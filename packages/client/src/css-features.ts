@@ -121,8 +121,17 @@ export const CSS_FEATURES = `
   }
   #pa-thread, #pa-input-area, #pa-tabs, #pa-hdr { position: relative; z-index: 1; }
   /* Message currently being spoken aloud */
-  .pa-bubble.pa-speaking { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); animation: pa-speak-pulse 1.6s ease-in-out infinite; }
+  .pa-bubble.pa-speaking { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); animation: pa-speak-pulse 1.6s ease-in-out infinite; position: relative; }
+  /* The specific sentence being spoken right now */
+  .pa-sb.pa-speaking-block { background: color-mix(in srgb, var(--pa-amber) 20%, transparent); border-radius: 3px; }
+  /* Mispronunciation flag — visible while the bubble is speaking, and on hover after */
+  .pa-flag { position: absolute; top: -10px; right: -8px; width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--pa-surf); border: 1px solid var(--pa-border); font-size: 11px; line-height: 1; display: none; }
+  .pa-bubble.pa-speaking .pa-flag, .pa-bubble:hover .pa-flag { display: block; }
+  .pa-flag:active { transform: scale(1.2); }
   @keyframes pa-speak-pulse { 0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); } 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pa-amber) 25%, transparent); } }
+  /* System pseudo-tab — present but visually recessive */
+  .pa-tab.pa-tab-system { opacity: .6; font-style: italic; }
+  .pa-tab.pa-tab-system.active { opacity: .9; }
   /* System update lines (hook firings etc.) — thin, muted, full-width */
   .pa-sysline { display: flex; align-items: baseline; gap: 7px; padding: 2px 6px; font-family: var(--pa-mono); font-size: 9.5px; color: var(--pa-muted); opacity: .85; }
   .pa-sysline-src { flex-shrink: 0; color: var(--pa-amber); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: 8.5px; }

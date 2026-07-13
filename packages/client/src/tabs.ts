@@ -57,7 +57,9 @@ function restoreActiveChannel() {
 export function msgInView(m: any): boolean {
   if (activeChannel === null) return true   // zero-agent state only — no All view exists
   if (m.role === 'user') return true
-  return !m.channel || m.channel === activeChannel
+  // Channel-less agent messages no longer leak into every tab (scoping #13);
+  // system lines live on the reserved 'system' channel / System pseudo-tab.
+  return m.channel === activeChannel
 }
 
 function updateHeader(ch: string | null) {
@@ -99,21 +101,26 @@ export function renderTabs() {
   }
 
   // Multiple agents: one tab per agent (no All view — per-agent chats only)
+  const prevActive = activeChannel
   restoreActiveChannel()   // first multi-agent render: re-apply the saved tab
   // An agent tab is always selected — default to the first unarchived agent
   if (!activeChannel || !agentInfo.has(activeChannel)) {
-    const first = [...agentInfo.keys()].find(id => !archived.has(id)) ?? [...agentInfo.keys()][0]
+    const first = [...agentInfo.keys()].find(id => !archived.has(id) && id !== 'system')
+      ?? [...agentInfo.keys()].find(id => !archived.has(id)) ?? [...agentInfo.keys()][0]
     setActiveChannel(first)
   }
+  // History renders before the agents list arrives (activeChannel null →
+  // everything passed msgInView) — re-filter the thread once a real channel
+  // is selected, whether restored from localStorage or defaulted (#13)
+  if (prevActive !== activeChannel && _renderThread) _renderThread()
   tabsEl.classList.add('visible')
   tabsEl.innerHTML = ''
 
-  for (const [id, info] of agentInfo) {
-    if (archived.has(id)) continue
+  const makeTab = (id: string, info: { name: string; color: string }) => {
     const tab = document.createElement('button')
-    tab.className = 'pa-tab' + (activeChannel === id ? ' active' : '')
+    tab.className = 'pa-tab' + (activeChannel === id ? ' active' : '') + (id === 'system' ? ' pa-tab-system' : '')
     tab.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
-    tab.title = statusTooltip(id)
+    tab.title = id === 'system' ? 'Hook & tool events from all sessions' : statusTooltip(id)
     const count = unreadByChannel[id] || 0
     const idLabel = id !== info.name.toLowerCase().replace(/\s+/g, '-') ? `<span class="pa-tab-id">${esc(id)}</span>` : ''
     tab.innerHTML = `<span class="pa-tab-pip ${statusOf(id)}"></span><span class="pa-tab-label-wrap">${esc(info.name)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
@@ -124,6 +131,15 @@ export function renderTabs() {
     })
     tabsEl.appendChild(tab)
   }
+
+  for (const [id, info] of agentInfo) {
+    if (archived.has(id) || id === 'system') continue
+    makeTab(id, info)
+  }
+  // System pseudo-tab always renders LAST; archiving it (the ×) is the
+  // per-device way to hide it — restore from the Archived dropdown.
+  const sysInfo = agentInfo.get('system')
+  if (sysInfo && !archived.has('system')) makeTab('system', sysInfo)
 
   // Archived tabs collapse behind a dropdown at the end of the bar
   const archList = [...agentInfo.entries()].filter(([id]) => archived.has(id))
@@ -198,7 +214,7 @@ export function switchChannel(ch: string) {
   unreadByChannel[ch] = 0
   renderTabs()
   if (_renderThread) _renderThread()
-  if (connBanner) {
+  if (connBanner && ch !== 'system') {   // System pseudo-tab has no poller to check
     connBanner.className = 'pa-conn-banner'
     connBanner.textContent = ''
     checkAgentOnline(ch)

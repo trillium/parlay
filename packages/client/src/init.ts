@@ -8,7 +8,7 @@
  */
 
 import { IS_STANDALONE, DESKTOP_BP } from './config'
-import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel } from './state'
+import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel, agentInfo } from './state'
 import { initSpeech } from './speech'
 import { initCommands } from './commands'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
@@ -47,6 +47,9 @@ const { popup, popupLbl, popupIn, popupOk, popupCx, settingsGearBtn } = domRefs
 setRenderThreadFn(renderThread)
 ;(window as any).__paMsgInView = msgInView
 initAgentSwitcher()
+// Reserved System pseudo-channel: hook/tool system_update lines land here
+// instead of leaking into every agent tab (scoping #13)
+agentInfo.set('system', { id: 'system', name: 'System', color: '#6b7280' })
 
 // ── Desktop detection ───────────────────────────────────────────────────────
 function isDesktop() { return window.innerWidth >= DESKTOP_BP }
