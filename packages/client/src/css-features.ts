@@ -63,6 +63,18 @@ export const CSS_FEATURES = `
     display: flex; align-items: center; justify-content: center;
   }
   #pa-fab:hover { background: color-mix(in srgb, var(--pa-green) 24%, var(--pa-surf)); }
+  /* Jump-to-bottom: sits left of the switcher FAB; hidden at bottom, fades in on scroll-up */
+  #pa-jump {
+    position: absolute; top: -15px; right: 62px; transform: translateY(-100%);
+    width: 40px; height: 40px; border-radius: 50%; z-index: 6; cursor: pointer;
+    background: color-mix(in srgb, var(--pa-blue) 14%, var(--pa-surf)); color: var(--pa-blue);
+    border: 1px solid color-mix(in srgb, var(--pa-blue) 40%, var(--pa-border));
+    font-size: 17px; line-height: 1; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity .18s ease;
+  }
+  #pa-jump.visible { opacity: 1; pointer-events: auto; }
+  #pa-jump:hover { background: color-mix(in srgb, var(--pa-blue) 24%, var(--pa-surf)); }
   #pa-sheet {
     position: absolute; bottom: 0; left: 0; right: 0; z-index: 25;
     display: none; flex-direction: column; max-height: 62%;

@@ -8,13 +8,13 @@
  */
 
 import { IS_STANDALONE, DESKTOP_BP } from './config'
-import { open, setOpen, setUnread, setAtBottom } from './state'
+import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel } from './state'
 import { initSpeech } from './speech'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
 import * as domRefs from './dom'
 import { setRenderThreadFn, msgInView } from './tabs'
 import { initAgentSwitcher } from './switcher'
-import { renderThread } from './thread'
+import { renderThread, scrollBottom } from './thread'
 import { wireToolLogEvents } from './toollog'
 import { connect, setOpenDrawerFn } from './sse'
 import { wireInputEvents, loadDraft, sendMsg } from './input'
@@ -89,8 +89,23 @@ document.getElementById('pa-close')!.addEventListener('click', closeDrawer)
 const SCROLL_KEY = 'pa-scroll-pct'
 let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null
 
+const jumpBtn = document.getElementById('pa-jump')!
+jumpBtn.addEventListener('click', () => {
+  scrollBottom(true, true)   // instant — no smooth animation on a long catch-up
+  setUnread(0)
+  badge.classList.remove('visible')
+  const ch = activeChannel
+  if (ch) {
+    unreadByChannel[ch] = 0
+    const tabBadge = document.getElementById(`pa-tab-unread-${ch}`)
+    if (tabBadge) { tabBadge.textContent = ''; tabBadge.classList.remove('visible') }
+  }
+})
+
 thread.addEventListener('scroll', () => {
-  setAtBottom(thread.scrollTop + thread.clientHeight >= thread.scrollHeight - 50)
+  const atBottomNow = thread.scrollTop + thread.clientHeight >= thread.scrollHeight - 50
+  setAtBottom(atBottomNow)
+  jumpBtn.classList.toggle('visible', !atBottomNow)
   // Debounced save of scroll position as a ratio
   clearTimeout(scrollSaveTimer!)
   scrollSaveTimer = setTimeout(() => {
