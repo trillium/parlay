@@ -45,13 +45,28 @@ export function speak(text: string) {
 let openDrawerFn: (skipFocus?: boolean) => void = () => {}
 export function setOpenDrawerFn(fn: (skipFocus?: boolean) => void) { openDrawerFn = fn }
 
+// ── Device identity ───────────────────────────────────────────────────────────
+// Stable per-browser uuid so the server can scope navigate/reload to one device.
+
+export function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem('pa-device-id')
+    if (!id) {
+      id = crypto.randomUUID ? crypto.randomUUID() : `dev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      localStorage.setItem('pa-device-id', id)
+    }
+    return id
+  } catch { return 'unknown' }
+}
+;(window as any).__paDeviceId = getDeviceId()
+
 // ── SSE connection ────────────────────────────────────────────────────────────
 
 export function connect() {
   const currentEs: EventSource | null = (window as any).__paEs ?? null
   if (currentEs) { try { currentEs.close() } catch {} }
 
-  const es = new EventSource(`${CHAT_BASE}/events`)
+  const es = new EventSource(`${CHAT_BASE}/events?device=${encodeURIComponent(getDeviceId())}`)
   ;(window as any).__paEs = es
   setEs(es)
 
