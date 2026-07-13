@@ -1,5 +1,5 @@
 import { esc, linkify, fmtTime } from './config'
-import { msgs, agentInfo, atBottom, thinking, setThinkingState } from './state'
+import { msgs, agentInfo, activeChannel, atBottom, thinking, setThinkingState } from './state'
 import { thread, emptyEl } from './dom'
 import { msgInView, switchChannel } from './tabs'
 import { annotateMessage } from './annotation'
@@ -22,7 +22,12 @@ export function addThinkEl() {
   const d = document.createElement('div')
   d.id = 'pa-think'
   d.className = 'pa-thinking'
-  d.innerHTML = `<div class="pa-av agent">AG</div><div class="pa-thinking-dots"><b></b><b></b><b></b></div>`
+  // The think indicator IS the responding agent: same initials + accent
+  // treatment as _appendMsgEl. Generic AG only in the zero-agent state.
+  const info = activeChannel ? agentInfo.get(activeChannel) : null
+  const init  = info ? info.name.slice(0, 2).toUpperCase() : 'AG'
+  const color = info ? info.color : 'var(--pa-green)'
+  d.innerHTML = `<div class="pa-av agent" style="background:color-mix(in srgb,${color} 14%,var(--pa-ink));color:${color};border-color:color-mix(in srgb,${color} 22%,transparent)">${init}</div><div class="pa-thinking-dots"><b></b><b></b><b></b></div>`
   thread.appendChild(d)
   scrollBottom(true)
 }
@@ -35,8 +40,9 @@ export function setThinking(on: boolean) {
   setThinkingState(on)
   const dot = document.getElementById('pa-dot')!
   const sub = document.getElementById('pa-sub')!
+  const name = activeChannel ? agentInfo.get(activeChannel)?.name : undefined
   dot.className = 'pa-dot' + (on ? ' thinking' : '')
-  sub.textContent = on ? ' · thinking…' : ' · firstmate'
+  sub.textContent = on ? ' · thinking…' : (name ? ` · ${name}` : '')
   if (on) addThinkEl(); else rmThinkEl()
 }
 
