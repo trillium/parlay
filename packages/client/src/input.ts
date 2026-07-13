@@ -93,21 +93,22 @@ function checkTalonSubmit() {
   const submitRe = phrases.length
     ? new RegExp(`\\s+(${phrases.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*$`, 'i')
     : null
-  // Dictation is sloppy with clear phrases: it repeats them across lines, adds
-  // punctuation, and drops short filler words ("change inside in input" comes
-  // out as "change inside input"). Clear when the box contains ONLY repetitions
-  // of any configured phrase, with interior words of ≤3 chars optional — the
-  // same per-phrase tolerance the single phrase had, OR-ed across all of them.
+  // Clear phrases fire ANYWHERE in the input (spec #8): dictation often lands
+  // the command after stray text ("Blah blah change inside input") and the
+  // captain wants the WHOLE box emptied. Per-phrase tolerance kept: punctuation
+  // or commas between words, dictation-dropped interior words of ≤3 chars.
+  // Word-boundary guards stop mid-word hits ("exchange…" is not "change…").
+  const SEP = "[\\s,.!?;:]+"
   const clearCores = clearPhrases.map(phrase => {
     const words = phrase.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     return words.map((w, i) => {
       const interior = i > 0 && i < words.length - 1
-      if (interior && w.length <= 3) return `(?:${w}\\s+)?`
-      return i < words.length - 1 ? `${w}\\s+` : w
+      if (interior && w.length <= 3) return `(?:${w}${SEP})?`
+      return i < words.length - 1 ? `${w}${SEP}` : w
     }).join('')
   })
   const clearRe = clearCores.length
-    ? new RegExp(`^(?:\\s*(?:${clearCores.join('|')})[.!?,;]*\\s*)+$`, 'i')
+    ? new RegExp(`(?:^|[\\s,.!?;:])(?:${clearCores.join('|')})(?=$|[\\s,.!?;:])`, 'i')
     : null
 
   const val = inputEl.value
@@ -127,8 +128,11 @@ function checkTalonSubmit() {
     }
   }
 
-  if (clearRe && clearRe.test(val.trim())) {
-    inputEl.value = ''; autoResize(); return
+  if (clearRe && clearRe.test(val)) {
+    inputEl.value = ''
+    autoResize()
+    clearDraft()   // cancels the pending debounced save + PUTs empty draft (send-clear hygiene)
+    return
   }
   if (submitRe && submitRe.test(val)) {
     setTalonTimer(setTimeout(() => {
