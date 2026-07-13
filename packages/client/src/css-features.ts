@@ -52,6 +52,45 @@ export const CSS_FEATURES = `
   .pa-action-label { flex: 1; font-family: var(--pa-mono); font-size: 11.5px; color: var(--pa-body); }
   .pa-action-btn { flex-shrink: 0; padding: 5px 12px; border-radius: 6px; cursor: pointer; border: 1px solid color-mix(in srgb, var(--pa-green) 45%, transparent); background: color-mix(in srgb, var(--pa-green) 13%, transparent); color: var(--pa-green); font-family: var(--pa-mono); font-size: 11px; }
   .pa-action-btn:hover { background: color-mix(in srgb, var(--pa-green) 24%, transparent); }
+  /* Mobile agent switcher: FAB floats 15px above the input area, sheet is a tap-friendly agent list */
+  #pa-input-area { position: relative; }
+  #pa-fab {
+    position: absolute; top: -15px; right: 14px; transform: translateY(-100%);
+    width: 40px; height: 40px; border-radius: 50%; z-index: 6; cursor: pointer;
+    background: color-mix(in srgb, var(--pa-green) 14%, var(--pa-surf)); color: var(--pa-green);
+    border: 1px solid color-mix(in srgb, var(--pa-green) 40%, var(--pa-border));
+    font-size: 17px; line-height: 1; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #pa-fab:hover { background: color-mix(in srgb, var(--pa-green) 24%, var(--pa-surf)); }
+  #pa-sheet {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 25;
+    display: none; flex-direction: column; max-height: 62%;
+    background: var(--pa-surf); border-top: 1px solid var(--pa-border);
+    border-radius: 14px 14px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.45);
+  }
+  #pa-sheet.open { display: flex; }
+  #pa-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 8px; font-family: var(--pa-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--pa-muted); }
+  #pa-sheet-close { background: none; border: none; color: var(--pa-muted); font-size: 14px; cursor: pointer; padding: 4px 6px; }
+  #pa-sheet-list { overflow-y: auto; padding: 0 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .pa-sheet-row {
+    display: flex; align-items: center; gap: 11px; min-height: 48px; padding: 10px 12px;
+    background: none; border: none; border-radius: 10px; cursor: pointer; text-align: left;
+    color: var(--pa-body); font-family: var(--pa-mono); font-size: 13px;
+  }
+  .pa-sheet-row:hover, .pa-sheet-row:active { background: color-mix(in srgb, var(--pa-muted) 12%, transparent); }
+  .pa-sheet-row.active { background: color-mix(in srgb, var(--tab-color, var(--pa-green)) 10%, transparent); }
+  .pa-sheet-row .pa-tab-pip { width: 8px; height: 8px; }
+  .pa-sheet-name { font-weight: 600; }
+  .pa-sheet-id { font-size: 10px; color: var(--pa-muted); margin-left: auto; }
+  /* Captain's messages clamp by default; tap to expand */
+  .pa-bubble.pa-clamped { max-height: 76px; overflow: hidden; position: relative; cursor: pointer; }
+  .pa-bubble.pa-clamped::after {
+    content: '⌄ tap to expand'; position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 18px 10px 3px; font-size: 9px; text-align: center; color: var(--pa-muted);
+    background: linear-gradient(transparent, color-mix(in srgb, var(--pa-blue) 9%, var(--pa-surf2)) 70%);
+  }
+  .pa-bubble.pa-expandable:not(.pa-clamped) { cursor: pointer; }
   #pa-ann-strip { flex-shrink: 0; display: none; padding: 8px 14px; background: color-mix(in srgb, var(--pa-amber) 5%, var(--pa-surf)); border-bottom: 1px solid var(--pa-border); }
   #pa-ann-strip.visible { display: block; }
   .pa-ann-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }

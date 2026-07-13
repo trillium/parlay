@@ -14,7 +14,7 @@ import {
 } from './state'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
 import * as domRefs from './dom'
-import { setRenderThreadFn, msgInView } from './tabs'
+import { setRenderThreadFn, msgInView, initAgentSwitcher } from './tabs'
 import { renderThread } from './thread'
 import { wireToolLogEvents } from './toollog'
 import { connect, setOpenDrawerFn } from './sse'
@@ -46,6 +46,7 @@ const { popup, popupLbl, popupIn, popupOk, popupCx, settingsGearBtn } = domRefs
 
 setRenderThreadFn(renderThread)
 ;(window as any).__paMsgInView = msgInView
+initAgentSwitcher()
 
 // ── Desktop detection ───────────────────────────────────────────────────────
 function isDesktop() { return window.innerWidth >= DESKTOP_BP }

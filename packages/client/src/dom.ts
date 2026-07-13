@@ -44,11 +44,17 @@ export const DRAWER_HTML = `
     </div>
 
     <div id="pa-input-area">
+      <button id="pa-fab" title="Switch agent">⇄</button>
       <div id="pa-input-row">
         <textarea id="pa-input" rows="1" placeholder="Message Agent…"></textarea>
         <button id="pa-send">↑</button>
       </div>
       <div id="pa-hint">⌘↵ send</div>
+    </div>
+
+    <div id="pa-sheet">
+      <div id="pa-sheet-head"><span>Switch agent</span><button id="pa-sheet-close">✕</button></div>
+      <div id="pa-sheet-list"></div>
     </div>
   </div>
 
