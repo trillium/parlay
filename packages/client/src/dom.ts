@@ -27,8 +27,10 @@ export const DRAWER_HTML = `
     <div id="pa-ann-strip">
       <div class="pa-ann-strip-head">
         <span class="pa-ann-label">QUEUED <span id="pa-ann-count">0</span></span>
+        <button id="pa-ann-exit" title="Exit annotate mode (Esc)">Done</button>
         <button id="pa-ann-send">Send to Agent</button>
       </div>
+      <div id="pa-ann-hint">Click any element to mark it · <b>Esc</b> or the ✎ button to exit</div>
       <div id="pa-ann-list"></div>
     </div>
 

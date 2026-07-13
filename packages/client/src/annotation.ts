@@ -6,6 +6,7 @@ let _openDrawer: (() => void) | null = null
 let _sendMsg: ((text: string) => Promise<void>) | null = null
 let _annToggle: HTMLElement, _annStrip: HTMLElement, _annCount: HTMLElement
 let _annList: HTMLElement, _annSend: HTMLElement
+let _renderStrip: (() => void) | null = null   // set in setupAnnotation; lets doSetAnnotate refresh the strip
 let _popup: HTMLElement, _popupLbl: HTMLElement
 let _popupIn: HTMLTextAreaElement, _popupOk: HTMLElement, _popupCx: HTMLElement
 
@@ -56,9 +57,14 @@ export function wireAnnotation(
     markerMap.set(el, m)
   }
 
+  _renderStrip = renderAnnStrip
   function renderAnnStrip() {
-    if (!annotations.length) { _annStrip.classList.remove('visible'); return }
+    const active = _annToggle.classList.contains('active')
+    // Show the strip whenever annotate mode is armed — even with nothing marked
+    // yet — so there is always a visible way out. Hide only when idle + empty.
+    if (!annotations.length && !active) { _annStrip.classList.remove('visible'); return }
     _annStrip.classList.add('visible')
+    _annStrip.classList.toggle('empty', annotations.length === 0)
     _annCount.textContent = String(annotations.length)
     _annList.innerHTML = annotations.map((a, i) => `
       <div class="pa-ann-item">
@@ -96,6 +102,15 @@ export function wireAnnotation(
     const isActive = _annToggle.classList.contains('active')
     doSetAnnotate(!isActive)
     if (!isActive && _openDrawer) _openDrawer()
+  })
+
+  // Explicit exit affordances: the strip's Done button and a global Escape key.
+  const annExit = document.getElementById('pa-ann-exit')
+  if (annExit) annExit.addEventListener('click', () => doSetAnnotate(false))
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || !_annToggle.classList.contains('active')) return
+    if (_popup.classList.contains('visible')) { hidePopup(); return }  // close popup first
+    doSetAnnotate(false)
   })
 
   document.addEventListener('mousemove', (e: MouseEvent) => {
@@ -137,7 +152,9 @@ export function doSetAnnotate(on: boolean) {
   if (!_annToggle) return
   setAnnotate(on)
   _annToggle.classList.toggle('active', on)
+  _annToggle.title = on ? 'Exit annotate mode (Esc)' : 'Annotate page'
   document.body.style.cursor = on ? 'crosshair' : ''
   if (!on && hoverEl) { hoverEl.classList.remove('pa-hover'); setHoverEl(null) }
   if (!on && _popup) _popup.classList.remove('visible')
+  _renderStrip?.()   // show/hide the strip (with its Done button) as mode toggles
 }

@@ -29,6 +29,13 @@ export const CSS_FEATURES = `
   .pa-ann-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
   .pa-ann-label { font-family: var(--pa-mono); font-size: 10px; color: var(--pa-amber); font-weight: 700; letter-spacing: .08em; }
   #pa-ann-send { font-family: var(--pa-mono); font-size: 10px; background: color-mix(in srgb,var(--pa-amber) 15%,transparent); border: 1px solid color-mix(in srgb,var(--pa-amber) 35%,transparent); color: var(--pa-amber); padding: 3px 10px; cursor: pointer; border-radius: 3px; }
+  .pa-ann-strip-head { gap: 8px; }
+  #pa-ann-exit { font-family: var(--pa-mono); font-size: 10px; background: none; border: 1px solid var(--pa-border); color: var(--pa-muted); padding: 3px 10px; cursor: pointer; border-radius: 3px; margin-left: auto; }
+  #pa-ann-exit:hover { border-color: var(--pa-muted); color: var(--pa-body); }
+  #pa-ann-hint { font-size: 11px; color: var(--pa-muted); margin-bottom: 6px; }
+  #pa-ann-hint b { color: var(--pa-amber); font-family: var(--pa-mono); font-weight: 700; }
+  #pa-ann-strip.empty #pa-ann-send { display: none; }
+  #pa-ann-strip:not(.empty) #pa-ann-hint { display: none; }
   #pa-ann-list { display: flex; flex-direction: column; gap: 4px; max-height: 110px; overflow-y: auto; }
   .pa-ann-item { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.4; }
   .pa-ann-num { font-family: var(--pa-mono); font-size: 10px; font-weight: 700; background: var(--pa-amber); color: var(--pa-ink); width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
