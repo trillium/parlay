@@ -50,6 +50,8 @@ export const DRAWER_HTML = `
       <button id="pa-jump" title="Jump to latest">↓</button>
       <button id="pa-fab" title="Switch agent">⇄</button>
       <div id="pa-input-row">
+        <button id="pa-attach" title="Attach image">📎</button>
+        <input type="file" id="pa-attach-file" accept="image/*" style="display:none">
         <textarea id="pa-input" rows="1" placeholder="Message Agent…"></textarea>
         <button id="pa-send">↑</button>
       </div>

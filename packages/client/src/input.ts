@@ -57,8 +57,8 @@ export function clearDraft() {
 
 // ── Send ──────────────────────────────────────────────────────────────────────
 
-export async function sendMsg(text: string) {
-  if (!text || sendBtn.disabled) return
+export async function sendMsg(text: string, images?: string[]) {
+  if ((!text && !images?.length) || sendBtn.disabled) return
   // Kill any pending debounced draft save FIRST — a full-text draft PUT firing
   // mid-send is what refilled the box after send (mobile race, bug #4).
   clearTimeout(draftSaveTimer!)
@@ -70,7 +70,7 @@ export async function sendMsg(text: string) {
     const r = await fetch(`${CHAT_BASE}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toAgent ? { text, toAgent } : { text }),
+      body: JSON.stringify({ text, ...(toAgent ? { toAgent } : {}), ...(images?.length ? { images } : {}) }),
     })
     if (r.ok) { lastSendTs = Date.now(); inputEl.value = ''; autoResize(); armCompactTimer(); clearDraft() }
   } catch {}
@@ -102,4 +102,29 @@ export function wireInputEvents() {
   sendBtn.addEventListener('click', () => {
     sendMsg(inputEl.value.trim())
   })
+
+  // Image attach (#17): pick/photograph → upload → send with images populated
+  const attachBtn = document.getElementById('pa-attach')
+  const attachFile = document.getElementById('pa-attach-file') as HTMLInputElement | null
+  if (attachBtn && attachFile) {
+    attachBtn.addEventListener('click', () => attachFile.click())
+    attachFile.addEventListener('change', async () => {
+      const file = attachFile.files?.[0]
+      attachFile.value = ''
+      if (!file) return
+      attachBtn.textContent = '⏳'
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        const r = await fetch(`${CHAT_BASE}/upload`, { method: 'POST', body: form })
+        const res = await r.json()
+        if (res.ok && res.url) {
+          await sendMsg(inputEl.value.trim(), [res.url])
+        } else {
+          inputEl.placeholder = `Upload failed: ${res.error ?? 'unknown'}`
+        }
+      } catch { inputEl.placeholder = 'Upload failed — network' }
+      attachBtn.textContent = '📎'
+    })
+  }
 }

@@ -47,6 +47,23 @@ export function setThinking(on: boolean) {
   if (on) addThinkEl(); else rmThinkEl()
 }
 
+// ── Inline images (#17) ───────────────────────────────────────────────────────
+// Renders m.images[] plus any image URLs found in the text, for both roles.
+// Thumbnails lazy-load, cap at 240px, tap opens full-size in a new tab.
+
+const IMG_URL_RE = /(?:https?:\/\/[^\s"'<>]+|\/[^\s"'<>]+)\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"'<>]*)?/gi
+
+function imagesHtml(m: any): string {
+  const fromText: string[] = String(m.text ?? '').match(IMG_URL_RE) ?? []
+  const urls = [...new Set([...(Array.isArray(m.images) ? m.images : []), ...fromText])]
+    .filter(u => /^(https?:\/\/|\/)/.test(u)).slice(0, 8)
+  if (!urls.length) return ''
+  const a = (u: string) => esc(u).replace(/"/g, '%22')
+  return `<div class="pa-imgs">${urls.map(u =>
+    `<a href="${a(u)}" target="_blank" rel="noopener noreferrer"><img class="pa-img" loading="lazy" src="${a(u)}" alt="attachment"></a>`
+  ).join('')}</div>`
+}
+
 // ── Message rendering ─────────────────────────────────────────────────────────
 
 // Internal: creates and appends a message element; does NOT manage emptyEl
@@ -105,7 +122,7 @@ export function _appendMsgEl(m: any) {
       </div>
       <div class="pa-bc">
         <div class="pa-meta"><span class="pa-meta-n" style="color:${agentColor}">${agentName}</span>${channelId}<span>${fmtTime(m.ts)}</span></div>
-        <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${linkify(esc(m.text))}</div>
+        <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${linkify(esc(m.text))}</div>${imagesHtml(m)}
       </div>`
     el.style.cursor = 'pointer'
     el.title = 'Click to re-read aloud'
@@ -126,7 +143,7 @@ export function _appendMsgEl(m: any) {
       <div class="pa-av user">YOU</div>
       <div class="pa-bc">
         <div class="pa-meta"><span class="pa-meta-n">You</span><span>${fmtTime(m.ts)}</span></div>
-        <div class="pa-bubble user">${linkify(esc(m.text))}</div>
+        <div class="pa-bubble user">${linkify(esc(m.text))}</div>${imagesHtml(m)}
       </div>`
   }
   thread.appendChild(el)

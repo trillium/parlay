@@ -129,6 +129,11 @@ export const CSS_FEATURES = `
   .pa-bubble.pa-speaking .pa-flag, .pa-bubble:hover .pa-flag { display: block; }
   .pa-flag:active { transform: scale(1.2); }
   @keyframes pa-speak-pulse { 0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); } 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pa-amber) 25%, transparent); } }
+  /* Inline images (#17): thumbnails under bubbles, tap for full size */
+  .pa-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .pa-img { max-height: 240px; max-width: 100%; border-radius: 10px; display: block; border: 1px solid var(--pa-border); cursor: pointer; }
+  #pa-attach { flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; background: none; border: 1px solid var(--pa-border); color: var(--pa-muted); font-size: 14px; line-height: 1; align-self: flex-end; }
+  #pa-attach:hover, #pa-attach:active { color: var(--pa-body); border-color: var(--pa-muted); }
   /* System pseudo-tab — present but visually recessive */
   .pa-tab.pa-tab-system { opacity: .6; font-style: italic; }
   .pa-tab.pa-tab-system.active { opacity: .9; }
