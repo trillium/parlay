@@ -1,8 +1,8 @@
-import { CHAT_BASE } from './config'
 import { ttsEnabled, ttsVoice, setTtsEnabled, setTtsVoice } from './state'
 import { getSettings } from './settings-modal'
-import { clipKey, cacheGet, cachePut, cacheStats } from './tts-cache'
-import { wrapBlocks, highlightBlock, clearAllSpeechHighlights, noteSpoken, flagLastSpoken, type RawBlock } from './speech-highlight'
+import { cacheStats } from './tts-cache'
+import { getClip, splitBlocks, clipFetches } from './speech-clips'
+import { wrapBlocks, highlightBlock, clearAllSpeechHighlights, noteSpoken, flagLastSpoken, splitBlocksRaw, spansFor, setPlayButton } from './speech-highlight'
 
 // ── Speech output ─────────────────────────────────────────────────────────────
 // Sentence-chunked Kokoro pipeline: blocks fetched concurrently, played gapless
@@ -11,7 +11,6 @@ import { wrapBlocks, highlightBlock, clearAllSpeechHighlights, noteSpoken, flagL
 // speechSynthesis remains the wholesale fallback when the daemon is down.
 
 let session = 0          // increments on every speak/stop — cancels in-flight loops
-let fetchCount = 0       // debug: network fetches this page load
 let _resolveCurrent: (() => void) | null = null
 
 function ttsAudio() { return document.getElementById('pa-tts-audio') as HTMLAudioElement | null }
@@ -22,48 +21,14 @@ function bubbleOf(msgId?: string) {
   return msgId ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`) : null
 }
 
-// Split into sentence blocks; merge fragments so blocks are ≥60 chars — small
-// enough for fast first synthesis, big enough to keep Kokoro prosody natural.
-// Raw segments concatenate back to the original text (pre-wrap rendering).
-export function splitBlocksRaw(text: string): RawBlock[] {
-  const parts = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
-  const blocks: RawBlock[] = []
-  let cur = ''
-  for (const p of parts) {
-    cur += p
-    if (cur.trim().length >= 60) { blocks.push({ synth: cur.trim(), raw: cur }); cur = '' }
-  }
-  if (cur.trim()) blocks.push({ synth: cur.trim(), raw: cur })
-  return blocks.length ? blocks : [{ synth: text.trim(), raw: text }]
-}
-
-export function splitBlocks(text: string): string[] {
-  return splitBlocksRaw(text).map(b => b.synth)
-}
-
-function isRiff(buf: ArrayBuffer): boolean {
-  const h = new Uint8Array(buf.slice(0, 4))
-  return h[0] === 0x52 && h[1] === 0x49 && h[2] === 0x46 && h[3] === 0x46
-}
-
-// Cache-first clip fetch. null = unavailable (daemon down / error payload).
-async function getClip(text: string): Promise<Blob | null> {
-  const key = clipKey(text)
-  const hit = await cacheGet(key)
-  if (hit) return hit
-  try {
-    fetchCount++
-    const r = await fetch(`${CHAT_BASE}/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    })
-    const buf = await r.arrayBuffer()
-    if (!isRiff(buf)) return null
-    const blob = new Blob([buf], { type: 'audio/wav' })
-    void cachePut(key, blob)
-    return blob
-  } catch { return null }
+// Prefer render-time spans (#18 block structure); wrap at speak time only for
+// bubbles that lack it. Marks the bubble speaking + flips its ▶ to ⏸.
+function speakingSpans(msgId: string | undefined, blocks: ReturnType<typeof splitBlocksRaw>): HTMLElement[] | null {
+  const existing = spansFor(msgId)
+  const spans = existing ?? wrapBlocks(msgId, blocks)
+  bubbleOf(msgId)?.classList.add('pa-speaking')
+  if (msgId) setPlayButton(msgId, true)
+  return spans
 }
 
 // Play one clip. Resolves true when playback finished, false when it could
@@ -113,15 +78,15 @@ function speakLocalBlock(text: string): Promise<void> {
 
 // Chunked Kokoro playback. Returns false only when block 1 is unavailable and
 // nothing played — caller then falls back to speechSynthesis wholesale.
-async function playChunked(text: string, msgId?: string): Promise<boolean> {
+async function playChunked(text: string, msgId?: string, startIdx = 0): Promise<boolean> {
   const sid = ++session
   const blocks = splitBlocksRaw(text)
-  const clips = blocks.map(b => getClip(b.synth))   // concurrent prefetch, ordered playback
-  const first = await clips[0]
+  const clips = blocks.map((b, i) => i >= startIdx ? getClip(b.synth) : Promise.resolve(null))
+  const first = await clips[startIdx]
   if (sid !== session) return true            // canceled while fetching
   if (!first) return false
-  const spans = wrapBlocks(msgId, blocks)     // per-sentence highlight spans (#11)
-  for (let i = 0; i < blocks.length; i++) {
+  const spans = speakingSpans(msgId, blocks)  // per-sentence highlight spans (#11/#18)
+  for (let i = startIdx; i < blocks.length; i++) {
     const clip = await clips[i]
     if (sid !== session) return true
     highlightBlock(spans, i)
@@ -151,7 +116,7 @@ async function playHybrid(text: string, msgId?: string): Promise<void> {
   const blocks = splitBlocksRaw(text)
   const ready: (Blob | null)[] = blocks.map(() => null)
   blocks.forEach((b, i) => { getClip(b.synth).then(c => { ready[i] = c }) })   // background fill, never awaited
-  const spans = wrapBlocks(msgId, blocks)     // per-sentence highlight spans (#11)
+  const spans = speakingSpans(msgId, blocks)  // per-sentence highlight spans (#11/#18)
   for (let i = 0; i < blocks.length; i++) {
     if (sid !== session) return
     highlightBlock(spans, i)
@@ -192,6 +157,37 @@ export function stopSpeak() {
   hardStop()
 }
 
+// Replay dots (#18): play a message from block i onward. Explicit user tap —
+// works regardless of the TTS toggle (the tap doubles as the audio unlock).
+export function speakFrom(text: string, msgId: string | undefined, startIdx: number) {
+  hardStop()
+  void playChunked(text, msgId, Math.max(0, startIdx)).then(ok => {
+    if (!ok) {   // daemon cold — local voice from that block onward
+      const blocks = splitBlocksRaw(text)
+      const spans = speakingSpans(msgId, blocks)
+      ;(async () => {
+        const sid = ++session
+        for (let i = Math.max(0, startIdx); i < blocks.length; i++) {
+          if (sid !== session) return
+          highlightBlock(spans, i)
+          noteSpoken(blocks[i].synth, msgId)
+          await speakLocalBlock(blocks[i].synth)
+        }
+        clearSpeakingHighlight()
+      })()
+    }
+  })
+}
+
+// ▶/⏸ per reply (#18): stop if this message is playing, else play from start.
+let currentPlayMsg: string | undefined
+export function playPause(text: string, msgId?: string) {
+  const playingThis = currentPlayMsg === msgId && !!document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble.pa-speaking`)
+  if (playingThis) { stopSpeak(); currentPlayMsg = undefined; return }
+  currentPlayMsg = msgId
+  speakFrom(text, msgId, 0)
+}
+
 function initTTSVoice() {
   if (!('speechSynthesis' in window)) return
   const voices = speechSynthesis.getVoices()
@@ -220,8 +216,11 @@ function unlockAudio() {
 export function initSpeech() {
   ;(window as any).__paSpeak = speak
   ;(window as any).__paStopSpeak = stopSpeak
+  ;(window as any).__paSpeakFrom = speakFrom
+  ;(window as any).__paPlayPause = playPause
+  ;(window as any).__paFlagSpeech = flagLastSpoken
   // Ops/debug surface: prefetch + cache stats without playing audio
-  ;(window as any).__paTts = { splitBlocks, prefetch: getClip, cacheStats, fetches: () => fetchCount }
+  ;(window as any).__paTts = { splitBlocks, prefetch: getClip, cacheStats, fetches: clipFetches }
 
   if ('speechSynthesis' in window) {
     speechSynthesis.addEventListener('voiceschanged', initTTSVoice)

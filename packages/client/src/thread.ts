@@ -4,6 +4,7 @@ import { thread, emptyEl } from './dom'
 import { msgInView, switchChannel } from './tabs'
 import { annotateMessage } from './annotation'
 import { navigateWorkspace } from './commands/ctx'
+import { blocksHtml } from './speech-highlight'
 
 // ── Scroll helper ─────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ export function _appendMsgEl(m: any) {
       </div>
       <div class="pa-bc">
         <div class="pa-meta"><span class="pa-meta-n" style="color:${agentColor}">${agentName}</span>${channelId}<span>${fmtTime(m.ts)}</span></div>
-        <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${linkify(esc(m.text))}</div>${imagesHtml(m)}
+        <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${blocksHtml(m.text)}</div>${imagesHtml(m)}
       </div>`
     el.style.cursor = 'pointer'
     el.title = 'Click to re-read aloud'
@@ -137,6 +138,20 @@ export function _appendMsgEl(m: any) {
       const bubble = el.querySelector('.pa-bubble') as HTMLElement
       const ev = e as MouseEvent
       annotateMessage(bubble, ev.clientX, ev.clientY)
+    })
+    // Replay dots + ▶/⏸ + 🚩 (#18) — all stopPropagation so click-to-speak
+    // on the row doesn't double-fire
+    el.querySelectorAll('.pa-dot-btn').forEach((d, i) => d.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if ((window as any).__paSpeakFrom) (window as any).__paSpeakFrom(m.text, m.id, i)
+    }))
+    el.querySelector('.pa-playpause')?.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if ((window as any).__paPlayPause) (window as any).__paPlayPause(m.text, m.id)
+    })
+    el.querySelector('.pa-flag')?.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if ((window as any).__paFlagSpeech) (window as any).__paFlagSpeech()
     })
   } else {
     el.innerHTML = `
