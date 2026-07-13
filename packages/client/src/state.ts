@@ -1,4 +1,19 @@
 // ── Shared mutable state ─────────────────────────────────────────────────────
+//
+// SETTINGS PLACEMENT DOCTRINE (bug #10) — future settings land on one side:
+//
+//   SHARED (server parlay-settings.json via settings-modal/io.ts): things that
+//   describe how Parlay behaves for the captain everywhere — panel side, page
+//   filters, voice phrases, command bindings, text scale, hybrid voice.
+//
+//   PER-DEVICE (localStorage): things a human sets on one screen and expects to
+//   stick to THAT screen — 'pa-tts-enabled' (speech.ts), 'pa-active-channel' +
+//   'pa-archived-channels' (tabs.ts), 'pa-device-id' (sse.ts),
+//   'pa-upgrade-attempt' (sse.ts), 'pa-scroll-pct' (init.ts).
+//
+//   DELIBERATELY TRANSIENT (module state only): tool-log visibility (it
+//   replaces the chat view — restoring it on load would hide the thread),
+//   annotate mode, drawer open/closed on mobile.
 
 export interface AgentInfo {
   id:    string

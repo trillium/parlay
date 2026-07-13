@@ -177,6 +177,19 @@ function initTTSVoice() {
   )
 }
 
+// PER-DEVICE setting (localStorage): TTS on/off sticks to this device across
+// reloads and pushed auto-upgrades. See state.ts for the shared/per-device split.
+const TTS_KEY = 'pa-tts-enabled'
+
+function unlockAudio() {
+  // iOS PWA blocks audio that isn't user-initiated; any real gesture unlocks
+  // the persistent element once, then SSE-triggered plays work for the session.
+  const au = ttsAudio()
+  if (!au || au.dataset.unlocked) return
+  au.src = 'data:audio/wav;base64,UklGRi4AAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA=='
+  au.play().then(() => { au.dataset.unlocked = '1' }).catch(() => {})
+}
+
 export function initSpeech() {
   ;(window as any).__paSpeak = speak
   ;(window as any).__paStopSpeak = stopSpeak
@@ -188,16 +201,20 @@ export function initSpeech() {
     initTTSVoice()
   }
   const ttsBtn = document.getElementById('pa-tts-btn')!
+  // Restore this device's TTS preference (bug #10 — it reset on every reload,
+  // which the auto-upgrade reloads made constant)
+  try {
+    if (localStorage.getItem(TTS_KEY) === '1') { setTtsEnabled(true); ttsBtn.classList.add('active') }
+  } catch {}
+  // Restored-on TTS never saw a toggle tap — unlock on the first real gesture
+  document.addEventListener('touchend', unlockAudio, { once: true, passive: true })
+  document.addEventListener('click', unlockAudio, { once: true })
+
   ttsBtn.addEventListener('click', () => {
     setTtsEnabled(!ttsEnabled)
     ttsBtn.classList.toggle('active', ttsEnabled)
+    try { localStorage.setItem(TTS_KEY, ttsEnabled ? '1' : '0') } catch {}
     if (!ttsEnabled) { stopSpeak(); return }
-    // iOS PWA blocks audio that isn't user-initiated; this tap IS the gesture —
-    // unlock the persistent element once so later SSE-triggered plays work.
-    const au = ttsAudio()
-    if (au && !au.dataset.unlocked) {
-      au.src = 'data:audio/wav;base64,UklGRi4AAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA=='
-      au.play().then(() => { au.dataset.unlocked = '1' }).catch(() => {})
-    }
+    unlockAudio()
   })
 }
