@@ -158,13 +158,10 @@ export const CSS_FEATURES = `
   .pa-lavish-name  { font-size: 12px; color: var(--pa-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pa-lavish-btn   { flex-shrink: 0; font-family: var(--pa-mono); font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 5px 10px; border-radius: 5px; background: color-mix(in srgb, #f4c95d 18%, transparent); border: 1px solid color-mix(in srgb, #f4c95d 40%, transparent); color: #f4c95d; text-decoration: none; }
   .pa-lavish-btn:hover { background: color-mix(in srgb, #f4c95d 28%, transparent); }
-  @media all and (display-mode: standalone) {
-    :root { --pa-w: 100vw; }
-    #pa-trigger  { display: none !important; }
-    #pa-close    { display: none !important; }
-    #pa-backdrop { display: none !important; }
-    #pa-drawer   { border-right: none !important; box-shadow: none !important; transition: none !important; }
-  }
+  /* Standalone PWA behaves like mobile browser: 85vw drawer, right 15% is the
+     tap-out dismissal strip (backdrop), trigger visible to reopen. */
+  /* Agent replies use the full panel width — it's a chat pane, not a phone bubble */
+  .pa-msg.agent .pa-bc { max-width: 100%; flex: 1; min-width: 0; }
   @media (min-width: 960px) {
     :root { --pa-w: 380px; }
     #pa-backdrop { display: none !important; }
