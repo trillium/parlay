@@ -102,6 +102,18 @@ export function _appendMsgEl(m: any) {
       </div>`
   }
   thread.appendChild(el)
+  // Long captain messages clamp by default — tap the bubble to expand/collapse.
+  // Measured synchronously post-append: rAF never fires in background tabs.
+  if (cls === 'user') {
+    const bubble = el.querySelector('.pa-bubble.user') as HTMLElement | null
+    if (bubble && bubble.scrollHeight > 96) {
+      bubble.classList.add('pa-expandable', 'pa-clamped')
+      bubble.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).tagName === 'A') return   // links still work
+        bubble.classList.toggle('pa-clamped')
+      })
+    }
+  }
   if (thinking) addThinkEl()
   scrollBottom()
 }
