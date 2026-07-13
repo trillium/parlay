@@ -1,0 +1,11 @@
+{
+  "name": "@parlay/cli",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "parlay": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts"
+  }
+}
