@@ -3,6 +3,7 @@ import { msgs, agentInfo, activeChannel, atBottom, thinking, setThinkingState } 
 import { thread, emptyEl } from './dom'
 import { msgInView, switchChannel } from './tabs'
 import { annotateMessage } from './annotation'
+import { navigateWorkspace } from './commands/ctx'
 
 // ── Scroll helper ─────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ export function _appendMsgEl(m: any) {
       </div>`
     el.querySelector('.pa-action-btn')!.addEventListener('click', () => {
       if (a.kind === 'switch_tab' && a.channel) switchChannel(a.channel)
-      else if (a.kind === 'navigate' && a.url && /^https?:/i.test(a.url)) location.href = a.url
+      else if (a.kind === 'navigate' && a.url && /^(https?:|\/)/i.test(a.url)) navigateWorkspace(a.url)
     })
     thread.appendChild(el)
     if (thinking) addThinkEl()

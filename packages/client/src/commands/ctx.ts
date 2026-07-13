@@ -46,7 +46,22 @@ export function buildContext(): CommandContext {
       stop() { (window as any).__paStopSpeak?.() },
     },
     settings: { get: getSettings },
+    workspace: { navigate: navigateWorkspace, present: workspacePresent },
   }
+}
+
+// Parlay-as-shell (#16): drive the workspace iframe when the page has one
+// (chat-app) — the chat drawer stays live as persistent chrome, zero SSE
+// teardown. Elsewhere, fall back to a full navigation.
+export function navigateWorkspace(url: string): boolean {
+  const frame = document.getElementById('pa-workspace') as HTMLIFrameElement | null
+  const sameOrigin = url.startsWith('/') || url.startsWith(location.origin)
+  if (frame && sameOrigin) { frame.src = url; return true }
+  location.href = url
+  return false   // navigated, but via teardown
+}
+export function workspacePresent(): boolean {
+  return !!document.getElementById('pa-workspace')
 }
 
 // Resolve a spoken {agent} capture against live agents: exact id, exact name,

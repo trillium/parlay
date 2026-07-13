@@ -72,9 +72,11 @@ export function runCommandPass(value: string): string | null {
         if (!phrase.trim()) continue
         const m = value.match(modeRegex(phraseCore(phrase), cmd.matchMode))
         if (m) {
-          matched = true
           const match: CommandMatch = { captures: { ...(m.groups ?? {}) }, matchedText: m[1] ?? m[0], value }
-          try { cmd.action(_ctx, match) } catch { /* a command must never break input */ }
+          let handled: void | boolean = undefined
+          try { handled = cmd.action(_ctx, match) } catch { /* a command must never break input */ }
+          if (handled === false) continue   // not handled — try the command's next phrase / later commands
+          matched = true
           fired = cmd.id
           break
         }

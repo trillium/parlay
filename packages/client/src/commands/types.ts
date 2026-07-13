@@ -22,7 +22,9 @@ export interface Command {
   matchMode: MatchMode
   priority: number         // lower wins; first match ends the pass
   description: string      // shown in settings + docs surfaces
-  action: (ctx: CommandContext, m: CommandMatch) => void
+  // Return exactly false to signal "not handled" — the pass continues to the
+  // next command (lets 'go to {agent}' fall through to 'go to {page}').
+  action: (ctx: CommandContext, m: CommandMatch) => void | boolean
   // Called EVERY input pass (matched or not) — lets stateful commands
   // (submit's 1s arm-and-verify timer) cancel themselves when the buffer
   // stops matching.
@@ -47,4 +49,7 @@ export interface CommandContext {
   drawer: { open(): void }
   speech: { stop(): void }
   settings: { get(): ParlaySettings }
+  // Parlay-as-shell (#16): drive the workspace iframe when the page has one
+  // (chat-app); falls back to a full navigation elsewhere.
+  workspace: { navigate(url: string): boolean; present(): boolean }
 }

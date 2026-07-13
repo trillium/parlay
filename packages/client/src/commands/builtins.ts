@@ -67,7 +67,8 @@ const switchTab: Command = {
   description: 'Switch the active agent tab by name',
   action(ctx, m) {
     const id = resolveAgent(m.captures.agent ?? '')
-    if (id && ctx.tabs.switch(id)) ctx.input.clear()
+    if (!id) return false                    // unknown agent — let 'go to {page}' try
+    if (ctx.tabs.switch(id)) ctx.input.clear()
   },
 }
 
@@ -79,7 +80,24 @@ const archiveTab: Command = {
   description: 'Archive an agent tab by name',
   action(ctx, m) {
     const id = resolveAgent(m.captures.agent ?? '')
-    if (id && ctx.tabs.archive(id)) ctx.input.clear()
+    if (!id) return false
+    if (ctx.tabs.archive(id)) ctx.input.clear()
+  },
+}
+
+// Parlay-as-shell (#16): open a Pulse page in the workspace pane. Lower
+// priority than switch-tab, so agent names win and unknown names fall through.
+const goToPage: Command = {
+  id: 'go-to-page',
+  phrases: ['go to {page}', 'open {page}', 'show {page}', 'workspace {page}'],
+  matchMode: 'whole',
+  priority: 25,
+  description: 'Open a Pulse page in the workspace pane (e.g. "go to status")',
+  action(ctx, m) {
+    const raw = (m.captures.page ?? '').trim().toLowerCase().replace(/[.!?,;:]+$/, '')
+    if (!raw) return false
+    ctx.workspace.navigate(`/${raw.replace(/\s+/g, '-')}/`)
+    ctx.input.clear()
   },
 }
 
@@ -114,5 +132,5 @@ const flagSpeech: Command = {
 }
 
 export function registerBuiltins(): void {
-  for (const c of [stopSpeech, flagSpeech, clear, switchTab, archiveTab, nextTab, prevTab, submit]) registerCommand(c)
+  for (const c of [stopSpeech, flagSpeech, clear, switchTab, archiveTab, nextTab, prevTab, goToPage, submit]) registerCommand(c)
 }

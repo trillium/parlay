@@ -9,6 +9,7 @@ import {
 import { connBanner, dot, drawer, badge, inputEl } from './dom'
 import { appendMsg, loadHistory as loadHistoryFn, setThinking, insertLavishCard } from './thread'
 import { draftClientId, lastSendTs } from './input'
+import { navigateWorkspace } from './commands/ctx'
 import { renderTabs } from './tabs'
 import { appendToolEntry } from './toollog'
 
@@ -192,7 +193,9 @@ export function connect() {
   es.addEventListener('navigate', (e: MessageEvent) => {
     const { url, openDrawer: od } = JSON.parse(e.data)
     if (od && !open) openDrawerFn()
-    if (url) location.href = url
+    // Parlay-as-shell (#16): on chat-app the workspace iframe absorbs the
+    // navigation and the chat survives; elsewhere this is a full navigation
+    if (url) navigateWorkspace(url)
   })
 
   es.onerror = () => {
