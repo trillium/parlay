@@ -1,7 +1,7 @@
 import { esc, linkify, fmtTime } from './config'
 import { msgs, agentInfo, atBottom, thinking, setThinkingState } from './state'
 import { thread, emptyEl } from './dom'
-import { msgInView } from './tabs'
+import { msgInView, switchChannel } from './tabs'
 
 // ── Scroll helper ─────────────────────────────────────────────────────────────
 
@@ -53,6 +53,31 @@ export function _appendMsgEl(m: any) {
   const el = document.createElement('div')
   el.dataset.paId = m.id
   el.className = `pa-msg ${cls}`
+
+  // Agent-suggested action → inline card with a button. Nothing happens until
+  // the captain clicks; the effect is local to this device only.
+  if (cls === 'agent' && m.type === 'action_request' && m.action) {
+    const a = m.action
+    const btnLabel = a.kind === 'switch_tab' ? `Switch to ${esc(a.channel ?? '')}` : 'Go →'
+    el.innerHTML = `
+      <div class="pa-av agent" style="background:color-mix(in srgb,${agentColor} 14%,var(--pa-ink));color:${agentColor};border-color:color-mix(in srgb,${agentColor} 22%,transparent)">${agentInit}</div>
+      <div class="pa-bc">
+        <div class="pa-meta"><span class="pa-meta-n" style="color:${agentColor}">${agentName}</span><span>${fmtTime(m.ts)}</span></div>
+        <div class="pa-action-card" style="border-color:color-mix(in srgb,${agentColor} 30%,var(--pa-border))">
+          <span class="pa-action-icon">⇢</span>
+          <span class="pa-action-label">${esc(a.label)}</span>
+          <button class="pa-action-btn">${btnLabel}</button>
+        </div>
+      </div>`
+    el.querySelector('.pa-action-btn')!.addEventListener('click', () => {
+      if (a.kind === 'switch_tab' && a.channel) switchChannel(a.channel)
+      else if (a.kind === 'navigate' && a.url && /^https?:/i.test(a.url)) location.href = a.url
+    })
+    thread.appendChild(el)
+    if (thinking) addThinkEl()
+    scrollBottom()   // respects atBottom — arrival never yanks a scrolled-up thread
+    return
+  }
 
   if (cls === 'agent') {
     const channelId = m.channel ? `<span class="pa-meta-id">${esc(m.channel)}</span>` : ''

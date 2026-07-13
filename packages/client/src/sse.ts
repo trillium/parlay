@@ -116,7 +116,7 @@ export function connect() {
       armCompactTimer()
     } else if (m.role === 'agent') {
       clearCompactTimer()
-      if (inView) speak(m.text)
+      if (inView && m.type !== 'action_request') speak(m.text)
       // Per-tab unread badge when this channel's tab is not active
       if (!inView && m.channel) {
         unreadByChannel[m.channel] = (unreadByChannel[m.channel] || 0) + 1

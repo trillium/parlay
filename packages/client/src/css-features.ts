@@ -47,6 +47,11 @@ export const CSS_FEATURES = `
   }
   .pa-arch-row:hover { background: color-mix(in srgb, var(--pa-muted) 12%, transparent); }
   .pa-arch-row-id { font-size: 8px; color: var(--pa-muted); margin-left: auto; }
+  .pa-action-card { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--pa-border); border-radius: 8px; background: color-mix(in srgb, var(--pa-green) 5%, var(--pa-surf2)); }
+  .pa-action-icon { color: var(--pa-green); font-size: 13px; flex-shrink: 0; }
+  .pa-action-label { flex: 1; font-family: var(--pa-mono); font-size: 11.5px; color: var(--pa-body); }
+  .pa-action-btn { flex-shrink: 0; padding: 5px 12px; border-radius: 6px; cursor: pointer; border: 1px solid color-mix(in srgb, var(--pa-green) 45%, transparent); background: color-mix(in srgb, var(--pa-green) 13%, transparent); color: var(--pa-green); font-family: var(--pa-mono); font-size: 11px; }
+  .pa-action-btn:hover { background: color-mix(in srgb, var(--pa-green) 24%, transparent); }
   #pa-ann-strip { flex-shrink: 0; display: none; padding: 8px 14px; background: color-mix(in srgb, var(--pa-amber) 5%, var(--pa-surf)); border-bottom: 1px solid var(--pa-border); }
   #pa-ann-strip.visible { display: block; }
   .pa-ann-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
