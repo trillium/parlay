@@ -139,19 +139,26 @@ async function cmdHistory(args: string[]) {
   for (const m of slice) console.log(fmtMsg(m))
 }
 
+async function cmdLavishImport() {
+  const { spawnSync } = await import("bun")
+  const script = new URL("./lavish-import.ts", import.meta.url).pathname
+  spawnSync(["bun", script], { stdio: ["inherit", "inherit", "inherit"], env: process.env })
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
   switch (cmd) {
-    case "subscribers": return cmdSubscribers()
-    case "agents":      return cmdAgents()
-    case "send":        return cmdSend(args)
-    case "alert":       return cmdAlert(args)
-    case "history":     return cmdHistory(args)
-    case "monitor":     return cmdMonitor(args)
+    case "subscribers":   return cmdSubscribers()
+    case "agents":        return cmdAgents()
+    case "send":          return cmdSend(args)
+    case "alert":         return cmdAlert(args)
+    case "history":       return cmdHistory(args)
+    case "monitor":       return cmdMonitor(args)
+    case "lavish-import": return cmdLavishImport()
     case "help":
     case "--help":
     case "-h":
-    case undefined:     console.log(USAGE); return
+    case undefined:       console.log(USAGE); return
     default:
       console.error(`Unknown command: ${cmd}\n`)
       console.log(USAGE)
