@@ -24,6 +24,17 @@ export function applySettings(s: ParlaySettings) {
     `
   }
 
+  // When the annotate button sits on the same side as the panel, the open drawer
+  // covers it (the trigger hides on open, but the ✎ stays for annotating). Park it
+  // just past the panel edge while the drawer is open so it never hides behind it.
+  const btnSide = s.triggerSide === 'left' ? 'left' : 'right'
+  const panelSide = s.panelSide === 'right' ? 'right' : 'left'
+  if (btnSide === panelSide) {
+    css += `
+      body:has(#pa-drawer.open) #pa-ann-btn { ${btnSide}: calc(var(--pa-w) + 22px) !important; }
+    `
+  }
+
   let el = document.getElementById('pa-settings-override') as HTMLStyleElement | null
   if (!el) {
     el = document.createElement('style')

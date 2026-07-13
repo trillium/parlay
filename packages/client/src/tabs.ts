@@ -5,6 +5,19 @@ import { tabsEl, inputEl, connBanner } from './dom'
 let _renderThread: (() => void) | null = null
 export function setRenderThreadFn(fn: () => void) { _renderThread = fn }
 
+// Persist the selected tab across refreshes ('' = the All view).
+const ACTIVE_KEY = 'pa-active-channel'
+let _restored = false
+function restoreActiveChannel() {
+  if (_restored) return
+  _restored = true
+  let saved: string | null = null
+  try { saved = localStorage.getItem(ACTIVE_KEY) } catch {}
+  if (saved === null) return              // nothing saved → keep default
+  if (saved === '') { setActiveChannel(null); return }   // explicit All view
+  if (agentInfo.has(saved)) setActiveChannel(saved)      // restore only if the tab still exists
+}
+
 export function msgInView(m: any): boolean {
   if (activeChannel === null) return true
   if (m.role === 'user') return true
@@ -44,6 +57,7 @@ export function renderTabs() {
   }
 
   // Multiple agents: show ALL + per-agent tabs
+  restoreActiveChannel()   // first multi-agent render: re-apply the saved tab
   tabsEl.classList.add('visible')
   tabsEl.innerHTML = ''
 
@@ -92,6 +106,7 @@ async function checkAgentOnline(ch: string) {
 
 export function switchChannel(ch: string | null) {
   setActiveChannel(ch)
+  try { localStorage.setItem(ACTIVE_KEY, ch ?? '') } catch {}   // persist the choice
   if (ch !== null) unreadByChannel[ch] = 0
   renderTabs()
   if (_renderThread) _renderThread()
