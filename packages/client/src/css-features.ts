@@ -83,6 +83,13 @@ export const CSS_FEATURES = `
   .pa-sheet-row .pa-tab-pip { width: 8px; height: 8px; }
   .pa-sheet-name { font-weight: 600; }
   .pa-sheet-id { font-size: 10px; color: var(--pa-muted); margin-left: auto; }
+  #pa-sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 10px 14px; border-top: 1px solid var(--pa-border); }
+  .pa-sheet-act {
+    min-height: 44px; border-radius: 10px; cursor: pointer;
+    background: color-mix(in srgb, var(--pa-muted) 8%, transparent); border: 1px solid var(--pa-border);
+    color: var(--pa-body); font-family: var(--pa-mono); font-size: 12px;
+  }
+  .pa-sheet-act:hover, .pa-sheet-act:active { background: color-mix(in srgb, var(--pa-muted) 16%, transparent); }
   /* Captain's messages clamp by default; tap to expand */
   .pa-bubble.pa-clamped { max-height: 76px; overflow: hidden; position: relative; cursor: pointer; }
   .pa-bubble.pa-clamped::after {

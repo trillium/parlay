@@ -55,6 +55,12 @@ export const DRAWER_HTML = `
     <div id="pa-sheet">
       <div id="pa-sheet-head"><span>Switch agent</span><button id="pa-sheet-close">✕</button></div>
       <div id="pa-sheet-list"></div>
+      <div id="pa-sheet-actions">
+        <button class="pa-sheet-act" data-proxy="pa-tts-btn">🔊 TTS</button>
+        <button class="pa-sheet-act" data-proxy="pa-log-btn">⚡ Tool log</button>
+        <button class="pa-sheet-act" data-proxy="pa-settings-btn-gear">⚙ Settings</button>
+        <button class="pa-sheet-act" data-proxy="pa-ann-btn">✎ Annotate</button>
+      </div>
     </div>
   </div>
 
