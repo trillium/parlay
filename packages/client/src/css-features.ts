@@ -20,6 +20,10 @@ export const CSS_FEATURES = `
   .pa-tab:hover { color: var(--pa-body); }
   .pa-tab.active { color: var(--pa-body); border-bottom-color: var(--tab-color, var(--pa-green)); }
   .pa-tab-pip { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--tab-color, var(--pa-green)); margin-right: 5px; vertical-align: middle; margin-bottom: 1px; }
+  /* Status dot states: green = listening, grey = idle, hollow = offline */
+  .pa-tab-pip.listening { background: var(--pa-green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-green) 22%, transparent); }
+  .pa-tab-pip.idle      { background: var(--pa-muted); }
+  .pa-tab-pip.offline   { background: transparent; box-shadow: inset 0 0 0 1px var(--pa-muted); }
   .pa-tab-unread { position: absolute; top: 3px; right: 2px; min-width: 14px; height: 14px; border-radius: 7px; padding: 0 3px; background: var(--pa-red); color: #fff; font-size: 8px; font-family: var(--pa-mono); font-weight: 700; display: none; align-items: center; justify-content: center; line-height: 1; }
   .pa-tab-unread.visible { display: flex; }
   .pa-tab-label-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.1; vertical-align: middle; }

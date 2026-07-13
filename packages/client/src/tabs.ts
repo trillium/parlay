@@ -1,6 +1,18 @@
-import { esc, CHAT_BASE } from './config'
-import { agentInfo, activeChannel, unreadByChannel, setActiveChannel } from './state'
+import { esc, CHAT_BASE, fmtTime } from './config'
+import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel } from './state'
 import { tabsEl, inputEl, connBanner } from './dom'
+
+// ── Per-channel status (green = listening, grey = idle, hollow = offline) ────
+export function statusOf(id: string): 'listening' | 'idle' | 'offline' {
+  return channelStatus[id] ?? 'offline'
+}
+function statusTooltip(id: string): string {
+  const st = statusOf(id)
+  if (st === 'listening') return `${id} — listening`
+  const seen = lastSeenByChannel[id]
+  if (st === 'idle') return `${id} — idle${seen ? `, last seen ${fmtTime(seen)}` : ''}`
+  return `${id} — offline (never seen listening)`
+}
 
 let _renderThread: (() => void) | null = null
 export function setRenderThreadFn(fn: () => void) { _renderThread = fn }
@@ -54,10 +66,16 @@ function updateHeader(ch: string | null) {
   if (ch && agentInfo.has(ch)) {
     const info = agentInfo.get(ch)!
     subEl.textContent = ` · ${info.name}`
-    dotEl.style.background = info.color || ''
+    // Header dot carries the channel's live status, even in single-agent mode
+    const st = statusOf(ch)
+    dotEl.style.background = st === 'listening' ? (info.color || 'var(--pa-green)')
+                           : st === 'idle'      ? 'var(--pa-muted)' : 'transparent'
+    dotEl.style.boxShadow  = st === 'offline' ? 'inset 0 0 0 1.5px var(--pa-muted)' : ''
+    dotEl.title = statusTooltip(ch)
   } else {
     subEl.textContent = ''
     dotEl.style.background = ''
+    dotEl.style.boxShadow = ''
   }
 }
 
@@ -94,10 +112,10 @@ export function renderTabs() {
     const tab = document.createElement('button')
     tab.className = 'pa-tab' + (activeChannel === id ? ' active' : '')
     tab.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
-    tab.title = id
+    tab.title = statusTooltip(id)
     const count = unreadByChannel[id] || 0
     const idLabel = id !== info.name.toLowerCase().replace(/\s+/g, '-') ? `<span class="pa-tab-id">${esc(id)}</span>` : ''
-    tab.innerHTML = `<span class="pa-tab-pip"></span><span class="pa-tab-label-wrap">${esc(info.name)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
+    tab.innerHTML = `<span class="pa-tab-pip ${statusOf(id)}"></span><span class="pa-tab-label-wrap">${esc(info.name)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
     tab.addEventListener('click', () => switchChannel(id))
     tab.querySelector('.pa-tab-x')!.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -156,7 +174,13 @@ async function checkAgentOnline(ch: string) {
   try {
     const r = await fetch(`${CHAT_BASE}/subscribers`)
     if (!r.ok) return
-    const data = await r.json() as { poll?: { channels?: { channel: string | null }[] } }
+    const data = await r.json() as {
+      poll?: { channels?: { channel: string | null }[] }
+      presence?: { channel: string; lastSeen: string | null }[]
+    }
+    for (const p of data.presence ?? []) {
+      if (p.lastSeen) lastSeenByChannel[p.channel] = p.lastSeen
+    }
     const pollers = data.poll?.channels ?? []
     const online = pollers.some(p => p.channel === ch)
     if (!online && connBanner) {

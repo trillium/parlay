@@ -3,7 +3,7 @@ import {
   msgs, open, unread,
   agentInfo, unreadByChannel,
   setUnread, setEs, setReconnectDelay, setReconnectTimer,
-  reconnectDelay,
+  reconnectDelay, setChannelStatuses,
 } from './state'
 import { connBanner, dot, drawer, badge, inputEl } from './dom'
 import { appendMsg, loadHistory as loadHistoryFn, setThinking, insertLavishCard } from './thread'
@@ -81,6 +81,11 @@ export function connect() {
   es.addEventListener('agent_register', (e: MessageEvent) => {
     const info = JSON.parse(e.data)
     agentInfo.set(info.id, info)
+    renderTabs()
+  })
+
+  es.addEventListener('presence_map', (e: MessageEvent) => {
+    setChannelStatuses(JSON.parse(e.data))
     renderTabs()
   })
 
