@@ -61,6 +61,7 @@ Usage:
   parlay alert <text...>          Broadcast an alert to all pollers + agents
   parlay alert --agent <id> <text...>   Alert one agent channel
   parlay history [N]              Print the last N messages (default 20)
+  parlay monitor [--agent <id>]   Persistent poll loop — emits CHAT_MSG lines (for Monitor{})
   parlay help                     Show this help
 
 Env:
@@ -105,6 +106,30 @@ async function cmdAlert(args: string[]) {
   console.log(`alert sent to ${r.channels} channel(s), delivered to ${r.delivered} live poller(s)`)
 }
 
+async function cmdMonitor(args: string[]) {
+  let agent: string | undefined
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--agent") { agent = args[++i]; if (!agent) return die("monitor: --agent requires an id") }
+  }
+  const channelParam = agent ? `&channel=${encodeURIComponent(agent)}` : ""
+  let lastId = ""
+  process.stderr.write(`parlay monitor — server ${SERVER}${agent ? ` channel ${agent}` : " (global)"}\n`)
+  while (true) {
+    try {
+      const res = await fetch(`${SERVER}/api/chat/poll?after=${lastId}${channelParam}`)
+      if (!res.ok) { await Bun.sleep(2000); continue }
+      const msg = await res.json() as { timeout?: boolean; id?: string; role?: string; text?: string }
+      if (msg.timeout) continue
+      if (msg.id && msg.role && msg.text != null) {
+        lastId = msg.id
+        process.stdout.write(`CHAT_MSG|${msg.id}|${msg.role}|${msg.text}\n`)
+      }
+    } catch {
+      await Bun.sleep(3000)
+    }
+  }
+}
+
 async function cmdHistory(args: string[]) {
   const n = args[0] ? Number(args[0]) : 20
   if (!Number.isFinite(n) || n <= 0) return die("history: N must be a positive number")
@@ -122,6 +147,7 @@ async function main() {
     case "send":        return cmdSend(args)
     case "alert":       return cmdAlert(args)
     case "history":     return cmdHistory(args)
+    case "monitor":     return cmdMonitor(args)
     case "help":
     case "--help":
     case "-h":
