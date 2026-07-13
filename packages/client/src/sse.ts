@@ -115,10 +115,10 @@ export function connect() {
     if (m.role === 'user') {
       armCompactTimer()
     } else if (m.role === 'agent') {
-      clearCompactTimer()
-      if (inView && m.type !== 'action_request') speak(m.text)
+      if (m.type !== 'system_update') clearCompactTimer()
+      if (inView && m.type !== 'action_request' && m.type !== 'system_update') speak(m.text)
       // Per-tab unread badge when this channel's tab is not active
-      if (!inView && m.channel) {
+      if (!inView && m.channel && m.type !== 'system_update') {
         unreadByChannel[m.channel] = (unreadByChannel[m.channel] || 0) + 1
         const tabBadge = document.getElementById(`pa-tab-unread-${m.channel}`)
         if (tabBadge) {
@@ -130,7 +130,7 @@ export function connect() {
 
     if (open && inView) {
       appendMsg(m)
-    } else if (!open && m.role === 'agent') {
+    } else if (!open && m.role === 'agent' && m.type !== 'system_update') {
       const newUnread = unread + 1
       setUnread(newUnread)
       badge.textContent = newUnread > 9 ? '9+' : String(newUnread)

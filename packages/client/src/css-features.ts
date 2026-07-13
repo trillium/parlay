@@ -90,6 +90,12 @@ export const CSS_FEATURES = `
     color: var(--pa-body); font-family: var(--pa-mono); font-size: 12px;
   }
   .pa-sheet-act:hover, .pa-sheet-act:active { background: color-mix(in srgb, var(--pa-muted) 16%, transparent); }
+  /* System update lines (hook firings etc.) — thin, muted, full-width */
+  .pa-sysline { display: flex; align-items: baseline; gap: 7px; padding: 2px 6px; font-family: var(--pa-mono); font-size: 9.5px; color: var(--pa-muted); opacity: .85; }
+  .pa-sysline-src { flex-shrink: 0; color: var(--pa-amber); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: 8.5px; }
+  .pa-sysline-src::before { content: '⚙ '; }
+  .pa-sysline-text { flex: 1; min-width: 0; word-break: break-word; }
+  .pa-sysline-ts { flex-shrink: 0; font-size: 8px; opacity: .7; }
   /* Captain's messages clamp by default; tap to expand */
   .pa-bubble.pa-clamped { max-height: 76px; overflow: hidden; position: relative; cursor: pointer; }
   .pa-bubble.pa-clamped::after {

@@ -54,6 +54,15 @@ export function _appendMsgEl(m: any) {
   el.dataset.paId = m.id
   el.className = `pa-msg ${cls}`
 
+  // System update (hook firings etc.) → thin muted line, no avatar, no bubble
+  if (m.type === 'system_update') {
+    el.className = 'pa-sysline'
+    el.innerHTML = `<span class="pa-sysline-src">${esc(m.source ?? 'system')}</span><span class="pa-sysline-text">${linkify(esc(m.text))}</span><span class="pa-sysline-ts">${fmtTime(m.ts)}</span>`
+    thread.appendChild(el)
+    scrollBottom()
+    return
+  }
+
   // Agent-suggested action → inline card with a button. Nothing happens until
   // the captain clicks; the effect is local to this device only.
   if (cls === 'agent' && m.type === 'action_request' && m.action) {
