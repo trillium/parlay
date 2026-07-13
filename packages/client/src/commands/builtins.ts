@@ -1,6 +1,7 @@
 import type { Command, CommandContext, CommandMatch } from './types'
 import { registerCommand } from './registry'
 import { resolveAgent } from './ctx'
+import { flagLastSpoken } from '../speech-highlight'
 
 // ── Built-in commands ────────────────────────────────────────────────────────
 // The original hardcoded behaviors (submit / clear / stop-speech) migrated onto
@@ -100,6 +101,18 @@ const prevTab: Command = {
   action(ctx) { ctx.tabs.prev(); ctx.input.clear() },
 }
 
+const flagSpeech: Command = {
+  id: 'flag-speech',
+  phrases: ['flag speech', 'flag that'],
+  matchMode: 'whole',
+  priority: 8,
+  description: 'Report the last-spoken sentence as mispronounced',
+  action(ctx) {
+    void flagLastSpoken()
+    ctx.input.clear()
+  },
+}
+
 export function registerBuiltins(): void {
-  for (const c of [stopSpeech, clear, switchTab, archiveTab, nextTab, prevTab, submit]) registerCommand(c)
+  for (const c of [stopSpeech, flagSpeech, clear, switchTab, archiveTab, nextTab, prevTab, submit]) registerCommand(c)
 }

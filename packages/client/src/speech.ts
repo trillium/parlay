@@ -2,6 +2,7 @@ import { CHAT_BASE } from './config'
 import { ttsEnabled, ttsVoice, setTtsEnabled, setTtsVoice } from './state'
 import { getSettings } from './settings-modal'
 import { clipKey, cacheGet, cachePut, cacheStats } from './tts-cache'
+import { wrapBlocks, highlightBlock, clearAllSpeechHighlights, noteSpoken, flagLastSpoken, type RawBlock } from './speech-highlight'
 
 // ── Speech output ─────────────────────────────────────────────────────────────
 // Sentence-chunked Kokoro pipeline: blocks fetched concurrently, played gapless
@@ -15,9 +16,7 @@ let _resolveCurrent: (() => void) | null = null
 
 function ttsAudio() { return document.getElementById('pa-tts-audio') as HTMLAudioElement | null }
 
-function clearSpeakingHighlight() {
-  document.querySelectorAll('.pa-speaking').forEach(el => el.classList.remove('pa-speaking'))
-}
+const clearSpeakingHighlight = clearAllSpeechHighlights
 
 function bubbleOf(msgId?: string) {
   return msgId ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`) : null
@@ -25,16 +24,21 @@ function bubbleOf(msgId?: string) {
 
 // Split into sentence blocks; merge fragments so blocks are ≥60 chars — small
 // enough for fast first synthesis, big enough to keep Kokoro prosody natural.
-export function splitBlocks(text: string): string[] {
+// Raw segments concatenate back to the original text (pre-wrap rendering).
+export function splitBlocksRaw(text: string): RawBlock[] {
   const parts = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
-  const blocks: string[] = []
+  const blocks: RawBlock[] = []
   let cur = ''
   for (const p of parts) {
     cur += p
-    if (cur.trim().length >= 60) { blocks.push(cur.trim()); cur = '' }
+    if (cur.trim().length >= 60) { blocks.push({ synth: cur.trim(), raw: cur }); cur = '' }
   }
-  if (cur.trim()) blocks.push(cur.trim())
-  return blocks.length ? blocks : [text.trim()]
+  if (cur.trim()) blocks.push({ synth: cur.trim(), raw: cur })
+  return blocks.length ? blocks : [{ synth: text.trim(), raw: text }]
+}
+
+export function splitBlocks(text: string): string[] {
+  return splitBlocksRaw(text).map(b => b.synth)
 }
 
 function isRiff(buf: ArrayBuffer): boolean {
@@ -62,37 +66,47 @@ async function getClip(text: string): Promise<Blob | null> {
   } catch { return null }
 }
 
-// Play one clip; resolves on ended/error/stop. stopSpeak() unblocks via
-// _resolveCurrent so a paused element can never hang the queue.
-function playBlob(blob: Blob): Promise<void> {
+// Play one clip. Resolves true when playback finished, false when it could
+// not play (mobile autoplay rejection, decode error) so callers can fall back
+// to the local voice for that block. stopSpeak() unblocks via _resolveCurrent.
+function playBlob(blob: Blob): Promise<boolean> {
   return new Promise((resolve) => {
     const au = ttsAudio()
-    if (!au) { resolve(); return }
+    if (!au) { resolve(false); return }
     const url = URL.createObjectURL(blob)
     let settled = false
-    const done = () => {
+    const done = (ok: boolean) => {
       if (settled) return
       settled = true
       URL.revokeObjectURL(url)
       _resolveCurrent = null
-      resolve()
+      resolve(ok)
     }
-    _resolveCurrent = done
-    au.onended = done
-    au.onerror = done
+    _resolveCurrent = () => done(true)   // stop path; session check exits the loop
+    au.onended = () => done(true)
+    au.onerror = () => done(false)
     au.src = url
-    au.play().catch(done)
+    au.play().catch(() => done(false))  // autoplay policy — never leave unsettled (#14)
   })
 }
 
-// One local utterance; resolves on end/error (cancel() fires these too).
+let _resolveLocal: (() => void) | null = null
+
+// One local utterance. Mobile speechSynthesis is notorious for dropping the
+// onend event (#14) — a watchdog at expected-duration+margin resolves anyway
+// so a lost event can never stall the rest of the message.
 function speakLocalBlock(text: string): Promise<void> {
   return new Promise((resolve) => {
     if (!('speechSynthesis' in window)) { resolve(); return }
     const utt = new SpeechSynthesisUtterance(text)
     if (ttsVoice) utt.voice = ttsVoice
     utt.rate = 1.05
-    utt.onend = utt.onerror = () => resolve()
+    let settled = false
+    const done = () => { if (!settled) { settled = true; clearTimeout(wd); _resolveLocal = null; resolve() } }
+    const expectedMs = (text.split(/\s+/).length / 2.5) * 1000 + 2500
+    const wd = setTimeout(done, expectedMs)
+    _resolveLocal = done
+    utt.onend = utt.onerror = done
     speechSynthesis.speak(utt)
   })
 }
@@ -101,17 +115,24 @@ function speakLocalBlock(text: string): Promise<void> {
 // nothing played — caller then falls back to speechSynthesis wholesale.
 async function playChunked(text: string, msgId?: string): Promise<boolean> {
   const sid = ++session
-  const blocks = splitBlocks(text)
-  const clips = blocks.map(b => getClip(b))   // concurrent prefetch, ordered playback
+  const blocks = splitBlocksRaw(text)
+  const clips = blocks.map(b => getClip(b.synth))   // concurrent prefetch, ordered playback
   const first = await clips[0]
   if (sid !== session) return true            // canceled while fetching
   if (!first) return false
-  bubbleOf(msgId)?.classList.add('pa-speaking')
+  const spans = wrapBlocks(msgId, blocks)     // per-sentence highlight spans (#11)
   for (let i = 0; i < blocks.length; i++) {
     const clip = await clips[i]
     if (sid !== session) return true
-    if (!clip) continue                       // mid-stream miss: skip block
-    await playBlob(clip)
+    highlightBlock(spans, i)
+    noteSpoken(blocks[i].synth, msgId)
+    if (clip) {
+      const ok = await playBlob(clip)
+      if (sid !== session) return true
+      if (!ok) await speakLocalBlock(blocks[i].synth)   // clip unplayable → local voice (#14)
+    } else {
+      await speakLocalBlock(blocks[i].synth)            // synth miss → local voice
+    }
     if (sid !== session) return true
   }
   clearSpeakingHighlight()
@@ -121,22 +142,27 @@ async function playChunked(text: string, msgId?: string): Promise<boolean> {
 // Hybrid experiment: local voice starts block 1 instantly; hand off to Kokoro
 // at the first sentence boundary where its clip is ready. Voices never overlap
 // — Kokoro only starts after the current local utterance resolves.
+// Hybrid (#14, captain's explicit policy): decide PER BLOCK at its start —
+// if that block's Kokoro clip is ready, play it; if not, speak the block with
+// the local voice IMMEDIATELY and move on. Never wait for synthesis
+// mid-message; the voice may ping-pong between local and Kokoro by design.
 async function playHybrid(text: string, msgId?: string): Promise<void> {
   const sid = ++session
-  const blocks = splitBlocks(text)
-  const states: ('pending' | 'ready' | 'failed')[] = blocks.map(() => 'pending')
-  const clips = blocks.map((b, i) => getClip(b).then(c => { states[i] = c ? 'ready' : 'failed'; return c }))
-  bubbleOf(msgId)?.classList.add('pa-speaking')
-  let kokoro = false
+  const blocks = splitBlocksRaw(text)
+  const ready: (Blob | null)[] = blocks.map(() => null)
+  blocks.forEach((b, i) => { getClip(b.synth).then(c => { ready[i] = c }) })   // background fill, never awaited
+  const spans = wrapBlocks(msgId, blocks)     // per-sentence highlight spans (#11)
   for (let i = 0; i < blocks.length; i++) {
     if (sid !== session) return
-    if (!kokoro && states[i] === 'ready') kokoro = true
-    if (kokoro) {
-      const clip = await clips[i]
+    highlightBlock(spans, i)
+    noteSpoken(blocks[i].synth, msgId)
+    const clip = ready[i]                     // snapshot at block start — no await
+    if (clip) {
+      const ok = await playBlob(clip)
       if (sid !== session) return
-      if (clip) await playBlob(clip)
+      if (!ok) await speakLocalBlock(blocks[i].synth)   // unplayable → local, keep moving
     } else {
-      await speakLocalBlock(blocks[i])
+      await speakLocalBlock(blocks[i].synth)
     }
     if (sid !== session) return
   }
@@ -148,6 +174,7 @@ function hardStop() {
   const au = ttsAudio()
   if (au) { try { au.pause(); au.currentTime = 0 } catch {} }
   if (_resolveCurrent) _resolveCurrent()   // unblock a queue awaiting 'ended'
+  if (_resolveLocal) _resolveLocal()       // unblock a local utterance whose events got dropped
   clearSpeakingHighlight()
 }
 
