@@ -16,15 +16,20 @@ function persistArchived() {
 export function archiveChannel(id: string) {
   archived.add(id)
   persistArchived()
-  if (activeChannel === id) switchChannel(null)   // re-renders tabs + thread
-  else renderTabs()
+  if (activeChannel === id) {
+    // Switch to the first remaining unarchived agent; if none, keep the
+    // (now archived) channel active — chat still routes to it.
+    const next = [...agentInfo.keys()].find(ch => !archived.has(ch))
+    if (next) { switchChannel(next); return }
+  }
+  renderTabs()
 }
 export function unarchiveChannel(id: string) {
   archived.delete(id)
   persistArchived()
 }
 
-// Persist the selected tab across refreshes ('' = the All view).
+// Persist the selected tab across refreshes.
 const ACTIVE_KEY = 'pa-active-channel'
 let _restored = false
 function restoreActiveChannel() {
@@ -32,13 +37,12 @@ function restoreActiveChannel() {
   _restored = true
   let saved: string | null = null
   try { saved = localStorage.getItem(ACTIVE_KEY) } catch {}
-  if (saved === null) return              // nothing saved → keep default
-  if (saved === '') { setActiveChannel(null); return }   // explicit All view
-  if (agentInfo.has(saved)) setActiveChannel(saved)      // restore only if the tab still exists
+  // Restore only if the tab still exists ('' was the retired All view — ignore)
+  if (saved && agentInfo.has(saved)) setActiveChannel(saved)
 }
 
 export function msgInView(m: any): boolean {
-  if (activeChannel === null) return true
+  if (activeChannel === null) return true   // zero-agent state only — no All view exists
   if (m.role === 'user') return true
   return !m.channel || m.channel === activeChannel
 }
@@ -75,17 +79,15 @@ export function renderTabs() {
     return
   }
 
-  // Multiple agents: show ALL + per-agent tabs
+  // Multiple agents: one tab per agent (no All view — per-agent chats only)
   restoreActiveChannel()   // first multi-agent render: re-apply the saved tab
+  // An agent tab is always selected — default to the first unarchived agent
+  if (!activeChannel || !agentInfo.has(activeChannel)) {
+    const first = [...agentInfo.keys()].find(id => !archived.has(id)) ?? [...agentInfo.keys()][0]
+    setActiveChannel(first)
+  }
   tabsEl.classList.add('visible')
   tabsEl.innerHTML = ''
-
-  const allTab = document.createElement('button')
-  allTab.className = 'pa-tab' + (activeChannel === null ? ' active' : '')
-  allTab.style.setProperty('--tab-color', 'var(--pa-green)')
-  allTab.innerHTML = '<span class="pa-tab-pip"></span>All'
-  allTab.addEventListener('click', () => switchChannel(null))
-  tabsEl.appendChild(allTab)
 
   for (const [id, info] of agentInfo) {
     if (archived.has(id)) continue
@@ -141,11 +143,10 @@ export function renderTabs() {
     tabsEl.appendChild(wrap)
   }
 
-  // Disable input + show hint when ALL is active (no broadcast)
+  // Input is always enabled and targets the selected agent's channel
   if (inputEl) {
-    const onAll = activeChannel === null
-    inputEl.disabled = onAll
-    inputEl.placeholder = onAll ? 'Select an agent tab to reply…' : 'Message Agent…'
+    inputEl.disabled = false
+    inputEl.placeholder = 'Message Agent…'
   }
 
   updateHeader(activeChannel)
@@ -165,13 +166,13 @@ async function checkAgentOnline(ch: string) {
   } catch {}
 }
 
-export function switchChannel(ch: string | null) {
+export function switchChannel(ch: string) {
   setActiveChannel(ch)
-  try { localStorage.setItem(ACTIVE_KEY, ch ?? '') } catch {}   // persist the choice
-  if (ch !== null) unreadByChannel[ch] = 0
+  try { localStorage.setItem(ACTIVE_KEY, ch) } catch {}   // persist the choice
+  unreadByChannel[ch] = 0
   renderTabs()
   if (_renderThread) _renderThread()
-  if (ch !== null && connBanner) {
+  if (connBanner) {
     connBanner.className = 'pa-conn-banner'
     connBanner.textContent = ''
     checkAgentOnline(ch)
