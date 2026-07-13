@@ -1,3 +1,4 @@
+import { PA_VERSION } from './version'
 import { CSS_LAYOUT } from './css-layout'
 import { CSS_THREAD } from './css-thread'
 import { CSS_FEATURES } from './css-features'
@@ -13,6 +14,8 @@ export const DRAWER_HTML = `
   <button id="pa-ann-btn" title="Annotate page">✎</button>
 
   <div id="pa-drawer">
+    <div id="pa-version">v${PA_VERSION}</div>
+    <audio id="pa-tts-audio"></audio>
     <div id="pa-hdr">
       <div class="pa-dot" id="pa-dot"></div>
       <div id="pa-title">Agent<span id="pa-sub"></span></div>

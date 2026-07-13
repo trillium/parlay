@@ -8,10 +8,8 @@
  */
 
 import { IS_STANDALONE, DESKTOP_BP } from './config'
-import {
-  open, setOpen, setUnread, setAtBottom,
-  ttsEnabled, ttsVoice, setTtsEnabled, setTtsVoice,
-} from './state'
+import { open, setOpen, setUnread, setAtBottom } from './state'
+import { initSpeech } from './speech'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
 import * as domRefs from './dom'
 import { setRenderThreadFn, msgInView } from './tabs'
@@ -103,65 +101,8 @@ thread.addEventListener('scroll', () => {
   }, 300)
 })
 
-// ── TTS ──────────────────────────────────────────────────────────────────────
-const ttsBtn = document.getElementById('pa-tts-btn')!
-
-function initTTSVoice() {
-  if (!('speechSynthesis' in window)) return
-  const voices = speechSynthesis.getVoices()
-  setTtsVoice(
-    voices.find(v => v.name === 'Samantha') ||
-    voices.find(v => v.name === 'Karen') ||
-    voices.find(v => v.lang === 'en-US') ||
-    voices.find(v => v.lang.startsWith('en')) ||
-    voices[0] || null
-  )
-}
-
-function clearSpeakingHighlight() {
-  document.querySelectorAll('.pa-speaking').forEach(el => el.classList.remove('pa-speaking'))
-}
-
-function speak(text: string, msgId?: string) {
-  if (!ttsEnabled || !('speechSynthesis' in window)) return
-  speechSynthesis.cancel()
-  clearSpeakingHighlight()
-  const utt = new SpeechSynthesisUtterance(text)
-  if (ttsVoice) utt.voice = ttsVoice
-  utt.rate = 1.05
-  // Highlight the message being spoken for its whole playback
-  const bubble = msgId
-    ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`)
-    : null
-  if (bubble) {
-    utt.onstart = () => bubble.classList.add('pa-speaking')
-    utt.onend = utt.onerror = () => bubble.classList.remove('pa-speaking')
-  }
-  speechSynthesis.speak(utt)
-}
-;(window as any).__paSpeak = speak
-
-// Hard-stop ALL speech output — voice command "spoken pause" routes here.
-// Covers speechSynthesis now and the server-TTS <audio> element when present.
-function stopSpeak() {
-  try { if ('speechSynthesis' in window) speechSynthesis.cancel() } catch {}
-  const au = document.getElementById('pa-tts-audio') as HTMLAudioElement | null
-  if (au) { try { au.pause(); au.currentTime = 0 } catch {} }
-  clearSpeakingHighlight()
-}
-;(window as any).__paStopSpeak = stopSpeak
-
-if ('speechSynthesis' in window) {
-  speechSynthesis.addEventListener('voiceschanged', initTTSVoice)
-  initTTSVoice()
-  ttsBtn.addEventListener('click', () => {
-    setTtsEnabled(!ttsEnabled)
-    ttsBtn.classList.toggle('active', ttsEnabled)
-    if (!ttsEnabled) speechSynthesis.cancel()
-  })
-} else {
-  (ttsBtn as HTMLElement).style.display = 'none'
-}
+// ── TTS (Kokoro server-first, speechSynthesis fallback) ─────────────────────
+initSpeech()
 
 // ── Compaction detection ──────────────────────────────────────────────────────
 let compactTimer: ReturnType<typeof setTimeout> | null = null

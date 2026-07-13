@@ -27,6 +27,14 @@ export function renderSheet() {
   }
 }
 
+// Mirror each proxy target's active state onto its sheet button (e.g. TTS on)
+function syncSheetActions(sheet: HTMLElement) {
+  for (const btn of sheet.querySelectorAll<HTMLElement>('.pa-sheet-act')) {
+    const target = document.getElementById(btn.dataset.proxy || '')
+    btn.classList.toggle('active', !!target?.classList.contains('active'))
+  }
+}
+
 export function initAgentSwitcher() {
   const fab = document.getElementById('pa-fab')
   const sheet = sheetEl()
@@ -34,7 +42,7 @@ export function initAgentSwitcher() {
   fab.addEventListener('click', (e) => {
     e.stopPropagation()
     const opening = !sheet.classList.contains('open')
-    if (opening) renderSheet()
+    if (opening) { renderSheet(); syncSheetActions(sheet) }
     sheet.classList.toggle('open')
     if (opening) {
       document.addEventListener('click', (ev) => {
@@ -47,6 +55,7 @@ export function initAgentSwitcher() {
   for (const btn of sheet.querySelectorAll<HTMLElement>('.pa-sheet-act')) {
     btn.addEventListener('click', () => {
       document.getElementById(btn.dataset.proxy || '')?.click()
+      syncSheetActions(sheet)
       sheet.classList.remove('open')
     })
   }

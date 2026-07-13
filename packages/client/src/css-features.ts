@@ -90,6 +90,15 @@ export const CSS_FEATURES = `
     color: var(--pa-body); font-family: var(--pa-mono); font-size: 12px;
   }
   .pa-sheet-act:hover, .pa-sheet-act:active { background: color-mix(in srgb, var(--pa-muted) 16%, transparent); }
+  .pa-sheet-act.active { color: var(--pa-green); border-color: color-mix(in srgb, var(--pa-green) 45%, transparent); background: color-mix(in srgb, var(--pa-green) 12%, transparent); }
+  /* Build version — muted bold text running up the left edge, behind content */
+  #pa-version {
+    position: absolute; left: 2px; bottom: 96px; z-index: 0; pointer-events: none;
+    writing-mode: vertical-rl; transform: rotate(180deg);
+    font-family: var(--pa-mono); font-weight: 800; font-size: 22px; letter-spacing: .12em;
+    color: var(--pa-muted); opacity: .22; user-select: none;
+  }
+  #pa-thread, #pa-input-area, #pa-tabs, #pa-hdr { position: relative; z-index: 1; }
   /* Message currently being spoken aloud */
   .pa-bubble.pa-speaking { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); animation: pa-speak-pulse 1.6s ease-in-out infinite; }
   @keyframes pa-speak-pulse { 0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); } 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pa-amber) 25%, transparent); } }
