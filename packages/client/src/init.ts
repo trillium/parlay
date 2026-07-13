@@ -14,7 +14,8 @@ import {
 } from './state'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
 import * as domRefs from './dom'
-import { setRenderThreadFn, msgInView, initAgentSwitcher } from './tabs'
+import { setRenderThreadFn, msgInView } from './tabs'
+import { initAgentSwitcher } from './switcher'
 import { renderThread } from './thread'
 import { wireToolLogEvents } from './toollog'
 import { connect, setOpenDrawerFn } from './sse'
@@ -117,15 +118,38 @@ function initTTSVoice() {
   )
 }
 
-function speak(text: string) {
+function clearSpeakingHighlight() {
+  document.querySelectorAll('.pa-speaking').forEach(el => el.classList.remove('pa-speaking'))
+}
+
+function speak(text: string, msgId?: string) {
   if (!ttsEnabled || !('speechSynthesis' in window)) return
   speechSynthesis.cancel()
+  clearSpeakingHighlight()
   const utt = new SpeechSynthesisUtterance(text)
   if (ttsVoice) utt.voice = ttsVoice
   utt.rate = 1.05
+  // Highlight the message being spoken for its whole playback
+  const bubble = msgId
+    ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`)
+    : null
+  if (bubble) {
+    utt.onstart = () => bubble.classList.add('pa-speaking')
+    utt.onend = utt.onerror = () => bubble.classList.remove('pa-speaking')
+  }
   speechSynthesis.speak(utt)
 }
 ;(window as any).__paSpeak = speak
+
+// Hard-stop ALL speech output — voice command "spoken pause" routes here.
+// Covers speechSynthesis now and the server-TTS <audio> element when present.
+function stopSpeak() {
+  try { if ('speechSynthesis' in window) speechSynthesis.cancel() } catch {}
+  const au = document.getElementById('pa-tts-audio') as HTMLAudioElement | null
+  if (au) { try { au.pause(); au.currentTime = 0 } catch {} }
+  clearSpeakingHighlight()
+}
+;(window as any).__paStopSpeak = stopSpeak
 
 if ('speechSynthesis' in window) {
   speechSynthesis.addEventListener('voiceschanged', initTTSVoice)

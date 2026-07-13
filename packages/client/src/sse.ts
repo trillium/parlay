@@ -37,8 +37,8 @@ export function clearCompactTimer() {
 
 // ── Speak callback (avoids circular dep) ──────────────────────────────────────
 
-export function speak(text: string) {
-  if ((window as any).__paSpeak) (window as any).__paSpeak(text)
+export function speak(text: string, msgId?: string) {
+  if ((window as any).__paSpeak) (window as any).__paSpeak(text, msgId)
 }
 
 // openDrawer is set by init.ts to break circular dep
@@ -116,7 +116,7 @@ export function connect() {
       armCompactTimer()
     } else if (m.role === 'agent') {
       if (m.type !== 'system_update') clearCompactTimer()
-      if (inView && m.type !== 'action_request' && m.type !== 'system_update') speak(m.text)
+      if (inView && m.type !== 'action_request' && m.type !== 'system_update') speak(m.text, m.id)
       // Per-tab unread badge when this channel's tab is not active
       if (!inView && m.channel && m.type !== 'system_update') {
         unreadByChannel[m.channel] = (unreadByChannel[m.channel] || 0) + 1

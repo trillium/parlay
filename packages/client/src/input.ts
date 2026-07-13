@@ -95,6 +95,22 @@ function checkTalonSubmit() {
     : null
 
   const val = inputEl.value
+
+  // Stop phrase ("spoken pause") at the very end of the box → immediately
+  // silence current speech, strip the phrase, keep the rest. The input box
+  // doubles as a partial command box; this must fire instantly, no timer.
+  const stopPhrase = (s.voiceStopPhrase ?? 'spoken pause').trim()
+  if (stopPhrase) {
+    const stopEsc = stopPhrase.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
+    const stopRe = new RegExp(`(^|\\s)${stopEsc}[.!?,;]*\\s*$`, 'i')
+    if (stopRe.test(val)) {
+      if ((window as any).__paStopSpeak) (window as any).__paStopSpeak()
+      inputEl.value = val.replace(stopRe, '$1').trimEnd()
+      autoResize()
+      return
+    }
+  }
+
   if (clearRe && clearRe.test(val.trim())) {
     inputEl.value = ''; autoResize(); return
   }

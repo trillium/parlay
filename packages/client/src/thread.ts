@@ -100,7 +100,7 @@ export function _appendMsgEl(m: any) {
     el.title = 'Click to re-read aloud'
     el.addEventListener('click', () => {
       // speak() is wired in init.ts via a registered callback to avoid circular dep
-      if ((window as any).__paSpeak) (window as any).__paSpeak(m.text)
+      if ((window as any).__paSpeak) (window as any).__paSpeak(m.text, m.id)
     })
   } else {
     el.innerHTML = `

@@ -5,6 +5,7 @@ export interface ParlaySettings {
   voiceEnabled:       boolean
   voiceSubmitPhrases: string[]
   voiceClearPhrase:   string
+  voiceStopPhrase:    string   // trailing phrase that hard-stops current speech
   textScale:          number   // percent; 100 = default
 }
 
@@ -15,5 +16,6 @@ export const DEFAULTS: ParlaySettings = {
   voiceEnabled:       true,
   voiceSubmitPhrases: ['bravely', 'gravely', 'briefly', 'lap'],
   voiceClearPhrase:   'change inside in input',
+  voiceStopPhrase:    'spoken pause',
   textScale:          100,
 }

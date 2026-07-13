@@ -61,6 +61,9 @@ export function injectSettingsModal() {
           <div class="pa-settings-label" style="margin-top:10px">Clear-input phrase</div>
           <input type="text" id="pa-settings-clear-phrase" placeholder="e.g. change inside in input">
           <div class="pa-settings-hint">If the entire input matches this phrase exactly, the field is cleared.</div>
+          <div class="pa-settings-label" style="margin-top:10px">Stop-speech phrase</div>
+          <input type="text" id="pa-settings-stop-phrase" placeholder="e.g. spoken pause">
+          <div class="pa-settings-hint">Ending the input with this phrase instantly silences current speech.</div>
         </div>
       </div>
 
