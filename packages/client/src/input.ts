@@ -80,8 +80,11 @@ function checkTalonSubmit() {
   const submitRe = phrases.length
     ? new RegExp(`\\s+(${phrases.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*$`, 'i')
     : null
+  // Dictation often emits the clear phrase repeated across lines and with
+  // punctuation — clear when the box contains ONLY repetitions of the phrase.
+  const clearEsc = clearPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const clearRe = clearPhrase
-    ? new RegExp(`^${clearPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
+    ? new RegExp(`^(?:\\s*${clearEsc}[.!?,;]*\\s*)+$`, 'i')
     : null
 
   const val = inputEl.value
