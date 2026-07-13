@@ -27,7 +27,7 @@ interface NativeResult {
   layout_warnings?: unknown[]
   session_ended?: boolean
   ended_by?: string
-  prompts?: Array<{ tag?: string; text?: string }>
+  prompts?: Array<{ tag?: string; text?: string; scenePath?: string; previewPath?: string }>
 }
 interface ParlayMsg { timeout?: boolean; id?: string; role?: string; text?: string }
 
@@ -35,11 +35,17 @@ interface ParlayMsg { timeout?: boolean; id?: string; role?: string; text?: stri
 // without aborting Parlay or creating a tight restart loop.
 function drop<T>(): Promise<T> { return new Promise<T>(() => {}) }
 
-function nextStep(ended: boolean): string {
+type Prompt = NonNullable<NativeResult["prompts"]>[number]
+
+function nextStep(ended: boolean, prompts: Prompt[] = []): string {
   if (ended) {
     return `The session has ended. Stop polling ${file} — deliver remaining updates in this conversation. Run \`lavish ${file} --reopen\` only if the user explicitly asks for further visual review.`
   }
-  return `Apply the requested changes to ${file}. Now run \`lavish poll ${file} --agent-reply "<your reply>"\` to send your reply and wait for the next message. Re-running is always safe — queued feedback is never lost.`
+  const hasWhiteboard = prompts.some(p => p.tag === "whiteboard")
+  const whiteboardNote = hasWhiteboard
+    ? `This feedback includes whiteboard edits (tag "whiteboard"): read the edit summary in the prompt text first; only open scenePath (.excalidraw JSON) or previewPath (PNG) if the summary isn't enough. Apply edits by updating the Mermaid source in ${file} — Lavish live-reloads it. Never write back to the .excalidraw scene file. `
+    : ""
+  return `${whiteboardNote}Apply the requested changes to ${file}. Now run \`lavish poll ${file} --agent-reply "<your reply>"\` to send your reply and wait for the next message. Re-running is always safe — queued feedback is never lost.`
 }
 
 function emit(result: object): never {
@@ -98,13 +104,14 @@ while (Date.now() < deadline) {
     }
 
     const warnings = n.layout_warnings ?? []
-    if (warnings.length > 0 || (n.prompts?.length ?? 0) > 0) {
+    const prompts = n.prompts ?? []
+    if (warnings.length > 0 || prompts.length > 0) {
       emit({
         session: { file, status: "feedback" },
         dom_snapshot: n.dom_snapshot || "",
-        prompts: n.prompts ?? [],
+        prompts,
         ...(warnings.length > 0 ? { layout_warnings: warnings } : {}),
-        next_step: nextStep(false),
+        next_step: nextStep(false, prompts),
       })
     }
     continue // native returned "waiting" (shouldn't happen in streaming mode)
@@ -119,12 +126,13 @@ while (Date.now() < deadline) {
     // 200ms grace window: give aborted nativeP time to deliver dom_snapshot
     const n = await Promise.race([nativeP, Bun.sleep(200).then(() => null)])
     const warnings = n?.layout_warnings ?? []
+    const chatPrompt = [{ tag: "chat", text: msg.text }]
     emit({
       session: { file, status: "feedback" },
       dom_snapshot: n?.dom_snapshot || "",
-      prompts: [{ tag: "chat", text: msg.text }],
+      prompts: chatPrompt,
       ...(warnings.length > 0 ? { layout_warnings: warnings } : {}),
-      next_step: nextStep(false),
+      next_step: nextStep(false, chatPrompt),
     })
   }
 }
