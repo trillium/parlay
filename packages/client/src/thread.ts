@@ -2,6 +2,7 @@ import { esc, linkify, fmtTime } from './config'
 import { msgs, agentInfo, atBottom, thinking, setThinkingState } from './state'
 import { thread, emptyEl } from './dom'
 import { msgInView, switchChannel } from './tabs'
+import { annotateMessage } from './annotation'
 
 // ── Scroll helper ─────────────────────────────────────────────────────────────
 
@@ -91,7 +92,10 @@ export function _appendMsgEl(m: any) {
   if (cls === 'agent') {
     const channelId = m.channel ? `<span class="pa-meta-id">${esc(m.channel)}</span>` : ''
     el.innerHTML = `
-      <div class="pa-av agent" style="background:color-mix(in srgb,${agentColor} 14%,var(--pa-ink));color:${agentColor};border-color:color-mix(in srgb,${agentColor} 22%,transparent)">${agentInit}</div>
+      <div class="pa-av-col">
+        <div class="pa-av agent" style="background:color-mix(in srgb,${agentColor} 14%,var(--pa-ink));color:${agentColor};border-color:color-mix(in srgb,${agentColor} 22%,transparent)">${agentInit}</div>
+        <button class="pa-msg-ann" title="Comment on this reply">✎</button>
+      </div>
       <div class="pa-bc">
         <div class="pa-meta"><span class="pa-meta-n" style="color:${agentColor}">${agentName}</span>${channelId}<span>${fmtTime(m.ts)}</span></div>
         <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${linkify(esc(m.text))}</div>
@@ -101,6 +105,14 @@ export function _appendMsgEl(m: any) {
     el.addEventListener('click', () => {
       // speak() is wired in init.ts via a registered callback to avoid circular dep
       if ((window as any).__paSpeak) (window as any).__paSpeak(m.text, m.id)
+    })
+    // ✎ under the avatar: comment on THIS reply via the annotation popup —
+    // works from anywhere in the scrollback, no annotate mode needed
+    el.querySelector('.pa-msg-ann')!.addEventListener('click', (e) => {
+      e.stopPropagation()   // don't trigger click-to-speak
+      const bubble = el.querySelector('.pa-bubble') as HTMLElement
+      const ev = e as MouseEvent
+      annotateMessage(bubble, ev.clientX, ev.clientY)
     })
   } else {
     el.innerHTML = `

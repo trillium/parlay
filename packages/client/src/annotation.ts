@@ -10,6 +10,14 @@ let _renderStrip: (() => void) | null = null   // set in setupAnnotation; lets d
 let _popup: HTMLElement, _popupLbl: HTMLElement
 let _popupIn: HTMLTextAreaElement, _popupOk: HTMLElement, _popupCx: HTMLElement
 
+// Per-message annotation entry point — assigned inside wireAnnotation (same
+// closure pattern as _renderStrip). Lets thread.ts open the annotation popup
+// pre-targeted at a specific chat reply without arming page-annotate mode.
+let _annotateEl: ((el: HTMLElement, x: number, y: number) => void) | null = null
+export function annotateMessage(el: HTMLElement, x: number, y: number) {
+  _annotateEl?.(el, x, y)
+}
+
 export function wireAnnotation(
   annToggle: HTMLElement, annStrip: HTMLElement, annCount: HTMLElement,
   annList: HTMLElement, annSend: HTMLElement,
@@ -43,6 +51,11 @@ export function wireAnnotation(
     _popup.style.top  = Math.max(4, top)  + 'px'
     _popup.classList.add('visible')
     setTimeout(() => _popupIn.focus(), 60)
+  }
+
+  _annotateEl = (el, x, y) => {
+    setAnnotateTarget(el)
+    showPopup(el, x, y)
   }
 
   function addMarker(el: HTMLElement, num: number) {

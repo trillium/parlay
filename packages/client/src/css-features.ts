@@ -91,9 +91,17 @@ export const CSS_FEATURES = `
   }
   .pa-sheet-act:hover, .pa-sheet-act:active { background: color-mix(in srgb, var(--pa-muted) 16%, transparent); }
   .pa-sheet-act.active { color: var(--pa-green); border-color: color-mix(in srgb, var(--pa-green) 45%, transparent); background: color-mix(in srgb, var(--pa-green) 12%, transparent); }
+  /* Per-message annotate button under the agent avatar */
+  .pa-av-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+  .pa-msg-ann {
+    width: 20px; height: 20px; border-radius: 50%; cursor: pointer; padding: 0;
+    background: none; border: 1px solid var(--pa-border); color: var(--pa-muted);
+    font-size: 10px; line-height: 1; opacity: .55;
+  }
+  .pa-msg-ann:hover, .pa-msg-ann:active { opacity: 1; color: var(--pa-amber); border-color: color-mix(in srgb, var(--pa-amber) 45%, transparent); }
   /* Build version — muted bold text running up the left edge, behind content */
   #pa-version {
-    position: absolute; left: 2px; bottom: 96px; z-index: 0; pointer-events: none;
+    position: absolute; left: 14px; bottom: 124px; z-index: 0; pointer-events: none;
     writing-mode: vertical-rl; transform: rotate(180deg);
     font-family: var(--pa-mono); font-weight: 800; font-size: 22px; letter-spacing: .12em;
     color: var(--pa-muted); opacity: .22; user-select: none;
