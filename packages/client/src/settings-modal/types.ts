@@ -6,6 +6,7 @@ export interface ParlaySettings {
   voiceSubmitPhrases: string[]
   voiceClearPhrases:  string[] // any of these (alone, repeated) clears the input
   voiceStopPhrase:    string   // trailing phrase that hard-stops current speech
+  commandPhrases:     Record<string, string[]>  // command-id → user phrase overrides (see src/commands/)
   hybridVoice:        boolean  // experimental: local voice speaks block 1 while Kokoro renders
   textScale:          number   // percent; 100 = default
 }
@@ -18,6 +19,7 @@ export const DEFAULTS: ParlaySettings = {
   voiceSubmitPhrases: ['bravely', 'gravely', 'briefly', 'lap'],
   voiceClearPhrases:  ['change inside in input'],
   voiceStopPhrase:    'spoken pause',
+  commandPhrases:     {},
   hybridVoice:        false,
   textScale:          100,
 }

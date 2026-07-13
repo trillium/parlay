@@ -10,6 +10,7 @@
 import { IS_STANDALONE, DESKTOP_BP } from './config'
 import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel } from './state'
 import { initSpeech } from './speech'
+import { initCommands } from './commands'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
 import * as domRefs from './dom'
 import { setRenderThreadFn, msgInView } from './tabs'
@@ -73,6 +74,7 @@ function closeDrawer() {
 }
 
 setOpenDrawerFn(openDrawer)
+;(window as any).__paOpenDrawer = openDrawer
 
 function syncLayout() {
   if (isDesktop()) {
@@ -171,6 +173,7 @@ wireAnnotation(
 }
 
 // ── Wire remaining events + connect ──────────────────────────────────────────
+initCommands()   // voice/text command subsystem (src/commands/, COMMANDS.md)
 wireToolLogEvents()
 wireInputEvents()
 if (isDesktop() || IS_STANDALONE) openDrawer(true)

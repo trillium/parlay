@@ -1,6 +1,7 @@
 import { type ParlaySettings } from './types'
 import { getSettings, saveSettings } from './io'
 import { applySettings } from './apply'
+import { listCommands } from '../commands'
 
 export function openSettingsModal() {
   const overlay = document.getElementById('pa-settings-overlay')!
@@ -40,7 +41,36 @@ export function openSettingsModal() {
   scaleIn.value = String(s.textScale || 100)
   scaleVal.textContent = `${scaleIn.value}%`
 
+  renderCommandRows(s)
   overlay.classList.add('open')
+}
+
+// Dynamic per-command phrase rows: every registered command except the three
+// that already have dedicated fields (submit / clear / stop-speech).
+const DEDICATED = new Set(['submit', 'clear', 'stop-speech'])
+function renderCommandRows(s: ParlaySettings) {
+  const wrap = document.getElementById('pa-settings-commands')
+  if (!wrap) return
+  wrap.innerHTML = ''
+  for (const cmd of listCommands()) {
+    if (DEDICATED.has(cmd.id)) continue
+    const row = document.createElement('div')
+    row.style.marginTop = '8px'
+    const label = document.createElement('div')
+    label.className = 'pa-settings-label'
+    label.textContent = cmd.id
+    label.title = cmd.description
+    const ta = document.createElement('textarea')
+    ta.dataset.commandId = cmd.id
+    ta.rows = Math.max(2, cmd.phrases.length)
+    ta.placeholder = cmd.phrases.join('\n')
+    ta.value = (s.commandPhrases?.[cmd.id] ?? []).join('\n')
+    let deb: ReturnType<typeof setTimeout> | null = null
+    ta.addEventListener('input', () => { clearTimeout(deb!); deb = setTimeout(commitSettings, 400) })
+    row.appendChild(label)
+    row.appendChild(ta)
+    wrap.appendChild(row)
+  }
 }
 
 export function closeSettingsModal() {
@@ -68,6 +98,11 @@ export async function commitSettings() {
     voiceEnabled:       voiceChk.checked,
     voiceSubmitPhrases: submitTa.value.split('\n').map(l => l.trim()).filter(Boolean),
     voiceClearPhrases:  clearTa.value.split('\n').map(l => l.trim()).filter(Boolean),
+    commandPhrases:     Object.fromEntries(
+      [...document.querySelectorAll<HTMLTextAreaElement>('#pa-settings-commands textarea[data-command-id]')]
+        .map(ta => [ta.dataset.commandId!, ta.value.split('\n').map(l => l.trim()).filter(Boolean)] as const)
+        .filter(([, v]) => v.length > 0)
+    ),
     voiceStopPhrase:    (document.getElementById('pa-settings-stop-phrase') as HTMLInputElement | null)?.value.trim() ?? 'spoken pause',
     hybridVoice:        (document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement | null)?.checked ?? false,
     textScale,

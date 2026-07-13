@@ -75,6 +75,12 @@ export function injectSettingsModal() {
       </div>
 
       <div class="pa-settings-section">
+        <div class="pa-settings-label">Voice commands</div>
+        <div id="pa-settings-commands"></div>
+        <div class="pa-settings-hint">Phrases per command, one per line. Submit/clear/stop use the fields above. Agents and other tools can add commands via window.__parlay.registerCommand.</div>
+      </div>
+
+      <div class="pa-settings-section">
         <div class="pa-settings-label">Text size <span id="pa-settings-textscale-val"></span></div>
         <input type="range" id="pa-settings-textscale" min="85" max="160" step="5">
         <div class="pa-settings-hint">Scales chat text in the Parlay panel.</div>

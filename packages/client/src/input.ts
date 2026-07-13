@@ -1,11 +1,9 @@
 import { CHAT_BASE } from './config'
-import {
-  talonTimer, draftSaveTimer, open, activeChannel,
-  setTalonTimer, setDraftSaveTimer,
-} from './state'
+import { draftSaveTimer, open, activeChannel, setDraftSaveTimer } from './state'
 import { inputEl, sendBtn } from './dom'
 import { armCompactTimer } from './sse'
 import { getSettings } from './settings-modal'
+import { runCommandPass } from './commands'
 
 // ── Auto-resize ───────────────────────────────────────────────────────────────
 
@@ -86,65 +84,9 @@ export async function sendMsg(text: string) {
 function checkTalonSubmit() {
   const s = getSettings()
   if (!s.voiceEnabled) return
-
-  const phrases = s.voiceSubmitPhrases.filter(Boolean)
-  const clearPhrases = (s.voiceClearPhrases ?? []).map(p => p.trim()).filter(Boolean)
-
-  const submitRe = phrases.length
-    ? new RegExp(`\\s+(${phrases.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*$`, 'i')
-    : null
-  // Clear phrases fire ANYWHERE in the input (spec #8): dictation often lands
-  // the command after stray text ("Blah blah change inside input") and the
-  // captain wants the WHOLE box emptied. Per-phrase tolerance kept: punctuation
-  // or commas between words, dictation-dropped interior words of ≤3 chars.
-  // Word-boundary guards stop mid-word hits ("exchange…" is not "change…").
-  const SEP = "[\\s,.!?;:]+"
-  const clearCores = clearPhrases.map(phrase => {
-    const words = phrase.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    return words.map((w, i) => {
-      const interior = i > 0 && i < words.length - 1
-      if (interior && w.length <= 3) return `(?:${w}${SEP})?`
-      return i < words.length - 1 ? `${w}${SEP}` : w
-    }).join('')
-  })
-  const clearRe = clearCores.length
-    ? new RegExp(`(?:^|[\\s,.!?;:])(?:${clearCores.join('|')})(?=$|[\\s,.!?;:])`, 'i')
-    : null
-
-  const val = inputEl.value
-
-  // Stop phrase ("spoken pause") at the very end of the box → immediately
-  // silence current speech, strip the phrase, keep the rest. The input box
-  // doubles as a partial command box; this must fire instantly, no timer.
-  const stopPhrase = (s.voiceStopPhrase ?? 'spoken pause').trim()
-  if (stopPhrase) {
-    const stopEsc = stopPhrase.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
-    const stopRe = new RegExp(`(^|\\s)${stopEsc}[.!?,;]*\\s*$`, 'i')
-    if (stopRe.test(val)) {
-      if ((window as any).__paStopSpeak) (window as any).__paStopSpeak()
-      inputEl.value = val.replace(stopRe, '$1').trimEnd()
-      autoResize()
-      return
-    }
-  }
-
-  if (clearRe && clearRe.test(val)) {
-    inputEl.value = ''
-    autoResize()
-    clearDraft()   // cancels the pending debounced save + PUTs empty draft (send-clear hygiene)
-    return
-  }
-  if (submitRe && submitRe.test(val)) {
-    setTalonTimer(setTimeout(() => {
-      if (submitRe.test(inputEl.value)) {
-        const stripped = inputEl.value.replace(submitRe, '').trim()
-        if (stripped) { inputEl.value = stripped; autoResize(); sendMsg(stripped) }
-      }
-    }, 1000))
-  } else {
-    clearTimeout(talonTimer!)
-    setTalonTimer(null)
-  }
+  // Voice/text commands (submit, clear, stop-speech, tab ops, third-party) all
+  // live in the command subsystem now — see src/commands/ and COMMANDS.md.
+  runCommandPass(inputEl.value)
 }
 
 // ── Wire input events ─────────────────────────────────────────────────────────
@@ -154,12 +96,10 @@ export function wireInputEvents() {
   inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault()
-      clearTimeout(talonTimer!)
       sendMsg(inputEl.value.trim())
     }
   })
   sendBtn.addEventListener('click', () => {
-    clearTimeout(talonTimer!)
     sendMsg(inputEl.value.trim())
   })
 }
