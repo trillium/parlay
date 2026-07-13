@@ -1,6 +1,6 @@
 import { CHAT_BASE } from './config'
 import {
-  talonTimer, draftSaveTimer, open,
+  talonTimer, draftSaveTimer, open, activeChannel,
   setTalonTimer, setDraftSaveTimer,
 } from './state'
 import { inputEl, sendBtn } from './dom'
@@ -55,7 +55,7 @@ export async function sendMsg(text: string) {
   sendBtn.disabled = true
   inputEl.disabled = true
   try {
-    const toAgent = (window as any).__paLavishChannel as string | undefined
+    const toAgent = activeChannel ?? ((window as any).__paLavishChannel as string | undefined)
     const r = await fetch(`${CHAT_BASE}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -15,7 +15,7 @@ export const DRAWER_HTML = `
   <div id="pa-drawer">
     <div id="pa-hdr">
       <div class="pa-dot" id="pa-dot"></div>
-      <div id="pa-title">Agent<span id="pa-sub"> · firstmate</span></div>
+      <div id="pa-title">Agent<span id="pa-sub"></span></div>
       <button id="pa-tts-btn" title="Toggle text-to-speech">TTS</button>
       <button id="pa-log-btn" title="Toggle tool activity log">⚡</button>
       <button id="pa-settings-btn-gear" title="Parlay settings">⚙</button>
