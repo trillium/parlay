@@ -19,13 +19,22 @@ export function autoResize() {
 
 // ── Draft sync ────────────────────────────────────────────────────────────────
 
+// Per-page-load client id: our own draft PUTs echo back over SSE tagged with
+// this id, and sse.ts ignores them — cross-device draft sync stays intact
+// while self-echoes can't refill a just-cleared input (mobile send race).
+export const draftClientId: string =
+  (crypto as any).randomUUID ? crypto.randomUUID() : 'c-' + Math.random().toString(36).slice(2)
+
+// Set on successful send; sse.ts also drops draft events for ~3s after this.
+export let lastSendTs = 0
+
 export function scheduleDraftSave() {
   clearTimeout(draftSaveTimer!)
   setDraftSaveTimer(setTimeout(() => {
     fetch(`${CHAT_BASE}/draft`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: inputEl.value }),
+      body: JSON.stringify({ text: inputEl.value, clientId: draftClientId }),
     }).catch(() => {})
   }, 600))
 }
@@ -44,7 +53,7 @@ export function clearDraft() {
   fetch(`${CHAT_BASE}/draft`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: '' }),
+    body: JSON.stringify({ text: '', clientId: draftClientId }),
   }).catch(() => {})
 }
 
@@ -52,6 +61,10 @@ export function clearDraft() {
 
 export async function sendMsg(text: string) {
   if (!text || sendBtn.disabled) return
+  // Kill any pending debounced draft save FIRST — a full-text draft PUT firing
+  // mid-send is what refilled the box after send (mobile race, bug #4).
+  clearTimeout(draftSaveTimer!)
+  setDraftSaveTimer(null)
   sendBtn.disabled = true
   inputEl.disabled = true
   try {
@@ -61,7 +74,7 @@ export async function sendMsg(text: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toAgent ? { text, toAgent } : { text }),
     })
-    if (r.ok) { inputEl.value = ''; autoResize(); armCompactTimer(); clearDraft() }
+    if (r.ok) { lastSendTs = Date.now(); inputEl.value = ''; autoResize(); armCompactTimer(); clearDraft() }
   } catch {}
   sendBtn.disabled = false
   inputEl.disabled = false

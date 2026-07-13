@@ -1,4 +1,5 @@
 import { CHAT_BASE } from './config'
+import { PA_VERSION } from './version'
 import {
   msgs, open, unread,
   agentInfo, unreadByChannel,
@@ -7,6 +8,7 @@ import {
 } from './state'
 import { connBanner, dot, drawer, badge, inputEl } from './dom'
 import { appendMsg, loadHistory as loadHistoryFn, setThinking, insertLavishCard } from './thread'
+import { draftClientId, lastSendTs } from './input'
 import { renderTabs } from './tabs'
 import { appendToolEntry } from './toollog'
 
@@ -76,6 +78,15 @@ export function connect() {
     connBanner.textContent = ''
     dot.classList.remove('offline')
     drawer.classList.remove('agent-away')
+    // Self-upgrade: PWA pages live for days — on every (re)connect compare our
+    // compiled-in version to the served bundle and reload once if stale. The
+    // sessionStorage guard prevents reload loops when a cache stays sticky.
+    fetch(`${CHAT_BASE}/version`).then(r => r.json()).then(({ version }) => {
+      if (!version || version === 'unknown' || version === PA_VERSION) return
+      if (sessionStorage.getItem('pa-upgrade-attempt') === version) return
+      sessionStorage.setItem('pa-upgrade-attempt', version)
+      location.reload()
+    }).catch(() => {})
   })
 
   es.addEventListener('history', (e: MessageEvent) => {
@@ -144,7 +155,12 @@ export function connect() {
   })
 
   es.addEventListener('draft', (e: MessageEvent) => {
-    const { text } = JSON.parse(e.data)
+    const { text, clientId } = JSON.parse(e.data)
+    // Self-echoes refilled a just-sent input on mobile (bug #4): ignore our own
+    // PUTs and anything in the 3s post-send window. Other devices' drafts
+    // still sync — that's the feature's point.
+    if (clientId && clientId === draftClientId) return
+    if (Date.now() - lastSendTs < 3_000) return
     if (document.activeElement !== inputEl) {
       inputEl.value = text
       if ((window as any).__paAutoResize) (window as any).__paAutoResize()

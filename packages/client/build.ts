@@ -21,3 +21,15 @@ await build({
 })
 
 console.log("dist/parlay-agent.js + pulse-agent.js built")
+
+// Deploy = live upgrade: tell connected panels to reload; each page's SSE
+// reconnect also runs the version handshake, so even missed broadcasts heal.
+try {
+  await fetch("http://127.0.0.1:31337/api/chat/reload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    signal: AbortSignal.timeout(2_000),
+  })
+  console.log("live clients told to reload")
+} catch { console.log("(Pulse not reachable — clients will self-upgrade on next reconnect)") }
