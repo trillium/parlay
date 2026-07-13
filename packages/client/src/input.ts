@@ -80,11 +80,18 @@ function checkTalonSubmit() {
   const submitRe = phrases.length
     ? new RegExp(`\\s+(${phrases.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*$`, 'i')
     : null
-  // Dictation often emits the clear phrase repeated across lines and with
-  // punctuation — clear when the box contains ONLY repetitions of the phrase.
-  const clearEsc = clearPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // Dictation is sloppy with the clear phrase: it repeats it across lines, adds
+  // punctuation, and drops short filler words ("change inside in input" comes
+  // out as "change inside input"). Clear when the box contains ONLY repetitions
+  // of the phrase, with interior words of ≤3 chars optional.
+  const clearWords = clearPhrase.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const clearCore = clearWords.map((w, i) => {
+    const interior = i > 0 && i < clearWords.length - 1
+    if (interior && w.length <= 3) return `(?:${w}\\s+)?`
+    return i < clearWords.length - 1 ? `${w}\\s+` : w
+  }).join('')
   const clearRe = clearPhrase
-    ? new RegExp(`^(?:\\s*${clearEsc}[.!?,;]*\\s*)+$`, 'i')
+    ? new RegExp(`^(?:\\s*${clearCore}[.!?,;]*\\s*)+$`, 'i')
     : null
 
   const val = inputEl.value
