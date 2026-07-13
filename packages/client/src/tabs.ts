@@ -1,6 +1,6 @@
-import { esc } from './config'
+import { esc, CHAT_BASE } from './config'
 import { agentInfo, activeChannel, unreadByChannel, setActiveChannel } from './state'
-import { tabsEl, inputEl } from './dom'
+import { tabsEl, inputEl, connBanner } from './dom'
 
 let _renderThread: (() => void) | null = null
 export function setRenderThreadFn(fn: () => void) { _renderThread = fn }
@@ -29,7 +29,7 @@ export function renderTabs() {
   // Single agent: no tab bar — just auto-select it and update header
   if (agentInfo.size === 1) {
     const [id] = agentInfo.keys()
-    if (activeChannel !== id) setActiveChannel(id)
+    if (activeChannel !== id) { setActiveChannel(id); checkAgentOnline(id) }
     updateHeader(id)
     tabsEl.classList.remove('visible')
     if (inputEl) inputEl.disabled = false
@@ -76,9 +76,28 @@ export function renderTabs() {
   updateHeader(activeChannel)
 }
 
+async function checkAgentOnline(ch: string) {
+  try {
+    const r = await fetch(`${CHAT_BASE}/subscribers`)
+    if (!r.ok) return
+    const data = await r.json() as { poll?: { channels?: { channel: string | null }[] } }
+    const pollers = data.poll?.channels ?? []
+    const online = pollers.some(p => p.channel === ch)
+    if (!online && connBanner) {
+      connBanner.className = 'pa-conn-banner reconnecting show'
+      connBanner.textContent = `Agent not listening — run: parlay monitor --agent ${ch}`
+    }
+  } catch {}
+}
+
 export function switchChannel(ch: string | null) {
   setActiveChannel(ch)
   if (ch !== null) unreadByChannel[ch] = 0
   renderTabs()
   if (_renderThread) _renderThread()
+  if (ch !== null && connBanner) {
+    connBanner.className = 'pa-conn-banner'
+    connBanner.textContent = ''
+    checkAgentOnline(ch)
+  }
 }
