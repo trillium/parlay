@@ -5,8 +5,13 @@ import { msgInView } from './tabs'
 
 // ── Scroll helper ─────────────────────────────────────────────────────────────
 
-export function scrollBottom(force?: boolean) {
-  if (force || atBottom) thread.scrollTop = thread.scrollHeight
+export function scrollBottom(force?: boolean, instant?: boolean) {
+  if (force || atBottom) {
+    // instant bypasses the thread's CSS scroll-behavior:smooth — used for initial
+    // history render and tab switches, where an animated scroll is jarring
+    if (instant) thread.scrollTo({ top: thread.scrollHeight, behavior: 'instant' as ScrollBehavior })
+    else thread.scrollTop = thread.scrollHeight
+  }
 }
 
 // ── Think indicator ───────────────────────────────────────────────────────────
@@ -94,7 +99,7 @@ export function renderThread() {
     emptyEl.style.display = 'none'
     visible.forEach((m: any) => _appendMsgEl(m))
   }
-  scrollBottom(true)
+  scrollBottom(true, true)
 }
 
 // ── Lavish session card ───────────────────────────────────────────────────────
@@ -129,4 +134,6 @@ export function loadHistory(history: any[]) {
     ;(window as any).__paLastId = m.id
     if (msgInView(m)) appendMsg(m)
   })
+  // Land at the bottom immediately — no animated catch-up scroll on page load
+  scrollBottom(true, true)
 }

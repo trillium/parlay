@@ -139,6 +139,10 @@ export function connect() {
   es.addEventListener('tool_event', (e: MessageEvent) => {
     const ev = JSON.parse(e.data)
     appendToolEntry(ev)
+    // Tool activity proves the agent is working, not compacting — clear any
+    // false "compacting" banner and push the deadline out another window.
+    // Only while a reply is pending (timer armed); never arm from scratch here.
+    if (compactTimer) { clearCompactTimer(); armCompactTimer() }
   })
 
   es.addEventListener('lavish_session', (e: MessageEvent) => {

@@ -24,6 +24,25 @@ export const CSS_FEATURES = `
   .pa-tab-unread.visible { display: flex; }
   .pa-tab-label-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.1; vertical-align: middle; }
   .pa-tab-id { font-size: 8px; font-weight: 400; color: var(--pa-muted); letter-spacing: .04em; text-transform: none; opacity: .7; }
+  .pa-tab-x { display: none; margin-left: 6px; vertical-align: middle; color: var(--pa-muted); font-size: 11px; line-height: 1; padding: 0 2px; border-radius: 3px; }
+  .pa-tab:hover .pa-tab-x { display: inline-block; }
+  .pa-tab-x:hover { color: var(--pa-body); background: color-mix(in srgb, var(--pa-muted) 20%, transparent); }
+  .pa-arch-wrap { position: relative; flex-shrink: 0; margin-left: auto; }
+  .pa-arch-btn { color: var(--pa-muted); opacity: .8; }
+  .pa-arch-menu {
+    display: none; position: absolute; top: 100%; right: 4px; z-index: 30;
+    min-width: 170px; padding: 4px;
+    background: var(--pa-surf); border: 1px solid var(--pa-border); border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  }
+  .pa-arch-menu.open { display: flex; flex-direction: column; gap: 2px; }
+  .pa-arch-row {
+    display: flex; align-items: center; gap: 6px; padding: 7px 9px;
+    background: none; border: none; border-radius: 6px; cursor: pointer;
+    color: var(--pa-body); font-family: var(--pa-mono); font-size: 11px; text-align: left;
+  }
+  .pa-arch-row:hover { background: color-mix(in srgb, var(--pa-muted) 12%, transparent); }
+  .pa-arch-row-id { font-size: 8px; color: var(--pa-muted); margin-left: auto; }
   #pa-ann-strip { flex-shrink: 0; display: none; padding: 8px 14px; background: color-mix(in srgb, var(--pa-amber) 5%, var(--pa-surf)); border-bottom: 1px solid var(--pa-border); }
   #pa-ann-strip.visible { display: block; }
   .pa-ann-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }

@@ -5,6 +5,25 @@ import { tabsEl, inputEl, connBanner } from './dom'
 let _renderThread: (() => void) | null = null
 export function setRenderThreadFn(fn: () => void) { _renderThread = fn }
 
+// Archived (stagnant) agent tabs — hidden behind a dropdown, persisted locally.
+const ARCHIVED_KEY = 'pa-archived-channels'
+const archived = new Set<string>((() => {
+  try { return JSON.parse(localStorage.getItem(ARCHIVED_KEY) || '[]') } catch { return [] }
+})())
+function persistArchived() {
+  try { localStorage.setItem(ARCHIVED_KEY, JSON.stringify([...archived])) } catch {}
+}
+export function archiveChannel(id: string) {
+  archived.add(id)
+  persistArchived()
+  if (activeChannel === id) switchChannel(null)   // re-renders tabs + thread
+  else renderTabs()
+}
+export function unarchiveChannel(id: string) {
+  archived.delete(id)
+  persistArchived()
+}
+
 // Persist the selected tab across refreshes ('' = the All view).
 const ACTIVE_KEY = 'pa-active-channel'
 let _restored = false
@@ -69,15 +88,57 @@ export function renderTabs() {
   tabsEl.appendChild(allTab)
 
   for (const [id, info] of agentInfo) {
+    if (archived.has(id)) continue
     const tab = document.createElement('button')
     tab.className = 'pa-tab' + (activeChannel === id ? ' active' : '')
     tab.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
     tab.title = id
     const count = unreadByChannel[id] || 0
     const idLabel = id !== info.name.toLowerCase().replace(/\s+/g, '-') ? `<span class="pa-tab-id">${esc(id)}</span>` : ''
-    tab.innerHTML = `<span class="pa-tab-pip"></span><span class="pa-tab-label-wrap">${esc(info.name)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span>`
+    tab.innerHTML = `<span class="pa-tab-pip"></span><span class="pa-tab-label-wrap">${esc(info.name)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
     tab.addEventListener('click', () => switchChannel(id))
+    tab.querySelector('.pa-tab-x')!.addEventListener('click', (e) => {
+      e.stopPropagation()
+      archiveChannel(id)
+    })
     tabsEl.appendChild(tab)
+  }
+
+  // Archived tabs collapse behind a dropdown at the end of the bar
+  const archList = [...agentInfo.entries()].filter(([id]) => archived.has(id))
+  if (archList.length > 0) {
+    const wrap = document.createElement('div')
+    wrap.className = 'pa-arch-wrap'
+    const archUnread = archList.reduce((n, [id]) => n + (unreadByChannel[id] || 0), 0)
+    const btn = document.createElement('button')
+    btn.className = 'pa-tab pa-arch-btn'
+    btn.innerHTML = `Archived (${archList.length}) ▾<span class="pa-tab-unread${archUnread ? ' visible' : ''}">${archUnread || ''}</span>`
+    const menu = document.createElement('div')
+    menu.className = 'pa-arch-menu'
+    for (const [id, info] of archList) {
+      const row = document.createElement('button')
+      row.className = 'pa-arch-row'
+      row.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
+      row.title = `Restore ${id}`
+      const count = unreadByChannel[id] || 0
+      row.innerHTML = `<span class="pa-tab-pip"></span><span>${esc(info.name)}</span><span class="pa-arch-row-id">${esc(id)}</span>${count ? `<span class="pa-tab-unread visible" style="position:static">${count}</span>` : ''}`
+      row.addEventListener('click', () => {
+        unarchiveChannel(id)   // opening an archived tab restores it
+        switchChannel(id)
+      })
+      menu.appendChild(row)
+    }
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const opening = !menu.classList.contains('open')
+      menu.classList.toggle('open')
+      if (opening) {
+        document.addEventListener('click', () => menu.classList.remove('open'), { once: true })
+      }
+    })
+    wrap.appendChild(btn)
+    wrap.appendChild(menu)
+    tabsEl.appendChild(wrap)
   }
 
   // Disable input + show hint when ALL is active (no broadcast)

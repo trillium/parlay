@@ -178,11 +178,15 @@ wireAnnotation(
 // ── Scroll position restore ──────────────────────────────────────────────────
 ;(window as any).__paRestoreScroll = () => {
   const raw = localStorage.getItem(SCROLL_KEY)
-  if (raw === null) return
-  const pct = parseFloat(raw)
-  if (!isFinite(pct) || pct >= 0.97) return  // was at (near) bottom — don't override
+  const pct = raw === null ? 1 : parseFloat(raw)
   const max = thread.scrollHeight - thread.clientHeight
-  if (max > 0) thread.scrollTop = pct * max
+  if (max <= 0) return
+  if (!isFinite(pct) || pct >= 0.97) {
+    // was at (near) bottom — settle exactly at the bottom after layout, instantly
+    thread.scrollTo({ top: max, behavior: 'instant' as ScrollBehavior })
+  } else {
+    thread.scrollTo({ top: pct * max, behavior: 'instant' as ScrollBehavior })
+  }
 }
 
 // ── Wire remaining events + connect ──────────────────────────────────────────
