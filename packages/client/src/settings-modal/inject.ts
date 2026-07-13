@@ -58,9 +58,11 @@ export function injectSettingsModal() {
             placeholder="One phrase per line&#10;e.g. bravely&#10;e.g. gravely"
           ></textarea>
           <div class="pa-settings-hint">When the message ends with one of these words, it auto-sends after 1s.</div>
-          <div class="pa-settings-label" style="margin-top:10px">Clear-input phrase</div>
-          <input type="text" id="pa-settings-clear-phrase" placeholder="e.g. change inside in input">
-          <div class="pa-settings-hint">If the entire input matches this phrase exactly, the field is cleared.</div>
+          <div class="pa-settings-label" style="margin-top:10px">Clear-input phrases</div>
+          <textarea id="pa-settings-clear-phrases"
+            placeholder="One phrase per line&#10;e.g. change inside in input&#10;e.g. clear the box"
+          ></textarea>
+          <div class="pa-settings-hint">If the input is nothing but one of these phrases (even repeated by dictation), it clears.</div>
           <div class="pa-settings-label" style="margin-top:10px">Stop-speech phrase</div>
           <input type="text" id="pa-settings-stop-phrase" placeholder="e.g. spoken pause">
           <div class="pa-settings-hint">Ending the input with this phrase instantly silences current speech.</div>
@@ -101,14 +103,14 @@ export function injectSettingsModal() {
 
   const voiceChk = document.getElementById('pa-settings-voice-enabled') as HTMLInputElement
   const submitPhrasesTa = document.getElementById('pa-settings-submit-phrases') as HTMLTextAreaElement
-  const clearPhraseIn = document.getElementById('pa-settings-clear-phrase') as HTMLInputElement
+  const clearPhrasesTa = document.getElementById('pa-settings-clear-phrases') as HTMLTextAreaElement
   voiceChk.addEventListener('change', () => {
-    submitPhrasesTa.disabled = !voiceChk.checked; clearPhraseIn.disabled = !voiceChk.checked; commitSettings()
+    submitPhrasesTa.disabled = !voiceChk.checked; clearPhrasesTa.disabled = !voiceChk.checked; commitSettings()
   })
   let phraseDebounce: ReturnType<typeof setTimeout> | null = null
   submitPhrasesTa.addEventListener('input', () => { clearTimeout(phraseDebounce!); phraseDebounce = setTimeout(commitSettings, 400) })
   let clearDebounce: ReturnType<typeof setTimeout> | null = null
-  clearPhraseIn.addEventListener('input', () => { clearTimeout(clearDebounce!); clearDebounce = setTimeout(commitSettings, 400) })
+  clearPhrasesTa.addEventListener('input', () => { clearTimeout(clearDebounce!); clearDebounce = setTimeout(commitSettings, 400) })
 
   const hybridChk = document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement
   hybridChk.addEventListener('change', commitSettings)

@@ -116,7 +116,8 @@ export const CSS_FEATURES = `
     position: absolute; left: 14px; bottom: 124px; z-index: 0; pointer-events: none;
     writing-mode: vertical-rl; transform: rotate(180deg);
     font-family: var(--pa-mono); font-weight: 800; font-size: 22px; letter-spacing: .12em;
-    color: var(--pa-muted); opacity: .22; user-select: none;
+    font-variant: small-caps;
+    color: var(--pa-body); opacity: .85; user-select: none;
   }
   #pa-thread, #pa-input-area, #pa-tabs, #pa-hdr { position: relative; z-index: 1; }
   /* Message currently being spoken aloud */

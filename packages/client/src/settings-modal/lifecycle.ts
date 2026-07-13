@@ -24,12 +24,12 @@ export function openSettingsModal() {
 
   const voiceChk = document.getElementById('pa-settings-voice-enabled') as HTMLInputElement
   const submitPhrasesTa = document.getElementById('pa-settings-submit-phrases') as HTMLTextAreaElement
-  const clearPhraseIn = document.getElementById('pa-settings-clear-phrase') as HTMLInputElement
+  const clearPhrasesTa = document.getElementById('pa-settings-clear-phrases') as HTMLTextAreaElement
   voiceChk.checked = s.voiceEnabled
   submitPhrasesTa.value = s.voiceSubmitPhrases.join('\n')
   submitPhrasesTa.disabled = !s.voiceEnabled
-  clearPhraseIn.value = s.voiceClearPhrase
-  clearPhraseIn.disabled = !s.voiceEnabled
+  clearPhrasesTa.value = (s.voiceClearPhrases ?? []).join('\n')
+  clearPhrasesTa.disabled = !s.voiceEnabled
   const stopPhraseIn = document.getElementById('pa-settings-stop-phrase') as HTMLInputElement
   stopPhraseIn.value = s.voiceStopPhrase ?? 'spoken pause'
   stopPhraseIn.disabled = !s.voiceEnabled
@@ -54,7 +54,7 @@ export async function commitSettings() {
   const projectsTa  = document.getElementById('pa-settings-projects')      as HTMLTextAreaElement
   const voiceChk    = document.getElementById('pa-settings-voice-enabled') as HTMLInputElement
   const submitTa    = document.getElementById('pa-settings-submit-phrases') as HTMLTextAreaElement
-  const clearIn     = document.getElementById('pa-settings-clear-phrase')   as HTMLInputElement
+  const clearTa     = document.getElementById('pa-settings-clear-phrases')  as HTMLTextAreaElement
 
   const enabledProjects: 'all' | string[] = allChk.checked
     ? 'all'
@@ -67,7 +67,7 @@ export async function commitSettings() {
     panelSide, triggerSide, enabledProjects,
     voiceEnabled:       voiceChk.checked,
     voiceSubmitPhrases: submitTa.value.split('\n').map(l => l.trim()).filter(Boolean),
-    voiceClearPhrase:   clearIn.value.trim(),
+    voiceClearPhrases:  clearTa.value.split('\n').map(l => l.trim()).filter(Boolean),
     voiceStopPhrase:    (document.getElementById('pa-settings-stop-phrase') as HTMLInputElement | null)?.value.trim() ?? 'spoken pause',
     hybridVoice:        (document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement | null)?.checked ?? false,
     textScale,

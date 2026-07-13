@@ -8,7 +8,15 @@ export function getSettings(): ParlaySettings { return _settings }
 export async function loadSettings(): Promise<ParlaySettings> {
   try {
     const r = await fetch(`${CHAT_BASE}/parlay/settings`, { signal: AbortSignal.timeout(3_000) })
-    if (r.ok) _settings = { ...DEFAULTS, ...(await r.json()) }
+    if (r.ok) {
+      const parsed = await r.json()
+      // Migration: voiceClearPhrase (single string) → voiceClearPhrases[]
+      if (typeof parsed.voiceClearPhrase === 'string' && !Array.isArray(parsed.voiceClearPhrases)) {
+        parsed.voiceClearPhrases = parsed.voiceClearPhrase.trim() ? [parsed.voiceClearPhrase.trim()] : []
+      }
+      delete parsed.voiceClearPhrase
+      _settings = { ...DEFAULTS, ...parsed }
+    }
   } catch { /* server not ready — use defaults */ }
   return _settings
 }

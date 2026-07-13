@@ -88,23 +88,26 @@ function checkTalonSubmit() {
   if (!s.voiceEnabled) return
 
   const phrases = s.voiceSubmitPhrases.filter(Boolean)
-  const clearPhrase = s.voiceClearPhrase.trim()
+  const clearPhrases = (s.voiceClearPhrases ?? []).map(p => p.trim()).filter(Boolean)
 
   const submitRe = phrases.length
     ? new RegExp(`\\s+(${phrases.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*$`, 'i')
     : null
-  // Dictation is sloppy with the clear phrase: it repeats it across lines, adds
+  // Dictation is sloppy with clear phrases: it repeats them across lines, adds
   // punctuation, and drops short filler words ("change inside in input" comes
   // out as "change inside input"). Clear when the box contains ONLY repetitions
-  // of the phrase, with interior words of ≤3 chars optional.
-  const clearWords = clearPhrase.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  const clearCore = clearWords.map((w, i) => {
-    const interior = i > 0 && i < clearWords.length - 1
-    if (interior && w.length <= 3) return `(?:${w}\\s+)?`
-    return i < clearWords.length - 1 ? `${w}\\s+` : w
-  }).join('')
-  const clearRe = clearPhrase
-    ? new RegExp(`^(?:\\s*${clearCore}[.!?,;]*\\s*)+$`, 'i')
+  // of any configured phrase, with interior words of ≤3 chars optional — the
+  // same per-phrase tolerance the single phrase had, OR-ed across all of them.
+  const clearCores = clearPhrases.map(phrase => {
+    const words = phrase.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    return words.map((w, i) => {
+      const interior = i > 0 && i < words.length - 1
+      if (interior && w.length <= 3) return `(?:${w}\\s+)?`
+      return i < words.length - 1 ? `${w}\\s+` : w
+    }).join('')
+  })
+  const clearRe = clearCores.length
+    ? new RegExp(`^(?:\\s*(?:${clearCores.join('|')})[.!?,;]*\\s*)+$`, 'i')
     : null
 
   const val = inputEl.value
