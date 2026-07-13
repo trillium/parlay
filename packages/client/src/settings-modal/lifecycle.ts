@@ -33,6 +33,7 @@ export function openSettingsModal() {
   const stopPhraseIn = document.getElementById('pa-settings-stop-phrase') as HTMLInputElement
   stopPhraseIn.value = s.voiceStopPhrase ?? 'spoken pause'
   stopPhraseIn.disabled = !s.voiceEnabled
+  ;(document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement).checked = !!s.hybridVoice
 
   const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement
   const scaleVal = document.getElementById('pa-settings-textscale-val')!
@@ -68,6 +69,7 @@ export async function commitSettings() {
     voiceSubmitPhrases: submitTa.value.split('\n').map(l => l.trim()).filter(Boolean),
     voiceClearPhrase:   clearIn.value.trim(),
     voiceStopPhrase:    (document.getElementById('pa-settings-stop-phrase') as HTMLInputElement | null)?.value.trim() ?? 'spoken pause',
+    hybridVoice:        (document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement | null)?.checked ?? false,
     textScale,
   }
   applySettings(next)

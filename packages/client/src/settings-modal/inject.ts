@@ -64,6 +64,11 @@ export function injectSettingsModal() {
           <div class="pa-settings-label" style="margin-top:10px">Stop-speech phrase</div>
           <input type="text" id="pa-settings-stop-phrase" placeholder="e.g. spoken pause">
           <div class="pa-settings-hint">Ending the input with this phrase instantly silences current speech.</div>
+          <div class="pa-settings-all-wrap" style="margin-top:10px">
+            <input type="checkbox" id="pa-settings-hybrid-voice">
+            <label for="pa-settings-hybrid-voice">Hybrid first-voice (experimental)</label>
+          </div>
+          <div class="pa-settings-hint">Local voice starts speaking instantly; hands off to Kokoro at the next sentence.</div>
         </div>
       </div>
 
@@ -104,6 +109,9 @@ export function injectSettingsModal() {
   submitPhrasesTa.addEventListener('input', () => { clearTimeout(phraseDebounce!); phraseDebounce = setTimeout(commitSettings, 400) })
   let clearDebounce: ReturnType<typeof setTimeout> | null = null
   clearPhraseIn.addEventListener('input', () => { clearTimeout(clearDebounce!); clearDebounce = setTimeout(commitSettings, 400) })
+
+  const hybridChk = document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement
+  hybridChk.addEventListener('change', commitSettings)
 
   const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement
   const scaleVal = document.getElementById('pa-settings-textscale-val')!
