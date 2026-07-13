@@ -64,6 +64,12 @@ export function injectSettingsModal() {
         </div>
       </div>
 
+      <div class="pa-settings-section">
+        <div class="pa-settings-label">Text size <span id="pa-settings-textscale-val"></span></div>
+        <input type="range" id="pa-settings-textscale" min="85" max="160" step="5">
+        <div class="pa-settings-hint">Scales chat text in the Parlay panel.</div>
+      </div>
+
       <div class="pa-settings-footer">
         <button class="pa-settings-btn" id="pa-settings-cancel">Close</button>
       </div>
@@ -95,4 +101,11 @@ export function injectSettingsModal() {
   submitPhrasesTa.addEventListener('input', () => { clearTimeout(phraseDebounce!); phraseDebounce = setTimeout(commitSettings, 400) })
   let clearDebounce: ReturnType<typeof setTimeout> | null = null
   clearPhraseIn.addEventListener('input', () => { clearTimeout(clearDebounce!); clearDebounce = setTimeout(commitSettings, 400) })
+
+  const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement
+  const scaleVal = document.getElementById('pa-settings-textscale-val')!
+  scaleIn.addEventListener('input', () => {
+    scaleVal.textContent = `${scaleIn.value}%`
+    commitSettings()   // live preview — applySettings is idempotent and cheap
+  })
 }

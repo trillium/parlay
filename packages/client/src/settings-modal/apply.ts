@@ -35,6 +35,18 @@ export function applySettings(s: ParlaySettings) {
     `
   }
 
+  // Text scale: bump the reading surfaces (bubbles, cards, input)
+  const k = (s.textScale || 100) / 100
+  if (k !== 1) {
+    css += `
+      .pa-bubble { font-size: ${(12.5 * k).toFixed(1)}px !important; }
+      .pa-bubble.agent { font-size: ${(11.5 * k).toFixed(1)}px !important; }
+      .pa-action-label { font-size: ${(11.5 * k).toFixed(1)}px !important; }
+      #pa-input { font-size: ${(14 * k).toFixed(1)}px !important; }
+      .pa-meta { font-size: ${(10 * k).toFixed(1)}px !important; }
+    `
+  }
+
   let el = document.getElementById('pa-settings-override') as HTMLStyleElement | null
   if (!el) {
     el = document.createElement('style')

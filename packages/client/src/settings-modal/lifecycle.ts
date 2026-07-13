@@ -31,6 +31,11 @@ export function openSettingsModal() {
   clearPhraseIn.value = s.voiceClearPhrase
   clearPhraseIn.disabled = !s.voiceEnabled
 
+  const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement
+  const scaleVal = document.getElementById('pa-settings-textscale-val')!
+  scaleIn.value = String(s.textScale || 100)
+  scaleVal.textContent = `${scaleIn.value}%`
+
   overlay.classList.add('open')
 }
 
@@ -51,11 +56,15 @@ export async function commitSettings() {
     ? 'all'
     : projectsTa.value.split('\n').map(l => l.trim()).filter(Boolean)
 
+  const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement | null
+  const textScale = Math.min(160, Math.max(85, parseInt(scaleIn?.value ?? '100', 10) || 100))
+
   const next: ParlaySettings = {
     panelSide, triggerSide, enabledProjects,
     voiceEnabled:       voiceChk.checked,
     voiceSubmitPhrases: submitTa.value.split('\n').map(l => l.trim()).filter(Boolean),
     voiceClearPhrase:   clearIn.value.trim(),
+    textScale,
   }
   applySettings(next)
   await saveSettings(next)

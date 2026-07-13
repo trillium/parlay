@@ -5,6 +5,7 @@ export interface ParlaySettings {
   voiceEnabled:       boolean
   voiceSubmitPhrases: string[]
   voiceClearPhrase:   string
+  textScale:          number   // percent; 100 = default
 }
 
 export const DEFAULTS: ParlaySettings = {
@@ -14,4 +15,5 @@ export const DEFAULTS: ParlaySettings = {
   voiceEnabled:       true,
   voiceSubmitPhrases: ['bravely', 'gravely', 'briefly', 'lap'],
   voiceClearPhrase:   'change inside in input',
+  textScale:          100,
 }
