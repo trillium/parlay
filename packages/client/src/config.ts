@@ -29,6 +29,18 @@ export function esc(s: unknown): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+// Linkify an ALREADY-ESCAPED string: markdown [label](url) and bare http(s) URLs.
+// Escape-first ordering is load-bearing — raw HTML in messages stays inert and
+// only these generated anchors survive. http/https only; quotes in URLs are
+// %-encoded so they can't break out of the href attribute.
+export function linkify(escaped: string): string {
+  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s"']+)/g
+  return escaped.replace(re, (_match, label: string | undefined, mdUrl: string | undefined, bareUrl: string | undefined) => {
+    const url = (mdUrl ?? bareUrl ?? '').replace(/"/g, '%22')
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label ?? bareUrl}</a>`
+  })
+}
+
 export function fmtTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString('en-US', {

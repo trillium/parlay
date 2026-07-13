@@ -1,4 +1,4 @@
-import { esc, fmtTime } from './config'
+import { esc, linkify, fmtTime } from './config'
 import { msgs, agentInfo, atBottom, thinking, setThinkingState } from './state'
 import { thread, emptyEl } from './dom'
 import { msgInView } from './tabs'
@@ -60,7 +60,7 @@ export function _appendMsgEl(m: any) {
       <div class="pa-av agent" style="background:color-mix(in srgb,${agentColor} 14%,var(--pa-ink));color:${agentColor};border-color:color-mix(in srgb,${agentColor} 22%,transparent)">${agentInit}</div>
       <div class="pa-bc">
         <div class="pa-meta"><span class="pa-meta-n" style="color:${agentColor}">${agentName}</span>${channelId}<span>${fmtTime(m.ts)}</span></div>
-        <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${esc(m.text)}</div>
+        <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${linkify(esc(m.text))}</div>
       </div>`
     el.style.cursor = 'pointer'
     el.title = 'Click to re-read aloud'
@@ -73,7 +73,7 @@ export function _appendMsgEl(m: any) {
       <div class="pa-av user">YOU</div>
       <div class="pa-bc">
         <div class="pa-meta"><span class="pa-meta-n">You</span><span>${fmtTime(m.ts)}</span></div>
-        <div class="pa-bubble user">${esc(m.text)}</div>
+        <div class="pa-bubble user">${linkify(esc(m.text))}</div>
       </div>`
   }
   thread.appendChild(el)
