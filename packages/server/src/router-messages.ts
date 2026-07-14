@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import type { ChatMessage } from "./types"
 import { pushToHistory, saveDraftToDisk, persistMessage } from "./storage"
-import { agents, pollWaiters, sseClients, setAgentPresence, CORS, broadcastToClients } from "./sse"
+import { agents, pollWaiters, sseClients, setAgentPresence, CORS, broadcastToClients, lastPollByChannel, LISTEN_WINDOW_MS, presenceBroadcasts } from "./sse"
 
 // ── Message creation ─────────────────────────────────────────────────────────
 
@@ -156,10 +156,27 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
       ...(w.channel && agents.has(w.channel) ? agents.get(w.channel)! : {}),
     }))
     const registered = Array.from(agents.values())
+    // Presence: union of registered agents and channels ever seen polling.
+    // listening = polled within the window; idle = seen but stale; offline = registered, never seen.
+    const now = Date.now()
+    const channelIds = new Set([...agents.keys(), ...lastPollByChannel.keys()])
+    const presence = [...channelIds].map(ch => {
+      const last = lastPollByChannel.get(ch)
+      const listening = last !== undefined && now - last < LISTEN_WINDOW_MS
+      return {
+        channel: ch,
+        ...(agents.get(ch) ?? {}),
+        listening,
+        lastSeen: last !== undefined ? new Date(last).toISOString() : null,
+        status: listening ? "listening" : last !== undefined ? "idle" : "offline",
+      }
+    })
     const body = {
       parlay:     { clients: sseClients.size },   // browser tabs with the chat drawer open
       poll:       { count: polling.length, channels: polling },  // agents with live poll connections
       registered: { count: registered.length, agents: registered },
+      presence,
+      presence_broadcasts: presenceBroadcasts,
     }
     return new Response(JSON.stringify(body, null, 2), {
       headers: { "Content-Type": "application/json", ...CORS },

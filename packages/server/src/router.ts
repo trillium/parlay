@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import { history, historyIndex, currentDraft, saveDraftToDisk } from "./storage"
-import { sseClients, agents, agentActive, pollWaiters, setAgentPresence, CORS, sseEvent, broadcastToClients } from "./sse"
+import { sseClients, agents, agentActive, pollWaiters, setAgentPresence, CORS, sseEvent, broadcastToClients, lastPollByChannel, broadcastPresenceMap } from "./sse"
 import { handleMessagesRequest } from "./router-messages"
 import { handleSettings } from "./settings"
 import type { PollWaiter } from "./types"
@@ -101,6 +101,10 @@ export function handleChatRequest(req: Request, pathname: string): Response | nu
     const params  = new URL(req.url).searchParams
     const afterId = params.get("after") ?? ""
     const channel = params.get("channel") ?? undefined  // undefined = global (no filter)
+    if (channel) {
+      lastPollByChannel.set(channel, Date.now())
+      broadcastPresenceMap()
+    }
     const afterIdx = afterId ? (historyIndex.get(afterId) ?? -1) : -1
     const pending  = history.slice(afterIdx + 1).filter(m =>
       m.role === "user" && (channel ? m.channel === channel : !m.channel)
@@ -117,6 +121,7 @@ export function handleChatRequest(req: Request, pathname: string): Response | nu
           const idx = pollWaiters.indexOf(waiter)
           if (idx !== -1) pollWaiters.splice(idx, 1)
           if (pollWaiters.length === 0) setAgentPresence(false)
+          broadcastPresenceMap()
           controller.enqueue(enc.encode(JSON.stringify({ timeout: true })))
           controller.close()
         }, 30_000)
