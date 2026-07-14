@@ -39,4 +39,11 @@ export const CSS_SPEECH = `
   .pa-img { max-height: 240px; max-width: 100%; border-radius: 10px; display: block; border: 1px solid var(--pa-border); cursor: pointer; }
   #pa-attach { flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; background: none; border: 1px solid var(--pa-border); color: var(--pa-muted); font-size: 14px; line-height: 1; align-self: flex-end; }
   #pa-attach:hover, #pa-attach:active { color: var(--pa-body); border-color: var(--pa-muted); }
+  /* Pending attachment chips (#17 addendum): queued above the input until send */
+  #pa-attach-strip { display: none; gap: 6px; padding: 6px 10px 0; flex-wrap: wrap; }
+  #pa-attach-strip.visible { display: flex; }
+  .pa-chip { position: relative; display: inline-block; }
+  .pa-chip img { height: 48px; border-radius: 8px; border: 1px solid var(--pa-border); display: block; }
+  .pa-chip-x { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--pa-surf); border: 1px solid var(--pa-border); color: var(--pa-muted); font-size: 9px; line-height: 1; }
+  .pa-chip-x:hover { color: var(--pa-red); border-color: var(--pa-red); }
 `

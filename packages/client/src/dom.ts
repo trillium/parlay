@@ -48,6 +48,7 @@ export const DRAWER_HTML = `
     </div>
 
     <div id="pa-input-area">
+      <div id="pa-attach-strip"></div>
       <button id="pa-jump" title="Jump to latest">↓</button>
       <button id="pa-fab" title="Switch agent">⇄</button>
       <div id="pa-input-row">

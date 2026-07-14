@@ -4,6 +4,7 @@ import { inputEl, sendBtn } from './dom'
 import { armCompactTimer } from './sse'
 import { getSettings } from './settings-modal'
 import { runCommandPass } from './commands'
+import { wireAttachments, takePendingImages } from './attachments'
 
 // ── Auto-resize ───────────────────────────────────────────────────────────────
 
@@ -96,35 +97,16 @@ export function wireInputEvents() {
   inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault()
-      sendMsg(inputEl.value.trim())
+      send()
     }
   })
-  sendBtn.addEventListener('click', () => {
-    sendMsg(inputEl.value.trim())
-  })
+  sendBtn.addEventListener('click', send)
+  // Attachments (#17 + addendum): 📎 picker and image paste both queue pending
+  // chips above the input; the next send carries them as images[]
+  wireAttachments()
+}
 
-  // Image attach (#17): pick/photograph → upload → send with images populated
-  const attachBtn = document.getElementById('pa-attach')
-  const attachFile = document.getElementById('pa-attach-file') as HTMLInputElement | null
-  if (attachBtn && attachFile) {
-    attachBtn.addEventListener('click', () => attachFile.click())
-    attachFile.addEventListener('change', async () => {
-      const file = attachFile.files?.[0]
-      attachFile.value = ''
-      if (!file) return
-      attachBtn.textContent = '⏳'
-      try {
-        const form = new FormData()
-        form.append('file', file)
-        const r = await fetch(`${CHAT_BASE}/upload`, { method: 'POST', body: form })
-        const res = await r.json()
-        if (res.ok && res.url) {
-          await sendMsg(inputEl.value.trim(), [res.url])
-        } else {
-          inputEl.placeholder = `Upload failed: ${res.error ?? 'unknown'}`
-        }
-      } catch { inputEl.placeholder = 'Upload failed — network' }
-      attachBtn.textContent = '📎'
-    })
-  }
+function send() {
+  const images = takePendingImages()
+  sendMsg(inputEl.value.trim(), images.length ? images : undefined)
 }
