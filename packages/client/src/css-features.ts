@@ -120,33 +120,6 @@ export const CSS_FEATURES = `
     color: var(--pa-body); opacity: .85; user-select: none;
   }
   #pa-thread, #pa-input-area, #pa-tabs, #pa-hdr { position: relative; z-index: 1; }
-  /* Message currently being spoken aloud */
-  .pa-bubble.pa-speaking { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); animation: pa-speak-pulse 1.6s ease-in-out infinite; position: relative; }
-  /* The specific sentence being spoken right now */
-  .pa-sb.pa-speaking-block { background: color-mix(in srgb, var(--pa-amber) 20%, transparent); border-radius: 3px; }
-  /* Mispronunciation flag — visible while the bubble is speaking, and on hover after */
-  .pa-flag { position: absolute; top: -10px; right: -8px; width: 22px; height: 22px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--pa-surf); border: 1px solid var(--pa-border); font-size: 11px; line-height: 1; display: none; }
-  .pa-bubble.pa-speaking .pa-flag, .pa-bubble:hover .pa-flag { display: block; }
-  .pa-flag:active { transform: scale(1.2); }
-  @keyframes pa-speak-pulse { 0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); } 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pa-amber) 25%, transparent); } }
-  /* Replay dots + per-reply transport (#18) */
-  .pa-block { display: flex; gap: 8px; align-items: flex-start; }
-  .pa-block + .pa-block { margin-top: 2px; }
-  .pa-dot-btn { flex-shrink: 0; width: 9px; height: 9px; margin-top: 6px; padding: 0; border-radius: 50%; cursor: pointer; background: color-mix(in srgb, var(--pa-green) 25%, transparent); border: 1px solid color-mix(in srgb, var(--pa-green) 60%, transparent); }
-  .pa-dot-btn:hover { background: var(--pa-green); }
-  .pa-block .pa-sb { flex: 1; min-width: 0; white-space: pre-wrap; }
-  .pa-block:has(.pa-sb.pa-speaking-block) .pa-dot-btn { background: var(--pa-amber); border-color: var(--pa-amber); }
-  .pa-block-ctl { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
-  .pa-playpause { width: 26px; height: 22px; padding: 0; border-radius: 6px; cursor: pointer; background: color-mix(in srgb, var(--pa-green) 12%, transparent); border: 1px solid color-mix(in srgb, var(--pa-green) 40%, transparent); color: var(--pa-green); font-size: 10px; line-height: 1; }
-  .pa-block-ctl .pa-flag { position: static; display: inline-block; width: 22px; height: 22px; }
-  /* Monospace text surfaces — cursorless prep (#18): predictable char metrics */
-  #pa-input { font-family: var(--pa-mono); }
-  .pa-bubble.user { font-family: var(--pa-mono); font-size: 11.5px; }
-  /* Inline images (#17): thumbnails under bubbles, tap for full size */
-  .pa-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .pa-img { max-height: 240px; max-width: 100%; border-radius: 10px; display: block; border: 1px solid var(--pa-border); cursor: pointer; }
-  #pa-attach { flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; background: none; border: 1px solid var(--pa-border); color: var(--pa-muted); font-size: 14px; line-height: 1; align-self: flex-end; }
-  #pa-attach:hover, #pa-attach:active { color: var(--pa-body); border-color: var(--pa-muted); }
   /* System pseudo-tab — present but visually recessive */
   .pa-tab.pa-tab-system { opacity: .6; font-style: italic; }
   .pa-tab.pa-tab-system.active { opacity: .9; }

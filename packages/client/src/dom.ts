@@ -2,9 +2,10 @@ import { PA_VERSION } from './version'
 import { CSS_LAYOUT } from './css-layout'
 import { CSS_THREAD } from './css-thread'
 import { CSS_FEATURES } from './css-features'
+import { CSS_SPEECH } from './css-speech'
 import { CSS_SETTINGS } from './css-settings'
 
-export const STYLE = CSS_LAYOUT + CSS_THREAD + CSS_FEATURES + CSS_SETTINGS
+export const STYLE = CSS_LAYOUT + CSS_THREAD + CSS_FEATURES + CSS_SPEECH + CSS_SETTINGS
 
 // ── HTML template ─────────────────────────────────────────────────────────────
 
