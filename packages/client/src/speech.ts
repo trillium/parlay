@@ -85,10 +85,11 @@ async function playChunked(text: string, msgId?: string, startIdx = 0): Promise<
   const first = await clips[startIdx]
   if (sid !== session) return true            // canceled while fetching
   if (!first) return false
-  const spans = speakingSpans(msgId, blocks)  // per-sentence highlight spans (#11/#18)
+  let spans = speakingSpans(msgId, blocks)    // per-sentence highlight spans (#11/#18)
   for (let i = startIdx; i < blocks.length; i++) {
     const clip = await clips[i]
     if (sid !== session) return true
+    if (!spans) spans = spansFor(msgId)       // bubble may render just after speak() starts
     highlightBlock(spans, i)
     noteSpoken(blocks[i].synth, msgId)
     if (clip) {
@@ -116,9 +117,10 @@ async function playHybrid(text: string, msgId?: string): Promise<void> {
   const blocks = splitBlocksRaw(text)
   const ready: (Blob | null)[] = blocks.map(() => null)
   blocks.forEach((b, i) => { getClip(b.synth).then(c => { ready[i] = c }) })   // background fill, never awaited
-  const spans = speakingSpans(msgId, blocks)  // per-sentence highlight spans (#11/#18)
+  let spans = speakingSpans(msgId, blocks)    // per-sentence highlight spans (#11/#18)
   for (let i = 0; i < blocks.length; i++) {
     if (sid !== session) return
+    if (!spans) spans = spansFor(msgId)       // bubble may render just after speak() starts
     highlightBlock(spans, i)
     noteSpoken(blocks[i].synth, msgId)
     const clip = ready[i]                     // snapshot at block start — no await

@@ -140,6 +140,17 @@ export function connect() {
 
     const inView = (window as any).__paMsgInView ? (window as any).__paMsgInView(m) : true
 
+    // Render BEFORE speaking: speak() highlights the rendered block spans, so
+    // the message must be in the DOM first (auto-TTS highlight bug)
+    if (open && inView) {
+      appendMsg(m)
+    } else if (!open && m.role === 'agent' && m.type !== 'system_update') {
+      const newUnread = unread + 1
+      setUnread(newUnread)
+      badge.textContent = newUnread > 9 ? '9+' : String(newUnread)
+      badge.classList.add('visible')
+    }
+
     if (m.role === 'user') {
       armCompactTimer()
     } else if (m.role === 'agent') {
@@ -154,15 +165,6 @@ export function connect() {
           tabBadge.classList.add('visible')
         }
       }
-    }
-
-    if (open && inView) {
-      appendMsg(m)
-    } else if (!open && m.role === 'agent' && m.type !== 'system_update') {
-      const newUnread = unread + 1
-      setUnread(newUnread)
-      badge.textContent = newUnread > 9 ? '9+' : String(newUnread)
-      badge.classList.add('visible')
     }
   })
 
