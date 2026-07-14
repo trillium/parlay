@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import { history, currentDraft, saveDraftToDisk } from "./storage"
+import { history, historyIndex, currentDraft, saveDraftToDisk } from "./storage"
 import { sseClients, agents, agentActive, pollWaiters, setAgentPresence, CORS, sseEvent, broadcastToClients } from "./sse"
 import { handleMessagesRequest } from "./router-messages"
 import { handleSettings } from "./settings"
@@ -19,7 +19,12 @@ export function handleChatRequest(req: Request, pathname: string): Response | nu
   if (msgResp !== null) return msgResp
 
   if (req.method === "GET" && pathname === "/api/chat/history") {
-    return new Response(JSON.stringify(history), {
+    // Bounded by default — a bare call returns at most 200 messages; pass
+    // ?limit=N for more (or fewer). Invalid/absent limit falls back to 200.
+    const rawLimit = new URL(req.url).searchParams.get("limit")
+    const parsed   = rawLimit ? parseInt(rawLimit, 10) : NaN
+    const limit    = Number.isFinite(parsed) && parsed > 0 ? parsed : 200
+    return new Response(JSON.stringify(history.slice(-limit)), {
       headers: { "Content-Type": "application/json", ...CORS },
     })
   }
@@ -96,7 +101,7 @@ export function handleChatRequest(req: Request, pathname: string): Response | nu
     const params  = new URL(req.url).searchParams
     const afterId = params.get("after") ?? ""
     const channel = params.get("channel") ?? undefined  // undefined = global (no filter)
-    const afterIdx = afterId ? history.findLastIndex(m => m.id === afterId) : -1
+    const afterIdx = afterId ? (historyIndex.get(afterId) ?? -1) : -1
     const pending  = history.slice(afterIdx + 1).filter(m =>
       m.role === "user" && (channel ? m.channel === channel : !m.channel)
     )

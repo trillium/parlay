@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import type { ChatMessage } from "./types"
-import { history, saveDraftToDisk, persistMessage } from "./storage"
+import { pushToHistory, saveDraftToDisk, persistMessage } from "./storage"
 import { agents, pollWaiters, sseClients, setAgentPresence, CORS, broadcastToClients } from "./sse"
 
 // ── Message creation ─────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ export function broadcastAlert(text: string, targetAgentIds?: string[]): { chann
       text,
       ...(channel ? { channel } : {}),
     }
-    history.push(msg)
+    pushToHistory(msg)
     persistMessage(msg)
     broadcastToClients("message", msg)
     delivered += resolveWaiters(msg)
@@ -58,7 +58,7 @@ export function addMessage(role: "user" | "agent", text: string, channel?: strin
     text,
     ...(channel ? { channel } : {}),
   }
-  history.push(msg)
+  pushToHistory(msg)
   persistMessage(msg)
   broadcastToClients("message", msg)
   if (role === "user") {
