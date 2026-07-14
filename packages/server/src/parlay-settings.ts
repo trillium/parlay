@@ -9,11 +9,14 @@ export interface ParlaySettings {
   enabledProjects:     "all" | string[]
   voiceEnabled:        boolean
   voiceSubmitPhrases:  string[]
-  voiceClearPhrase:    string
+  voiceClearPhrases:   string[]
+  voiceStopPhrase:     string
+  hybridVoice:         boolean
+  textScale:           number
+  commandPhrases:      Record<string, string[]>
 }
 
-const DATA_DIR      = process.env.PARLAY_DATA_DIR ?? join(homedir(), ".parlay")
-const SETTINGS_PATH = join(DATA_DIR, "parlay-settings.json")
+const SETTINGS_PATH = join(homedir(), "exchange", "parlay-settings.json")
 
 const DEFAULTS: ParlaySettings = {
   panelSide:           "left",
@@ -21,24 +24,34 @@ const DEFAULTS: ParlaySettings = {
   enabledProjects:     "all",
   voiceEnabled:        true,
   voiceSubmitPhrases:  ["bravely", "gravely", "briefly", "lap"],
-  voiceClearPhrase:    "change inside in input",
+  voiceClearPhrases:   ["change inside in input"],
+  voiceStopPhrase:     "spoken pause",
+  hybridVoice:         false,
+  textScale:           100,
+  commandPhrases:      {},
 }
 
 export async function readSettings(): Promise<ParlaySettings> {
   try {
     const raw = await readFile(SETTINGS_PATH, "utf8")
-    return { ...DEFAULTS, ...JSON.parse(raw) }
+    const parsed = JSON.parse(raw)
+    // Migration: voiceClearPhrase (single string, pre-2026-07-13) → voiceClearPhrases[]
+    if (typeof parsed.voiceClearPhrase === "string" && !Array.isArray(parsed.voiceClearPhrases)) {
+      parsed.voiceClearPhrases = parsed.voiceClearPhrase.trim() ? [parsed.voiceClearPhrase.trim()] : []
+    }
+    delete parsed.voiceClearPhrase
+    return { ...DEFAULTS, ...parsed }
   } catch {
     return { ...DEFAULTS }
   }
 }
 
 async function writeSettings(s: ParlaySettings): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true })
+  await mkdir(join(homedir(), "exchange"), { recursive: true })
   await writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2), "utf8")
 }
 
-export function handleSettings(req: Request, pathname: string): Response | null {
+export function handleParlaySettings(req: Request, pathname: string): Response | null {
   if (pathname !== "/api/chat/parlay/settings") return null
 
   if (req.method === "GET") {
@@ -69,7 +82,16 @@ export function handleSettings(req: Request, pathname: string): Response | null 
             enabledProjects:    body.enabledProjects    ?? current.enabledProjects,
             voiceEnabled:       body.voiceEnabled != null ? Boolean(body.voiceEnabled) : current.voiceEnabled,
             voiceSubmitPhrases: Array.isArray(body.voiceSubmitPhrases) ? body.voiceSubmitPhrases.map(String) : current.voiceSubmitPhrases,
-            voiceClearPhrase:   body.voiceClearPhrase != null ? String(body.voiceClearPhrase) : current.voiceClearPhrase,
+            voiceClearPhrases:  Array.isArray(body.voiceClearPhrases) ? body.voiceClearPhrases.map(String) : current.voiceClearPhrases,
+            voiceStopPhrase:    body.voiceStopPhrase != null ? String(body.voiceStopPhrase) : current.voiceStopPhrase,
+            hybridVoice:        body.hybridVoice != null ? Boolean(body.hybridVoice) : current.hybridVoice,
+            textScale:          typeof body.textScale === "number" && isFinite(body.textScale)
+                                  ? Math.min(160, Math.max(85, body.textScale)) : current.textScale,
+            commandPhrases:     body.commandPhrases && typeof body.commandPhrases === "object" && !Array.isArray(body.commandPhrases)
+                                  ? Object.fromEntries(Object.entries(body.commandPhrases)
+                                      .filter(([, v]) => Array.isArray(v))
+                                      .map(([k, v]) => [String(k), (v as unknown[]).map(String)]))
+                                  : current.commandPhrases,
           }
           await writeSettings(merged)
           controller.enqueue(enc.encode(JSON.stringify({ ok: true, settings: merged })))

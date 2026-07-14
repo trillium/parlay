@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, statSync, renameSync } from "fs"
 import { join } from "path"
-import { homedir } from "os"
 import type { ChatMessage } from "./types"
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const HISTORY_DIR  = process.env.PARLAY_DATA_DIR ?? join(homedir(), ".parlay")
+const HOME        = process.env.HOME ?? ""
+export const HISTORY_DIR  = process.env.PARLAY_DATA_DIR ?? join(HOME, "exchange")
 export const HISTORY_FILE = join(HISTORY_DIR, "chat-history.jsonl")
 export const DRAFT_FILE   = join(HISTORY_DIR, "chat-draft.txt")
 

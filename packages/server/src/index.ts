@@ -1,12 +1,10 @@
 import { serve } from "bun"
 import { handleChatRequest } from "./router"
-import { loadHistory, loadDraftFromDisk } from "./storage"
-import { join } from "path"
-import { homedir } from "os"
+import { loadHistory, loadDraftFromDisk, HISTORY_DIR } from "./storage"
 import { mkdirSync } from "fs"
 
 const PORT     = Number(process.env.PARLAY_PORT ?? 4242)
-const DATA_DIR = process.env.PARLAY_DATA_DIR ?? join(homedir(), ".parlay")
+const DATA_DIR = HISTORY_DIR
 
 mkdirSync(DATA_DIR, { recursive: true })
 console.log(`Parlay server  http://localhost:${PORT}`)

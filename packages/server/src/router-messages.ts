@@ -1,78 +1,11 @@
-import { randomUUID } from "crypto"
-import type { ChatMessage } from "./types"
-import { pushToHistory, saveDraftToDisk, persistMessage } from "./storage"
-import { agents, pollWaiters, sseClients, setAgentPresence, CORS, broadcastToClients, lastPollByChannel, LISTEN_WINDOW_MS, presenceBroadcasts } from "./sse"
+import type { ChatAction } from "./types"
+import { saveDraftToDisk } from "./storage"
+import { agents, pollWaiters, sseClients, CORS, broadcastToClients, lastPollByChannel, LISTEN_WINDOW_MS, persistAgents, presenceBroadcasts } from "./sse"
+import { addMessage, broadcastAlert } from "./messages"
 
-// ── Message creation ─────────────────────────────────────────────────────────
-
-// Resolve all matching poll waiters for an alert message (not just one)
-function resolveWaiters(msg: ChatMessage) {
-  let delivered = 0
-  const target = msg.channel
-  for (let i = pollWaiters.length - 1; i >= 0; i--) {
-    const w = pollWaiters[i]
-    if (target ? w.channel === target : !w.channel) {
-      pollWaiters.splice(i, 1)
-      clearTimeout(w.timer)
-      w.resolve(msg)
-      delivered++
-    }
-  }
-  if (pollWaiters.length === 0) setAgentPresence(false)
-  return delivered
-}
-
-// Send an alert to specific agent channels (or all registered agents if none specified).
-// Creates one message per channel so each agent receives it on poll.
-export function broadcastAlert(text: string, targetAgentIds?: string[]): { channels: number; delivered: number } {
-  const channels: (string | undefined)[] = targetAgentIds?.length
-    ? targetAgentIds
-    : [undefined, ...agents.keys()]   // undefined = global pollers + each named agent
-
-  const now = new Date().toISOString()
-  let delivered = 0
-
-  for (const channel of channels) {
-    const msg: ChatMessage = {
-      id:   crypto.randomUUID(),
-      role: "user",
-      type: "alert",
-      ts:   now,
-      text,
-      ...(channel ? { channel } : {}),
-    }
-    pushToHistory(msg)
-    persistMessage(msg)
-    broadcastToClients("message", msg)
-    delivered += resolveWaiters(msg)
-  }
-
-  return { channels: channels.length, delivered }
-}
-
-export function addMessage(role: "user" | "agent", text: string, channel?: string): ChatMessage {
-  const msg: ChatMessage = {
-    id:   randomUUID(),
-    role,
-    ts:   new Date().toISOString(),
-    text,
-    ...(channel ? { channel } : {}),
-  }
-  pushToHistory(msg)
-  persistMessage(msg)
-  broadcastToClients("message", msg)
-  if (role === "user") {
-    // Route to channel-specific waiter first, then fall back to global (no channel) waiters
-    const idx = pollWaiters.findIndex(w => msg.channel ? w.channel === msg.channel : !w.channel)
-    if (idx !== -1) {
-      const [waiter] = pollWaiters.splice(idx, 1)
-      clearTimeout(waiter.timer)
-      waiter.resolve(msg)
-      if (pollWaiters.length === 0) setAgentPresence(false)
-    }
-  }
-  return msg
-}
+// Message creation lives in messages.ts; re-exported so existing importers
+// (lavish.ts, hook-tailer.ts) keep their "./router-messages" path.
+export { addMessage, broadcastAlert }
 
 // ── Message routes ────────────────────────────────────────────────────────────
 // POST /api/chat/send, /reply, /register-agent; GET /api/chat/agents, /draft
@@ -87,8 +20,20 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           const body = await req.json()
           const text    = String(body.text    ?? "").trim()
           const toAgent = body.toAgent ? String(body.toAgent).trim() : undefined
-          if (!text) { controller.enqueue(enc.encode(JSON.stringify({ error: "empty message" }))); controller.close(); return }
-          const msg = addMessage("user", text, toAgent)
+          const images  = Array.isArray(body.images) ? body.images.slice(0, 8).map(String).filter((u: string) => u.length <= 500) : []
+          if (!text && !images.length) { controller.enqueue(enc.encode(JSON.stringify({ error: "empty message" }))); controller.close(); return }
+          // Agent contract (#17 addendum): image URLs also ride in the text so
+          // every poll/monitor consumer sees them; agents map the URL path to
+          // ~/exchange/parlay-uploads/<name> and Read the file (see uploads.ts)
+          const missing = images.filter((u: string) => !text.includes(u))
+          const outText = missing.length ? (text ? `${text}\n${missing.join("\n")}` : missing.join("\n")) : text
+          // Sender attribution (#19): relays/intake pages set from so their
+          // messages never masquerade as the captain; absent = the captain
+          const from = body.from ? String(body.from).trim().slice(0, 40) : undefined
+          const msg = addMessage("user", outText, toAgent, {
+            ...(images.length ? { images } : {}),
+            ...(from ? { from } : {}),
+          })
           saveDraftToDisk("")
           broadcastToClients("draft",    { text: "" })
           broadcastToClients("presence", { status: "thinking" })
@@ -107,15 +52,40 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           const body    = await req.json()
           const text    = String(body.text  ?? "").trim()
           const agentId = body.agent ? String(body.agent).trim() : undefined
-          if (!text) { controller.enqueue(enc.encode(JSON.stringify({ error: "empty reply" }))); controller.close(); return }
-          if (agentId && !agents.has(agentId)) {
-            const name  = String(body.name  ?? agentId).trim() || agentId
-            const color = String(body.color ?? "").trim()       || "#3FB950"
-            const info  = { id: agentId, name, color }
-            agents.set(agentId, info)
-            broadcastToClients("agent_register", info)
+          // Optional action payload → message becomes an inline suggestion card
+          let action: ChatAction | undefined
+          if (body.action && typeof body.action === "object") {
+            const kind = String(body.action.kind ?? "")
+            if (kind === "navigate" || kind === "switch_tab") {
+              action = {
+                kind,
+                ...(body.action.url     ? { url:     String(body.action.url) }     : {}),
+                ...(body.action.channel ? { channel: String(body.action.channel) } : {}),
+                label: String(body.action.label ?? "").trim() || (kind === "navigate" ? "Open page" : "Switch tab"),
+              }
+            } else {
+              controller.enqueue(enc.encode(JSON.stringify({ error: `unknown action kind: ${kind}` }))); controller.close(); return
+            }
           }
-          const msg = addMessage("agent", text, agentId)
+          const images = Array.isArray(body.images) ? body.images.slice(0, 8).map(String).filter((u: string) => u.length <= 500) : []
+          if (!text && !action && !images.length) { controller.enqueue(enc.encode(JSON.stringify({ error: "empty reply" }))); controller.close(); return }
+          if (agentId) {
+            // Upsert: a poll-auto-registered record (grey, name=id) gets the
+            // real name/color on first reply that carries them.
+            const existing = agents.get(agentId)
+            const name  = String(body.name  ?? existing?.name ?? agentId).trim() || agentId
+            const color = String(body.color ?? "").trim() || existing?.color || "#3FB950"
+            if (!existing || existing.name !== name || existing.color !== color) {
+              const info = { id: agentId, name, color }
+              agents.set(agentId, info)
+              broadcastToClients("agent_register", info)
+              persistAgents()
+            }
+          }
+          const msg = addMessage("agent", text || action?.label || "", agentId, {
+            ...(action ? { type: "action_request" as const, action } : {}),
+            ...(images.length ? { images } : {}),
+          })
           broadcastToClients("presence", { status: "idle" })
           controller.enqueue(enc.encode(JSON.stringify({ ok: true, id: msg.id })))
         } catch { controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" }))) }
@@ -137,7 +107,27 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           const info = { id, name, color }
           agents.set(id, info)
           broadcastToClients("agent_register", info)
+          persistAgents()
           controller.enqueue(enc.encode(JSON.stringify({ ok: true, ...info })))
+        } catch { controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" }))) }
+        controller.close()
+      },
+    }), { headers: { "Content-Type": "application/json", ...CORS } })
+  }
+
+  // Hooks (and other system components) announce themselves into the chat.
+  // Renders as a thin muted system line in every tab; never resolves poll waiters.
+  if (req.method === "POST" && pathname === "/api/chat/system") {
+    return new Response(new ReadableStream({
+      async start(controller) {
+        const enc = new TextEncoder()
+        try {
+          const body   = await req.json()
+          const text   = String(body.text   ?? "").trim()
+          const source = String(body.source ?? "").trim() || undefined
+          if (!text) { controller.enqueue(enc.encode(JSON.stringify({ error: "text required" }))); controller.close(); return }
+          const msg = addMessage("agent", text.slice(0, 500), "system", { type: "system_update", ...(source ? { source } : {}) })
+          controller.enqueue(enc.encode(JSON.stringify({ ok: true, id: msg.id })))
         } catch { controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" }))) }
         controller.close()
       },
@@ -171,12 +161,18 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
         status: listening ? "listening" : last !== undefined ? "idle" : "offline",
       }
     })
+    // Connected SSE devices — lets an agent see which devices exist and address
+    // one via POST /navigate|/reload { device }.
+    const devices = Array.from(sseClients.values())
+      .filter(c => c.device)
+      .map(c => ({ device: c.device, ua: c.ua, connectedAt: c.connectedAt }))
     const body = {
       parlay:     { clients: sseClients.size },   // browser tabs with the chat drawer open
       poll:       { count: polling.length, channels: polling },  // agents with live poll connections
       registered: { count: registered.length, agents: registered },
       presence,
       presence_broadcasts: presenceBroadcasts,
+      devices,
     }
     return new Response(JSON.stringify(body, null, 2), {
       headers: { "Content-Type": "application/json", ...CORS },
