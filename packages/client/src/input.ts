@@ -8,9 +8,22 @@ import { wireAttachments, takePendingImages } from './attachments'
 
 // ── Auto-resize ───────────────────────────────────────────────────────────────
 
+// Reflow-guarded (#20): coalesce bursts into one rAF and only write the
+// height when it actually changed — the old per-keystroke auto+measure double
+// reflow was part of the mobile typing lag. (rAF defers in background tabs;
+// resize is purely visual, so that's fine.)
+let _resizeQueued = false
+let _lastResizeH = 0
 export function autoResize() {
-  inputEl.style.height = 'auto'
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px'
+  if (_resizeQueued) return
+  _resizeQueued = true
+  requestAnimationFrame(() => {
+    _resizeQueued = false
+    inputEl.style.height = 'auto'
+    const h = Math.min(inputEl.scrollHeight, 140)
+    if (h !== _lastResizeH) _lastResizeH = h
+    inputEl.style.height = h + 'px'
+  })
 }
 
 // Expose for draft SSE handler
@@ -92,8 +105,17 @@ function checkTalonSubmit() {
 
 // ── Wire input events ─────────────────────────────────────────────────────────
 
+let _cmdDebounce: ReturnType<typeof setTimeout> | null = null
+
 export function wireInputEvents() {
-  inputEl.addEventListener('input', () => { autoResize(); checkTalonSubmit(); scheduleDraftSave() })
+  // Command pass debounced 150ms (#20): phrases arrive as dictation bursts —
+  // per-character matching was pure cost. Imperceptible for recognition.
+  inputEl.addEventListener('input', () => {
+    autoResize()
+    clearTimeout(_cmdDebounce!)
+    _cmdDebounce = setTimeout(checkTalonSubmit, 150)
+    scheduleDraftSave()
+  })
   inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault()

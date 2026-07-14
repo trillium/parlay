@@ -3,6 +3,11 @@ import { type ParlaySettings, DEFAULTS } from './types'
 
 let _settings: ParlaySettings = { ...DEFAULTS }
 
+// Bumped on every load/save — lets caches keyed on settings (e.g. compiled
+// command matchers, #20) invalidate without deep comparison
+let _settingsVersion = 0
+export function getSettingsVersion(): number { return _settingsVersion }
+
 export function getSettings(): ParlaySettings { return _settings }
 
 export async function loadSettings(): Promise<ParlaySettings> {
@@ -16,6 +21,7 @@ export async function loadSettings(): Promise<ParlaySettings> {
       }
       delete parsed.voiceClearPhrase
       _settings = { ...DEFAULTS, ...parsed }
+      _settingsVersion++
     }
   } catch { /* server not ready — use defaults */ }
   return _settings
@@ -23,6 +29,7 @@ export async function loadSettings(): Promise<ParlaySettings> {
 
 export async function saveSettings(s: ParlaySettings): Promise<void> {
   _settings = s
+  _settingsVersion++
   try {
     await fetch(`${CHAT_BASE}/parlay/settings`, {
       method: 'PUT',

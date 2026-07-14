@@ -1,4 +1,4 @@
-import { registerCommand, listCommands, runCommandPass, setCommandContext } from './registry'
+import { registerCommand, listCommands, runCommandPass, setCommandContext, passCount, compileCount } from './registry'
 import { registerBuiltins } from './builtins'
 import { buildContext } from './ctx'
 
@@ -13,4 +13,5 @@ export function initCommands(): void {
   const pub = ((window as any).__parlay ??= {})
   pub.registerCommand = registerCommand
   pub.listCommands = listCommands
+  pub.perf = { passes: passCount, compiles: compileCount }   // #20 verification/debug
 }

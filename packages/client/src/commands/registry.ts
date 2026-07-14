@@ -1,4 +1,5 @@
 import type { Command, CommandContext, CommandMatch, MatchMode } from './types'
+import { getSettingsVersion } from '../settings-modal/io'
 
 // ── Registry + matching engine ───────────────────────────────────────────────
 // One watcher normalizes the buffer and runs registered commands by priority;
@@ -18,6 +19,7 @@ export function registerCommand(cmd: Command): void {
   if (i !== -1) commands.splice(i, 1)   // re-register replaces (idempotent)
   commands.push(cmd)
   commands.sort((a, b) => a.priority - b.priority)
+  matcherCache.delete(cmd.id)
 }
 
 export function listCommands(): Command[] { return [...commands] }
@@ -59,18 +61,41 @@ function effectivePhrases(cmd: Command): string[] {
   return cmd.phrases
 }
 
+// ── Compiled-matcher cache (#20 perf) ────────────────────────────────────────
+// Building phrase regexes on every pass was part of the mobile typing lag.
+// Matchers compile once per command and invalidate only when settings change
+// (phrase rebinding) or a command re-registers.
+let _cacheSettingsVersion = -1
+const matcherCache = new Map<string, RegExp[]>()
+let _compileCount = 0
+export function compileCount(): number { return _compileCount }
+
+function matchersFor(cmd: Command): RegExp[] {
+  const sv = getSettingsVersion()
+  if (sv !== _cacheSettingsVersion) { matcherCache.clear(); _cacheSettingsVersion = sv }
+  let ms = matcherCache.get(cmd.id)
+  if (!ms) {
+    ms = effectivePhrases(cmd).filter(p => p.trim()).map(p => { _compileCount++; return modeRegex(phraseCore(p), cmd.matchMode) })
+    matcherCache.set(cmd.id, ms)
+  }
+  return ms
+}
+
+let _passCount = 0
+export function passCount(): number { return _passCount }
+
 // Run one pass over the buffer. Returns the id of the command that fired.
 export function runCommandPass(value: string): string | null {
   if (!_ctx) return null
   const s = _ctx.settings.get()
   if (!s.voiceEnabled) return null
+  _passCount++
   let fired: string | null = null
   for (const cmd of commands) {
     let matched = false
     if (!fired) {
-      for (const phrase of effectivePhrases(cmd)) {
-        if (!phrase.trim()) continue
-        const m = value.match(modeRegex(phraseCore(phrase), cmd.matchMode))
+      for (const re of matchersFor(cmd)) {
+        const m = value.match(re)
         if (m) {
           const match: CommandMatch = { captures: { ...(m.groups ?? {}) }, matchedText: m[1] ?? m[0], value }
           let handled: void | boolean = undefined
