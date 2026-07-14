@@ -63,6 +63,21 @@ export function getDeviceId(): string {
 }
 ;(window as any).__paDeviceId = getDeviceId()
 
+// ── Plugin SSE subscriptions ──────────────────────────────────────────────────
+// Raw listeners on __paEs die when connect() replaces the EventSource on
+// reconnect — plugins subscribe here and get re-attached automatically.
+const pluginSse: Array<[string, (data: any) => void]> = []
+function attachPluginHandlers(es: EventSource) {
+  for (const [event, handler] of pluginSse) {
+    es.addEventListener(event, (e: MessageEvent) => { try { handler(JSON.parse(e.data)) } catch {} })
+  }
+}
+export function onSse(event: string, handler: (data: any) => void) {
+  pluginSse.push([event, handler])
+  const es = (window as any).__paEs as EventSource | null
+  if (es) es.addEventListener(event, (e: MessageEvent) => { try { handler(JSON.parse(e.data)) } catch {} })
+}
+
 // ── SSE connection ────────────────────────────────────────────────────────────
 
 export function connect() {
@@ -70,6 +85,7 @@ export function connect() {
   if (currentEs) { try { currentEs.close() } catch {} }
 
   const es = new EventSource(`${CHAT_BASE}/events?device=${encodeURIComponent(getDeviceId())}`)
+  attachPluginHandlers(es)
   ;(window as any).__paEs = es
   setEs(es)
 

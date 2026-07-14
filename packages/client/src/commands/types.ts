@@ -34,9 +34,11 @@ export interface Command {
 export interface CommandContext {
   input: {
     value(): string
-    setText(t: string): void       // replaces buffer + resizes + draft-syncs
+    setText(t: string): void       // replaces buffer + resizes + draft-syncs (no command pass)
     clear(): void                  // empty + full draft hygiene
     submit(text: string): void     // send as the captain's message
+    selection(): { anchor: number; active: number }
+    setSelection(anchor: number, active: number): void
   }
   tabs: {
     list(): { id: string; name: string }[]

@@ -17,9 +17,15 @@ export function buildContext(): CommandContext {
   return {
     input: {
       value: () => inputEl.value,
+      // setText deliberately does NOT run the command pass — programmatic edits
+      // (e.g. Cursorless) must not trip trailing submit words
       setText(t: string) { inputEl.value = t; autoResize(); scheduleDraftSave() },
       clear() { inputEl.value = ''; autoResize(); clearDraft() },
       submit(text: string) { const t = text.trim(); if (t) { inputEl.value = t; autoResize(); void sendMsg(t) } },
+      selection: () => ({ anchor: inputEl.selectionStart ?? 0, active: inputEl.selectionEnd ?? 0 }),
+      setSelection(anchor: number, active: number) {
+        inputEl.setSelectionRange(Math.min(anchor, active), Math.max(anchor, active))
+      },
     },
     tabs: {
       list: () => [...agentInfo.values()].map(a => ({ id: a.id, name: a.name })),

@@ -11,6 +11,7 @@ import { IS_STANDALONE, DESKTOP_BP } from './config'
 import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel, agentInfo } from './state'
 import { initSpeech } from './speech'
 import { initCommands } from './commands'
+import { initPlugins } from './plugins'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
 import * as domRefs from './dom'
 import { setRenderThreadFn, msgInView } from './tabs'
@@ -177,6 +178,7 @@ wireAnnotation(
 
 // ── Wire remaining events + connect ──────────────────────────────────────────
 initCommands()   // voice/text command subsystem (src/commands/, COMMANDS.md)
+initPlugins()    // plugin loader — before connect() so SSE subscriptions catch the first burst
 wireToolLogEvents()
 wireInputEvents()
 if (isDesktop() || IS_STANDALONE) openDrawer(true)

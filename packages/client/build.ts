@@ -20,7 +20,16 @@ await build({
   target: "browser",
 })
 
-console.log("dist/parlay-agent.js + pulse-agent.js built")
+// Plugins — one IIFE per src-plugins entry, served at /annotate/plugins/<id>.js
+await build({
+  entrypoints: ["./src-plugins/cursorless.ts"],
+  outdir: "./plugins",
+  format: "iife",
+  minify: false,
+  target: "browser",
+})
+
+console.log("dist/parlay-agent.js + pulse-agent.js + plugins built")
 
 // Deploy = live upgrade: tell connected panels to reload; each page's SSE
 // reconnect also runs the version handshake, so even missed broadcasts heal.
