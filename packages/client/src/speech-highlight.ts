@@ -49,11 +49,13 @@ export function setPlayButton(msgId: string | undefined, playing: boolean) {
   }
 }
 
-let lastSpoken: { sentence: string; msgId?: string } | null = null
+let lastSpoken: { sentence: string; msgId?: string; blockIdx?: number } | null = null
 
-export function noteSpoken(sentence: string, msgId?: string) {
-  lastSpoken = { sentence, msgId }
+export function noteSpoken(sentence: string, msgId?: string, blockIdx?: number) {
+  lastSpoken = { sentence, msgId, blockIdx }
 }
+
+export function getLastSpoken() { return lastSpoken }
 
 export function wrapBlocks(msgId: string | undefined, blocks: RawBlock[]): HTMLElement[] | null {
   const bubble = msgId ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`) : null

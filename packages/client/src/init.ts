@@ -9,7 +9,6 @@
 
 import { IS_STANDALONE, DESKTOP_BP } from './config'
 import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel, agentInfo } from './state'
-import { initSpeech } from './speech'
 import { initCommands } from './commands'
 import { initPlugins } from './plugins'
 import { injectDOM, bindDOMRefs, setBodyMargin } from './dom'
@@ -122,8 +121,7 @@ thread.addEventListener('scroll', () => {
   }, 300)
 })
 
-// ── TTS (Kokoro server-first, speechSynthesis fallback) ─────────────────────
-initSpeech()
+// ── TTS is the `speak` plugin now (#19) — loaded via initPlugins() below ────
 
 // ── Compaction detection ──────────────────────────────────────────────────────
 let compactTimer: ReturnType<typeof setTimeout> | null = null

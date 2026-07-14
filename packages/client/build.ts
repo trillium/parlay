@@ -22,7 +22,7 @@ await build({
 
 // Plugins — one IIFE per src-plugins entry, served at /annotate/plugins/<id>.js
 await build({
-  entrypoints: ["./src-plugins/cursorless.ts"],
+  entrypoints: ["./src-plugins/cursorless.ts", "./src-plugins/speak.ts"],
   outdir: "./plugins",
   format: "iife",
   minify: false,

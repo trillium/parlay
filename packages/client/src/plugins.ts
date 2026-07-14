@@ -3,6 +3,10 @@ import { PA_VERSION } from './version'
 import { buildContext } from './commands/ctx'
 import { onSse } from './sse'
 import { getDeviceId } from './sse'
+import {
+  splitBlocksRaw, spansFor, wrapBlocks, highlightBlock, clearAllSpeechHighlights,
+  noteSpoken, getLastSpoken, setPlayButton, flagLastSpoken,
+} from './speech-highlight'
 
 // ── Plugin loader (client side) ──────────────────────────────────────────────
 // Plugins are IIFE files served from /annotate/plugins/<id>.js, listed by
@@ -44,6 +48,13 @@ function pluginApi(id: string) {
 
 export function initPlugins() {
   const pub = ((window as any).__parlay ??= {})
+  // Core speech-UI surface for the speak plugin: plugin bundles CANNOT import
+  // core modules (a second copy of module state would split-brain) — they use
+  // this instead.
+  pub.speechUi = {
+    splitBlocksRaw, spansFor, wrapBlocks, highlightBlock,
+    clearAllSpeechHighlights, noteSpoken, getLastSpoken, setPlayButton, flagLastSpoken,
+  }
   pub.registerPlugin = (def: PluginDef) => {
     if (def.minPanel && semverLt(PA_VERSION, def.minPanel)) {
       console.warn(`[parlay] plugin ${def.id} needs panel ≥${def.minPanel} (running ${PA_VERSION}) — skipped`)
