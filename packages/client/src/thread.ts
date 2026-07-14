@@ -161,11 +161,14 @@ export function _appendMsgEl(m: any) {
       if ((window as any).__paFlagSpeech) (window as any).__paFlagSpeech()
     })
   } else {
+    // Sender attribution (#19): user-role messages carrying `from` (intake
+    // relays, friends) render with that name + neutral initials — never as YOU
+    const from = typeof m.from === 'string' && m.from.trim() ? m.from.trim() : null
     el.innerHTML = `
-      <div class="pa-av user">YOU</div>
+      <div class="pa-av user${from ? ' pa-av-guest' : ''}">${from ? esc(from.slice(0, 2).toUpperCase()) : 'YOU'}</div>
       <div class="pa-bc">
-        <div class="pa-meta"><span class="pa-meta-n">You</span><span>${fmtTime(m.ts)}</span></div>
-        <div class="pa-bubble user">${linkify(esc(m.text))}</div>${imagesHtml(m)}
+        <div class="pa-meta"><span class="pa-meta-n">${from ? esc(from) : 'You'}</span><span>${fmtTime(m.ts)}</span></div>
+        <div class="pa-bubble user${from ? ' pa-bubble-guest' : ''}">${linkify(esc(m.text))}</div>${imagesHtml(m)}
       </div>`
   }
   thread.appendChild(el)

@@ -46,6 +46,9 @@ export const CSS_SPEECH = `
   .pa-chip img { height: 48px; border-radius: 8px; border: 1px solid var(--pa-border); display: block; }
   .pa-chip-x { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; cursor: pointer; background: var(--pa-surf); border: 1px solid var(--pa-border); color: var(--pa-muted); font-size: 9px; line-height: 1; }
   .pa-chip-x:hover { color: var(--pa-red); border-color: var(--pa-red); }
+  /* Guest senders (#19): attributed user-role messages — never the YOU treatment */
+  .pa-av-guest { background: color-mix(in srgb, var(--pa-muted) 22%, var(--pa-ink)) !important; color: var(--pa-muted) !important; border-color: color-mix(in srgb, var(--pa-muted) 40%, transparent) !important; }
+  .pa-bubble-guest { background: color-mix(in srgb, var(--pa-muted) 10%, var(--pa-surf2)) !important; border-color: color-mix(in srgb, var(--pa-muted) 25%, var(--pa-border)) !important; }
   /* Lightbox (#17 amendment) */
   #pa-lightbox { position: fixed; inset: 0; z-index: 10050; background: rgba(0,0,0,.88); display: flex; align-items: center; justify-content: center; }
   #pa-lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 6px; transition: transform .15s ease; cursor: zoom-in; }
