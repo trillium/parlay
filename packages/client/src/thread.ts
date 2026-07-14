@@ -60,8 +60,10 @@ function imagesHtml(m: any): string {
     .filter(u => /^(https?:\/\/|\/)/.test(u)).slice(0, 8)
   if (!urls.length) return ''
   const a = (u: string) => esc(u).replace(/"/g, '%22')
+  // No anchor: taps open the shared lightbox (delegated in lightbox.ts);
+  // long-press/context menu still offers new-tab natively (#17 amendment)
   return `<div class="pa-imgs">${urls.map(u =>
-    `<a href="${a(u)}" target="_blank" rel="noopener noreferrer"><img class="pa-img" loading="lazy" src="${a(u)}" alt="attachment"></a>`
+    `<img class="pa-img" loading="lazy" src="${a(u)}" alt="attachment">`
   ).join('')}</div>`
 }
 
