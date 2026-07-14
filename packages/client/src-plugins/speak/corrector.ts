@@ -14,6 +14,7 @@ export function injectCorrectorStyles(api: any) {
     .pa-corr-btns button { padding: 5px 10px; border-radius: 6px; cursor: pointer; font-family: var(--pa-mono); font-size: 10.5px; border: 1px solid var(--pa-border); background: none; color: var(--pa-body); }
     .pa-corr-save { border-color: color-mix(in srgb, var(--pa-green) 45%, transparent) !important; color: var(--pa-green) !important; }
     .pa-corr-ask { border-color: color-mix(in srgb, var(--pa-blue) 45%, transparent) !important; color: var(--pa-blue) !important; }
+    .pa-corr-split { border-color: color-mix(in srgb, var(--pa-amber) 45%, transparent) !important; color: var(--pa-amber) !important; }
   `)
 }
 
@@ -37,6 +38,7 @@ export function openCorrector(api: any) {
     <div class="pa-corr-btns">
       <button class="pa-corr-save">Save fix</button>
       <button class="pa-corr-ask">Ask agent why</button>
+      <button class="pa-corr-split">Bad split</button>
       <button class="pa-corr-x">✕</button>
     </div>`
   anchor.after(box)
@@ -59,6 +61,27 @@ export function openCorrector(api: any) {
   box.querySelector('.pa-corr-ask')!.addEventListener('click', () => {
     api.input.submit(`The speak system pronounced this oddly: "${last.sentence}" — why might the TTS get it wrong, and what substitution (word → phonetic respelling) should we save?`)
     box.remove()
+  })
+  // Segmentation complaints are a different problem class than pronunciation:
+  // the SPLIT was wrong, not the speech. Reported with the neighboring blocks
+  // so the splitter can be tuned against real cases.
+  box.querySelector('.pa-corr-split')!.addEventListener('click', async () => {
+    const blocks = last.msgId
+      ? [...document.querySelectorAll(`[data-pa-id="${last.msgId}"] .pa-sb`)].map(s => s.textContent ?? '')
+      : []
+    const i = last.blockIdx ?? blocks.findIndex(b => b.includes(last.sentence.slice(0, 40)))
+    try {
+      await fetch('/api/chat/tts-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sentence: last.sentence,
+          clipMeta: { kind: 'segmentation', blockIdx: i, prevBlock: blocks[i - 1] ?? null, nextBlock: blocks[i + 1] ?? null },
+        }),
+      })
+      box.querySelector('.pa-corr-quote')!.textContent = '✓ split reported — the block boundaries around this phrase are logged for tuning'
+      setTimeout(() => box.remove(), 1800)
+    } catch { box.querySelector('.pa-corr-quote')!.textContent = 'failed — network' }
   })
   box.querySelector('.pa-corr-x')!.addEventListener('click', () => box.remove())
 }

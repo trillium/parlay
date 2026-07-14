@@ -125,11 +125,16 @@ export function _appendMsgEl(m: any) {
         <div class="pa-meta"><span class="pa-meta-n" style="color:${agentColor}">${agentName}</span>${channelId}<span>${fmtTime(m.ts)}</span></div>
         <div class="pa-bubble agent" style="background:color-mix(in srgb,${agentColor} 7%,var(--pa-surf2));border-color:color-mix(in srgb,${agentColor} 16%,var(--pa-border));border-radius:3px 10px 10px 10px;font-family:var(--pa-mono);font-size:11.5px">${blocksHtml(m.text)}</div>${imagesHtml(m)}
       </div>`
-    el.style.cursor = 'pointer'
-    el.title = 'Click to re-read aloud'
-    el.addEventListener('click', () => {
-      // speak() is wired in init.ts via a registered callback to avoid circular dep
-      if ((window as any).__paSpeak) (window as any).__paSpeak(m.text, m.id)
+    // Click a block's TEXT to play from that phrase (same semantics as its
+    // dot) — replaces the old whole-message re-read click
+    el.querySelectorAll('.pa-sb').forEach((sb, i) => {
+      ;(sb as HTMLElement).style.cursor = 'pointer'
+      ;(sb as HTMLElement).title = 'Play from here'
+      sb.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).tagName === 'A') return   // links still navigate
+        e.stopPropagation()
+        if ((window as any).__paSpeakFrom) (window as any).__paSpeakFrom(m.text, m.id, i)
+      })
     })
     // ✎ under the avatar: comment on THIS reply via the annotation popup —
     // works from anywhere in the scrollback, no annotate mode needed
