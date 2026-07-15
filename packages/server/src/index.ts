@@ -15,8 +15,12 @@ loadDraftFromDisk()
 
 serve({
   port: PORT,
-  fetch(req) {
+  async fetch(req) {
     const url = new URL(req.url)
-    return handleChatRequest(req, url.pathname) ?? new Response("not found", { status: 404 })
+    // handleChatRequest may return a Response, a Promise<Response|null> (the
+    // async server-side-eval routes), or null. await resolves the promise case;
+    // a null (sync or resolved) falls through to 404.
+    const resp = await handleChatRequest(req, url.pathname)
+    return resp ?? new Response("not found", { status: 404 })
   },
 })
