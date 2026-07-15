@@ -196,30 +196,6 @@ export function renderThread() {
   scrollBottom(true, true)
 }
 
-// ── Lavish session card ───────────────────────────────────────────────────────
-
-export function insertLavishCard(key: string, file: string, proxyUrl: string, status: string) {
-  const name = file.split('/').pop() ?? file
-  if (status === 'ended') {
-    const el = document.getElementById(`pa-lavish-${key}`)
-    if (el) el.classList.add('closed')
-    return
-  }
-  emptyEl.style.display = 'none'
-  const el = document.createElement('div')
-  el.id = `pa-lavish-${key}`
-  el.className = 'pa-lavish-card'
-  el.innerHTML = `
-    <div class="pa-lavish-icon">📄</div>
-    <div class="pa-lavish-body">
-      <div class="pa-lavish-label">Lavish artifact</div>
-      <div class="pa-lavish-name">${esc(name)}</div>
-    </div>
-    <a class="pa-lavish-btn" href="${esc(proxyUrl)}" target="_blank">Open →</a>`
-  thread.appendChild(el)
-  scrollBottom(true)
-}
-
 export function loadHistory(history: any[]) {
   history.forEach((m: any) => {
     if (document.querySelector(`[data-pa-id="${m.id}"]`)) return
