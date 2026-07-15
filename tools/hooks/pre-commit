@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Tracked pre-commit hook. Activated via `git config core.hooksPath tools/hooks`
+# (wired automatically by the root package.json `prepare` script on bun install).
+set -euo pipefail
+
+# ── 1. 250-line file limit ────────────────────────────────────────────────────
+# Keep modules small; refactor into a subfolder + barrel index past the limit.
+LIMIT=250
+FAILED=()
+while IFS= read -r file; do
+  [[ "$file" == *.ts ]] || continue
+  [[ -f "$file" ]] || continue
+  lines=$(wc -l < "$file")
+  if (( lines > LIMIT )); then
+    FAILED+=("$file ($lines lines)")
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+if (( ${#FAILED[@]} > 0 )); then
+  echo "❌ 250-line limit exceeded. Refactor into a subfolder with barrel index before committing:"
+  printf '   %s\n' "${FAILED[@]}"
+  exit 1
+fi
+
+# ── 2. Autonomous PA_VERSION bump ─────────────────────────────────────────────
+# Classifies the staged packages/client/src diff (small/medium/large) and bumps
+# PA_VERSION accordingly, re-staging it into this commit. No client change ⇒ no-op.
+# Escape hatch: PA_BUMP=none git commit ...   (or =patch|minor|major to force).
+bun "$(git rev-parse --show-toplevel)/tools/bump-version.ts"

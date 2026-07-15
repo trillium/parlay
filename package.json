@@ -6,6 +6,8 @@
     "packages/*"
   ],
   "scripts": {
+    "prepare": "git config core.hooksPath tools/hooks",
+    "bump": "bun tools/bump-version.ts",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish"
