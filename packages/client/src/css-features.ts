@@ -117,18 +117,25 @@ export const CSS_FEATURES = `
     writing-mode: vertical-rl; transform: rotate(180deg);
     font-family: var(--pa-mono); font-weight: 800; font-size: 22px; letter-spacing: .12em;
     font-variant: small-caps;
-    color: var(--pa-body); opacity: .85; user-select: none;
+    /* Recessive background brand mark: sits behind the thread (z-index 0) at low
+       opacity so full-width message/sysline text never visually clashes with it
+       (the long "· AgentName" suffix used to overlap turn content). */
+    color: var(--pa-body); opacity: .2; user-select: none;
   }
   #pa-thread, #pa-input-area, #pa-tabs, #pa-hdr { position: relative; z-index: 1; }
   /* System pseudo-tab — present but visually recessive */
   .pa-tab.pa-tab-system { opacity: .6; font-style: italic; }
   .pa-tab.pa-tab-system.active { opacity: .9; }
   /* System update lines (hook firings etc.) — thin, muted, full-width */
-  .pa-sysline { display: flex; align-items: baseline; gap: 7px; padding: 2px 6px; font-family: var(--pa-mono); font-size: 9.5px; color: var(--pa-muted); opacity: .85; }
-  .pa-sysline-src { flex-shrink: 0; color: var(--pa-amber); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: 8.5px; }
+  /* Block + floats (not flex): the amber source label + timestamp float out of
+     the flow so the gray text wraps to FULL width beneath them instead of being
+     squished into a narrow column beside a long label. */
+  .pa-sysline { display: block; padding: 2px 6px; font-family: var(--pa-mono); font-size: 9.5px; color: var(--pa-muted); opacity: .85; line-height: 1.5; }
+  .pa-sysline::after { content: ''; display: block; clear: both; }
+  .pa-sysline-src { float: left; margin-right: 7px; color: var(--pa-amber); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: 8.5px; }
   .pa-sysline-src::before { content: '⚙ '; }
-  .pa-sysline-text { flex: 1; min-width: 0; word-break: break-word; white-space: pre-wrap; }
-  .pa-sysline-ts { flex-shrink: 0; font-size: 8px; opacity: .7; }
+  .pa-sysline-ts { float: right; margin-left: 7px; font-size: 8px; opacity: .7; }
+  .pa-sysline-text { display: block; word-break: break-word; white-space: pre-wrap; }
   /* Captain's messages clamp by default; tap to expand */
   .pa-bubble.pa-clamped { max-height: 76px; overflow: hidden; position: relative; cursor: pointer; }
   .pa-bubble.pa-clamped::after {
