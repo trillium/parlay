@@ -2,6 +2,7 @@ import type { ChatAction } from "./types"
 import { saveDraftToDisk } from "./storage"
 import { agents, pollWaiters, sseClients, CORS, broadcastToClients, lastPollByChannel, LISTEN_WINDOW_MS, persistAgents, presenceBroadcasts } from "./sse"
 import { addMessage, broadcastAlert } from "./messages"
+import { unregisterAgent } from "./prune"
 
 // Message creation lives in messages.ts; re-exported so existing importers
 // (lavish.ts, hook-tailer.ts) keep their "./router-messages" path.
@@ -10,7 +11,7 @@ export { addMessage, broadcastAlert }
 // ── Message routes ────────────────────────────────────────────────────────────
 // POST /api/chat/send, /reply, /register-agent; GET /api/chat/agents, /draft
 
-export function handleMessagesRequest(req: Request, pathname: string): Response | null {
+export function handleMessagesRequest(req: Request, pathname: string): Response | Promise<Response> | null {
 
   if (req.method === "POST" && pathname === "/api/chat/send") {
     return new Response(new ReadableStream({
@@ -113,6 +114,41 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
         controller.close()
       },
     }), { headers: { "Content-Type": "application/json", ...CORS } })
+  }
+
+  // Deregister a channel from the registry. The counterpart to register-agent:
+  // the deregistration-on-exit contract (see prune.ts) says whatever spawned a
+  // channel should call this when it finishes; the periodic prune sweep is the
+  // belt-and-suspenders for when it doesn't. Fails LOUD (400/404) on a bad or
+  // unknown id — never a false ok (robots-5l8).
+  if (req.method === "POST" && pathname === "/api/chat/unregister") {
+    // Non-streaming (unlike the sibling POST routes) so the HTTP status can
+    // actually reflect the outcome — a fail-loud contract needs 400/404, not a
+    // 200 body that says "error". Awaiting req.json() here is fine; the caller
+    // is a single small POST, not a long-poll.
+    return (async () => {
+      const json = (b: unknown, status = 200) =>
+        new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json", ...CORS } })
+      let id: string
+      try {
+        const body = await req.json()
+        id = String(body.id ?? "").trim()
+      } catch { return json({ error: "bad request" }, 400) }
+      if (!id) return json({ error: "id required" }, 400)
+      const res = unregisterAgent(id)
+      if (!res.ok) return json({ error: res.error }, 404)
+      return json({ ok: true, id: res.id })
+    })()
+  }
+
+  // REST alias for the same removal: DELETE /api/chat/agents/:id. Same fail-loud
+  // contract. The id is the trailing path segment, URL-decoded.
+  if (req.method === "DELETE" && pathname.startsWith("/api/chat/agents/")) {
+    const id = decodeURIComponent(pathname.slice("/api/chat/agents/".length)).trim()
+    if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers: { "Content-Type": "application/json", ...CORS } })
+    const res = unregisterAgent(id)
+    if (!res.ok) return new Response(JSON.stringify({ error: res.error }), { status: 404, headers: { "Content-Type": "application/json", ...CORS } })
+    return new Response(JSON.stringify({ ok: true, id: res.id }), { headers: { "Content-Type": "application/json", ...CORS } })
   }
 
   // Hooks (and other system components) announce themselves into the chat.
