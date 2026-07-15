@@ -1,8 +1,19 @@
 import { esc, CHAT_BASE, fmtTime } from './config'
 import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel, toolLogVisible } from './state'
-import { tabsEl, inputEl, connBanner } from './dom'
+import { tabsEl, inputEl, connBanner, versionEl } from './dom'
 import { sheetOpen, renderSheet } from './switcher'
 import { renderToolLog } from './toollog'
+import { PA_VERSION } from './version'
+
+// Left-edge build label doubles as the active-tab cue: "v3.7.5 · First Mate".
+// The agent name is the load-bearing part (which tab am I in?), so it trails
+// the version — if the rotated string ever clips at the top edge, the version
+// is what goes, not the name. Falls back to the bare version with no channel.
+function updateVersionLabel(ch: string | null) {
+  if (!versionEl) return
+  const name = ch && agentInfo.has(ch) ? agentInfo.get(ch)!.name : null
+  versionEl.textContent = name ? `v${PA_VERSION} · ${name}` : `v${PA_VERSION}`
+}
 
 // ── Per-channel status (green = listening, grey = idle, hollow = offline) ────
 export function statusOf(id: string): 'listening' | 'idle' | 'offline' {
@@ -69,6 +80,7 @@ export function msgInView(m: any): boolean {
 }
 
 function updateHeader(ch: string | null) {
+  updateVersionLabel(ch)
   const subEl = document.getElementById('pa-sub')
   const dotEl = document.getElementById('pa-dot')
   if (!subEl || !dotEl) return
