@@ -138,6 +138,7 @@ export let connBanner!: HTMLElement
 export let toolLog!: HTMLElement
 export let logBtn!: HTMLElement
 export let settingsGearBtn!: HTMLElement
+export let versionEl!: HTMLElement
 
 export function bindDOMRefs() {
   backdrop   = document.getElementById('pa-backdrop')!
@@ -165,4 +166,5 @@ export function bindDOMRefs() {
   toolLog        = document.getElementById('pa-toollog')!
   logBtn         = document.getElementById('pa-log-btn')!
   settingsGearBtn = document.getElementById('pa-settings-btn-gear')!
+  versionEl      = document.getElementById('pa-version')!
 }
