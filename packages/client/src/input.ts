@@ -22,7 +22,7 @@ export function autoResize() {
   requestAnimationFrame(() => {
     _resizeQueued = false
     inputEl.style.height = 'auto'
-    const h = Math.min(inputEl.scrollHeight, 140)
+    const h = Math.max(38, Math.min(inputEl.scrollHeight, 140))
     if (h !== _lastResizeH) _lastResizeH = h
     inputEl.style.height = h + 'px'
   })
