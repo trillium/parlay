@@ -127,7 +127,7 @@ export const CSS_FEATURES = `
   .pa-sysline { display: flex; align-items: baseline; gap: 7px; padding: 2px 6px; font-family: var(--pa-mono); font-size: 9.5px; color: var(--pa-muted); opacity: .85; }
   .pa-sysline-src { flex-shrink: 0; color: var(--pa-amber); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; font-size: 8.5px; }
   .pa-sysline-src::before { content: '⚙ '; }
-  .pa-sysline-text { flex: 1; min-width: 0; word-break: break-word; }
+  .pa-sysline-text { flex: 1; min-width: 0; word-break: break-word; white-space: pre-wrap; }
   .pa-sysline-ts { flex-shrink: 0; font-size: 8px; opacity: .7; }
   /* Captain's messages clamp by default; tap to expand */
   .pa-bubble.pa-clamped { max-height: 76px; overflow: hidden; position: relative; cursor: pointer; }
@@ -156,7 +156,7 @@ export const CSS_FEATURES = `
   .pa-ann-text { color: var(--pa-body); }
   .pa-ann-rm   { margin-left: auto; color: var(--pa-muted); cursor: pointer; background: none; border: none; font-size: 13px; flex-shrink: 0; }
   .pa-ann-rm:hover { color: var(--pa-red); }
-  #pa-toollog { display: none; flex: 1; overflow-y: auto; padding: 10px 12px; flex-direction: column; gap: 5px; font-family: var(--pa-mono); font-size: 10.5px; }
+  #pa-toollog { display: none; flex: 1; overflow-y: auto; padding: 10px 12px 56px; flex-direction: column; gap: 5px; font-family: var(--pa-mono); font-size: 10.5px; }
   #pa-toollog.visible { display: flex; }
   #pa-toollog::-webkit-scrollbar { width: 3px; }
   #pa-toollog::-webkit-scrollbar-thumb { background: var(--pa-border); border-radius: 2px; }
