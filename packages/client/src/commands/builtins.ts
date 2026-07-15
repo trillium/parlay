@@ -38,10 +38,10 @@ const submit: Command = {
 
 const clear: Command = {
   id: 'clear',
-  phrases: ['change inside in input'],
-  matchMode: 'anywhere',
+  phrases: ['change inside input', 'change inside in input'],
+  matchMode: 'trailing',
   priority: 10,
-  description: 'Saying this anywhere in the input empties the whole box',
+  description: 'End the input with a clear phrase to empty the whole box',
   action(ctx) { ctx.input.clear() },
 }
 
