@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Wrapper around lavish-axi that:
+#   1. Auto-claims new sessions for the calling agent (on open)
+#   2. Intercepts `poll` and bridges it to Parlay at 31337 instead of native 4387
+
+# Channel identity is HANDED to the agent, never demanded of it: prefer an
+# explicit override, else the ambient PARLAY_AGENT_ID that launch paths export,
+# else the generic "lavish" channel as a last resort.
+AGENT_ID="${LAVISH_AGENT_ID:-${PARLAY_AGENT_ID:-lavish}}"
+PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
+LAVISH_BIN="/opt/homebrew/bin/lavish-axi"
+CLAIM_FILE="${HOME}/.lavish-axi/pending-claim.json"
+POLL_BRIDGE="${HOME}/code/parlay/packages/cli/src/lavish-poll.ts"
+
+case "${1:-}" in
+  poll)
+    shift
+    exec bun "$POLL_BRIDGE" "$AGENT_ID" "$PARLAY" "$@"
+    ;;
+  end|stop|server|playbook|design|setup|export|share|--help|-h|"")
+    exec "$LAVISH_BIN" "$@"
+    ;;
+  *)
+    # Opening a session — write claim so Parlay proxy can assign it to this agent
+    mkdir -p "$(dirname "$CLAIM_FILE")"
+    printf '{"agentId":"%s"}' "$AGENT_ID" > "$CLAIM_FILE"
+    exec "$LAVISH_BIN" "$@"
+    ;;
+esac

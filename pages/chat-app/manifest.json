@@ -1,0 +1,19 @@
+{
+  "name": "Agent",
+  "short_name": "Agent",
+  "description": "Pulse agent chat",
+  "start_url": "/chat-app/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0D1117",
+  "theme_color": "#0D1117",
+  "icons": [
+    {
+      "src": "/chat-app/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

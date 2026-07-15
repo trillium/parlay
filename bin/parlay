@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Wrapper: routes parlay to the Pulse server running on port 31337.
+# Override with PARLAY_SERVER env var if needed.
+export PARLAY_SERVER="${PARLAY_SERVER:-http://localhost:31337}"
+exec bun /Users/trilliumsmith/code/parlay/packages/cli/src/index.ts "$@"
