@@ -1,7 +1,8 @@
 import { esc, CHAT_BASE, fmtTime } from './config'
-import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel } from './state'
+import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel, toolLogVisible } from './state'
 import { tabsEl, inputEl, connBanner } from './dom'
 import { sheetOpen, renderSheet } from './switcher'
+import { renderToolLog } from './toollog'
 
 // ── Per-channel status (green = listening, grey = idle, hollow = offline) ────
 export function statusOf(id: string): 'listening' | 'idle' | 'offline' {
@@ -56,10 +57,15 @@ function restoreActiveChannel() {
 
 export function msgInView(m: any): boolean {
   if (activeChannel === null) return true   // zero-agent state only — no All view exists
-  if (m.role === 'user') return true
-  // Channel-less agent messages no longer leak into every tab (scoping #13);
-  // system lines live on the reserved 'system' channel / System pseudo-tab.
-  return m.channel === activeChannel
+  // Channel-tagged messages (either role) are strictly scoped to their own tab.
+  // A captain message sent in agent A's tab carries channel=A, so it no longer
+  // leaks into agent B's tab (#21 cross-tab leak — user messages used to return
+  // true unconditionally here).
+  if (m.channel) return m.channel === activeChannel
+  // Channel-less messages: a user-role one is a global relay/alert with no
+  // target and shows in every tab; a channel-less agent line shows nowhere
+  // (preserves the #13 no-leak behavior for legacy system lines).
+  return m.role === 'user'
 }
 
 function updateHeader(ch: string | null) {
@@ -214,6 +220,7 @@ export function switchChannel(ch: string) {
   unreadByChannel[ch] = 0
   renderTabs()
   if (_renderThread) _renderThread()
+  if (toolLogVisible) renderToolLog()   // keep the tool log scoped to the new tab
   if (connBanner && ch !== 'system') {   // System pseudo-tab has no poller to check
     connBanner.className = 'pa-conn-banner'
     connBanner.textContent = ''
