@@ -7,6 +7,7 @@ import { annotateMessage } from './annotation'
 import { navigateWorkspace } from './commands/ctx'
 import { blocksHtml } from './speech-highlight'
 import { imagesHtml } from './thread-images'
+import { richText } from './rich-text'
 
 // ── Think indicator ───────────────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ export function _appendMsgEl(m: any) {
   // System update (hook firings etc.) → thin muted line, no avatar, no bubble
   if (m.type === 'system_update') {
     el.className = 'pa-sysline'
-    el.innerHTML = `<span class="pa-sysline-src">${esc(m.source ?? 'system')}</span><span class="pa-sysline-text">${linkify(esc(m.text))}</span><span class="pa-sysline-ts">${fmtTime(m.ts)}</span>`
+    el.innerHTML = `<span class="pa-sysline-src">${esc(m.source ?? 'system')}</span><span class="pa-sysline-text">${richText(m.text)}</span><span class="pa-sysline-ts">${fmtTime(m.ts)}</span>`
     thread.appendChild(el)
     scrollBottom()
     return
