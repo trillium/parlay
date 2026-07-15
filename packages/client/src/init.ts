@@ -22,6 +22,7 @@ import { wireToolLogEvents } from './toollog'
 import { connect, setOpenDrawerFn, onSse } from './sse'
 import { wireInputEvents, loadDraft, sendMsg, wireServerEval } from './input'
 import { wireAnnotation, doSetAnnotate } from './annotation'
+import { trackFocusTitle } from './focus-title'
 import {
   loadSettings, applySettings, isPageEnabled,
   injectSettingsModal, openSettingsModal,
@@ -80,6 +81,10 @@ function closeDrawer() {
 
 setOpenDrawerFn(openDrawer)
 ;(window as any).__paOpenDrawer = openDrawer
+
+// Window-title focus marker: while the composer input is focused, the host
+// page title carries `[focus:parlay-input]` for external watchers (Talon).
+trackFocusTitle(inputEl, 'parlay-input')
 
 function syncLayout() {
   if (isDesktop()) {
