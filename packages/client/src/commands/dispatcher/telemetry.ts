@@ -29,12 +29,19 @@ function ensureOverlay(): HTMLElement {
   const el = document.createElement('div')
   el.id = 'pa-eval-overlay'
   el.style.cssText = [
-    'position:fixed', 'bottom:6px', 'left:6px', 'z-index:2147483647',
+    // Anchored to the RIGHT gutter, pushed below the fixed header/tabs band and
+    // well above the bottom-anchored input box, so it never covers either.
+    // Tap to dismiss so it is never stuck in the way. `bottom/left:auto` guard
+    // against any inherited/UA anchoring.
+    'position:fixed', 'top:calc(env(safe-area-inset-top, 0px) + 56px)',
+    'right:6px', 'left:auto', 'bottom:auto', 'z-index:2147483647',
     'font:10px/1.35 ui-monospace,Menlo,monospace', 'color:#9fe',
     'background:rgba(0,0,0,.82)', 'padding:6px 8px', 'border-radius:6px',
-    'pointer-events:none', 'white-space:pre', 'max-width:46ch',
+    'pointer-events:auto', 'cursor:pointer', 'white-space:pre', 'max-width:46ch',
     'border:1px solid #2a6', 'box-shadow:0 2px 10px rgba(0,0,0,.5)',
   ].join(';')
+  el.title = 'tap to hide server-eval telemetry'
+  el.addEventListener('click', () => { el.style.display = 'none' })
   document.body.appendChild(el)
   overlayEl = el
   return el
@@ -69,9 +76,14 @@ export function showCountdownHint(text: string): void {
     el = document.createElement('div')
     el.id = 'pa-eval-hint'
     el.style.cssText = [
-      'position:fixed', 'bottom:64px', 'left:6px', 'z-index:2147483647',
+      // LEFT gutter, same clear-of-header offset as the overlay. Never over the
+      // bottom input, and the opposite side from the right-anchored overlay so
+      // the two never collide even as the overlay grows to several lines.
+      'position:fixed', 'top:calc(env(safe-area-inset-top, 0px) + 56px)',
+      'left:6px', 'right:auto', 'bottom:auto', 'z-index:2147483647',
       'font:11px ui-monospace,monospace', 'color:#fe9', 'background:rgba(40,20,0,.9)',
-      'padding:4px 8px', 'border-radius:6px', 'border:1px solid #a63', 'pointer-events:none',
+      'padding:4px 8px', 'border-radius:6px', 'border:1px solid #a63',
+      'pointer-events:none', 'max-width:44vw', 'white-space:pre-wrap',
     ].join(';')
     document.body.appendChild(el)
   }
