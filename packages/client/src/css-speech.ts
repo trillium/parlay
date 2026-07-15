@@ -37,7 +37,8 @@ export const CSS_SPEECH = `
   /* Inline images (#17): thumbnails under bubbles, tap for full size */
   .pa-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .pa-img { max-height: 240px; max-width: 100%; border-radius: 10px; display: block; border: 1px solid var(--pa-border); cursor: pointer; }
-  #pa-attach { flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; background: none; border: 1px solid var(--pa-border); color: var(--pa-muted); font-size: 14px; line-height: 1; align-self: flex-end; }
+  /* Inline in the flex #pa-input-row: fixed size, sits left of the textarea */
+  #pa-attach { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; background: none; border: 1px solid var(--pa-border); color: var(--pa-muted); font-size: 14px; line-height: 1; align-self: flex-end; padding: 0; }
   #pa-attach:hover, #pa-attach:active { color: var(--pa-body); border-color: var(--pa-muted); }
   /* Pending attachment chips (#17 addendum): queued above the input until send */
   #pa-attach-strip { display: none; gap: 6px; padding: 6px 10px 0; flex-wrap: wrap; }

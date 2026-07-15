@@ -49,10 +49,13 @@ export const CSS_THREAD = `
   .pa-thinking-dots b:nth-child(2){animation-delay:.15s}.pa-thinking-dots b:nth-child(3){animation-delay:.3s}
   @keyframes pa-dot{0%,80%,100%{opacity:.3;transform:scale(1)}40%{opacity:1;transform:scale(1.3)}}
   #pa-input-area { flex-shrink:0;border-top:1px solid var(--pa-border);padding:10px 14px 14px;background:var(--pa-ink); }
-  #pa-input-row { position:relative; }
+  /* Single non-wrapping flex line: [📎 attach] [ textarea (grows) ] [send].
+     min-width:0 on the textarea lets it shrink instead of shoving the buttons
+     onto their own lines at narrow (mobile) widths. */
+  #pa-input-row { display:flex;flex-wrap:nowrap;align-items:flex-end;gap:8px; }
   #pa-input {
-    width:100%;background:var(--pa-surf2);border:1px solid var(--pa-border);color:var(--pa-body);
-    border-radius:7px;padding:8px 52px 8px 11px;font-size:13px;font-family:var(--pa-sans);
+    flex:1 1 auto;min-width:0;background:var(--pa-surf2);border:1px solid var(--pa-border);color:var(--pa-body);
+    border-radius:7px;padding:8px 11px;font-size:13px;font-family:var(--pa-sans);
     line-height:1.5;resize:none;min-height:38px !important;max-height:140px;outline:none;
     transition:border-color .15s;box-sizing:border-box !important;
   }
@@ -61,12 +64,12 @@ export const CSS_THREAD = `
   #pa-input:focus { border-color: color-mix(in srgb,var(--pa-blue) 50%,transparent); }
   #pa-input::placeholder { color:var(--pa-muted);opacity:.5; }
   #pa-send {
-    position:absolute;bottom:6px;right:6px;
-    height:26px;padding:0 8px;
+    flex-shrink:0;align-self:flex-end;
+    height:34px;padding:0 12px;
     background:color-mix(in srgb,var(--pa-blue) 14%,transparent);
     border:1px solid color-mix(in srgb,var(--pa-blue) 28%,transparent);
-    color:var(--pa-blue);border-radius:5px;
-    font-family:var(--pa-mono);font-size:9px;font-weight:700;letter-spacing:.08em;
+    color:var(--pa-blue);border-radius:8px;
+    font-family:var(--pa-mono);font-size:11px;font-weight:700;letter-spacing:.08em;
     cursor:pointer;transition:background .12s,border-color .12s;
   }
   #pa-send:hover:not(:disabled){background:color-mix(in srgb,var(--pa-blue) 22%,transparent);}
