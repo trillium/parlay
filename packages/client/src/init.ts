@@ -23,6 +23,7 @@ import { connect, setOpenDrawerFn, onSse } from './sse'
 import { wireInputEvents, loadDraft, sendMsg, wireServerEval } from './input'
 import { wireAnnotation, doSetAnnotate } from './annotation'
 import { trackFocusTitle } from './focus-title'
+import { injectPageNav, openPageNav } from './page-nav'
 import {
   loadSettings, applySettings, isPageEnabled,
   injectSettingsModal, openSettingsModal,
@@ -159,6 +160,10 @@ function clearCompactTimer() {
 injectSettingsModal()
 settingsGearBtn.addEventListener('click', openSettingsModal)
 applySettings(settings)
+
+// ── Page-nav picker ───────────────────────────────────────────────────────────
+injectPageNav()
+document.getElementById('pa-nav-btn')?.addEventListener('click', openPageNav)
 
 // ── Annotation ────────────────────────────────────────────────────────────────
 wireAnnotation(

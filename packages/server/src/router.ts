@@ -6,6 +6,7 @@ import { handleParlaySettings } from "./parlay-settings"
 import { handleTTSRequest } from "./tts"
 import { handleUploadRequest } from "./uploads"
 import { handlePluginsRequest } from "./plugins"
+import { handlePagesRequest } from "./pages"
 import { handleEvalRequest } from "./eval-relay"
 import { handleTTSValidateRequest } from "./tts-validate"
 import { bundleVersion } from "./bundle-version"
@@ -35,6 +36,10 @@ export function handleChatRequest(req: Request, pathname: string): Response | Pr
   // Plugins: GET /api/chat/plugins (manifest), /api/chat/plugin/<id>/*
   const pluginResp = handlePluginsRequest(req, pathname)
   if (pluginResp !== null) return pluginResp
+
+  // Local page index: GET /api/chat/pages → pulse-pages for the nav picker
+  const pagesResp = handlePagesRequest(req, pathname)
+  if (pagesResp !== null) return pagesResp
 
   // Delegate message-centric routes (send, reply, register-agent, agents)
   const msgResp = handleMessagesRequest(req, pathname)

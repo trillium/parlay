@@ -4,8 +4,9 @@ import { CSS_THREAD } from './css-thread'
 import { CSS_FEATURES } from './css-features'
 import { CSS_SPEECH } from './css-speech'
 import { CSS_SETTINGS } from './css-settings'
+import { CSS_PAGENAV } from './css-pagenav'
 
-export const STYLE = CSS_LAYOUT + CSS_THREAD + CSS_FEATURES + CSS_SPEECH + CSS_SETTINGS
+export const STYLE = CSS_LAYOUT + CSS_THREAD + CSS_FEATURES + CSS_SPEECH + CSS_SETTINGS + CSS_PAGENAV
 
 // ── HTML template ─────────────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ export const DRAWER_HTML = `
       <div id="pa-title">Agent<span id="pa-sub"></span></div>
       <button id="pa-tts-btn" title="Toggle text-to-speech">TTS</button>
       <button id="pa-log-btn" title="Toggle tool activity log">⚡</button>
+      <button id="pa-nav-btn" title="Jump to page">🧭</button>
       <button id="pa-settings-btn-gear" title="Parlay settings">⚙</button>
       <button id="pa-close">✕</button>
     </div>
@@ -66,6 +68,7 @@ export const DRAWER_HTML = `
       <div id="pa-sheet-actions">
         <button class="pa-sheet-act" data-proxy="pa-tts-btn">🔊 TTS</button>
         <button class="pa-sheet-act" data-proxy="pa-log-btn">⚡ Tool log</button>
+        <button class="pa-sheet-act" data-proxy="pa-nav-btn">🧭 Pages</button>
         <button class="pa-sheet-act" data-proxy="pa-settings-btn-gear">⚙ Settings</button>
         <button class="pa-sheet-act" data-proxy="pa-ann-btn">✎ Annotate</button>
       </div>
