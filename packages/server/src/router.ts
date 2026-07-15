@@ -6,6 +6,7 @@ import { handleParlaySettings } from "./parlay-settings"
 import { handleTTSRequest } from "./tts"
 import { handleUploadRequest } from "./uploads"
 import { handlePluginsRequest } from "./plugins"
+import { handleEvalRequest } from "./eval-relay"
 import type { PollWaiter } from "./types"
 
 // Extract PA_VERSION from the served client bundle, cached by mtime.
@@ -22,10 +23,14 @@ function bundleVersion(): string {
   } catch { return "unknown" }
 }
 
-export function handleChatRequest(req: Request, pathname: string): Response | null {
+export function handleChatRequest(req: Request, pathname: string): Response | Promise<Response | null> | null {
   if (!pathname.startsWith("/api/chat")) return null
 
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
+
+  // Server-side eval (feat/server-side-eval): async routes that await the Go
+  // engine; the outer Bun fetch handler (async) resolves the returned Promise.
+  if (pathname === "/api/chat/eval" || pathname === "/api/chat/eval-push") return handleEvalRequest(req, pathname)
 
   // Parlay settings: GET/PUT /api/chat/parlay/settings
   const parlayResp = handleParlaySettings(req, pathname)

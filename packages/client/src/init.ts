@@ -18,8 +18,8 @@ import { setRenderThreadFn, msgInView } from './tabs'
 import { initAgentSwitcher } from './switcher'
 import { renderThread, scrollBottom } from './thread'
 import { wireToolLogEvents } from './toollog'
-import { connect, setOpenDrawerFn } from './sse'
-import { wireInputEvents, loadDraft, sendMsg } from './input'
+import { connect, setOpenDrawerFn, onSse } from './sse'
+import { wireInputEvents, loadDraft, sendMsg, wireServerEval } from './input'
 import { wireAnnotation, doSetAnnotate } from './annotation'
 import {
   loadSettings, applySettings, isPageEnabled,
@@ -181,6 +181,11 @@ initPlugins()    // plugin loader — before connect() so SSE subscriptions catc
 initLightbox()   // shared image lightbox — delegated over all .pa-img surfaces
 wireToolLogEvents()
 wireInputEvents()
+// Server-side eval (feat/server-side-eval): subscribe the action dispatcher to
+// the input_action SSE channel. onSse auto-reattaches across reconnects, so the
+// action channel survives connection drops with zero extra code. No-op unless the
+// serverEvalEnabled flag is on (the handler early-returns).
+wireServerEval(onSse)
 if (isDesktop() || IS_STANDALONE) openDrawer(true)
 connect()
 loadDraft()
