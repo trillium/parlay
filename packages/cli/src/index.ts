@@ -4,6 +4,8 @@
 //
 // Exit codes: 0 = ok, 1 = runtime/server error, 2 = usage error (bad flag/command/args).
 
+import { runMonitor } from "./monitor"
+
 const SERVER = (process.env.PARLAY_SERVER ?? "http://localhost:4242").replace(/\/+$/, "")
 
 const EXIT_RUNTIME = 1
@@ -118,7 +120,8 @@ Usage:
   parlay alert <text...>          Broadcast an alert to all pollers + agents
   parlay alert --agent <id> <text...>   Alert one agent channel
   parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
-  parlay monitor [--agent <id>]   Persistent poll loop — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --agent <id>     Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
   parlay lavish-import            Import lavish sessions
   parlay help                     Show this help
 
@@ -135,7 +138,7 @@ const HELP: Record<string, string> = {
   send: `parlay send — send a message from the human to agents.\nUsage: parlay send <text...>`,
   alert: `parlay alert — broadcast an alert to pollers + agents.\nUsage: parlay alert [--agent <id>] <text...>\n  --agent <id>   Deliver only to one agent channel`,
   history: `parlay history — print recent messages (server-bounded).\nUsage: parlay history [N] [--full]\n  N        How many messages (default 20)\n  --full   Untruncated text plus id and channel per message`,
-  monitor: `parlay monitor — persistent poll loop; emits CHAT_MSG|id|role|text lines on stdout.\nUsage: parlay monitor [--agent <id>]\n  --agent <id>   Poll a single agent channel instead of the global feed`,
+  monitor: `parlay monitor — enroll with the relay and stream CHAT_MSG|id|role|text lines on stdout.\nUsage: parlay monitor --agent <id> [--legacy-poll]\n  --agent <id>    Agent channel to enroll + stream (required unless --legacy-poll)\n  --legacy-poll   Use the old independent poll loop with no relay (global feed if no --agent)\n\nDefault path registers <id> with the central relay (tools/relay/parlay-relay must\nbe running) and execs 'tail -F' on the agent's spool — ~1.2MB per agent, one relay\nfans out to all. See tools/RELAY_MONITOR.md.`,
   "lavish-import": `parlay lavish-import — import lavish sessions via the bundled importer.\nUsage: parlay lavish-import`,
 }
 
@@ -229,27 +232,7 @@ async function cmdAlert(args: string[]) {
 }
 
 async function cmdMonitor(args: string[]) {
-  if (helpWanted("monitor", args)) return
-  const { opts } = parseArgs("monitor", args, [], ["--agent"])
-  const agent = opts["--agent"] as string | undefined
-  const channelParam = agent ? `&channel=${encodeURIComponent(agent)}` : ""
-  let lastId = ""
-  process.stderr.write(`parlay monitor — server ${SERVER}${agent ? ` channel ${agent}` : " (global)"}\n`)
-  process.stderr.write(`Next (from another shell): parlay send <text...>\n`)
-  while (true) {
-    try {
-      const res = await fetch(`${SERVER}/api/chat/poll?after=${lastId}${channelParam}`)
-      if (!res.ok) { await Bun.sleep(2000); continue }
-      const msg = await res.json() as { timeout?: boolean; id?: string; role?: string; text?: string }
-      if (msg.timeout) continue
-      if (msg.id && msg.role && msg.text != null) {
-        lastId = msg.id
-        process.stdout.write(`CHAT_MSG|${msg.id}|${msg.role}|${msg.text}\n`)
-      }
-    } catch {
-      await Bun.sleep(3000)
-    }
-  }
+  return runMonitor(args, { server: SERVER, exitUsage: EXIT_USAGE, die, helpWanted, parseArgs })
 }
 
 async function cmdHistory(args: string[]) {
