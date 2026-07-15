@@ -18,7 +18,7 @@ export const CSS_FEATURES = `
     transition: color .12s, border-bottom-color .12s;
   }
   .pa-tab:hover { color: var(--pa-body); }
-  .pa-tab.active { color: var(--pa-body); border-bottom-color: var(--tab-color, var(--pa-green)); }
+  .pa-tab.active { color: var(--pa-body); border-bottom: 3px solid var(--pa-green); }
   .pa-tab-pip { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--tab-color, var(--pa-green)); margin-right: 5px; vertical-align: middle; margin-bottom: 1px; }
   /* Status dot states: green = listening, grey = idle, hollow = offline */
   .pa-tab-pip.listening { background: var(--pa-green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-green) 22%, transparent); }

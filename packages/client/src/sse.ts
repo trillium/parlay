@@ -2,7 +2,7 @@ import { CHAT_BASE } from './config'
 import { PA_VERSION } from './version'
 import {
   msgs, open, unread,
-  agentInfo, unreadByChannel,
+  agentInfo, unreadByChannel, lastActivityByChannel,
   setUnread, setEs, setReconnectDelay, setReconnectTimer,
   reconnectDelay, setChannelStatuses,
 } from './state'
@@ -137,6 +137,8 @@ export function connect() {
     if (document.querySelector(`[data-pa-id="${m.id}"]`)) return
     msgs.push(m)
     ;(window as any).__paLastId = m.id
+    // Track per-channel activity for tab sort order (recent-message-first)
+    if (m.channel) lastActivityByChannel[m.channel] = Date.now()
 
     const inView = (window as any).__paMsgInView ? (window as any).__paMsgInView(m) : true
 
