@@ -20,22 +20,17 @@ import { broadcastToDevice, CORS } from "./sse"
 const EVAL_ENGINE_URL =
   process.env.PARLAY_EVAL_ENGINE_URL ?? "http://127.0.0.1:4343"
 
-// The flag lives in the shared Parlay settings (parlay-settings.json), read
-// per-request so a toggle takes effect without a server restart. Reading it here
-// (server-side) is the authoritative gate; the client also checks its own copy
-// to decide whether to POST at all, but the server never trusts that.
-import { readFileSync } from "fs"
-import { join } from "path"
+// The flag lives in the shared Parlay settings (~/exchange/parlay-settings.json),
+// read per-request through the canonical reader so a toggle takes effect without a
+// server restart and stays in lockstep with the GET/PUT handler's shape. Reading
+// it here (server-side) is the authoritative gate; the client also checks its own
+// copy to decide whether to POST at all, but the server never trusts that.
+import { readSettings } from "./parlay-settings"
 
-const SETTINGS_PATH = join(
-  process.env.PAI_DIR ?? join(process.env.HOME ?? "", ".claude", "PAI"),
-  "MEMORY", "STATE", "parlay-settings.json",
-)
-
-export function serverEvalEnabled(): boolean {
+export async function serverEvalEnabled(): Promise<boolean> {
   try {
-    const s = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8"))
-    return s?.serverEvalEnabled === true
+    const s = await readSettings()
+    return s.serverEvalEnabled === true
   } catch {
     return false // absent/unreadable settings ⇒ OFF (safe default)
   }
@@ -67,7 +62,7 @@ export async function handleEvalRequest(
   // POST /api/chat/eval — the up-channel. Delegates to the compiled Go engine
   // and relays its actions over the device-scoped SSE.
   if (req.method === "POST" && pathname === "/api/chat/eval") {
-    if (!serverEvalEnabled()) {
+    if (!(await serverEvalEnabled())) {
       return json({ disabled: true }, 200)
     }
     let body: {
@@ -146,7 +141,7 @@ export async function handleEvalRequest(
   // the network-race cost: the fire is already ~1 round-trip stale by the time it
   // reaches the client, which re-verifies the tail before actually sending.
   if (req.method === "POST" && pathname === "/api/chat/eval-push") {
-    if (!serverEvalEnabled()) {
+    if (!(await serverEvalEnabled())) {
       return json({ disabled: true }, 200)
     }
     let body: { streamId?: string; seq?: number; baseVersion?: number; v?: number; action?: unknown }
