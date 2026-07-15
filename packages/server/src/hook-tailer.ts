@@ -34,7 +34,9 @@ export function startHookFiringTailer() {
         try {
           const ev = JSON.parse(line)
           const source = String(ev.source ?? "hook").slice(0, 60)
-          const text   = String(ev.text ?? "").slice(0, 400)
+          // Ordinary firings are short; agent turn mirrors (source "turn") can
+          // run long, so allow up to 1400 chars for readable deliberations.
+          const text   = String(ev.text ?? "").slice(0, 1400)
           if (!text) continue
           // Route the firing to the tab of the agent whose session produced it,
           // resolved via the session → channel map. Firings without a known
