@@ -3,6 +3,10 @@
 // True concurrent racing: Parlay (chat) vs 4387 (layout_warnings, session-end, dom_snapshot).
 // Whichever has data first wins; the other is aborted. Emits lavish-axi-compatible JSON, then exits.
 
+import { createHash } from "node:crypto"
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { join } from "node:path"
+
 const LAVISH_NATIVE = process.env.LAVISH_URL ?? "http://127.0.0.1:4387"
 const [agentId, parlay, ...pollArgs] = process.argv.slice(2)
 
@@ -65,8 +69,30 @@ if (agentReply) {
   }
 }
 
+// ── Cursor persistence (robots-nm8) ────────────────────────────────────────────
+// lastParlayId used to live only in process memory, but each emit() calls
+// process.exit(0) and the tool's own next_step tells the agent to re-run
+// `lavish poll`. On re-arm a fresh process started at after='' and re-fetched the
+// oldest un-consumed role=user message, so an alert was re-delivered on EVERY
+// re-arm forever until a newer user message arrived (agent replies are role=agent
+// and never clear it). Fix: persist the cursor to a temp file keyed by file+agent
+// and seed after= from it on startup. Best-effort — a read/write failure degrades
+// to the old in-memory-only behavior, never blocks polling.
+function cursorPath(): string {
+  const runtime = (process.env.PARLAY_RELAY_RUNTIME || join(process.env.TMPDIR || "/tmp", "parlay")).replace(/\/$/, "")
+  const key = createHash("sha256").update(`${agentId}\0${file}`).digest("hex").slice(0, 16)
+  try { mkdirSync(runtime, { recursive: true }) } catch {}
+  return join(runtime, `lavish-poll-${key}.cursor`)
+}
+function readCursor(): string {
+  try { return readFileSync(cursorPath(), "utf8").trim() } catch { return "" }
+}
+function writeCursor(id: string): void {
+  try { writeFileSync(cursorPath(), id) } catch {}
+}
+
 const deadline = timeoutMs ? Date.now() + timeoutMs : Infinity
-let lastParlayId = ""
+let lastParlayId = readCursor()
 
 while (Date.now() < deadline) {
   const ac = new AbortController()
@@ -123,6 +149,7 @@ while (Date.now() < deadline) {
 
   if (msg.id && msg.role === "user" && msg.text != null) {
     lastParlayId = msg.id
+    writeCursor(lastParlayId)   // persist BEFORE emit (which exits) so the next re-arm resumes past this msg
     // 200ms grace window: give aborted nativeP time to deliver dom_snapshot
     const n = await Promise.race([nativeP, Bun.sleep(200).then(() => null)])
     const warnings = n?.layout_warnings ?? []
