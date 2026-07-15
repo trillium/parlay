@@ -259,7 +259,15 @@ func (r *relay) shutdown(srv *http.Server) {
 func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 	defer close(loop.done)
 
-	lastID := ""
+	// Resume after the last message already written to the spool. On a relay
+	// restart the server would otherwise replay the whole channel history from
+	// after="", duplicating every already-spooled line. Seeding lastID from the
+	// spool makes the restart re-open exactly-once from the monitor's point of
+	// view (the monitor's tail -F never restarts).
+	lastID := lastSpooledID(loop.spool)
+	if lastID != "" {
+		log.Printf("agent %q resuming after spooled id %s", loop.id, lastID)
+	}
 	for {
 		if ctx.Err() != nil {
 			return
@@ -319,6 +327,51 @@ func (r *relay) pollOnce(parent context.Context, agent, after string) (*upstream
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return &msg, nil
+}
+
+// lastSpooledID returns the id from the last well-formed CHAT_MSG line in the
+// spool, or "" if the spool is empty/absent/unparseable. Used to resume polling
+// after a relay restart without replaying the channel's whole history. Only the
+// file's tail is read so a large spool does not force a full scan.
+func lastSpooledID(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return "" // no spool yet — start fresh
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return ""
+	}
+	// Read up to the last 64KiB — far more than any single line, so the final
+	// complete line is guaranteed to be within it.
+	const window = 64 * 1024
+	size := info.Size()
+	start := int64(0)
+	if size > window {
+		start = size - window
+	}
+	buf := make([]byte, size-start)
+	if _, err := f.ReadAt(buf, start); err != nil && err != io.EOF {
+		return ""
+	}
+	// Walk lines from the end; return the id of the last that parses as a
+	// CHAT_MSG. A partial first line (when start > 0) is naturally skipped
+	// because we only accept lines that begin with the exact "CHAT_MSG|" prefix.
+	text := string(buf)
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimRight(lines[i], "\r")
+		if !strings.HasPrefix(line, "CHAT_MSG|") {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) >= 2 && parts[1] != "" {
+			return parts[1]
+		}
+	}
+	return ""
 }
 
 // appendSpool writes one CHAT_MSG line for msg to the agent's spool file.
