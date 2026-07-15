@@ -1,21 +1,11 @@
 import { esc, linkify, fmtTime } from './config'
-import { msgs, agentInfo, activeChannel, atBottom, thinking, setThinkingState } from './state'
+import { msgs, agentInfo, activeChannel, thinking, setThinkingState, lastActivityByChannel } from './state'
 import { thread, emptyEl } from './dom'
+import { scrollBottom } from './thread-scroll'
 import { msgInView, switchChannel } from './tabs'
 import { annotateMessage } from './annotation'
 import { navigateWorkspace } from './commands/ctx'
 import { blocksHtml } from './speech-highlight'
-
-// ── Scroll helper ─────────────────────────────────────────────────────────────
-
-export function scrollBottom(force?: boolean, instant?: boolean) {
-  if (force || atBottom) {
-    // instant bypasses the thread's CSS scroll-behavior:smooth — used for initial
-    // history render and tab switches, where an animated scroll is jarring
-    if (instant) thread.scrollTo({ top: thread.scrollHeight, behavior: 'instant' as ScrollBehavior })
-    else thread.scrollTop = thread.scrollHeight
-  }
-}
 
 // ── Think indicator ───────────────────────────────────────────────────────────
 
@@ -239,6 +229,12 @@ export function loadHistory(history: any[]) {
     msgs.push(m)
     // setLastId is in state but imported there; direct mutation here is fine for lastId
     ;(window as any).__paLastId = m.id
+    // Seed per-channel last-activity from history so tabs sort correctly on load.
+    // Messages are in chronological order; keep overwriting to get the latest.
+    if (m.channel) {
+      const ts = m.ts ? new Date(m.ts).getTime() : 0
+      if (ts > (lastActivityByChannel[m.channel] ?? 0)) lastActivityByChannel[m.channel] = ts
+    }
     if (msgInView(m)) appendMsg(m)
   })
   // Land at the bottom immediately — no animated catch-up scroll on page load

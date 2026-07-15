@@ -1,5 +1,6 @@
-import { esc, CHAT_BASE, fmtTime } from './config'
-import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel, toolLogVisible } from './state'
+import { esc, fmtTime } from './config'
+import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel, lastActivityByChannel, toolLogVisible } from './state'
+import { checkAgentOnline } from './tab-online'
 import { tabsEl, inputEl, connBanner, versionEl } from './dom'
 import { sheetOpen, renderSheet } from './switcher'
 import { renderToolLog } from './toollog'
@@ -150,10 +151,20 @@ export function renderTabs() {
     tabsEl.appendChild(tab)
   }
 
-  for (const [id, info] of agentInfo) {
-    if (archived.has(id) || id === 'system') continue
-    makeTab(id, info)
-  }
+  // Sort: most-recently-active first, then listening agents, then alphabetical by name.
+  // System pseudo-tab is excluded here and always rendered last (below).
+  const sortedAgents = [...agentInfo.entries()]
+    .filter(([id]) => !archived.has(id) && id !== 'system')
+    .sort(([a, ai], [b, bi]) => {
+      const aTime = lastActivityByChannel[a] ?? 0
+      const bTime = lastActivityByChannel[b] ?? 0
+      if (bTime !== aTime) return bTime - aTime
+      const aListen = channelStatus[a] === 'listening' ? 1 : 0
+      const bListen = channelStatus[b] === 'listening' ? 1 : 0
+      if (bListen !== aListen) return bListen - aListen
+      return ai.name.localeCompare(bi.name)
+    })
+  for (const [id, info] of sortedAgents) makeTab(id, info)
   // System pseudo-tab always renders LAST; archiving it (the ×) is the
   // per-device way to hide it — restore from the Archived dropdown.
   const sysInfo = agentInfo.get('system')
@@ -204,26 +215,6 @@ export function renderTabs() {
 
   updateHeader(activeChannel)
   if (sheetOpen()) renderSheet()   // keep switcher sheet dots/unreads live
-}
-
-async function checkAgentOnline(ch: string) {
-  try {
-    const r = await fetch(`${CHAT_BASE}/subscribers`)
-    if (!r.ok) return
-    const data = await r.json() as {
-      poll?: { channels?: { channel: string | null }[] }
-      presence?: { channel: string; lastSeen: string | null }[]
-    }
-    for (const p of data.presence ?? []) {
-      if (p.lastSeen) lastSeenByChannel[p.channel] = p.lastSeen
-    }
-    const pollers = data.poll?.channels ?? []
-    const online = pollers.some(p => p.channel === ch)
-    if (!online && connBanner) {
-      connBanner.className = 'pa-conn-banner reconnecting show'
-      connBanner.textContent = `Agent not listening — run: parlay monitor --agent ${ch}`
-    }
-  } catch {}
 }
 
 export function switchChannel(ch: string) {

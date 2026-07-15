@@ -29,6 +29,9 @@ export const unreadByChannel: Record<string, number> = {}  // id → count
 // Per-channel presence (from presence_map SSE). Absent key = offline (never seen).
 export const channelStatus: Record<string, 'listening' | 'idle'> = {}
 export const lastSeenByChannel: Record<string, string> = {}  // id → ISO timestamp
+// Last activity per channel — updated when a message with a channel tag arrives.
+// Tab sort: most-recently-active first, then listening, then rest.
+export const lastActivityByChannel: Record<string, number> = {}  // id → Date.now() ms
 export function setChannelStatuses(map: Record<string, 'listening' | 'idle'>) {
   for (const k of Object.keys(channelStatus)) if (!(k in map)) delete channelStatus[k]
   Object.assign(channelStatus, map)
