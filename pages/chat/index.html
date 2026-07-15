@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="pulse-shell" content="off">
+<title>Agent Chat · Pulse</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #0D1117; overflow: hidden; }
+/* Force the Parlay drawer open and full-width */
+#pa-drawer {
+  display: flex !important;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  border-radius: 0 !important;
+  border-left: none !important;
+}
+#pa-trigger, #pa-backdrop, #pa-ann-btn { display: none !important; }
+</style>
+</head>
+<body>
+<script src="/annotate/pulse-agent.js" defer></script>
+<script>
+// Open the drawer immediately after the panel boots
+document.addEventListener('DOMContentLoaded', () => {
+  const open = () => {
+    const drawer = document.getElementById('pa-drawer')
+    if (drawer) { drawer.style.display = 'flex'; return true }
+    return false
+  }
+  if (!open()) {
+    const ob = new MutationObserver(() => { if (open()) ob.disconnect() })
+    ob.observe(document.body, { childList: true, subtree: true })
+  }
+})
+</script>
+</body>
+</html>

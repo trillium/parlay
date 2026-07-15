@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# parlay-spawn — launch a NEW background Claude Code agent "from Parlay".
+#
+# Spins up a fresh, TOP-LEVEL `claude` session inside a detached herdr terminal
+# that auto-enrolls a Parlay monitor on startup, so the agent shows up as a
+# live, reachable tab in the Pulse/Parlay chat panel (http://localhost:31337)
+# immediately.
+#
+# Precedent: ~/.local/bin/lavish (auto-claim pattern). This differs: instead of
+# claiming an existing session, it registers a brand-new agent, posts a hello so
+# the tab goes live, then launches the agent with a startup prompt that arms the
+# monitor and works the task.
+#
+# The CLAUDECODE nesting problem: Claude Code refuses to launch a nested `claude`
+# subprocess when CLAUDECODE / CLAUDE_CODE_* are set. herdr terminals INHERIT the
+# parent env, so the launch wrapper explicitly `unset`s those vars — verified to
+# produce a clean top-level session (2026-07-13).
+#
+# Usage:
+#   parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus] [--model MODEL]
+#
+# Example:
+#   parlay-spawn code-reviewer "Code Reviewer" "#c084fc" \
+#     "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
+#
+# Env:
+#   PARLAY_SERVER   Parlay/Pulse base URL (default http://localhost:31337)
+
+set -euo pipefail
+
+PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus]
+
+  agent-id        kebab-slug, stable across restarts (e.g. code-reviewer)
+  display-name    tab header text (e.g. "Code Reviewer")
+  hex-color       tab accent color (e.g. "#c084fc")
+  initial-prompt  the task the spawned agent should work
+
+  --cwd PATH      working directory for the spawned claude (default: \$HOME)
+  --focus         focus the new terminal (default: launched --no-focus)
+  --model MODEL   pin the claude model (e.g. sonnet, opus, haiku, or a full
+                  model id); default: session default with sonnet fallback
+
+Env: PARLAY_SERVER (default http://localhost:31337)
+EOF
+  exit 2
+}
+
+[ $# -lt 4 ] && usage
+
+AGENT_ID="$1"; NAME="$2"; COLOR="$3"; PROMPT="$4"; shift 4
+
+CWD="$HOME"
+FOCUS_FLAG="--no-focus"
+MODEL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cwd)   CWD="$2"; shift 2 ;;
+    --focus) FOCUS_FLAG="--focus"; shift ;;
+    --model) MODEL="$2"; shift 2 ;;
+    *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
+  esac
+done
+
+# Validate agent id shape (kebab-slug).
+if ! printf '%s' "$AGENT_ID" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+  echo "parlay-spawn: agent-id must be a kebab-slug (got: '$AGENT_ID')" >&2
+  exit 2
+fi
+
+json_escape() { printf '%s' "$1" | jq -Rs .; }
+
+echo "parlay-spawn: registering agent '$AGENT_ID' with Parlay at $PARLAY ..." >&2
+
+# 1. Register the agent so the tab exists.
+curl -s -X POST "$PARLAY/api/chat/register-agent" \
+  -H "Content-Type: application/json" \
+  -d "{\"id\":$(json_escape "$AGENT_ID"),\"name\":$(json_escape "$NAME"),\"color\":$(json_escape "$COLOR")}" \
+  >/dev/null || { echo "parlay-spawn: register-agent failed — is Pulse running on $PARLAY?" >&2; exit 1; }
+
+# 2. Post a hello reply so the tab goes live immediately.
+curl -s -X POST "$PARLAY/api/chat/reply" \
+  -H "Content-Type: application/json" \
+  -d "{\"text\":$(json_escape "Spawning… arming monitor and starting on the task."),\"agent\":$(json_escape "$AGENT_ID"),\"name\":$(json_escape "$NAME"),\"color\":$(json_escape "$COLOR")}" \
+  >/dev/null || true
+
+# 3. Compose the startup prompt: enrollment instructions + the task.
+#    The fresh claude processes this as its first turn, so it arms the Monitor
+#    (making the tab "listening") and posts a ready reply before/while working.
+STARTUP_PROMPT=$(cat <<EOF
+You are a background agent enrolled in the Pulse/Parlay chat panel at $PARLAY.
+Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
+
+FIRST, before anything else, enroll so the captain can reach you:
+1. Arm a persistent Monitor to receive captain messages on your channel:
+   Monitor({ command: "PARLAY_SERVER=$PARLAY parlay monitor --agent $AGENT_ID", persistent: true })
+2. Post a reply so your tab shows "listening":
+   curl -s -X POST $PARLAY/api/chat/reply -H "Content-Type: application/json" -d '{"text":"Ready. Monitor armed, standing by.","agent":"$AGENT_ID","name":"$NAME","color":"$COLOR"}'
+   (Consult the pulse-agent skill at ~/.claude/.agents/skills/pulse-agent/SKILL.md if you need the full reply/poll contract.)
+
+THEN work on this task and reply via the same curl endpoint when done:
+
+$PROMPT
+EOF
+)
+
+# 4. Pre-trust the workdir so the spawned claude never stalls on the folder
+#    trust dialog (captain's standing policy 2026-07-13: always trust).
+CLAUDE_JSON="$HOME/.claude.json"
+if [ -f "$CLAUDE_JSON" ] && command -v jq >/dev/null; then
+  _tmp=$(mktemp)
+  if jq --arg p "$CWD" '.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})' "$CLAUDE_JSON" > "$_tmp"; then
+    mv "$_tmp" "$CLAUDE_JSON"
+  else
+    rm -f "$_tmp"; echo "parlay-spawn: warn: could not pre-trust $CWD (jq failed)" >&2
+  fi
+fi
+
+# 5. Launch a fresh, TOP-LEVEL claude in a detached herdr terminal.
+#    The bash wrapper UNSETS the nesting-marker env vars so Claude Code does not
+#    treat this as a nested subprocess (empty-string via --env is NOT enough —
+#    the guard checks presence, so we must `unset`).
+echo "parlay-spawn: launching detached claude via herdr (cwd=$CWD, $FOCUS_FLAG) ..." >&2
+
+# shellcheck disable=SC2016
+# Runs in YOLO mode (skip-permissions + sonnet fallback) — same as the `yolo`
+# command — so a remotely-driven agent never stalls on a permission prompt the
+# absent user can't answer. `yolo` is a zsh function, unavailable in this bash
+# login shell, so we replicate its exact behaviour here.
+LAUNCH_SCRIPT='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; exec claude --dangerously-skip-permissions --fallback-model sonnet ${PARLAY_SPAWN_MODEL:+--model "$PARLAY_SPAWN_MODEL"} "$PARLAY_SPAWN_PROMPT"'
+
+# Give the agent its OWN tab (captain's rule 2026-07-13: agents never split the
+# captain's current tab, and they launch unfocused/background). The tab's root
+# shell pane is a harmless side effect — no pane-close verb exists in herdr 0.7.3.
+TAB_FLAG=""
+ROOT_PANE=""
+TAB_JSON=$(herdr tab create --no-focus --label "$AGENT_ID" ${HERDR_WORKSPACE_ID:+--workspace "$HERDR_WORKSPACE_ID"} 2>/dev/null) || true
+TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
+ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
+[ -n "$TAB_ID" ] && TAB_FLAG="--tab $TAB_ID"
+
+herdr agent start "$AGENT_ID" --cwd "$CWD" $FOCUS_FLAG $TAB_FLAG \
+  --env "PARLAY_SPAWN_PROMPT=$STARTUP_PROMPT" \
+  --env "PARLAY_SPAWN_MODEL=$MODEL" \
+  --env "PARLAY_SERVER=$PARLAY" \
+  --env "PARLAY_AGENT_ID=$AGENT_ID" \
+  -- bash -lc "$LAUNCH_SCRIPT"
+
+# Drop the tab's now-redundant root shell pane so the agent has the tab to
+# itself. Only after the agent pane exists — closing a tab's only pane closes
+# the tab (and a workspace's last tab closes the workspace).
+[ -n "$ROOT_PANE" ] && herdr pane close "$ROOT_PANE" >/dev/null 2>&1 || true
+
+echo "parlay-spawn: done. Agent '$AGENT_ID' registered; terminal launched." >&2
+echo "parlay-spawn: watch it come live with: parlay subscribers | jq '.poll'" >&2

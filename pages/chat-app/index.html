@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+  <!-- PWA — iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Agent">
+
+  <!-- PWA — Android / Chrome -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0D1117">
+
+  <link rel="manifest" href="/chat-app/manifest.json">
+  <link rel="apple-touch-icon" href="/chat-app/icon.svg">
+
+  <title>Agent</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%; height: 100dvh;
+      background: #0D1117;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <!-- pulse-agent.js injected by portal.ts; opens full-screen in standalone mode -->
+  <!-- Parlay-as-shell workspace (#16, task-3xp): same-origin Pulse pages render
+       here while the chat drawer stays live as persistent chrome — navigation
+       never tears down SSE/chat state. Driven by the 'go to {page}' command,
+       agent action cards, and the navigate SSE event. -->
+  <iframe id="pa-workspace" src="/status/" style="border:0;width:100%;height:100%;height:100dvh;display:block;background:#0D1117"></iframe>
+</body>
+</html>
