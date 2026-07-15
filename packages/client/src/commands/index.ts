@@ -1,7 +1,7 @@
 import { registerCommand, listCommands, runCommandPass, setCommandContext, passCount, compileCount } from './registry'
 import { registerBuiltins } from './builtins'
 import { buildContext } from './ctx'
-import { setDispatcherContext, telemetry } from './dispatcher'
+import { setDispatcherContext, setEvalDisabledFallback, telemetry } from './dispatcher'
 
 export { registerCommand, listCommands, runCommandPass }
 export { setDispatcherContext, applyEnvelope, scheduleEval, bumpInputVersion, currentInputVersion, telemetry, renderOverlay } from './dispatcher'
@@ -16,6 +16,10 @@ export function initCommands(): void {
   // The server-eval dispatcher applies server-computed actions through the SAME
   // CommandContext the local commands use (feat/server-side-eval).
   setDispatcherContext(ctx)
+  // robots-q6u: when the server declines to evaluate (flag off, error, or
+  // unreachable relay), fall back to the LOCAL command pass so a stale-cached
+  // serverEvalEnabled=true client is never left with dead commands.
+  setEvalDisabledFallback(runCommandPass)
   registerBuiltins()
   const pub = ((window as any).__parlay ??= {})
   pub.registerCommand = registerCommand

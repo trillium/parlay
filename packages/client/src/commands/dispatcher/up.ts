@@ -15,6 +15,23 @@ export function currentInputVersion(): number { return inputVersion }
 // the true client-observed round trip (POST → SSE receipt).
 export const postSentAt = new Map<number, number>()
 
+// ── Disabled/unreachable-server fallback (robots-q6u) ──────────────────────────
+// When the input event routes to the server branch but the server declines to
+// evaluate — flag flipped OFF server-side ({disabled:true}), an error response,
+// or an unreachable/timed-out relay — the client would otherwise do NOTHING for
+// that keystroke, and because the local command pass was skipped, ALL commands
+// (clear/submit/tab) silently die until a hard reload. That strands a
+// half-reloaded client on a stale cached serverEvalEnabled=true. The fix: run
+// the LOCAL command pass for that keystroke so commands always work. Wired by
+// initCommands() to runCommandPass; inert (no-op) until wired.
+let _disabledFallback: ((text: string) => void) | null = null
+export function setEvalDisabledFallback(fn: (text: string) => void): void {
+  _disabledFallback = fn
+}
+function runDisabledFallback(text: string): void {
+  try { _disabledFallback?.(text) } catch { /* a fallback must never break input */ }
+}
+
 let _settleTimer: ReturnType<typeof setTimeout> | null = null
 
 // scheduleEval schedules an eval POST after the voice-settle quiet period. Call
@@ -57,9 +74,9 @@ async function postEval(text: string, ctx: EvalCtx, reason: string): Promise<voi
       }),
       signal: AbortSignal.timeout(3_000),
     })
-    if (!r.ok) { log('eval POST failed', r.status); return }
+    if (!r.ok) { log('eval POST failed', r.status); runDisabledFallback(text); return }
     const body = await r.json()
-    if (body?.disabled) return   // flag off server-side — do nothing
+    if (body?.disabled) { runDisabledFallback(text); return }   // flag off server-side → local pass
     // The synchronous response also carries timing; the ACTIONS are applied via
     // the SSE path (single source of truth) so ordering/staleness is uniform.
     if (body?.timing?.engineEvalNs != null) {
@@ -69,5 +86,6 @@ async function postEval(text: string, ctx: EvalCtx, reason: string): Promise<voi
     }
   } catch (e) {
     log('eval POST error', e)
+    runDisabledFallback(text)   // unreachable/timed-out relay → never leave commands dead
   }
 }
