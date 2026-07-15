@@ -7,21 +7,9 @@ import { handleTTSRequest } from "./tts"
 import { handleUploadRequest } from "./uploads"
 import { handlePluginsRequest } from "./plugins"
 import { handleEvalRequest } from "./eval-relay"
+import { handleTTSValidateRequest } from "./tts-validate"
+import { bundleVersion } from "./bundle-version"
 import type { PollWaiter } from "./types"
-
-// Extract PA_VERSION from the served client bundle, cached by mtime.
-let _bundleVer: { mtime: number; version: string } | null = null
-function bundleVersion(): string {
-  try {
-    const { statSync, readFileSync } = require("fs") as typeof import("fs")
-    const path = `${process.env.HOME}/pulse-pages/annotate/pulse-agent.js`
-    const mtime = statSync(path).mtimeMs
-    if (_bundleVer && _bundleVer.mtime === mtime) return _bundleVer.version
-    const m = readFileSync(path, "utf8").match(/PA_VERSION = ["']([^"']+)["']/)
-    _bundleVer = { mtime, version: m ? m[1] : "unknown" }
-    return _bundleVer.version
-  } catch { return "unknown" }
-}
 
 export function handleChatRequest(req: Request, pathname: string): Response | Promise<Response | null> | null {
   if (!pathname.startsWith("/api/chat")) return null
@@ -51,6 +39,10 @@ export function handleChatRequest(req: Request, pathname: string): Response | Pr
   // Delegate message-centric routes (send, reply, register-agent, agents)
   const msgResp = handleMessagesRequest(req, pathname)
   if (msgResp !== null) return msgResp
+
+  // TTS split quality validation (local Ollama)
+  const ttsValidResp = handleTTSValidateRequest(req, pathname)
+  if (ttsValidResp !== null) return ttsValidResp
 
   if (req.method === "GET" && pathname === "/api/chat/history") {
     // Bounded by default — a bare call returns at most 200 messages; pass
