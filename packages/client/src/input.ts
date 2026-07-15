@@ -3,7 +3,9 @@ import { draftSaveTimer, open, activeChannel, setDraftSaveTimer } from './state'
 import { inputEl, sendBtn } from './dom'
 import { armCompactTimer } from './sse'
 import { getSettings } from './settings-modal'
-import { runCommandPass } from './commands'
+import { runCommandPass, scheduleEval, bumpInputVersion, applyEnvelope } from './commands'
+import type { ActionEnvelope } from './commands'
+import { agentInfo } from './state'
 import { wireAttachments, takePendingImages } from './attachments'
 
 // ── Auto-resize ───────────────────────────────────────────────────────────────
@@ -20,7 +22,7 @@ export function autoResize() {
   requestAnimationFrame(() => {
     _resizeQueued = false
     inputEl.style.height = 'auto'
-    const h = Math.min(inputEl.scrollHeight, 140)
+    const h = Math.max(38, Math.min(inputEl.scrollHeight, 140))
     if (h !== _lastResizeH) _lastResizeH = h
     inputEl.style.height = h + 'px'
   })
@@ -103,17 +105,42 @@ function checkTalonSubmit() {
   runCommandPass(inputEl.value)
 }
 
+// ── Server-side eval context (feat/server-side-eval) ───────────────────────────
+// Builds the per-POST context the dispatcher needs: the live tab set (for
+// server-side {agent} resolution), the device id, the stream id, the voice gate,
+// and the voice-settle tuning knob. Read fresh each schedule so a settings change
+// takes effect without a reload.
+function evalCtx() {
+  const s = getSettings()
+  const device = (window as any).__paDeviceId as string ?? 'unknown'
+  return {
+    voiceEnabled: s.voiceEnabled,
+    settleMs: typeof s.voiceSettleMs === 'number' ? s.voiceSettleMs : 450,
+    tabs: [...agentInfo.values()].map(a => ({ id: a.id, name: a.name })),
+    device,
+    streamId: `eval-${device}-main`,
+  }
+}
+
 // ── Wire input events ─────────────────────────────────────────────────────────
 
 let _cmdDebounce: ReturnType<typeof setTimeout> | null = null
 
 export function wireInputEvents() {
-  // Command pass debounced 150ms (#20): phrases arrive as dictation bursts —
-  // per-character matching was pure cost. Imperceptible for recognition.
   inputEl.addEventListener('input', () => {
     autoResize()
-    clearTimeout(_cmdDebounce!)
-    _cmdDebounce = setTimeout(checkTalonSubmit, 150)
+    if (getSettings().serverEvalEnabled) {
+      // PURE server-side mode: the client does NO local evaluation. Bump the
+      // monotonic input version (the staleness token) and schedule a voice-settle
+      // -debounced POST of the STABILIZED buffer to the compiled Go engine.
+      bumpInputVersion()
+      scheduleEval(() => inputEl.value, evalCtx, false, 'input')
+    } else {
+      // LOCAL mode (flag off) — byte-for-byte today's behavior: command pass
+      // debounced 150ms (#20), phrases arrive as dictation bursts.
+      clearTimeout(_cmdDebounce!)
+      _cmdDebounce = setTimeout(checkTalonSubmit, 150)
+    }
     scheduleDraftSave()
   })
   inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -126,6 +153,24 @@ export function wireInputEvents() {
   // Attachments (#17 + addendum): 📎 picker and image paste both queue pending
   // chips above the input; the next send carries them as images[]
   wireAttachments()
+}
+
+// wireServerEval subscribes the action dispatcher to the input_action SSE channel
+// (feat/server-side-eval). It is always wired but inert unless serverEvalEnabled
+// is on, because the server relay returns {disabled:true} and never emits actions
+// while the flag is off. The resync callback re-POSTs the CURRENT buffer so the
+// server recomputes on fresh text — the self-correcting loop for stale actions.
+export function wireServerEval(onSse: (event: string, handler: (data: any) => void) => void) {
+  const resync = (reason: string) => {
+    // Bump the version first so the resync POST carries the freshest token, then
+    // send immediately (no settle debounce — we already know the text is current).
+    bumpInputVersion()
+    scheduleEval(() => inputEl.value, evalCtx, true, reason)
+  }
+  onSse('input_action', (env: ActionEnvelope) => {
+    if (!getSettings().serverEvalEnabled) return   // flag off — ignore any late events
+    try { applyEnvelope(env, resync) } catch { /* an action must never break input */ }
+  })
 }
 
 function send() {
