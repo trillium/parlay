@@ -53,9 +53,11 @@ export const CSS_THREAD = `
   #pa-input {
     width:100%;background:var(--pa-surf2);border:1px solid var(--pa-border);color:var(--pa-body);
     border-radius:7px;padding:8px 52px 8px 11px;font-size:13px;font-family:var(--pa-sans);
-    line-height:1.5;resize:none;min-height:38px;max-height:140px;outline:none;
-    transition:border-color .15s;box-sizing:border-box;
+    line-height:1.5;resize:none;min-height:38px !important;max-height:140px;outline:none;
+    transition:border-color .15s;box-sizing:border-box !important;
   }
+  #pa-input-area { min-height:62px !important; }
+  #pa-input-row  { min-height:38px !important; }
   #pa-input:focus { border-color: color-mix(in srgb,var(--pa-blue) 50%,transparent); }
   #pa-input::placeholder { color:var(--pa-muted);opacity:.5; }
   #pa-send {
