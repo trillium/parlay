@@ -45,16 +45,68 @@ func TestVoiceGate(t *testing.T) {
 	}
 }
 
-func TestClearAnywhere(t *testing.T) {
-	e := NewEngine()
-	// anywhere mode: phrase anywhere clears the whole box.
-	r := eval(e, "please change inside in input now", 1, nil)
-	if r.Fired != "clear" {
-		t.Fatalf("expected clear to fire, got %q (verbs %v)", r.Fired, verbs(r))
+func TestClearTrailing(t *testing.T) {
+	// TRAILING-match (robots-41w clear half): a clear phrase clears the WHOLE box
+	// ONLY when it is at the very END of the buffer. A phrase in the middle does
+	// NOTHING. A phrase that IS the whole buffer counts as trailing (it's at the
+	// end). Both phrases; case/punctuation tolerant.
+	cases := []struct {
+		name      string
+		text      string
+		wantClear bool
+	}{
+		// "change inside input" — the natural phrasing.
+		{"natural trailing", "hello world change inside input", true},
+		{"natural non-trailing", "change inside input hello", false},
+		{"natural whole box", "change inside input", true},
+		{"natural mid buffer", "please change inside input then more", false},
+		// "change inside in input" — the "in input" variant.
+		{"variant trailing", "hello world change inside in input", true},
+		{"variant non-trailing", "change inside in input hello", false},
+		{"variant whole box", "change inside in input", true},
+		{"variant mid buffer", "please change inside in input now", false},
+		// Case + trailing-punctuation tolerance (still trailing).
+		{"upper + punct", "CHANGE INSIDE INPUT!!!", true},
+		{"trailing with comma", "reset it, change inside input,", true},
+		// Negative: no clear phrase → must not clear.
+		{"plain text", "just some normal text here", false},
+		{"near phrase not exact", "change the input box please", false},
+		{"empty", "", false},
 	}
-	if !hasVerb(r, "clear") {
-		t.Fatalf("clear command must emit a clear action; got %v", verbs(r))
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := NewEngine()
+			r := eval(e, c.text, 1, nil)
+			gotClear := r.Fired == "clear" && hasVerb(r, "clear")
+			if gotClear != c.wantClear {
+				t.Fatalf("text %q: got clear=%v (fired=%q verbs=%v), want clear=%v",
+					c.text, gotClear, r.Fired, verbs(r), c.wantClear)
+			}
+		})
 	}
+}
+
+func TestBothClearPhrasesRegistered(t *testing.T) {
+	// Guard against regressing to a single hardcoded phrase: BOTH clear phrases
+	// must be present in the clear command spec.
+	for _, spec := range builtins {
+		if spec.id != "clear" {
+			continue
+		}
+		want := map[string]bool{"change inside input": false, "change inside in input": false}
+		for _, p := range spec.phrases {
+			if _, ok := want[p]; ok {
+				want[p] = true
+			}
+		}
+		for phrase, present := range want {
+			if !present {
+				t.Fatalf("clear spec missing required phrase %q; have %v", phrase, spec.phrases)
+			}
+		}
+		return
+	}
+	t.Fatalf("no clear command found in builtins")
 }
 
 func TestSwitchTabResolvesAgent(t *testing.T) {

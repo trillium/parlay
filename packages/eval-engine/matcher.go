@@ -19,10 +19,11 @@ import (
 //  1. Go's regexp is RE2 — it has NO lookahead. The JS `anywhere` mode used a
 //     trailing lookahead `(?=$|BOUND)` so it would not consume the boundary.
 //     RE2 rejects that. Here `anywhere` consumes a trailing boundary instead
-//     `(?:$|BOUND)`. For the ONE anywhere-mode command (`clear`) the action only
-//     cares WHETHER it matched (it empties the whole box), so consuming vs.
-//     asserting the trailing boundary is behaviourally identical. Documented so
-//     nobody "fixes" it back into a lookahead RE2 can't compile.
+//     `(?:$|BOUND)`. No built-in currently ships in anywhere mode (`clear` is
+//     trailing), but a user may rebind a command to it via settings, and for a
+//     whole-box-clearing action consuming vs. asserting the boundary is
+//     behaviourally identical. Documented so nobody "fixes" it back into a
+//     lookahead RE2 can't compile.
 //
 //  2. Named captures use RE2 syntax `(?P<name>...)` instead of JS `(?<name>...)`.
 //
@@ -85,7 +86,10 @@ func modeRegex(core string, mode MatchMode) *regexp.Regexp {
 	var pat string
 	switch mode {
 	case ModeTrailing:
-		pat = `(?i)\s+(` + core + `)[.!?,;]*\s*$`
+		// Leading anchor `(?:^|\s+)` so a phrase that IS the whole buffer counts as
+		// trailing too — required by `clear` ("change inside input" alone must
+		// clear). Safe for submit (empty-strip guard) and stop-speech (empty set).
+		pat = `(?i)(?:^|\s+)(` + core + `)[.!?,;]*\s*$`
 	case ModeAnywhere:
 		// RE2 has no lookahead; consume the trailing boundary (see note 1).
 		pat = `(?i)(?:^|` + bound + `)(` + core + `)(?:$|` + bound + `)`

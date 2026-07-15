@@ -43,7 +43,12 @@ export function phraseCore(phrase: string): string {
 
 function modeRegex(core: string, mode: MatchMode): RegExp {
   switch (mode) {
-    case 'trailing': return new RegExp(`\\s+(${core})[.!?,;]*\\s*$`, 'i')
+    // trailing: phrase at the very END of the buffer. Leading anchor is
+    // `(?:^|\s+)` so a phrase that IS the whole buffer counts as trailing too —
+    // required by `clear` ("change inside input" alone must clear). Safe for the
+    // other trailing commands: submit's empty-strip guard skips an empty send,
+    // and stop-speech's strip to '' is harmless.
+    case 'trailing': return new RegExp(`(?:^|\\s+)(${core})[.!?,;]*\\s*$`, 'i')
     case 'anywhere': return new RegExp(`(?:^|${BOUND})(${core})(?=$|${BOUND})`, 'i')
     case 'whole':    return new RegExp(`^\\s*(${core})[.!?,;]*\\s*$`, 'i')
   }
