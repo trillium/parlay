@@ -86,29 +86,29 @@ global feed or environments without the relay running.
 
 ## Footprint & scaling math
 
-Measured on this machine (`ps -o rss=`, macOS arm64):
+Measured on this machine (`ps -o rss=`, macOS arm64, live server on :31337):
 
 | Component            | RSS (per process) | Instances |
 |----------------------|-------------------|-----------|
-| **relay** (Go)       | ~11 MB            | **1** (total) |
-| **monitor** (`tail -F`) | ~1.2 MB        | N (one per agent) |
-| old `parlay monitor` (bun) | ~40 MB      | N (one per agent) |
+| **relay** (Go)       | ~13.6 MB          | **1** (total) |
+| **monitor** (`tail -F`) | 1.17 MB (1200 KB) | N (one per agent) |
+| old `parlay monitor` (bun) | 33.8 MB     | N (one per agent) |
 
 For N agents:
 
 ```
-old:  N × 40 MB                       = 40N MB
-new:  11 MB (relay) + N × 1.2 MB       = 11 + 1.2N MB
+old:  N × 33.8 MB                        = 33.8N MB
+new:  13.6 MB (relay) + N × 1.17 MB       = 13.6 + 1.17N MB
 ```
 
 | N agents | old (bun) | new (relay+tail) | saved |
 |---------:|----------:|-----------------:|------:|
-| 1  | 40 MB  | 12.2 MB  | ~28 MB |
-| 3  | 120 MB | 14.6 MB  | ~105 MB |
-| 5  | 200 MB | 17 MB    | ~183 MB |
-| 10 | 400 MB | 23 MB    | ~377 MB |
+| 1  | 33.8 MB  | 14.8 MB  | ~19 MB  |
+| 3  | 101 MB   | 17.1 MB  | ~84 MB  |
+| 5  | 169 MB   | 19.5 MB  | ~150 MB |
+| 10 | 338 MB   | 25.3 MB  | ~313 MB |
 
-Crossover is immediate: even at N=1 the new split uses roughly a third of the old
-memory, and the per-agent marginal cost drops from 40 MB to 1.2 MB. Replace the
-table's measured numbers with the live `ps` readings from your machine — the
-relay/monitor RSS is reported at build time and by `parlay monitor` startup.
+Crossover is at N=2 (the fixed relay cost is paid back once two agents share it);
+from N=3 on the savings widen fast. The per-agent **marginal** cost is the real
+win: 1.17 MB instead of 33.8 MB — a ~29× reduction per additional agent. The
+relay's fixed cost is amortized across the whole fleet.
