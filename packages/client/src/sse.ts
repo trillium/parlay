@@ -7,7 +7,8 @@ import {
   reconnectDelay, setChannelStatuses,
 } from './state'
 import { connBanner, dot, drawer, badge, inputEl } from './dom'
-import { appendMsg, loadHistory as loadHistoryFn, setThinking, insertLavishCard, markMsgReceived } from './thread'
+import { appendMsg, loadHistory as loadHistoryFn, setThinking, markMsgReceived } from './thread'
+import { insertLavishCard } from './thread-lavish'
 import { draftClientId, lastSendTs } from './input'
 import { navigateWorkspace } from './commands/ctx'
 import { renderTabs } from './tabs'
