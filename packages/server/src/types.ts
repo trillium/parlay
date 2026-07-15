@@ -21,6 +21,7 @@ export interface ChatMessage {
   meta?:   Record<string, unknown>       // system_update: attribution (e.g. session_id) for future tab mapping
   images?: string[]                      // attached image URLs (uploads or agent-provided), rendered inline
   from?:   string                        // user-role sender attribution (#19): relay/intake senders; absent = the captain
+  received?: boolean                     // delivery status of a user message: false=queued, true=agent polled it. Runtime-only, stripped from disk.
 }
 
 export interface AgentInfo {

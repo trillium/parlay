@@ -6,6 +6,7 @@ import { msgInView, switchChannel } from './tabs'
 import { annotateMessage } from './annotation'
 import { navigateWorkspace } from './commands/ctx'
 import { blocksHtml } from './speech-highlight'
+import { imagesHtml } from './thread-images'
 
 // ── Think indicator ───────────────────────────────────────────────────────────
 
@@ -36,25 +37,6 @@ export function setThinking(on: boolean) {
   dot.className = 'pa-dot' + (on ? ' thinking' : '')
   sub.textContent = on ? ' · thinking…' : (name ? ` · ${name}` : '')
   if (on) addThinkEl(); else rmThinkEl()
-}
-
-// ── Inline images (#17) ───────────────────────────────────────────────────────
-// Renders m.images[] plus any image URLs found in the text, for both roles.
-// Thumbnails lazy-load, cap at 240px, tap opens full-size in a new tab.
-
-const IMG_URL_RE = /(?:https?:\/\/[^\s"'<>]+|\/[^\s"'<>]+)\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"'<>]*)?/gi
-
-function imagesHtml(m: any): string {
-  const fromText: string[] = String(m.text ?? '').match(IMG_URL_RE) ?? []
-  const urls = [...new Set([...(Array.isArray(m.images) ? m.images : []), ...fromText])]
-    .filter(u => /^(https?:\/\/|\/)/.test(u)).slice(0, 8)
-  if (!urls.length) return ''
-  const a = (u: string) => esc(u).replace(/"/g, '%22')
-  // No anchor: taps open the shared lightbox (delegated in lightbox.ts);
-  // long-press/context menu still offers new-tab natively (#17 amendment)
-  return `<div class="pa-imgs">${urls.map(u =>
-    `<img class="pa-img" loading="lazy" src="${a(u)}" alt="attachment">`
-  ).join('')}</div>`
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────────
@@ -154,10 +136,15 @@ export function _appendMsgEl(m: any) {
     // Sender attribution (#19): user-role messages carrying `from` (intake
     // relays, friends) render with that name + neutral initials — never as YOU
     const from = typeof m.from === 'string' && m.from.trim() ? m.from.trim() : null
+    // Delivery status pip (only when the server tracked it — historical messages
+    // have no `received` field → no pip). queued = ◌, received = ✓.
+    const statusPip = typeof m.received === 'boolean'
+      ? `<span class="pa-msg-status ${m.received ? 'received' : 'queued'}" title="${m.received ? 'Received by agent' : 'Queued — agent is busy'}">${m.received ? '✓' : '◌'}</span>`
+      : ''
     el.innerHTML = `
       <div class="pa-av user${from ? ' pa-av-guest' : ''}">${from ? esc(from.slice(0, 2).toUpperCase()) : 'YOU'}</div>
       <div class="pa-bc">
-        <div class="pa-meta"><span class="pa-meta-n">${from ? esc(from) : 'You'}</span><span>${fmtTime(m.ts)}</span></div>
+        <div class="pa-meta"><span class="pa-meta-n">${from ? esc(from) : 'You'}</span><span>${fmtTime(m.ts)}</span>${statusPip}</div>
         <div class="pa-bubble user${from ? ' pa-bubble-guest' : ''}">${linkify(esc(m.text))}</div>${imagesHtml(m)}
       </div>`
   }
@@ -182,6 +169,15 @@ export function _appendMsgEl(m: any) {
 export function appendMsg(m: any) {
   emptyEl.style.display = 'none'
   _appendMsgEl(m)
+}
+
+// Flip a user message's delivery pip queued → received (server SSE ack). Updates
+// both the live DOM pip and the cached msg so a re-render keeps the state.
+export function markMsgReceived(id: string) {
+  const cached = msgs.find((m: any) => m.id === id)
+  if (cached) (cached as any).received = true
+  const pip = thread.querySelector(`[data-pa-id="${id}"] .pa-msg-status`)
+  if (pip) { pip.textContent = '✓'; pip.className = 'pa-msg-status received'; (pip as HTMLElement).title = 'Received by agent' }
 }
 
 export function renderThread() {
