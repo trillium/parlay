@@ -3,4 +3,4 @@
 // The captain reads this off the left edge of the panel to know at a glance
 // which build he is looking at (kills the "did my PWA refresh take?" problem).
 // 2.0.0 = the 2026-07-13 redesign era (per-agent tabs, presence, device scoping).
-export const PA_VERSION = '3.9.1'
+export const PA_VERSION = '3.10.0'

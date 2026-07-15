@@ -75,7 +75,10 @@ function rotateHistoryIfNeeded() {
 
 export function persistMessage(msg: ChatMessage) {
   try {
-    appendFileSync(HISTORY_FILE, JSON.stringify(msg) + "\n", "utf8")
+    // `received` is runtime delivery state — never persist it, so reloaded
+    // history isn't stuck showing "queued" for messages long since delivered.
+    const { received, ...persistable } = msg
+    appendFileSync(HISTORY_FILE, JSON.stringify(persistable) + "\n", "utf8")
     rotateHistoryIfNeeded()
   } catch { /* best-effort */ }
 }

@@ -27,6 +27,9 @@ export const CSS_THREAD = `
   .pa-meta { font-family: var(--pa-mono); font-size: 9px; color: var(--pa-muted); padding: 0 4px; display: flex; gap: 5px; align-items: baseline; }
   .pa-meta-n { font-weight: 600; }
   .pa-meta-id { font-size: 8px; opacity: .45; font-weight: 400; }
+  .pa-msg-status { font-size: 10px; line-height: 1; margin-left: 1px; }
+  .pa-msg-status.queued { color: var(--pa-amber); opacity: .7; }
+  .pa-msg-status.received { color: var(--pa-green); }
   .pa-bubble { padding: 9px 12px; font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
   .pa-bubble.agent {
     background: color-mix(in srgb,var(--pa-green) 7%,var(--pa-surf2));

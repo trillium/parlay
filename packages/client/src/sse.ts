@@ -7,7 +7,7 @@ import {
   reconnectDelay, setChannelStatuses,
 } from './state'
 import { connBanner, dot, drawer, badge, inputEl } from './dom'
-import { appendMsg, loadHistory as loadHistoryFn, setThinking, insertLavishCard } from './thread'
+import { appendMsg, loadHistory as loadHistoryFn, setThinking, insertLavishCard, markMsgReceived } from './thread'
 import { draftClientId, lastSendTs } from './input'
 import { navigateWorkspace } from './commands/ctx'
 import { renderTabs } from './tabs'
@@ -168,6 +168,11 @@ export function connect() {
         }
       }
     }
+  })
+
+  // Delivery ack: the agent polled a queued message → flip its pip to received.
+  es.addEventListener('message_received', (e: MessageEvent) => {
+    try { markMsgReceived(JSON.parse(e.data).id) } catch {}
   })
 
   es.addEventListener('presence', (e: MessageEvent) => {

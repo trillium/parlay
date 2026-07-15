@@ -59,6 +59,9 @@ export function addMessage(role: "user" | "agent", text: string, channel?: strin
     ...(channel ? { channel } : {}),
     ...(extra ?? {}),
   }
+  // A fresh user message starts "queued" — no agent has polled it yet. Set before
+  // the broadcast so the SSE echo carries the initial state (no client race).
+  if (role === "user") msg.received = false
   pushToHistory(msg)
   persistMessage(msg)
   broadcastToClients("message", msg)
@@ -69,8 +72,18 @@ export function addMessage(role: "user" | "agent", text: string, channel?: strin
       const [waiter] = pollWaiters.splice(idx, 1)
       clearTimeout(waiter.timer)
       waiter.resolve(msg)
+      // The agent had a waiter parked → it receives this immediately. Flip the
+      // delivery status so the panel shows queued → received.
+      markReceived(msg)
       if (pollWaiters.length === 0) setAgentPresence(false)
     }
   }
   return msg
+}
+
+// Mark a user message as delivered to its agent and tell the panel. Idempotent.
+export function markReceived(msg: ChatMessage): void {
+  if (msg.role !== "user" || msg.received === true) return
+  msg.received = true
+  broadcastToClients("message_received", { id: msg.id, ...(msg.channel ? { channel: msg.channel } : {}) })
 }

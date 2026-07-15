@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import { history, historyIndex, rebuildHistoryIndex, currentDraft, saveDraftToDisk } from "./storage"
 import { sseClients, agents, agentActive, pollWaiters, setAgentPresence, CORS, sseEvent, broadcastToClients, broadcastToDevice, lastPollByChannel, computePresenceMap, broadcastPresenceMap, persistAgents } from "./sse"
 import { handleMessagesRequest } from "./router-messages"
+import { markReceived } from "./messages"
 import { handleParlaySettings } from "./parlay-settings"
 import { handleTTSRequest } from "./tts"
 import { handleUploadRequest } from "./uploads"
@@ -200,6 +201,9 @@ export function handleChatRequest(req: Request, pathname: string): Response | Pr
       m.role === "user" && (channel ? m.channel === channel : !m.channel)
     )
     if (pending.length > 0) {
+      // The agent polled and is taking this message now → mark it delivered so
+      // the panel flips queued → received (agent was mid-turn when it was sent).
+      markReceived(pending[0])
       return new Response(JSON.stringify(pending[0]), {
         headers: { "Content-Type": "application/json", ...CORS },
       })
