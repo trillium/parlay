@@ -106,6 +106,11 @@ export async function commitSettings() {
     voiceStopPhrase:    (document.getElementById('pa-settings-stop-phrase') as HTMLInputElement | null)?.value.trim() ?? 'spoken pause',
     hybridVoice:        (document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement | null)?.checked ?? false,
     textScale,
+    // feat/server-side-eval: these two are not surfaced in the modal — they are
+    // managed via the settings JSON / flag toggle. Carry the current values
+    // through so a modal save never clobbers them.
+    serverEvalEnabled:  getSettings().serverEvalEnabled ?? false,
+    voiceSettleMs:      getSettings().voiceSettleMs ?? 450,
   }
   applySettings(next)
   await saveSettings(next)
