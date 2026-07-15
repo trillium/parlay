@@ -35,7 +35,14 @@ function persist(): void {
 
 export function recordSessionChannel(sessionId: string | undefined, channel: string | undefined): void {
   if (!sessionId || !channel) return
-  if (sessionChannel.get(sessionId) === channel) return
+  // STICKY identity (first-enrollment-wins). A session's agent identity is set
+  // at spawn — its first `parlay monitor --agent X`. Later monitors of OTHER
+  // channels are that agent WATCHING others (relay/orchestration), NOT it
+  // becoming them; letting those overwrite mis-scoped one agent's turns onto
+  // another's tab (e.g. firstmate's turns landing on edgar after it monitored
+  // edgar). So never overwrite an existing mapping with a different channel.
+  const existing = sessionChannel.get(sessionId)
+  if (existing) return
   sessionChannel.set(sessionId, channel)
   persist()
 }
