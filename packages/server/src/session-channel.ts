@@ -77,7 +77,8 @@ export function backfillFromToolActivity(): void {
       if (!line || line.indexOf("parlay monitor") === -1) continue
       try {
         const ev = JSON.parse(line)
-        const ch = parseEnrollmentChannel(`${ev.tool_input_preview ?? ""} ${ev.ground_truth?.command ?? ""}`)
+        if (ev.tool_name !== "Monitor") continue   // real enrollments only, not ps/grep mentions
+        const ch = parseEnrollmentChannel(ev.tool_input_preview)
         if (ch) recordSessionChannel(ev.session_id, ch)   // last enrollment wins for a session
       } catch { /* skip partial first line / malformed */ }
     }

@@ -34,12 +34,15 @@ export function startToolEventTailer() {
           const ev   = JSON.parse(line)
           const gt   = ev.ground_truth ?? {}
           const inp  = ev.tool_input_preview ? (() => { try { return JSON.parse(ev.tool_input_preview) } catch { return {} } })() : {}
-          // Learn session → channel from the agent's own enrollment command
-          // before attributing this (or any later) event. Check both the raw
-          // input preview and the resolved command so Monitor- and Bash-started
-          // monitors are both caught.
-          const enrolled = parseEnrollmentChannel(`${ev.tool_input_preview ?? ""} ${gt.command ?? ""}`)
-          if (enrolled) recordSessionChannel(ev.session_id, enrolled)
+          // Learn session → channel from the agent's own enrollment BEFORE
+          // attributing this (or any later) event. Enrollment is armed through
+          // the Monitor tool (the pulse-agent contract), so only Monitor events
+          // count — a Bash line that merely mentions `parlay monitor --agent x`
+          // (ps/grep/kill housekeeping) must never remap a session.
+          if (ev.tool_name === "Monitor") {
+            const enrolled = parseEnrollmentChannel(ev.tool_input_preview)
+            if (enrolled) recordSessionChannel(ev.session_id, enrolled)
+          }
           const desc = gt.description ?? inp.description ?? inp.file_path ?? inp.url ?? ""
           const cmd  = (gt.command ?? "").slice(0, 140)
           const out  = (gt.stdout_preview ?? "").slice(0, 280)
