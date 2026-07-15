@@ -136,6 +136,20 @@ export const CSS_FEATURES = `
   .pa-sysline-src::before { content: '⚙ '; }
   .pa-sysline-ts { float: right; margin-left: 7px; font-size: 8px; opacity: .7; }
   .pa-sysline-text { display: block; word-break: break-word; white-space: pre-wrap; }
+  /* Code-aware rendering (rich-text.ts): fenced blocks scroll horizontally so a
+     long line never widens the panel; inline code gets a subtle chip. */
+  .pa-code {
+    display: block; margin: 4px 0; padding: 7px 9px;
+    background: var(--pa-ink); border: 1px solid var(--pa-border); border-radius: 5px;
+    overflow-x: auto; white-space: pre; word-break: normal;
+    font-family: var(--pa-mono); font-size: 10px; line-height: 1.5; color: var(--pa-body); opacity: .95;
+  }
+  .pa-code code { font-family: inherit; }
+  .pa-code-inline {
+    font-family: var(--pa-mono); font-size: .92em;
+    background: color-mix(in srgb, var(--pa-body) 9%, transparent);
+    border: 1px solid var(--pa-border); border-radius: 3px; padding: 0 3px;
+  }
   /* Captain's messages clamp by default; tap to expand */
   .pa-bubble.pa-clamped { max-height: 76px; overflow: hidden; position: relative; cursor: pointer; }
   .pa-bubble.pa-clamped::after {
