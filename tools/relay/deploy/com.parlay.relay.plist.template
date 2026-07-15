@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for the Parlay relay (com.parlay.relay).
+
+  This is a TEMPLATE. install.sh substitutes the __TOKENS__ with resolved
+  absolute paths and writes the result to
+    ~/Library/LaunchAgents/com.parlay.relay.plist
+  because launchd plists cannot reference $HOME or expand env vars in paths.
+
+  RunAtLoad  -> starts at login.
+  KeepAlive  -> launchd restarts it on any exit (crash or kill), so the relay is
+                always available for new `parlay monitor` enrollments.
+
+  It runs the launcher (__LAUNCHER__), which resolves the per-user runtime dir and
+  execs the binary with an explicit -runtime-dir. stdout/stderr go to stable log
+  files under ~/Library/Logs/parlay so a crash trail survives a runtime-dir wipe.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__LAUNCHER__</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PARLAY_SERVER</key>
+    <string>__SERVER__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- If the relay ever crash-loops on startup, back off instead of spinning. -->
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__OUT_LOG__</string>
+
+  <key>StandardErrorPath</key>
+  <string>__ERR_LOG__</string>
+</dict>
+</plist>
