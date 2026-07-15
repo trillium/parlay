@@ -1,7 +1,7 @@
 // CSS part 2: thread, messages, bubbles, thinking indicator, input, connection banner
 export const CSS_THREAD = `
   #pa-thread {
-    flex: 1; overflow-y: auto; padding: 16px 14px 10px;
+    flex: 1; overflow-y: auto; padding: 16px 14px 56px;
     display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth;
   }
   #pa-thread::-webkit-scrollbar { width: 3px; }
