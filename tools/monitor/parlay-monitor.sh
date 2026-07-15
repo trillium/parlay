@@ -57,9 +57,28 @@ RUNTIME="${RUNTIME%/}"
 SOCK="${PARLAY_RELAY_SOCK:-$RUNTIME/relay.sock}"
 SPOOL="$RUNTIME/$AGENT.chan"
 
-if [ ! -S "$SOCK" ]; then
+# Ensure a relay is up before enrolling, so a monitor never dead-ends on a
+# missing relay. ensure-up is idempotent and concurrency-safe: it no-ops if the
+# relay already answers /health, otherwise it starts it (launchd if installed,
+# else the binary) and waits for /health. It respects PARLAY_RELAY_RUNTIME/SOCK
+# via the same lib resolution, and honors PARLAY_SERVER for the started relay.
+ENSURE_UP="$(cd "$(dirname "$0")" && pwd)/../relay/deploy/ensure-up.sh"
+if [ -x "$ENSURE_UP" ]; then
+  if ! "$ENSURE_UP"; then
+    echo "parlay-monitor: relay is not up and could not be started" >&2
+    echo "parlay-monitor: install the relay (tools/relay/deploy/install.sh) or start it manually" >&2
+    exit 1
+  fi
+elif [ ! -S "$SOCK" ]; then
+  # ensure-up missing (older checkout): fall back to the original hard requirement.
   echo "parlay-monitor: relay control socket not found at $SOCK" >&2
   echo "parlay-monitor: start the relay first (tools/relay/parlay-relay)" >&2
+  exit 1
+fi
+
+# After ensure-up, the socket must exist. Guard so the enroll below has a target.
+if [ ! -S "$SOCK" ]; then
+  echo "parlay-monitor: relay control socket still not found at $SOCK after ensure-up" >&2
   exit 1
 fi
 
