@@ -5,59 +5,54 @@ import (
 	"testing"
 )
 
-// TestInterpreterMatchesRunAction is the equivalence oracle for Step 1/2: for every
-// builtin command and a battery of representative inputs (including the resolve-miss
-// fall-through paths), the manifest interpreter must produce the EXACT same
-// (handled, []Action) result the hand-written runAction switch produces. Once this
-// passes, each runAction case can be deleted knowing the data path is proven equal.
+// TestInterpreterGoldenActions pins the manifest interpreter's output for every
+// builtin sequence command to the exact []Action the action constructors build —
+// the same actionList the deleted runAction switch produced. The `want` lists use
+// the verb constructors directly, so this asserts the interpreter maps each
+// command's declarative emit onto the right verbs and args (including the
+// resolve-miss fall-through paths that emit nothing).
 //
-// submit is excluded here — it is a stateful handler (emit.kind=="handler"), not a
-// sequence; its equivalence is covered by the engine-level submit tests.
-func TestInterpreterMatchesRunAction(t *testing.T) {
+// submit is excluded — it is a stateful handler, exercised by the engine-level
+// submit tests (TestSubmitArmsServerTimer, TestSubmitFiresServerSideAndCallsBack).
+func TestInterpreterGoldenActions(t *testing.T) {
 	man := embeddedManifest()
 	manByID := map[string]CommandManifest{}
 	for _, c := range man.Commands {
 		manByID[c.ID] = c
 	}
-	specByID := map[string]commandSpec{}
-	for _, s := range builtins {
-		specByID[s.id] = s
-	}
 
 	tabs := []Tab{{ID: "marcus", Name: "Marcus Webb"}, {ID: "cato", Name: "Cato"}}
+	ptabs := pickerTabs()
 
 	cases := []struct {
-		name string
-		id   string
-		text string
-		tabs []Tab
+		name    string
+		id      string
+		text    string
+		tabs    []Tab
+		want    []Action
+		handled bool
 	}{
-		{"clear natural trailing", "clear", "hello world change inside input", nil},
-		{"clear variant whole", "clear", "change inside in input", nil},
-		{"clear upper punct", "clear", "CHANGE INSIDE INPUT!!!", nil},
-		{"stop-speech strips tail", "stop-speech", "quiet down spoken pause", nil},
-		{"stop-speech strips to empty", "stop-speech", "spoken pause", nil},
-		{"flag-speech plain", "flag-speech", "flag speech", nil},
-		{"flag-speech comma sep", "flag-speech", "flag, speech", nil},
-		{"switch-tab hit", "switch-tab", "switch to marcus", tabs},
-		{"switch-tab miss fallthrough", "switch-tab", "switch to nobody", tabs},
-		{"switch-tab go-to hit", "switch-tab", "go to cato", tabs},
-		{"archive-tab hit", "archive-tab", "archive marcus", tabs},
-		{"archive-tab miss fallthrough", "archive-tab", "archive nobody", tabs},
-		{"channel-list", "channel-list", "channel list", pickerTabs()},
-		{"channel-list nicknames", "channel-list", "list channels", pickerTabs()},
-		{"next-tab", "next-tab", "next tab", nil},
-		{"prev-tab", "prev-tab", "previous agent", nil},
-		{"go-to-page multiword", "go-to-page", "open my dashboard", nil},
-		{"go-to-page single", "go-to-page", "workspace status", nil},
+		{"clear natural trailing", "clear", "hello world change inside input", nil, []Action{actClear()}, true},
+		{"clear variant whole", "clear", "change inside in input", nil, []Action{actClear()}, true},
+		{"clear upper punct", "clear", "CHANGE INSIDE INPUT!!!", nil, []Action{actClear()}, true},
+		{"stop-speech strips tail", "stop-speech", "quiet down spoken pause", nil, []Action{actStopSpeech(), actSetText("quiet down")}, true},
+		{"stop-speech strips to empty", "stop-speech", "spoken pause", nil, []Action{actStopSpeech(), actSetText("")}, true},
+		{"flag-speech plain", "flag-speech", "flag speech", nil, []Action{actFlagSpeech(), actClear()}, true},
+		{"flag-speech comma sep", "flag-speech", "flag, speech", nil, []Action{actFlagSpeech(), actClear()}, true},
+		{"switch-tab hit", "switch-tab", "switch to marcus", tabs, []Action{actSwitchTab("marcus"), actClear()}, true},
+		{"switch-tab miss fallthrough", "switch-tab", "switch to nobody", tabs, nil, false},
+		{"switch-tab go-to hit", "switch-tab", "go to cato", tabs, []Action{actSwitchTab("cato"), actClear()}, true},
+		{"archive-tab hit", "archive-tab", "archive marcus", tabs, []Action{actArchiveTab("marcus"), actClear()}, true},
+		{"archive-tab miss fallthrough", "archive-tab", "archive nobody", tabs, nil, false},
+		{"channel-list", "channel-list", "channel list", ptabs, []Action{actOpenChannelPicker(pickerPrompt, buildPickerChannels(ptabs)), actClear()}, true},
+		{"next-tab", "next-tab", "next tab", nil, []Action{actNextTab(), actClear()}, true},
+		{"prev-tab", "prev-tab", "previous agent", nil, []Action{actPrevTab(), actClear()}, true},
+		{"go-to-page multiword", "go-to-page", "open my dashboard", nil, []Action{actNavigate("/my-dashboard/"), actClear()}, true},
+		{"go-to-page single", "go-to-page", "workspace status", nil, []Action{actNavigate("/status/"), actClear()}, true},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			spec, ok := specByID[c.id]
-			if !ok {
-				t.Fatalf("no builtin spec for %q", c.id)
-			}
 			cmd, ok := manByID[c.id]
 			if !ok {
 				t.Fatalf("no manifest command for %q", c.id)
@@ -65,25 +60,19 @@ func TestInterpreterMatchesRunAction(t *testing.T) {
 			if cmd.Emit.Kind != "sequence" {
 				t.Fatalf("%q is not a sequence command", c.id)
 			}
-
-			// Match using the command's phrases (spec and manifest share phrases).
-			m := firstMatch(compilePhrases(spec.phrases, spec.mode), c.text)
+			m := firstMatch(compilePhrases(cmd.Phrases, MatchMode(cmd.Mode)), c.text)
 			if m == nil {
 				t.Fatalf("input %q did not match any %q phrase", c.text, c.id)
 			}
 
-			var oldOut actionList
-			handledOld := runAction(spec, m, c.tabs, &oldOut)
+			var out actionList
+			handled := (&Engine{}).interpretSequence(&cmd.Emit, m, MatchMode(cmd.Mode), c.tabs, &out)
 
-			var newOut actionList
-			handledNew := (&Engine{}).interpretSequence(&cmd.Emit, m, spec.mode, c.tabs, &newOut)
-
-			if handledOld != handledNew {
-				t.Fatalf("handled mismatch: runAction=%v interpreter=%v", handledOld, handledNew)
+			if handled != c.handled {
+				t.Fatalf("handled = %v, want %v", handled, c.handled)
 			}
-			if !reflect.DeepEqual(oldOut.items, newOut.items) {
-				t.Fatalf("action mismatch for %q %q:\n runAction=%+v\n interp   =%+v",
-					c.id, c.text, oldOut.items, newOut.items)
+			if !reflect.DeepEqual(out.items, c.want) {
+				t.Fatalf("actions for %q %q:\n got  %+v\n want %+v", c.id, c.text, out.items, c.want)
 			}
 		})
 	}
