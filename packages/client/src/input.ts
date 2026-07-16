@@ -145,6 +145,14 @@ export async function sendMsg(text: string, images?: string[]) {
 // server-side {agent} resolution), the device id, the stream id, the voice gate,
 // and the voice-settle tuning knob. Read fresh each schedule so a settings change
 // takes effect without a reload.
+
+// Per-page-load epoch: ensures each fresh page gets a new stream ID in the Go
+// engine so its version counter starts at 0. Without this, a page refresh resets
+// inputVersion to 0 while the engine still has lastVersion=N from the prior
+// session, causing every eval to be dropped as stale (engine fast-returns noop
+// in <1µs, serverOwnedFires stays 0, voice submit never works).
+const _evalPageEpoch: string = (crypto as any).randomUUID?.() ?? `e-${Date.now()}`
+
 function evalCtx() {
   const s = getSettings()
   const device = (window as any).__paDeviceId as string ?? 'unknown'
@@ -153,7 +161,7 @@ function evalCtx() {
     settleMs: typeof s.voiceSettleMs === 'number' ? s.voiceSettleMs : 450,
     tabs: [...agentInfo.values()].map(a => ({ id: a.id, name: a.name })),
     device,
-    streamId: `eval-${device}-main`,
+    streamId: `eval-${device}-${_evalPageEpoch}`,
   }
 }
 
