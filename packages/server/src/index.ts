@@ -1,5 +1,6 @@
 import { serve } from "bun"
 import { handleChatRequest } from "./router"
+import { handleDebugRequest } from "./router-debug"
 import { loadHistory, loadDraftFromDisk, HISTORY_DIR } from "./storage"
 import { mkdirSync } from "fs"
 
@@ -20,6 +21,8 @@ serve({
     // handleChatRequest may return a Response, a Promise<Response|null> (the
     // async server-side-eval routes), or null. await resolves the promise case;
     // a null (sync or resolved) falls through to 404.
+    const dbg = handleDebugRequest(req, url.pathname)
+    if (dbg) return dbg
     const resp = await handleChatRequest(req, url.pathname)
     return resp ?? new Response("not found", { status: 404 })
   },

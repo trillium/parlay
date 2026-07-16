@@ -3,7 +3,7 @@ import { draftSaveTimer, open, activeChannel, setDraftSaveTimer } from './state'
 import { inputEl, sendBtn } from './dom'
 import { armCompactTimer } from './sse'
 import { getSettings } from './settings-modal'
-import { runCommandPass, scheduleEval, bumpInputVersion, applyEnvelope } from './commands'
+import { scheduleEval, bumpInputVersion, applyEnvelope } from './commands'
 import type { ActionEnvelope } from './commands'
 import { agentInfo } from './state'
 import { wireAttachments, takePendingImages } from './attachments'
@@ -30,6 +30,39 @@ export function autoResize() {
 
 // Expose for draft SSE handler
 ;(window as any).__paAutoResize = autoResize
+
+// ── Input timing telemetry ────────────────────────────────────────────────────
+// Measures event-to-first-frame latency (input event → rAF) as a proxy for
+// browser responsiveness. Sampled every 5th keystroke; flushed to the server
+// in batches so the measurement itself adds no per-keystroke overhead.
+// Fire-and-forget — never awaited, never blocks typing.
+
+let _lastInputTs = 0, _sampleN = 0
+const _timingBatch: Array<{ sinceLastMs: number; costMs: number }> = []
+let _flushTimer: ReturnType<typeof setTimeout> | null = null
+
+function _flushTiming() {
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
+  if (!_timingBatch.length) return
+  const samples = _timingBatch.splice(0)
+  fetch('/api/debug/input-timing', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device: draftClientId, ua: navigator.userAgent, samples }),
+  }).catch(() => {})
+}
+
+function _sampleInput() {
+  const now = performance.now()
+  const sinceLastMs = _lastInputTs ? now - _lastInputTs : 0
+  _lastInputTs = now
+  if (++_sampleN % 5 !== 0) return   // only sample every 5th keystroke
+  const t0 = now
+  requestAnimationFrame(() => {
+    _timingBatch.push({ sinceLastMs, costMs: performance.now() - t0 })
+    if (_timingBatch.length >= 20) _flushTiming()
+    else { if (_flushTimer) clearTimeout(_flushTimer); _flushTimer = setTimeout(_flushTiming, 5000) }
+  })
+}
 
 // ── Draft sync ────────────────────────────────────────────────────────────────
 
@@ -87,25 +120,27 @@ export async function sendMsg(text: string, images?: string[]) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, ...(toAgent ? { toAgent } : {}), ...(images?.length ? { images } : {}) }),
+      // A stalled /send must never wedge the composer. On timeout the catch runs
+      // and the finally re-enables; the text stays put (only cleared on r.ok).
+      signal: AbortSignal.timeout(10_000),
     })
     if (r.ok) { lastSendTs = Date.now(); inputEl.value = ''; autoResize(); armCompactTimer(); clearDraft() }
-  } catch {}
-  sendBtn.disabled = false
-  inputEl.disabled = false
-  inputEl.focus()
+  } catch {
+    // Network error / timeout / abort — leave the text so a failed auto-submit
+    // (voice "briefly") can be retried, never silently lost.
+  } finally {
+    // ALWAYS restore interactivity. Re-enabling lived after the try/catch, not in
+    // a finally — so any non-settling /send left the send button greyed
+    // (opacity .35, :disabled) and the box unsubmittable forever. Now a stall
+    // recovers on its own. This is what wedged the voice auto-submit path once
+    // it became the ONLY submit route.
+    sendBtn.disabled = false
+    inputEl.disabled = false
+    inputEl.focus()
+  }
 }
 
-// ── Talon voice auto-submit ───────────────────────────────────────────────────
-
-function checkTalonSubmit() {
-  const s = getSettings()
-  if (!s.voiceEnabled) return
-  // Voice/text commands (submit, clear, stop-speech, tab ops, third-party) all
-  // live in the command subsystem now — see src/commands/ and COMMANDS.md.
-  runCommandPass(inputEl.value)
-}
-
-// ── Server-side eval context (feat/server-side-eval) ───────────────────────────
+// ── Server-side eval context ───────────────────────────────────────────────────
 // Builds the per-POST context the dispatcher needs: the live tab set (for
 // server-side {agent} resolution), the device id, the stream id, the voice gate,
 // and the voice-settle tuning knob. Read fresh each schedule so a settings change
@@ -124,23 +159,15 @@ function evalCtx() {
 
 // ── Wire input events ─────────────────────────────────────────────────────────
 
-let _cmdDebounce: ReturnType<typeof setTimeout> | null = null
-
 export function wireInputEvents() {
   inputEl.addEventListener('input', () => {
     autoResize()
-    if (getSettings().serverEvalEnabled) {
-      // PURE server-side mode: the client does NO local evaluation. Bump the
-      // monotonic input version (the staleness token) and schedule a voice-settle
-      // -debounced POST of the STABILIZED buffer to the compiled Go engine.
-      bumpInputVersion()
-      scheduleEval(() => inputEl.value, evalCtx, false, 'input')
-    } else {
-      // LOCAL mode (flag off) — byte-for-byte today's behavior: command pass
-      // debounced 150ms (#20), phrases arrive as dictation bursts.
-      clearTimeout(_cmdDebounce!)
-      _cmdDebounce = setTimeout(checkTalonSubmit, 150)
-    }
+    _sampleInput()
+    // PURE server-side eval: the client does NO local evaluation. Bump the
+    // monotonic input version (the staleness token) and schedule a voice-settle
+    // -debounced POST of the STABILIZED buffer to the compiled Go engine.
+    bumpInputVersion()
+    scheduleEval(() => inputEl.value, evalCtx, false, 'input')
     scheduleDraftSave()
   })
   inputEl.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -155,11 +182,9 @@ export function wireInputEvents() {
   wireAttachments()
 }
 
-// wireServerEval subscribes the action dispatcher to the input_action SSE channel
-// (feat/server-side-eval). It is always wired but inert unless serverEvalEnabled
-// is on, because the server relay returns {disabled:true} and never emits actions
-// while the flag is off. The resync callback re-POSTs the CURRENT buffer so the
-// server recomputes on fresh text — the self-correcting loop for stale actions.
+// wireServerEval subscribes the action dispatcher to the input_action SSE channel.
+// The resync callback re-POSTs the CURRENT buffer so the server recomputes on fresh
+// text — the self-correcting loop for stale actions.
 export function wireServerEval(onSse: (event: string, handler: (data: any) => void) => void) {
   const resync = (reason: string) => {
     // Bump the version first so the resync POST carries the freshest token, then
@@ -168,7 +193,6 @@ export function wireServerEval(onSse: (event: string, handler: (data: any) => vo
     scheduleEval(() => inputEl.value, evalCtx, true, reason)
   }
   onSse('input_action', (env: ActionEnvelope) => {
-    if (!getSettings().serverEvalEnabled) return   // flag off — ignore any late events
     try { applyEnvelope(env, resync) } catch { /* an action must never break input */ }
   })
 }
@@ -177,3 +201,4 @@ function send() {
   const images = takePendingImages()
   sendMsg(inputEl.value.trim(), images.length ? images : undefined)
 }
+
