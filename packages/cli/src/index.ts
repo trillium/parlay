@@ -18,6 +18,7 @@ import {
   cmdAlert,
   cmdHistory,
   cmdLavishImport,
+  cmdLaunch,
   cmdMonitor,
   cmdSend,
   cmdStatus,
@@ -40,6 +41,7 @@ async function main() {
     case "alert":         return cmdAlert(args)
     case "history":       return cmdHistory(args)
     case "monitor":       return cmdMonitor(args)
+    case "launch":        return cmdLaunch(args)
     case "lavish-import": return cmdLavishImport(args)
     case "help":
     case "--help":
