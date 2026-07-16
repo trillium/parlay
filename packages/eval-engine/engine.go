@@ -177,6 +177,19 @@ func compileManifest(man *Manifest) []compiledCommand {
 	return cmds
 }
 
+// SetCommands atomically swaps the engine's live command set from a validated
+// manifest (hot-reload). Compilation happens before the lock so the swap itself is
+// a single pointer assignment — an in-flight Eval either sees the whole old set or
+// the whole new set, never a torn mix. Callers must pass only a validated Manifest;
+// an empty set is impossible because validateManifest rejects zero commands (never
+// fall open to no commands).
+func (e *Engine) SetCommands(man *Manifest) {
+	cmds := compileManifest(man)
+	e.mu.Lock()
+	e.commands = cmds
+	e.mu.Unlock()
+}
+
 func (e *Engine) stream(id string) *streamState {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -262,7 +275,13 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 	value := req.Text
 	fired := ""
 
-	for _, cc := range e.commands {
+	// Snapshot the live command set so a concurrent hot-reload swap (SetCommands)
+	// is race-free: we iterate a stable slice for the whole pass.
+	e.mu.Lock()
+	cmds := e.commands
+	e.mu.Unlock()
+
+	for _, cc := range cmds {
 		matched := false
 		submitHandler := isSubmitHandler(cc.cmd.Emit)
 		if fired == "" {
