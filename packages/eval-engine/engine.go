@@ -24,9 +24,13 @@ const submitDelayMs = 1000 // mirrors builtins.ts:24 setTimeout(…, 1000)
 
 // Tab is one agent tab the client reports so {agent}/{page} resolution can run
 // server-side (the engine has no DOM; the client sends its live tab set).
+// Nicknames are optional spoken aliases (CHANNEL_PICKER_CONTRACT §EvalRequest);
+// they participate in resolveAgent + resolveChannelSelection matching. The array
+// may be nil/empty and the backend must tolerate that.
 type Tab struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Nicknames []string `json:"nicknames"`
 }
 
 // EvalRequest is the body of POST /eval — the versioned buffer snapshot.
@@ -38,6 +42,7 @@ type EvalRequest struct {
 	Reason       string    `json:"reason"`       // "input" | "blur" | "resync" | "timer-fire"
 	VoiceEnabled bool      `json:"voiceEnabled"` // master gate (input.ts:100 / registry.ts:91)
 	Tabs         []Tab     `json:"tabs"`         // live agent tabs for {agent} resolution
+	Mode         string    `json:"mode"`         // "" = normal eval; "channel-select" = resolve text as a channel pick
 }
 
 type CursorPos struct {
@@ -181,6 +186,15 @@ func (e *Engine) Eval(req EvalRequest) EvalResponse {
 
 	out := &actionList{}
 
+	// CHANNEL-SELECT mode (CHANNEL_PICKER_CONTRACT §Resolution). The picker input
+	// is a distinct surface with its own streamId; it BYPASSES normal command
+	// matching and the submit machine entirely, running deterministic channel
+	// resolution instead.
+	if req.Mode == "channel-select" {
+		e.resolveChannelPick(req, out)
+		return e.finish(req, st, out, "channel-select", start)
+	}
+
 	// CHECK A/B — voice-enabled master gate (input.ts:100, registry.ts:91). With
 	// voice off, NO command matching runs; typed text only submits via the
 	// client's Enter/button path (untouched by this build).
@@ -193,6 +207,26 @@ func (e *Engine) Eval(req EvalRequest) EvalResponse {
 
 	fired := e.runPass(req, out)
 	return e.finish(req, st, out, fired, start)
+}
+
+// resolveChannelPick runs the deterministic channel-select resolution and emits
+// the contract's actions (CHANNEL_PICKER_CONTRACT §Resolution / The Loop step 5):
+//   - cancel word  → closeChannelPicker (+ clear).
+//   - hit          → switchTab + closeChannelPicker (+ clear).
+//   - no match     → pickerHint (modal stays open; NO close).
+func (e *Engine) resolveChannelPick(req EvalRequest, out *actionList) {
+	id, cancel, ok := resolveChannelSelection(req.Text, req.Tabs)
+	switch {
+	case cancel:
+		out.add(actCloseChannelPicker())
+		out.add(actClear())
+	case ok:
+		out.add(actSwitchTab(id))
+		out.add(actCloseChannelPicker())
+		out.add(actClear())
+	default:
+		out.add(actPickerHint(`No channel matched "` + strings.TrimSpace(req.Text) + `" — try again`))
+	}
 }
 
 // runPass mirrors registry.ts:88-113: iterate commands by priority; first match
