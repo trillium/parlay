@@ -138,20 +138,23 @@ func envOr(k, def string) string {
 	return def
 }
 
-// itoa avoids importing strconv twice; keeps main.go self-contained.
+// itoa avoids importing strconv twice; keeps main.go self-contained. It works in
+// the NEGATIVE domain so math.MinInt64 is representable — negating it into the
+// positive domain overflows back to MinInt64 and drops every digit.
 func itoa(n int64) string {
 	if n == 0 {
 		return "0"
 	}
 	neg := n < 0
-	if neg {
+	// Fold positive inputs into the negative domain, then emit digits from there.
+	if !neg {
 		n = -n
 	}
 	var buf [20]byte
 	i := len(buf)
-	for n > 0 {
+	for n < 0 {
 		i--
-		buf[i] = byte('0' + n%10)
+		buf[i] = byte('0' - n%10) // -(n%10) is the digit; n is ≤ 0 here
 		n /= 10
 	}
 	if neg {
