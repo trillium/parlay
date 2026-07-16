@@ -62,17 +62,29 @@ fi
 
 LOG="${TMPDIR:-/tmp}/reincarnate-$CLAUDE_PID.log"
 
+# ── Change 2: durable, discoverable receipt (append-only) ──
+# The $TMPDIR watcher log is ephemeral and pid-named — forensically painful. Also
+# record every reincarnation to a stable per-agent path so a broken restart is
+# discoverable long after $TMPDIR is gone. Path computed here (baked into the
+# watcher) so the heredoc stays free of $HOME/$AID escaping.
+if [ -n "${AID:-}" ]; then RECEIPT_DIR="${PARLAY_AGENT_HOME:-$HOME/.parlay/agents}/${AID}"; else RECEIPT_DIR="$HOME/.parlay"; fi
+RECEIPT="$RECEIPT_DIR/reincarnations.log"
+mkdir -p "$RECEIPT_DIR" 2>/dev/null || true
+
 # ── the external watcher: verify claude closed, then optionally reboot ──
 # A panel-agent reboot first clears any lingering dead herdr tab so parlay-spawn's
 # duplicate-name guard doesn't block the relaunch.
 read -r -d '' WATCHER <<WSCRIPT || true
 echo "[\$(date '+%H:%M:%S')] watching claude PID $CLAUDE_PID for exit..."
+# Durable receipt writer: \$1=outcome \$2=new_tab. One jsonl line per reincarnation.
+_receipt() { jq -cn --arg ts "\$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson pid "$CLAUDE_PID" --arg cmd "$CMD" --arg outcome "\$1" --arg newtab "\${2:-}" --arg agent "${AID:-}" '{ts:\$ts,old_pid:\$pid,cmd:\$cmd,outcome:\$outcome,new_tab:\$newtab,agent:\$agent}' >> "$RECEIPT" 2>/dev/null || true; }
 for _ in \$(seq 1 120); do
   kill -0 $CLAUDE_PID 2>/dev/null || { echo "[\$(date '+%H:%M:%S')] claude $CLAUDE_PID CLOSED (verified)"; CLOSED=1; break; }
   sleep 1
 done
-if [ "\${CLOSED:-0}" != "1" ]; then echo "[\$(date '+%H:%M:%S')] TIMEOUT: claude $CLAUDE_PID still alive after 120s; NOT rebooting"; exit 1; fi
+if [ "\${CLOSED:-0}" != "1" ]; then echo "[\$(date '+%H:%M:%S')] TIMEOUT: claude $CLAUDE_PID still alive after 120s; NOT rebooting"; _receipt timeout ""; exit 1; fi
 if [ "$REBOOT" = "1" ]; then
+  _keep=""
   # ── Change 1: reconcile to EXACTLY ONE live tab for this agent id ──
   # herdr agents die with their tab, so closing every old/dead/ghost tab for this
   # id BOTH frees the name (parlay-spawn's duplicate guard then permits the
@@ -97,11 +109,14 @@ if [ "$REBOOT" = "1" ]; then
       if [ -z "\$_keep" ]; then echo "[\$(date '+%H:%M:%S')] WARNING: no live tab for ${AID:-} after reboot — relaunch may have failed"; fi
       [ "\$_extra" -gt 0 ] && echo "[\$(date '+%H:%M:%S')] reconciled: kept 1 tab (\$_keep), closed \$_extra duplicate(s) for ${AID:-}"
     fi
+    _receipt launched "\$_keep"
   else
     echo "[\$(date '+%H:%M:%S')] reboot FAILED"
+    _receipt reboot_failed ""
   fi
 else
   echo "[\$(date '+%H:%M:%S')] no --reboot; staying dead. Clean end."
+  _receipt clean_end ""
 fi
 WSCRIPT
 
