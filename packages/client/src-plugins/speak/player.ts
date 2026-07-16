@@ -9,7 +9,6 @@ const ui = () => (window as any).__parlay.speechUi
 let api: any = null
 export function setApi(a: any) { api = a }
 
-
 let ttsEnabled = false
 let ttsVoice: SpeechSynthesisVoice | null = null
 let session = 0
@@ -49,7 +48,13 @@ function playBlob(blob: Blob): Promise<boolean> {
     if (!au) { resolve(false); return }
     const url = URL.createObjectURL(blob)
     let settled = false
-    const done = (ok: boolean) => { if (!settled) { settled = true; URL.revokeObjectURL(url); _resolveCurrent = null; resolve(ok) } }
+    const done = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      // Clear src + null handlers before revoke so iOS doesn't wedge <audio> on next play() (dead blob: URL).
+      au.onended = au.onerror = null; au.src = ''
+      URL.revokeObjectURL(url); _resolveCurrent = null; resolve(ok)
+    }
     _resolveCurrent = () => done(true)
     au.onended = () => done(true)
     au.onerror = () => done(false)
