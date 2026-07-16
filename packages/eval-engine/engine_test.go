@@ -317,6 +317,205 @@ func TestEvalTimeMeasured(t *testing.T) {
 	}
 }
 
+// ── Channel picker (CHANNEL_PICKER_CONTRACT) ───────────────────────────────────
+
+// pickerTabs is a fixed ordered tab set used across the picker tests so the
+// 1-based numbering the user speaks is stable.
+func pickerTabs() []Tab {
+	return []Tab{
+		{ID: "main", Name: "Main", Nicknames: []string{"main"}},
+		{ID: "mayor", Name: "Mayor", Nicknames: []string{"boss", "chief"}},
+		{ID: "cato", Name: "Cato", Nicknames: nil},
+	}
+}
+
+func TestResolveChannelSelection(t *testing.T) {
+	tabs := pickerTabs()
+	cases := []struct {
+		name       string
+		spoken     string
+		wantID     string
+		wantCancel bool
+		wantOK     bool
+	}{
+		// Rule 1 — number / ordinal.
+		{"digit", "2", "mayor", false, true},
+		{"digit with channel filler", "channel 2", "mayor", false, true},
+		{"digit with number filler", "number 3", "cato", false, true},
+		{"number word", "two", "mayor", false, true},
+		{"ordinal word", "first", "main", false, true},
+		{"ordinal tenth out of range", "tenth", "", false, false},
+		{"digit out of range", "9", "", false, false},
+		// Rule 2 — exact id / name / nickname.
+		{"exact name", "mayor", "mayor", false, true},
+		{"exact name case-insensitive", "MAYOR", "mayor", false, true},
+		{"exact nickname", "boss", "mayor", false, true},
+		{"exact second nickname", "chief", "mayor", false, true},
+		{"exact id", "cato", "cato", false, true},
+		{"exact with trailing punct", "cato.", "cato", false, true},
+		// Rule 3 — substring id / name / nickname (first match wins).
+		{"substring name", "may", "mayor", false, true},
+		{"substring nickname", "bos", "mayor", false, true},
+		// Rule 4 — cancel words.
+		{"cancel close", "close", "", true, false},
+		{"cancel cancel", "cancel", "", true, false},
+		{"cancel never mind two words", "never mind", "", true, false},
+		{"cancel nevermind one word", "nevermind", "", true, false},
+		{"cancel dismiss", "dismiss", "", true, false},
+		{"cancel exit", "exit", "", true, false},
+		// Rule 5 — no match.
+		{"no match gibberish", "zxqp", "", false, false},
+		{"empty", "", "", false, false},
+		{"whitespace only", "   ", "", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			id, cancel, ok := resolveChannelSelection(c.spoken, tabs)
+			if id != c.wantID || cancel != c.wantCancel || ok != c.wantOK {
+				t.Fatalf("resolveChannelSelection(%q) = (%q,%v,%v); want (%q,%v,%v)",
+					c.spoken, id, cancel, ok, c.wantID, c.wantCancel, c.wantOK)
+			}
+		})
+	}
+}
+
+func TestResolveAgentMatchesNicknames(t *testing.T) {
+	tabs := pickerTabs()
+	cases := []struct {
+		spoken string
+		want   string
+	}{
+		{"boss", "mayor"},    // exact nickname
+		{"chief", "mayor"},   // exact second nickname
+		{"bos", "mayor"},     // substring nickname
+		{"mayor", "mayor"},   // exact name still works
+		{"cato", "cato"},     // id still works
+		{"nobody", ""},       // no match
+	}
+	for _, c := range cases {
+		if got := resolveAgent(c.spoken, tabs); got != c.want {
+			t.Fatalf("resolveAgent(%q) = %q; want %q", c.spoken, got, c.want)
+		}
+	}
+}
+
+func TestChannelListEmitsOpenChannelPicker(t *testing.T) {
+	e := NewEngine()
+	tabs := pickerTabs()
+	r := eval(e, "channel list", 1, tabs)
+	if r.Fired != "channel-list" {
+		t.Fatalf("expected channel-list, got %q (%v)", r.Fired, verbs(r))
+	}
+	if !hasVerb(r, "openChannelPicker") {
+		t.Fatalf("channel-list must emit openChannelPicker; got %v", verbs(r))
+	}
+	if hasVerb(r, "openSwitcher") {
+		t.Fatalf("openSwitcher must NOT be emitted anymore; got %v", verbs(r))
+	}
+	for _, a := range r.Actions {
+		if a.Verb != "openChannelPicker" {
+			continue
+		}
+		if a.Args.Prompt != pickerPrompt {
+			t.Fatalf("expected prompt %q, got %q", pickerPrompt, a.Args.Prompt)
+		}
+		chans := a.Args.Channels
+		if len(chans) != 3 {
+			t.Fatalf("expected 3 channels, got %d", len(chans))
+		}
+		// index 1-based; label = first nickname if present else name.
+		if chans[0].Index != 1 || chans[0].ID != "main" || chans[0].Label != "main" || chans[0].Nickname != "main" {
+			t.Fatalf("channel[0] wrong: %+v", chans[0])
+		}
+		if chans[1].Index != 2 || chans[1].ID != "mayor" || chans[1].Label != "boss" || chans[1].Nickname != "boss" {
+			t.Fatalf("channel[1] wrong: %+v", chans[1])
+		}
+		// cato has no nickname → label falls back to name, nickname empty.
+		if chans[2].Index != 3 || chans[2].ID != "cato" || chans[2].Label != "Cato" || chans[2].Nickname != "" {
+			t.Fatalf("channel[2] wrong: %+v", chans[2])
+		}
+		return
+	}
+	t.Fatalf("no openChannelPicker action found")
+}
+
+func evalMode(e *Engine, text string, ver int64, tabs []Tab) EvalResponse {
+	return e.Eval(EvalRequest{
+		StreamID: "picker-test", Version: ver, Text: text,
+		VoiceEnabled: true, Reason: "input", Tabs: tabs, Mode: "channel-select",
+	})
+}
+
+func TestChannelSelectModeSwitchesTab(t *testing.T) {
+	e := NewEngine()
+	tabs := pickerTabs()
+	r := evalMode(e, "mayor", 1, tabs)
+	if r.Fired != "channel-select" {
+		t.Fatalf("expected fired=channel-select, got %q", r.Fired)
+	}
+	if !hasVerb(r, "switchTab") || !hasVerb(r, "closeChannelPicker") {
+		t.Fatalf("hit must emit switchTab + closeChannelPicker; got %v", verbs(r))
+	}
+	for _, a := range r.Actions {
+		if a.Verb == "switchTab" && a.Args.Channel != "mayor" {
+			t.Fatalf("expected switchTab mayor, got %q", a.Args.Channel)
+		}
+	}
+	// A number pick resolves the same way.
+	r2 := evalMode(e, "channel 3", 2, tabs)
+	if !hasVerb(r2, "switchTab") || !hasVerb(r2, "closeChannelPicker") {
+		t.Fatalf("number pick must switch+close; got %v", verbs(r2))
+	}
+	for _, a := range r2.Actions {
+		if a.Verb == "switchTab" && a.Args.Channel != "cato" {
+			t.Fatalf("number 3 should resolve to cato, got %q", a.Args.Channel)
+		}
+	}
+}
+
+func TestChannelSelectModeNoMatchHints(t *testing.T) {
+	e := NewEngine()
+	tabs := pickerTabs()
+	r := evalMode(e, "zxqp", 1, tabs)
+	if r.Fired != "channel-select" {
+		t.Fatalf("expected fired=channel-select, got %q", r.Fired)
+	}
+	if !hasVerb(r, "pickerHint") {
+		t.Fatalf("no-match must emit pickerHint; got %v", verbs(r))
+	}
+	if hasVerb(r, "closeChannelPicker") || hasVerb(r, "switchTab") {
+		t.Fatalf("no-match must NOT close or switch; got %v", verbs(r))
+	}
+	for _, a := range r.Actions {
+		if a.Verb == "pickerHint" {
+			if a.Args.Text == nil || *a.Args.Text != `No channel matched "zxqp" — try again` {
+				got := "<nil>"
+				if a.Args.Text != nil {
+					got = *a.Args.Text
+				}
+				t.Fatalf("unexpected hint text: %q", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("no pickerHint action found")
+}
+
+func TestChannelSelectModeCancelCloses(t *testing.T) {
+	e := NewEngine()
+	tabs := pickerTabs()
+	r := evalMode(e, "never mind", 1, tabs)
+	if r.Fired != "channel-select" {
+		t.Fatalf("expected fired=channel-select, got %q", r.Fired)
+	}
+	if !hasVerb(r, "closeChannelPicker") {
+		t.Fatalf("cancel must emit closeChannelPicker; got %v", verbs(r))
+	}
+	if hasVerb(r, "switchTab") {
+		t.Fatalf("cancel must NOT switch; got %v", verbs(r))
+	}
+}
+
 func TestSubmitRearmResetsCountdown(t *testing.T) {
 	e := NewEngine()
 	fires := int32(0)
