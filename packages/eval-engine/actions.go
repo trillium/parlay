@@ -52,8 +52,24 @@ type ActionArg struct {
 	Channel string `json:"channel,omitempty"`
 	URL     string `json:"url,omitempty"`
 
+	// openChannelPicker
+	Channels []PickerChannel `json:"channels,omitempty"`
+	Prompt   string          `json:"prompt,omitempty"`
+
 	// noop
 	Reason string `json:"reason,omitempty"`
+}
+
+// PickerChannel is one entry in the authoritative ordered channel list the
+// backend hands the frontend via openChannelPicker (CHANNEL_PICKER_CONTRACT
+// §Actions). Index is 1-based — it is the number the user speaks. Label is the
+// display name (first nickname if present, else name); Nickname is a secondary
+// hint string that may be empty.
+type PickerChannel struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Nickname string `json:"nickname"`
 }
 
 // actionList accumulates actions in emission order.
@@ -117,4 +133,23 @@ func actPrevTab() Action                  { return Action{Verb: "prevTab"} }
 func actNavigate(url string) Action       { return Action{Verb: "navigate", Args: ActionArg{URL: url}} }
 func actStopSpeech() Action               { return Action{Verb: "stopSpeech"} }
 func actFlagSpeech() Action               { return Action{Verb: "flagSpeech"} }
-func actOpenSwitcher() Action             { return Action{Verb: "openSwitcher"} }
+
+// ── Channel picker verbs (CHANNEL_PICKER_CONTRACT §Actions) ────────────────────
+
+// actOpenChannelPicker hands the frontend the authoritative ordered channel list
+// plus the instruction prompt. The frontend renders its full-screen modal from
+// exactly this data — the numbering (1-based index) is the number the user speaks.
+func actOpenChannelPicker(prompt string, channels []PickerChannel) Action {
+	return Action{Verb: "openChannelPicker", Args: ActionArg{Prompt: prompt, Channels: channels}}
+}
+
+// actCloseChannelPicker dismisses the modal (a hit's switch or an explicit cancel).
+func actCloseChannelPicker() Action {
+	return Action{Verb: "closeChannelPicker"}
+}
+
+// actPickerHint keeps the modal open and shows a transient hint after a no-match.
+// It reuses the existing Text *string arg field per the contract.
+func actPickerHint(text string) Action {
+	return Action{Verb: "pickerHint", Args: ActionArg{Text: strp(text)}}
+}
