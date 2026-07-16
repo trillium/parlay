@@ -1,4 +1,5 @@
 import { getClip, clipKey, cacheHas } from './cache'
+import { reportTtsEvent } from './events'
 
 // ── Speak plugin: playback engine ────────────────────────────────────────────
 // Talks to core ONLY through window.__parlay.speechUi (block spans, highlight,
@@ -7,6 +8,7 @@ import { getClip, clipKey, cacheHas } from './cache'
 const ui = () => (window as any).__parlay.speechUi
 let api: any = null
 export function setApi(a: any) { api = a }
+
 
 let ttsEnabled = false
 let ttsVoice: SpeechSynthesisVoice | null = null
@@ -86,14 +88,17 @@ async function playChunked(text: string, msgId?: string, startIdx = 0): Promise<
     if (!spans) spans = ui().spansFor(msgId)
     ui().highlightBlock(spans, i)
     ui().noteSpoken(blocks[i].synth, msgId, i)
+    reportTtsEvent('block_start', { blockIndex: i, totalBlocks: blocks.length, msgId, source: clip ? 'kokoro' : 'local' })
     if (clip) {
       const ok = await playBlob(clip)
       if (sid !== session) return true
       if (!ok) await speakLocalBlock(blocks[i].synth)
     } else await speakLocalBlock(blocks[i].synth)
     if (sid !== session) return true
+    reportTtsEvent('block_end', { blockIndex: i, totalBlocks: blocks.length, msgId })
   }
   ui().clearAllSpeechHighlights()
+  reportTtsEvent('session_done', { msgId, totalBlocks: blocks.length })
   return true
 }
 
@@ -148,7 +153,7 @@ export function speak(text: string, msgId?: string) {
   })
 }
 
-export function stopSpeak() { session++; hardStop() }
+export function stopSpeak() { session++; hardStop(); reportTtsEvent('session_stop') }
 
 export function speakFrom(text: string, msgId: string | undefined, startIdx: number) {
   hardStop()
