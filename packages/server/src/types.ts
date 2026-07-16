@@ -28,7 +28,7 @@ export interface AgentInfo {
   id:       string
   name:     string
   color:    string
-  nickname?: string    // short human-friendly alias; shown in place of name everywhere
+  nicknames?: string[] // human-friendly aliases; first entry is the primary display name
   urls?:    string[]   // pulse pages this agent owns or generated
 }
 

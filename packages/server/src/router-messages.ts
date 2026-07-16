@@ -5,10 +5,26 @@ import { addMessage, broadcastAlert } from "./messages"
 import { unregisterAgent } from "./prune"
 import { handleSubscribersRequest } from "./router-subscribers"
 
-// Best-effort: when an agent sets a nickname, sync it to herdr so the terminal
-// tab label matches. Fire-and-forget — failure is silently ignored.
-function herdrRename(agentId: string, nickname: string): void {
-  try { Bun.spawn(["herdr", "agent", "rename", agentId, nickname], { stdout: "ignore", stderr: "ignore" }) } catch { /* herdr absent */ }
+// Best-effort: sync primary nickname to herdr so the terminal tab label matches.
+// Fire-and-forget — failure is silently ignored.
+function herdrRename(agentId: string, primary: string): void {
+  try { Bun.spawn(["herdr", "agent", "rename", agentId, primary], { stdout: "ignore", stderr: "ignore" }) } catch { /* herdr absent */ }
+}
+
+// Normalise the nicknames field from a request body:
+// - nicknames: [...] → use as-is
+// - nickname: "foo"  → [foo]  (backward compat)
+// - absent / empty   → fallback
+function parseNicknames(body: Record<string, unknown>, fallback?: string[]): string[] | undefined {
+  if (Array.isArray(body.nicknames)) {
+    const arr = body.nicknames.map(String).map(s => s.trim()).filter(Boolean)
+    return arr.length ? arr : fallback
+  }
+  if (body.nickname != null) {
+    const s = String(body.nickname).trim()
+    return s ? [s] : fallback
+  }
+  return fallback
 }
 
 // Message creation lives in messages.ts; re-exported so existing importers
@@ -80,22 +96,23 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           if (agentId) {
             // Upsert: a poll-auto-registered record (grey, name=id) gets the
             // real name/color on first reply that carries them.
-            const existing  = agents.get(agentId)
-            const name      = String(body.name     ?? existing?.name     ?? agentId).trim() || agentId
-            const color     = String(body.color    ?? "").trim() || existing?.color || "#3FB950"
-            const nickname  = body.nickname != null ? String(body.nickname).trim() || undefined : existing?.nickname
-            const urls      = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : existing?.urls
-            const changed   = !existing
-              || existing.name     !== name
-              || existing.color    !== color
-              || existing.nickname !== nickname
+            const existing   = agents.get(agentId)
+            const name       = String(body.name  ?? existing?.name  ?? agentId).trim() || agentId
+            const color      = String(body.color ?? "").trim() || existing?.color || "#3FB950"
+            const nicknames  = parseNicknames(body as Record<string, unknown>, existing?.nicknames)
+            const urls       = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : existing?.urls
+            const changed    = !existing
+              || existing.name  !== name
+              || existing.color !== color
+              || JSON.stringify(existing.nicknames ?? []) !== JSON.stringify(nicknames ?? [])
               || JSON.stringify(existing.urls ?? []) !== JSON.stringify(urls ?? [])
             if (changed) {
-              const info = { id: agentId, name, color, ...(nickname ? { nickname } : {}), ...(urls?.length ? { urls } : {}) }
+              const info = { id: agentId, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}) }
               agents.set(agentId, info)
               broadcastToClients("agent_register", info)
               persistAgents()
-              if (nickname && nickname !== existing?.nickname) herdrRename(agentId, nickname)
+              const primary = nicknames?.[0]; const oldPrimary = existing?.nicknames?.[0]
+              if (primary && primary !== oldPrimary) herdrRename(agentId, primary)
             }
           }
           const msg = addMessage("agent", text || action?.label || "", agentId, {
@@ -119,15 +136,16 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           const id       = String(body.id    ?? "").trim()
           const name     = String(body.name  ?? id).trim() || id
           const color    = String(body.color ?? "").trim() || "#3FB950"
-          const nickname = body.nickname != null ? String(body.nickname).trim() || undefined : undefined
-          const urls     = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : undefined
+          const nicknames = parseNicknames(body as Record<string, unknown>)
+          const urls      = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : undefined
           if (!id) { controller.enqueue(enc.encode(JSON.stringify({ error: "id required" }))); controller.close(); return }
-          const existing = agents.get(id)
-          const info = { id, name, color, ...(nickname ? { nickname } : {}), ...(urls?.length ? { urls } : {}) }
+          const existing  = agents.get(id)
+          const info = { id, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}) }
           agents.set(id, info)
           broadcastToClients("agent_register", info)
           persistAgents()
-          if (nickname && nickname !== existing?.nickname) herdrRename(id, nickname)
+          const primary = nicknames?.[0]; const oldPrimary = existing?.nicknames?.[0]
+          if (primary && primary !== oldPrimary) herdrRename(id, primary)
           controller.enqueue(enc.encode(JSON.stringify({ ok: true, ...info })))
         } catch { controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" }))) }
         controller.close()

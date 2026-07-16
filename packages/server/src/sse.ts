@@ -32,7 +32,7 @@ try {
       id:    String(a.id),
       name:  String(a.name  ?? a.id),
       color: String(a.color ?? "#6b7280"),
-      ...(a.nickname ? { nickname: String(a.nickname) } : {}),
+      ...(Array.isArray(a.nicknames) && a.nicknames.length ? { nicknames: a.nicknames.map(String) } : {}),
       ...(Array.isArray(a.urls) && a.urls.length ? { urls: a.urls.map(String) } : {}),
     })
   }

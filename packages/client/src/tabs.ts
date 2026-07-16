@@ -4,7 +4,7 @@ import { checkAgentOnline } from './tab-online'
 import { tabsEl, inputEl, connBanner, versionEl, urlsEl } from './dom'
 
 // Nickname takes precedence over name for all human-facing display.
-function displayName(info: AgentInfo): string { return info.nickname ?? info.name }
+function displayName(info: AgentInfo): string { return info.nicknames?.[0] ?? info.name }
 import { sheetOpen, renderSheet } from './switcher'
 import { renderToolLog } from './toollog'
 import { PA_VERSION } from './version'
