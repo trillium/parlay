@@ -27,6 +27,15 @@ import { injectCorrectorStyles, openCorrector } from './speak/corrector'
     const w = window as any
     w.__paSpeak = speak
     w.__paStopSpeak = stopSpeak
+    w.__paResetTts = () => {
+      stopSpeak()
+      if ('speechSynthesis' in window) try { speechSynthesis.cancel() } catch {}
+      const au = document.getElementById('pa-tts-audio') as HTMLAudioElement | null
+      if (!au) return
+      delete (au as any).dataset.unlocked
+      au.src = 'data:audio/wav;base64,UklGRi4AAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA=='
+      au.play().then(() => { au.dataset.unlocked = '1' }).catch(() => {})
+    }
     w.__paSpeakFrom = speakFrom
     w.__paPlayPause = playPause
     w.__paFlagSpeech = () => {

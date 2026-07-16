@@ -31,6 +31,7 @@ import {
   injectSettingsModal, openSettingsModal,
   getSettings,
 } from './settings-modal'
+import { sendDebugSnapshot } from './settings-modal/debug'
 import { loadStored } from './idb'
 
 // Idempotency guard — only one instance per page
@@ -205,6 +206,16 @@ wireInputEvents()
 // channel. onSse auto-reattaches across reconnects, so the action channel
 // survives connection drops with zero extra code.
 wireServerEval(onSse)
+
+// Agent-triggerable device commands via SSE: reload, reset-tts, ping.
+// Agents POST /api/chat/device-cmd to drive the client without needing the
+// captain to press anything — useful for live debugging on mobile.
+onSse('device_cmd', (data: { cmd: string }) => {
+  if (data.cmd === 'reload') { location.reload(); return }
+  if (data.cmd === 'reset-tts') { (window as any).__paResetTts?.(); return }
+  if (data.cmd === 'ping') { void sendDebugSnapshot() }
+})
+
 if (isDesktop() || IS_STANDALONE) openDrawer(true)
 
 // ── IDB cache: render stored messages immediately, then connect for delta ──
