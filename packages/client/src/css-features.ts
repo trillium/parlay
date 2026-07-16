@@ -9,6 +9,10 @@ export const CSS_FEATURES = `
   }
   #pa-tabs.visible { display: flex; }
   #pa-tabs::-webkit-scrollbar { display: none; }
+  #pa-agent-urls { flex-shrink: 0; display: none; flex-wrap: wrap; gap: 4px; padding: 5px 10px; border-bottom: 1px solid var(--pa-border); background: color-mix(in srgb, var(--pa-ink) 80%, var(--pa-surf)); }
+  #pa-agent-urls.visible { display: flex; }
+  .pa-url-pill { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-family: var(--pa-mono); color: var(--pa-muted); background: color-mix(in srgb, var(--pa-border) 60%, transparent); border: 1px solid var(--pa-border); text-decoration: none; transition: color .1s, border-color .1s; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pa-url-pill:hover { color: var(--pa-body); border-color: var(--pa-muted); }
   .pa-tab {
     flex-shrink: 0; padding: 8px 14px;
     background: none; border: none; border-bottom: 2px solid transparent;

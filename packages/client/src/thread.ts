@@ -18,8 +18,9 @@ export function addThinkEl() {
   d.className = 'pa-thinking'
   // The think indicator IS the responding agent: same initials + accent
   // treatment as _appendMsgEl. Generic AG only in the zero-agent state.
-  const info = activeChannel ? agentInfo.get(activeChannel) : null
-  const init  = info ? info.name.slice(0, 2).toUpperCase() : 'AG'
+  const info  = activeChannel ? agentInfo.get(activeChannel) : null
+  const label = info ? (info.nickname ?? info.name) : null
+  const init  = label ? label.slice(0, 2).toUpperCase() : 'AG'
   const color = info ? info.color : 'var(--pa-green)'
   d.innerHTML = `<div class="pa-av agent" style="background:color-mix(in srgb,${color} 14%,var(--pa-ink));color:${color};border-color:color-mix(in srgb,${color} 22%,transparent)">${init}</div><div class="pa-thinking-dots"><b></b><b></b><b></b></div>`
   thread.appendChild(d)
@@ -34,9 +35,10 @@ export function setThinking(on: boolean) {
   setThinkingState(on)
   const dot = document.getElementById('pa-dot')!
   const sub = document.getElementById('pa-sub')!
-  const name = activeChannel ? agentInfo.get(activeChannel)?.name : undefined
+  const info2 = activeChannel ? agentInfo.get(activeChannel) : undefined
+  const dname = info2 ? (info2.nickname ?? info2.name) : undefined
   dot.className = 'pa-dot' + (on ? ' thinking' : '')
-  sub.textContent = on ? ' · thinking…' : (name ? ` · ${name}` : '')
+  sub.textContent = on ? ' · thinking…' : (dname ? ` · ${dname}` : '')
   if (on) addThinkEl(); else rmThinkEl()
 }
 
@@ -47,9 +49,10 @@ export function _appendMsgEl(m: any) {
   rmThinkEl()
   const cls = m.role === 'agent' ? 'agent' : 'user'
   const info = (cls === 'agent' && m.channel) ? agentInfo.get(m.channel) : null
-  const agentName  = info ? esc(info.name) : 'Agent'
+  const agentLabel = info ? (info.nickname ?? info.name) : null
+  const agentName  = agentLabel ? esc(agentLabel) : 'Agent'
   const agentColor = info ? info.color : 'var(--pa-green)'
-  const agentInit  = info ? info.name.slice(0, 2).toUpperCase() : 'AG'
+  const agentInit  = agentLabel ? agentLabel.slice(0, 2).toUpperCase() : 'AG'
 
   const el = document.createElement('div')
   el.dataset.paId = m.id

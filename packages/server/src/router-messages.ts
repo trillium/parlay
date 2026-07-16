@@ -1,8 +1,15 @@
 import type { ChatAction } from "./types"
 import { saveDraftToDisk } from "./storage"
-import { agents, pollWaiters, sseClients, CORS, broadcastToClients, lastPollByChannel, LISTEN_WINDOW_MS, persistAgents, presenceBroadcasts } from "./sse"
+import { agents, pollWaiters, CORS, broadcastToClients, persistAgents } from "./sse"
 import { addMessage, broadcastAlert } from "./messages"
 import { unregisterAgent } from "./prune"
+import { handleSubscribersRequest } from "./router-subscribers"
+
+// Best-effort: when an agent sets a nickname, sync it to herdr so the terminal
+// tab label matches. Fire-and-forget — failure is silently ignored.
+function herdrRename(agentId: string, nickname: string): void {
+  try { Bun.spawn(["herdr", "agent", "rename", agentId, nickname], { stdout: "ignore", stderr: "ignore" }) } catch { /* herdr absent */ }
+}
 
 // Message creation lives in messages.ts; re-exported so existing importers
 // (lavish.ts, hook-tailer.ts) keep their "./router-messages" path.
@@ -73,14 +80,22 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           if (agentId) {
             // Upsert: a poll-auto-registered record (grey, name=id) gets the
             // real name/color on first reply that carries them.
-            const existing = agents.get(agentId)
-            const name  = String(body.name  ?? existing?.name ?? agentId).trim() || agentId
-            const color = String(body.color ?? "").trim() || existing?.color || "#3FB950"
-            if (!existing || existing.name !== name || existing.color !== color) {
-              const info = { id: agentId, name, color }
+            const existing  = agents.get(agentId)
+            const name      = String(body.name     ?? existing?.name     ?? agentId).trim() || agentId
+            const color     = String(body.color    ?? "").trim() || existing?.color || "#3FB950"
+            const nickname  = body.nickname != null ? String(body.nickname).trim() || undefined : existing?.nickname
+            const urls      = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : existing?.urls
+            const changed   = !existing
+              || existing.name     !== name
+              || existing.color    !== color
+              || existing.nickname !== nickname
+              || JSON.stringify(existing.urls ?? []) !== JSON.stringify(urls ?? [])
+            if (changed) {
+              const info = { id: agentId, name, color, ...(nickname ? { nickname } : {}), ...(urls?.length ? { urls } : {}) }
               agents.set(agentId, info)
               broadcastToClients("agent_register", info)
               persistAgents()
+              if (nickname && nickname !== existing?.nickname) herdrRename(agentId, nickname)
             }
           }
           const msg = addMessage("agent", text || action?.label || "", agentId, {
@@ -100,15 +115,19 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
       async start(controller) {
         const enc = new TextEncoder()
         try {
-          const body  = await req.json()
-          const id    = String(body.id    ?? "").trim()
-          const name  = String(body.name  ?? id).trim() || id
-          const color = String(body.color ?? "").trim() || "#3FB950"
+          const body     = await req.json()
+          const id       = String(body.id    ?? "").trim()
+          const name     = String(body.name  ?? id).trim() || id
+          const color    = String(body.color ?? "").trim() || "#3FB950"
+          const nickname = body.nickname != null ? String(body.nickname).trim() || undefined : undefined
+          const urls     = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : undefined
           if (!id) { controller.enqueue(enc.encode(JSON.stringify({ error: "id required" }))); controller.close(); return }
-          const info = { id, name, color }
+          const existing = agents.get(id)
+          const info = { id, name, color, ...(nickname ? { nickname } : {}), ...(urls?.length ? { urls } : {}) }
           agents.set(id, info)
           broadcastToClients("agent_register", info)
           persistAgents()
+          if (nickname && nickname !== existing?.nickname) herdrRename(id, nickname)
           controller.enqueue(enc.encode(JSON.stringify({ ok: true, ...info })))
         } catch { controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" }))) }
         controller.close()
@@ -176,44 +195,8 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
     })
   }
 
-  if (req.method === "GET" && pathname === "/api/chat/subscribers") {
-    const polling = pollWaiters.map(w => ({
-      channel: w.channel ?? null,
-      ...(w.channel && agents.has(w.channel) ? agents.get(w.channel)! : {}),
-    }))
-    const registered = Array.from(agents.values())
-    // Presence: union of registered agents and channels ever seen polling.
-    // listening = polled within the window; idle = seen but stale; offline = registered, never seen.
-    const now = Date.now()
-    const channelIds = new Set([...agents.keys(), ...lastPollByChannel.keys()])
-    const presence = [...channelIds].map(ch => {
-      const last = lastPollByChannel.get(ch)
-      const listening = last !== undefined && now - last < LISTEN_WINDOW_MS
-      return {
-        channel: ch,
-        ...(agents.get(ch) ?? {}),
-        listening,
-        lastSeen: last !== undefined ? new Date(last).toISOString() : null,
-        status: listening ? "listening" : last !== undefined ? "idle" : "offline",
-      }
-    })
-    // Connected SSE devices — lets an agent see which devices exist and address
-    // one via POST /navigate|/reload { device }.
-    const devices = Array.from(sseClients.values())
-      .filter(c => c.device)
-      .map(c => ({ device: c.device, ua: c.ua, connectedAt: c.connectedAt }))
-    const body = {
-      parlay:     { clients: sseClients.size },   // browser tabs with the chat drawer open
-      poll:       { count: polling.length, channels: polling },  // agents with live poll connections
-      registered: { count: registered.length, agents: registered },
-      presence,
-      presence_broadcasts: presenceBroadcasts,
-      devices,
-    }
-    return new Response(JSON.stringify(body, null, 2), {
-      headers: { "Content-Type": "application/json", ...CORS },
-    })
-  }
+  const subsResp = handleSubscribersRequest(req, pathname)
+  if (subsResp !== null) return subsResp
 
   if (req.method === "POST" && pathname === "/api/chat/alert") {
     return new Response(new ReadableStream({
