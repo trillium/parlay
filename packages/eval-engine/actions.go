@@ -117,3 +117,4 @@ func actPrevTab() Action                  { return Action{Verb: "prevTab"} }
 func actNavigate(url string) Action       { return Action{Verb: "navigate", Args: ActionArg{URL: url}} }
 func actStopSpeech() Action               { return Action{Verb: "stopSpeech"} }
 func actFlagSpeech() Action               { return Action{Verb: "flagSpeech"} }
+func actOpenSwitcher() Action             { return Action{Verb: "openSwitcher"} }

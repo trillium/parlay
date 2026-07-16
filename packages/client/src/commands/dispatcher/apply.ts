@@ -113,6 +113,10 @@ function applyAction(a: Action): ApplyResult {
       case 'navigate':
         if (a.args?.url) _ctx.workspace.navigate(a.args.url)
         return 'applied'
+      case 'openSwitcher':
+        if (!document.getElementById('pa-sheet')?.classList.contains('open'))
+          document.getElementById('pa-fab')?.click()
+        return 'applied'
       case 'stopSpeech': _ctx.speech.stop(); return 'applied'
       case 'flagSpeech':
         ;(window as any).__paFlagLastSpoken?.()
