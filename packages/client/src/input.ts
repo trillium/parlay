@@ -159,7 +159,7 @@ function evalCtx() {
   return {
     voiceEnabled: s.voiceEnabled,
     settleMs: typeof s.voiceSettleMs === 'number' ? s.voiceSettleMs : 450,
-    tabs: [...agentInfo.values()].map(a => ({ id: a.id, name: a.name })),
+    tabs: [...agentInfo.values()].map(a => ({ id: a.id, name: a.name, nicknames: a.nicknames ?? [] })),
     device,
     streamId: `eval-${device}-${_evalPageEpoch}`,
   }

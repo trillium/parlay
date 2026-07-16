@@ -48,7 +48,7 @@ export const ACTION_TTL_MS = 1500   // an action older than this at receipt is d
 export interface EvalCtx {
   voiceEnabled: boolean
   settleMs: number
-  tabs: { id: string; name: string }[]
+  tabs: { id: string; name: string; nicknames: string[] }[]
   device: string
   streamId: string
 }
