@@ -25,15 +25,19 @@ import { wireInputEvents, loadDraft, sendMsg, wireServerEval } from './input'
 import { wireAnnotation, doSetAnnotate } from './annotation'
 import { trackFocusTitle } from './focus-title'
 import { injectPageNav, openPageNav } from './page-nav'
+import { injectCommandsModal } from './commands-modal'
 import {
   loadSettings, applySettings, isPageEnabled,
   injectSettingsModal, openSettingsModal,
   getSettings,
 } from './settings-modal'
+import { loadStored } from './idb'
 
 // Idempotency guard — only one instance per page
 ;(async () => {
 if (document.getElementById('pa-drawer')) return
+const _t0 = performance.now()
+;(window as any).__paT0 = _t0
 
 // ── Load settings before rendering ─────────────────────────────────────────
 const settings = await loadSettings()
@@ -164,6 +168,7 @@ applySettings(settings)
 
 // ── Page-nav picker ───────────────────────────────────────────────────────────
 injectPageNav()
+injectCommandsModal()
 document.getElementById('pa-nav-btn')?.addEventListener('click', openPageNav)
 
 // ── Debug panel (Ctrl+Shift+D) ────────────────────────────────────────────────
@@ -201,6 +206,17 @@ wireInputEvents()
 // survives connection drops with zero extra code.
 wireServerEval(onSse)
 if (isDesktop() || IS_STANDALONE) openDrawer(true)
+
+// ── IDB cache: render stored messages immediately, then connect for delta ──
+const _idbStart = performance.now()
+const { msgs: _cached, lastId: _idbLastId } = await loadStored()
+const _idbMs = Math.round(performance.now() - _idbStart)
+if (_idbLastId) (window as any).__paLastId = _idbLastId
+if (_cached.length) {
+  const { loadHistory: _lh } = await import('./thread')
+  _lh(_cached)
+  ;(window as any).__paColdStart = { source: 'idb', idbMs: _idbMs, cached: _cached.length }
+}
 connect()
 loadDraft()
 

@@ -13,28 +13,11 @@ import { broadcastToDevice, CORS } from "./sse"
 //   down: Go /eval response.actions    ──▶  broadcastToDevice(input_action) ─▶ SSE
 //   fire: Go server-owned submit timer ──▶  POST /api/chat/eval-push ─▶ SSE
 //
-// Everything is gated: when serverEvalEnabled is off, /api/chat/eval and
-// /api/chat/eval-push return a disabled marker and NOTHING is relayed, so the
-// live behavior is byte-for-byte today's local pipeline.
+// Input evaluation is PURE server-side and unconditional — there is no local
+// pipeline and no enable flag. Every keystroke is relayed to the Go engine.
 
 const EVAL_ENGINE_URL =
   process.env.PARLAY_EVAL_ENGINE_URL ?? "http://127.0.0.1:4343"
-
-// The flag lives in the shared Parlay settings (~/exchange/parlay-settings.json),
-// read per-request through the canonical reader so a toggle takes effect without a
-// server restart and stays in lockstep with the GET/PUT handler's shape. Reading
-// it here (server-side) is the authoritative gate; the client also checks its own
-// copy to decide whether to POST at all, but the server never trusts that.
-import { readSettings } from "./parlay-settings"
-
-export async function serverEvalEnabled(): Promise<boolean> {
-  try {
-    const s = await readSettings()
-    return s.serverEvalEnabled === true
-  } catch {
-    return false // absent/unreadable settings ⇒ OFF (safe default)
-  }
-}
 
 // The action-protocol envelope the client dispatcher expects. Built from the Go
 // engine's response; the relay is agnostic to the verbs inside.
@@ -62,9 +45,6 @@ export async function handleEvalRequest(
   // POST /api/chat/eval — the up-channel. Delegates to the compiled Go engine
   // and relays its actions over the device-scoped SSE.
   if (req.method === "POST" && pathname === "/api/chat/eval") {
-    if (!(await serverEvalEnabled())) {
-      return json({ disabled: true }, 200)
-    }
     let body: {
       streamId?: string
       version?: number
@@ -110,8 +90,8 @@ export async function handleEvalRequest(
       if (!r.ok) return json({ error: `engine ${r.status}` }, 502)
       env = (await r.json()) as EvalEnvelope
     } catch (e) {
-      // Engine unreachable — fail loud but non-fatal. The client falls back to
-      // its (still-present, flag-gated-off) local pipeline on the next keystroke.
+      // Engine unreachable — fail loud but non-fatal. No local fallback exists;
+      // commands simply don't fire for this keystroke until the engine returns.
       return json({ error: "engine unreachable", detail: String(e) }, 502)
     }
     const relayMs = performance.now() - t0
@@ -141,9 +121,6 @@ export async function handleEvalRequest(
   // the network-race cost: the fire is already ~1 round-trip stale by the time it
   // reaches the client, which re-verifies the tail before actually sending.
   if (req.method === "POST" && pathname === "/api/chat/eval-push") {
-    if (!(await serverEvalEnabled())) {
-      return json({ disabled: true }, 200)
-    }
     let body: { streamId?: string; seq?: number; baseVersion?: number; v?: number; action?: unknown }
     try {
       body = await req.json()

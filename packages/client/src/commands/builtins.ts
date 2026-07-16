@@ -2,6 +2,8 @@ import type { Command, CommandContext, CommandMatch } from './types'
 import { registerCommand } from './registry'
 import { resolveAgent } from './ctx'
 import { flagLastSpoken } from '../speech-highlight'
+import { sendAnnotations } from '../annotation'
+import { openCommandsModal } from '../commands-modal'
 
 // ── Built-in commands ────────────────────────────────────────────────────────
 // The original hardcoded behaviors (submit / clear / stop-speech) migrated onto
@@ -131,6 +133,27 @@ const flagSpeech: Command = {
   },
 }
 
+const commandsActive: Command = {
+  id: 'commands-active',
+  phrases: ['commands active', 'show commands', 'list commands'],
+  matchMode: 'whole',
+  priority: 8,
+  description: 'Show a modal listing all active commands and their trigger phrases',
+  action(ctx) { openCommandsModal(); ctx.input.clear() },
+}
+
+const annotationsSend: Command = {
+  id: 'annotations-send',
+  phrases: ['annotations send'],
+  matchMode: 'whole',
+  priority: 15,
+  description: 'Send all queued page annotations to the active agent',
+  action(ctx) {
+    void sendAnnotations()
+    ctx.input.clear()
+  },
+}
+
 export function registerBuiltins(): void {
-  for (const c of [stopSpeech, flagSpeech, clear, switchTab, archiveTab, nextTab, prevTab, goToPage, submit]) registerCommand(c)
+  for (const c of [stopSpeech, flagSpeech, clear, commandsActive, switchTab, archiveTab, nextTab, prevTab, goToPage, annotationsSend, submit]) registerCommand(c)
 }

@@ -132,7 +132,13 @@ function hardStop() {
 export function speak(text: string, msgId?: string) {
   if (!ttsEnabled) { if (msgId) void probeReadiness(msgId, text); return }
   hardStop()
-  const hybrid = !!api?.settings.get().hybridVoice
+  const s = api?.settings.get()
+  if (s?.localOnlyVoice) {
+    bubbleOf(msgId)?.classList.add('pa-speaking')
+    speakLocalBlock(text).then(() => ui().clearAllSpeechHighlights())
+    return
+  }
+  const hybrid = !!s?.hybridVoice
   const run = hybrid ? playHybrid(text, msgId).then(() => true) : playChunked(text, msgId)
   run.then(ok => {
     if (!ok) {
@@ -146,6 +152,30 @@ export function stopSpeak() { session++; hardStop() }
 
 export function speakFrom(text: string, msgId: string | undefined, startIdx: number) {
   hardStop()
+  const s = api?.settings.get()
+  if (s?.localOnlyVoice) {
+    // Local-only: bypass Kokoro entirely, stay in this call frame for iOS gesture
+    const blocks = ui().splitBlocksRaw(text)
+    const spans = speakingSpans(msgId, blocks)
+    ;(async () => {
+      const sid = ++session
+      for (let i = Math.max(0, startIdx); i < blocks.length; i++) {
+        if (sid !== session) return
+        ui().highlightBlock(spans, i)
+        ui().noteSpoken(blocks[i].synth, msgId, i)
+        await speakLocalBlock(blocks[i].synth)
+      }
+      ui().clearAllSpeechHighlights()
+    })()
+    return
+  }
+  // Pre-unlock speechSynthesis while still in the user-gesture call frame so
+  // the local fallback can speak from the async .then() callback on iOS.
+  if ('speechSynthesis' in window) {
+    const u = new SpeechSynthesisUtterance(' ')
+    u.volume = 0
+    speechSynthesis.speak(u)
+  }
   void playChunked(text, msgId, Math.max(0, startIdx)).then(ok => {
     if (!ok) {
       const blocks = ui().splitBlocksRaw(text)

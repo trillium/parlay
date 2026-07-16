@@ -34,12 +34,18 @@ export function openSettingsModal() {
   const stopPhraseIn = document.getElementById('pa-settings-stop-phrase') as HTMLInputElement
   stopPhraseIn.value = s.voiceStopPhrase ?? 'spoken pause'
   stopPhraseIn.disabled = !s.voiceEnabled
+  ;(document.getElementById('pa-settings-local-only-voice') as HTMLInputElement).checked = !!s.localOnlyVoice
   ;(document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement).checked = !!s.hybridVoice
 
   const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement
   const scaleVal = document.getElementById('pa-settings-textscale-val')!
   scaleIn.value = String(s.textScale || 100)
   scaleVal.textContent = `${scaleIn.value}%`
+
+  const settleIn = document.getElementById('pa-settings-settle-ms') as HTMLInputElement
+  const settleVal = document.getElementById('pa-settings-settle-val')!
+  settleIn.value = String(s.voiceSettleMs ?? 450)
+  settleVal.textContent = `${settleIn.value}ms`
 
   renderCommandRows(s)
   overlay.classList.add('open')
@@ -93,6 +99,9 @@ export async function commitSettings() {
   const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement | null
   const textScale = Math.min(160, Math.max(85, parseInt(scaleIn?.value ?? '100', 10) || 100))
 
+  const settleIn = document.getElementById('pa-settings-settle-ms') as HTMLInputElement | null
+  const voiceSettleMs = settleIn ? Math.min(3000, Math.max(0, parseInt(settleIn.value, 10) || 0)) : getSettings().voiceSettleMs ?? 450
+
   const next: ParlaySettings = {
     panelSide, triggerSide, enabledProjects,
     voiceEnabled:       voiceChk.checked,
@@ -104,13 +113,10 @@ export async function commitSettings() {
         .filter(([, v]) => v.length > 0)
     ),
     voiceStopPhrase:    (document.getElementById('pa-settings-stop-phrase') as HTMLInputElement | null)?.value.trim() ?? 'spoken pause',
+    localOnlyVoice:     (document.getElementById('pa-settings-local-only-voice') as HTMLInputElement | null)?.checked ?? false,
     hybridVoice:        (document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement | null)?.checked ?? false,
     textScale,
-    // feat/server-side-eval: these two are not surfaced in the modal — they are
-    // managed via the settings JSON / flag toggle. Carry the current values
-    // through so a modal save never clobbers them.
-    serverEvalEnabled:  getSettings().serverEvalEnabled ?? false,
-    voiceSettleMs:      getSettings().voiceSettleMs ?? 450,
+    voiceSettleMs,
   }
   applySettings(next)
   await saveSettings(next)

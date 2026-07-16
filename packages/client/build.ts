@@ -1,33 +1,44 @@
 import { build } from "bun"
 
+// Bun.build() does NOT throw on a compile error — it returns {success:false,
+// logs} and leaves the previous output in place. Unchecked, that silently ships
+// a STALE bundle while still printing "built". Fail loud instead.
+async function buildOrThrow(opts: Parameters<typeof build>[0], label: string) {
+  const r = await build(opts)
+  if (!r.success) {
+    for (const l of r.logs) console.error(l)
+    throw new Error(`build failed: ${label} — stale bundle left untouched`)
+  }
+}
+
 // parlay-agent.js — canonical output name for standalone users
-await build({
+await buildOrThrow({
   entrypoints: ["./src/init.ts"],
   outdir: "./dist",
   naming: "parlay-agent.js",
   format: "iife",
   minify: false,
   target: "browser",
-})
+}, "parlay-agent.js")
 
 // pulse-agent.js — compatibility alias served by Pulse via ~/pulse-pages/annotate/ symlink
-await build({
+await buildOrThrow({
   entrypoints: ["./src/init.ts"],
   outdir: ".",
   naming: "pulse-agent.js",
   format: "iife",
   minify: false,
   target: "browser",
-})
+}, "pulse-agent.js")
 
 // Plugins — one IIFE per src-plugins entry, served at /annotate/plugins/<id>.js
-await build({
+await buildOrThrow({
   entrypoints: ["./src-plugins/cursorless.ts", "./src-plugins/speak.ts"],
   outdir: "./plugins",
   format: "iife",
   minify: false,
   target: "browser",
-})
+}, "plugins")
 
 console.log("dist/parlay-agent.js + pulse-agent.js + plugins built")
 

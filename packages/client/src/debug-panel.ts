@@ -53,9 +53,19 @@ function buildContent(): string {
         return `  ${d.ua.padEnd(18)} ${d.samples}smp | event→frame p50:${c.p50.toFixed(1)}ms p95:${c.p95.toFixed(1)}ms max:${c.max.toFixed(1)}ms${k ? ` | cadence p50:${k.p50.toFixed(0)}ms` : ""}`
       }).join("\n")
 
+  // Cold start
+  const cs = (window as any).__paColdStart as Record<string, any> | undefined
+  const csLine = cs
+    ? cs.source === 'idb'
+      ? `  source: idb  |  idb read: ${cs.idbMs}ms  |  cached: ${cs.cached} msgs  |  delta via SSE`
+      : `  source: sse  |  sse history: ${cs.sseMs}ms  |  msgs: ${cs.msgs}`
+    : "  (loading…)"
+
   const lines = [
     "━━ Parlay Debug ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     `  Page: domReady ${nav ? MS(nav.domContentLoadedEventEnd) : "—"}  |  load ${nav ? MS(nav.loadEventEnd) : "—"}  |  uptime ${MS(performance.now())}`,
+    "─ Cold start ───────────────────────────────────────",
+    csLine,
     "─ Bundles ──────────────────────────────────────────",
     bundleSection,
     "─ Chat ─────────────────────────────────────────────",

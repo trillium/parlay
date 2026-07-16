@@ -1,5 +1,5 @@
 import { esc } from './config'
-import { agentInfo, activeChannel, unreadByChannel } from './state'
+import { agentInfo, activeChannel, unreadByChannel, channelStatus, lastActivityByChannel } from './state'
 import { archived, unarchiveChannel, switchChannel, statusOf } from './tabs'
 
 // ── Mobile agent switcher: floating button above the input → tap-friendly sheet ──
@@ -11,7 +11,19 @@ export function renderSheet() {
   const list = document.getElementById('pa-sheet-list')
   if (!list) return
   list.innerHTML = ''
-  const entries = [...agentInfo.entries()].sort(([a], [b]) => Number(archived.has(a)) - Number(archived.has(b)))
+  // Mirror the tab panel sort: recent-activity first, then listening, then alpha; archived last; system always last.
+  const entries = [...agentInfo.entries()].sort(([a, ai], [b, bi]) => {
+    const aArch = archived.has(a), bArch = archived.has(b)
+    if (aArch !== bArch) return Number(aArch) - Number(bArch)
+    const aSys = a === 'system', bSys = b === 'system'
+    if (aSys !== bSys) return Number(aSys) - Number(bSys)
+    const aTime = lastActivityByChannel[a] ?? 0, bTime = lastActivityByChannel[b] ?? 0
+    if (bTime !== aTime) return bTime - aTime
+    const aListen = channelStatus[a] === 'listening' ? 1 : 0
+    const bListen = channelStatus[b] === 'listening' ? 1 : 0
+    if (bListen !== aListen) return bListen - aListen
+    return (ai.nicknames?.[0] ?? ai.name).localeCompare(bi.nicknames?.[0] ?? bi.name)
+  })
   for (const [id, info] of entries) {
     const row = document.createElement('button')
     row.className = 'pa-sheet-row' + (activeChannel === id ? ' active' : '')

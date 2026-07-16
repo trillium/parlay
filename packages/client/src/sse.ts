@@ -8,6 +8,7 @@ import {
 } from './state'
 import { connBanner, dot, drawer, badge, inputEl } from './dom'
 import { appendMsg, loadHistory as loadHistoryFn, setThinking, markMsgReceived } from './thread'
+import { storeMessages } from './idb'
 import { insertLavishCard } from './thread-lavish'
 import { draftClientId, lastSendTs } from './input'
 import { navigateWorkspace } from './commands/ctx'
@@ -85,7 +86,15 @@ export function connect() {
   const currentEs: EventSource | null = (window as any).__paEs ?? null
   if (currentEs) { try { currentEs.close() } catch {} }
 
-  const es = new EventSource(`${CHAT_BASE}/events?device=${encodeURIComponent(getDeviceId())}`)
+  // Reconnect delta: pass the last message we already hold so the server ships
+  // only what's new instead of re-dumping the whole history (1.2MB+) on every
+  // dropped-stream reconnect. First connect has no lastId → full history. The
+  // history handler dedups by data-pa-id, so any small overlap is harmless.
+  const lastId = (window as any).__paLastId as string | undefined
+  const afterQ = lastId ? `&after=${encodeURIComponent(lastId)}` : ''
+  // Pass current page URL so the server can give the owning channel deeper history.
+  const urlQ   = `&url=${encodeURIComponent(window.location.href)}`
+  const es = new EventSource(`${CHAT_BASE}/events?device=${encodeURIComponent(getDeviceId())}${afterQ}${urlQ}`)
   attachPluginHandlers(es)
   ;(window as any).__paEs = es
   setEs(es)
@@ -109,7 +118,11 @@ export function connect() {
 
   es.addEventListener('history', (e: MessageEvent) => {
     const history = JSON.parse(e.data)
+    storeMessages(history)   // persist to IDB for next cold-load
     loadHistoryFn(history)
+    // Record SSE cold-start time if IDB had nothing
+    if (!(window as any).__paColdStart && history.length)
+      (window as any).__paColdStart = { source: 'sse', sseMs: Math.round(performance.now() - ((window as any).__paT0 ?? 0)), msgs: history.length }
     // After DOM settles, restore saved scroll position if user wasn't at bottom
     if ((window as any).__paRestoreScroll) {
       requestAnimationFrame(() => (window as any).__paRestoreScroll())
@@ -138,6 +151,7 @@ export function connect() {
     if (document.querySelector(`[data-pa-id="${m.id}"]`)) return
     msgs.push(m)
     ;(window as any).__paLastId = m.id
+    storeMessages([m])   // keep IDB current so next reload gets this message
     // Track per-channel activity for tab sort order (recent-message-first)
     if (m.channel) lastActivityByChannel[m.channel] = Date.now()
 
