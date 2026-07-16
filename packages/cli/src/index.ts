@@ -23,6 +23,7 @@ import {
   cmdStatus,
   cmdSubscribers,
 } from "./commands"
+import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
@@ -32,6 +33,10 @@ async function main() {
     case "subscribers":   return cmdSubscribers(args)
     case "agents":        return cmdAgents(args)
     case "send":          return cmdSend(args)
+    case "say":
+    case "reply":         return cmdSay(args)
+    case "scratchpad":    return cmdScratchpad(args)
+    case "identity":      return cmdIdentity(args)
     case "alert":         return cmdAlert(args)
     case "history":       return cmdHistory(args)
     case "monitor":       return cmdMonitor(args)
