@@ -52,11 +52,12 @@ export async function runMonitor(args: string[], deps: MonitorDeps): Promise<voi
     try {
       const res = await fetch(`${server}/api/chat/poll?after=${lastId}${channelParam}`)
       if (!res.ok) { await Bun.sleep(2000); continue }
-      const msg = await res.json() as { timeout?: boolean; id?: string; role?: string; text?: string }
+      const msg = await res.json() as { timeout?: boolean; id?: string; role?: string; text?: string; from?: string }
       if (msg.timeout) continue
       if (msg.id && msg.role && msg.text != null) {
         lastId = msg.id
-        process.stdout.write(`CHAT_MSG|${msg.id}|${msg.role}|${msg.text}\n`)
+        const fromSuffix = msg.from ? `|from:${msg.from}` : ""
+        process.stdout.write(`CHAT_MSG|${msg.id}|${msg.role}|${msg.text}${fromSuffix}\n`)
       }
     } catch {
       await Bun.sleep(3000)

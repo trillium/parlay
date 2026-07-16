@@ -10,7 +10,8 @@
 //
 //	Upstream poll : GET  {server}/api/chat/poll?after=<lastId>&channel=<agent>
 //	                → {"timeout":true}  or  {"id","role","text","ts",...}
-//	Spool line    : CHAT_MSG|<id>|<role>|<text>\n   (text newlines flattened to spaces)
+//	Spool line    : CHAT_MSG|<id>|<role>|<text>\n               (captain messages, no attribution)
+//	              : CHAT_MSG|<id>|<role>|<text>|from:<sender>\n (agent→agent messages, 5th field)
 //	Spool path    : {runtime-dir}/<agent>.chan       (runtime-dir defaults to $TMPDIR/parlay)
 //	Control socket : Unix domain socket at {runtime-dir}/relay.sock
 //	  POST /register {"agent":"<id>"}     → {"ok":true,"agent":"<id>","spool":"<path>"}   (idempotent)
@@ -60,6 +61,7 @@ type upstreamMessage struct {
 	Role    string `json:"role"`
 	Text    string `json:"text"`
 	Ts      string `json:"ts"`
+	From    string `json:"from"` // sender attribution; empty = captain
 }
 
 // agentLoop owns one agent's upstream poll goroutine and its spool file.
@@ -384,7 +386,11 @@ func appendSpool(path string, msg *upstreamMessage) error {
 		return err
 	}
 	defer f.Close()
-	line := fmt.Sprintf("CHAT_MSG|%s|%s|%s\n", msg.ID, msg.Role, flatten(msg.Text))
+	fromSuffix := ""
+	if msg.From != "" {
+		fromSuffix = "|from:" + msg.From
+	}
+	line := fmt.Sprintf("CHAT_MSG|%s|%s|%s%s\n", msg.ID, msg.Role, flatten(msg.Text), fromSuffix)
 	if _, err := f.WriteString(line); err != nil {
 		return err
 	}
