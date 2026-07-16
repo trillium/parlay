@@ -9,7 +9,7 @@ export interface ChatMessage {
   type?: "alert"
 }
 
-export interface AgentInfo { id: string; name: string; color: string; nickname?: string; urls?: string[] }
+export interface AgentInfo { id: string; name: string; color: string; nicknames?: string[]; urls?: string[] }
 
 export interface SubscribersInfo {
   parlay?: { clients?: number }

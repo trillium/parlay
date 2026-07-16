@@ -19,7 +19,7 @@ export function addThinkEl() {
   // The think indicator IS the responding agent: same initials + accent
   // treatment as _appendMsgEl. Generic AG only in the zero-agent state.
   const info  = activeChannel ? agentInfo.get(activeChannel) : null
-  const label = info ? (info.nickname ?? info.name) : null
+  const label = info ? (info.nicknames?.[0] ?? info.name) : null
   const init  = label ? label.slice(0, 2).toUpperCase() : 'AG'
   const color = info ? info.color : 'var(--pa-green)'
   d.innerHTML = `<div class="pa-av agent" style="background:color-mix(in srgb,${color} 14%,var(--pa-ink));color:${color};border-color:color-mix(in srgb,${color} 22%,transparent)">${init}</div><div class="pa-thinking-dots"><b></b><b></b><b></b></div>`
@@ -36,7 +36,7 @@ export function setThinking(on: boolean) {
   const dot = document.getElementById('pa-dot')!
   const sub = document.getElementById('pa-sub')!
   const info2 = activeChannel ? agentInfo.get(activeChannel) : undefined
-  const dname = info2 ? (info2.nickname ?? info2.name) : undefined
+  const dname = info2 ? (info2.nicknames?.[0] ?? info2.name) : undefined
   dot.className = 'pa-dot' + (on ? ' thinking' : '')
   sub.textContent = on ? ' · thinking…' : (dname ? ` · ${dname}` : '')
   if (on) addThinkEl(); else rmThinkEl()
@@ -49,7 +49,7 @@ export function _appendMsgEl(m: any) {
   rmThinkEl()
   const cls = m.role === 'agent' ? 'agent' : 'user'
   const info = (cls === 'agent' && m.channel) ? agentInfo.get(m.channel) : null
-  const agentLabel = info ? (info.nickname ?? info.name) : null
+  const agentLabel = info ? (info.nicknames?.[0] ?? info.name) : null
   const agentName  = agentLabel ? esc(agentLabel) : 'Agent'
   const agentColor = info ? info.color : 'var(--pa-green)'
   const agentInit  = agentLabel ? agentLabel.slice(0, 2).toUpperCase() : 'AG'
