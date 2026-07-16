@@ -4,6 +4,7 @@ import { resolveAgent } from './ctx'
 import { flagLastSpoken } from '../speech-highlight'
 import { sendAnnotations } from '../annotation'
 import { openCommandsModal } from '../commands-modal'
+import { sheetOpen } from '../switcher'
 
 // ── Built-in commands ────────────────────────────────────────────────────────
 // The original hardcoded behaviors (submit / clear / stop-speech) migrated onto
@@ -63,7 +64,7 @@ const stopSpeech: Command = {
 
 const switchTab: Command = {
   id: 'switch-tab',
-  phrases: ['switch to {agent}', 'go to {agent}', 'show me {agent}'],
+  phrases: ['switch to {agent}', 'go to {agent}', 'show me {agent}', 'channel switch {agent}'],
   matchMode: 'whole',
   priority: 20,
   description: 'Switch the active agent tab by name',
@@ -142,6 +143,18 @@ const commandsActive: Command = {
   action(ctx) { openCommandsModal(); ctx.input.clear() },
 }
 
+const channelList: Command = {
+  id: 'channel-list',
+  phrases: ['channel list', 'list channels', 'show channels'],
+  matchMode: 'whole',
+  priority: 20,
+  description: 'Open the agent switcher to show available channels',
+  action(ctx) {
+    if (!sheetOpen()) document.getElementById('pa-fab')?.click()
+    ctx.input.clear()
+  },
+}
+
 const annotationsSend: Command = {
   id: 'annotations-send',
   phrases: ['annotations send'],
@@ -155,5 +168,5 @@ const annotationsSend: Command = {
 }
 
 export function registerBuiltins(): void {
-  for (const c of [stopSpeech, flagSpeech, clear, commandsActive, switchTab, archiveTab, nextTab, prevTab, goToPage, annotationsSend, submit]) registerCommand(c)
+  for (const c of [stopSpeech, flagSpeech, clear, commandsActive, switchTab, archiveTab, channelList, nextTab, prevTab, goToPage, annotationsSend, submit]) registerCommand(c)
 }
