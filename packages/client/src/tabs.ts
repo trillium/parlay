@@ -65,9 +65,11 @@ let _restored = false
 function restoreActiveChannel() {
   if (_restored) return
   _restored = true
+  // URL ownership: agent whose registered urls match this page is the default — beats last-tab memory.
+  const owner = [...agentInfo.entries()].find(([, i]) => i.urls?.some(u => window.location.href.startsWith(u)))?.[0]
+  if (owner) { setActiveChannel(owner); return }
   let saved: string | null = null
   try { saved = localStorage.getItem(ACTIVE_KEY) } catch {}
-  // Restore only if the tab still exists ('' was the retired All view — ignore)
   if (saved && agentInfo.has(saved)) setActiveChannel(saved)
 }
 
