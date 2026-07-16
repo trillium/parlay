@@ -3,6 +3,7 @@ import type { Action, ActionEnvelope, ApplyResult } from './types'
 import { PROTOCOL_V } from './types'
 import { telemetry, renderOverlay, log, showCountdownHint, clearCountdownHint } from './telemetry'
 import { currentInputVersion, postSentAt } from './up'
+import { openChannelPicker, closeChannelPicker, pickerHint } from '../../channel-picker'
 
 // ── Down-channel: apply an input_action envelope ───────────────────────────────
 
@@ -104,6 +105,21 @@ function applyAction(a: Action): ApplyResult {
         return 'applied'
       case 'switchTab':
         if (a.args?.channel) _ctx.tabs.switch(a.args.channel)
+        return 'applied'
+      case 'openChannelPicker':
+        // Backend hands the authoritative ordered list; we render our own
+        // perception. Empty channels ⇒ nothing to pick — skip rather than show
+        // an empty modal.
+        if (a.args?.channels?.length)
+          openChannelPicker(a.args.prompt ?? 'Say a channel name, nickname, or number', a.args.channels)
+        return 'applied'
+      case 'closeChannelPicker':
+        // Fires after switchTab in a successful-pick batch; the loop's array
+        // order guarantees the tab switch lands before we dismiss the modal.
+        closeChannelPicker()
+        return 'applied'
+      case 'pickerHint':
+        pickerHint(a.args?.text ?? '')
         return 'applied'
       case 'archiveTab':
         if (a.args?.channel) _ctx.tabs.archive(a.args.channel)

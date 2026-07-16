@@ -27,6 +27,7 @@ import { wireAnnotation, doSetAnnotate } from './annotation'
 import { trackFocusTitle } from './focus-title'
 import { injectPageNav, openPageNav } from './page-nav'
 import { injectCommandsModal } from './commands-modal'
+import { injectChannelPickerStyles } from './channel-picker'
 import {
   loadSettings, applySettings, isPageEnabled,
   injectSettingsModal, openSettingsModal,
@@ -171,6 +172,7 @@ applySettings(settings)
 // ── Page-nav picker ───────────────────────────────────────────────────────────
 injectPageNav()
 injectCommandsModal()
+injectChannelPickerStyles()   // full-screen voice channel-picker modal styles
 document.getElementById('pa-nav-btn')?.addEventListener('click', openPageNav)
 
 // ── Debug panel (Ctrl+Shift+D) ────────────────────────────────────────────────
