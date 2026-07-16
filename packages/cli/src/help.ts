@@ -20,6 +20,8 @@ Usage:
   parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
   parlay monitor --agent <id>     Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
   parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
   parlay lavish-import            Import lavish sessions
   parlay help                     Show this help
 
@@ -40,6 +42,7 @@ const HELP: Record<string, string> = {
   alert: `parlay alert — broadcast an alert to pollers + agents.\nUsage: parlay alert [--agent <id>] <text...>\n  --agent <id>   Deliver only to one agent channel`,
   history: `parlay history — print recent messages (server-bounded).\nUsage: parlay history [N] [--full]\n  N        How many messages (default 20)\n  --full   Untruncated text plus id and channel per message`,
   monitor: `parlay monitor — enroll with the relay and stream CHAT_MSG|id|role|text lines on stdout.\nUsage: parlay monitor --agent <id> [--legacy-poll]\n  --agent <id>    Agent channel to enroll + stream (required unless --legacy-poll)\n  --legacy-poll   Use the old independent poll loop with no relay (global feed if no --agent)\n\nDefault path registers <id> with the central relay (tools/relay/parlay-relay must\nbe running) and execs 'tail -F' on the agent's spool — ~1.2MB per agent, one relay\nfans out to all. See tools/RELAY_MONITOR.md.`,
+  launch: `parlay launch — discover and launch agents defined in ~/.parlay/agents/.\nUsage: parlay launch          → list all known agents with live status\n       parlay launch <id>    → spawn the named agent via parlay-spawn (reads identity.md for name/color/cwd/model)\nOffline agents are clearly marked; spawning fires the standard identity→handoff→scratchpad recovery chain.`,
   "lavish-import": `parlay lavish-import — import lavish sessions via the bundled importer.\nUsage: parlay lavish-import`,
 }
 
