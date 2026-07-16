@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -44,6 +45,15 @@ type EvalRequest struct {
 	VoiceEnabled bool      `json:"voiceEnabled"` // master gate (input.ts:100 / registry.ts:91)
 	Tabs         []Tab     `json:"tabs"`         // live agent tabs for {agent} resolution
 	Mode         string    `json:"mode"`         // "" = normal eval; "channel-select" = resolve text as a channel pick
+
+	// Commands is an OPTIONAL per-request command manifest. When present and valid
+	// it wholly replaces the engine's command set FOR THIS REQUEST ONLY (contract
+	// §Loading precedence: request > file > embedded, highest wins). This is how a
+	// client ships user-customized phrases (today's voiceSubmitPhrases generalize to
+	// it) with no server state. It is a raw message so an invalid override is simply
+	// ignored — the request still evaluates against the live file/embedded set —
+	// rather than failing the whole request at JSON-decode time.
+	Commands json.RawMessage `json:"commands,omitempty"`
 }
 
 type CursorPos struct {
@@ -275,11 +285,10 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 	value := req.Text
 	fired := ""
 
-	// Snapshot the live command set so a concurrent hot-reload swap (SetCommands)
-	// is race-free: we iterate a stable slice for the whole pass.
-	e.mu.Lock()
-	cmds := e.commands
-	e.mu.Unlock()
+	// Resolve the command set for this pass: a valid per-request override wins,
+	// otherwise the live file/embedded set (snapshotted so a concurrent hot-reload
+	// swap is race-free).
+	cmds := e.commandSet(req)
 
 	for _, cc := range cmds {
 		matched := false
@@ -314,6 +323,24 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 		}
 	}
 	return fired
+}
+
+// commandSet resolves which command set a request evaluates against, implementing
+// the request > file > embedded precedence. A per-request Commands override is
+// compiled and used ONLY if it parses+validates; an invalid override is ignored
+// (fail-closed to the live set), never a 400 — the request still evaluates. The
+// override is not cached: it is opt-in per request, so the common no-override hot
+// path pays nothing and only override-carrying requests pay the compile.
+func (e *Engine) commandSet(req EvalRequest) []compiledCommand {
+	if raw := bytes.TrimSpace(req.Commands); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) {
+		if man, err := parseManifest(raw); err == nil {
+			return compileManifest(man)
+		}
+		// Invalid override: fall through to the live file/embedded set.
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.commands
 }
 
 // isSubmitHandler reports whether an emit delegates to the stateful submit handler.
