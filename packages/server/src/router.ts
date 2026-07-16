@@ -12,6 +12,7 @@ import { handlePagesRequest } from "./pages"
 import { handleParlayUiRequest } from "./parlay-ui"
 import { handleEvalRequest } from "./eval-relay"
 import { handleTTSValidateRequest } from "./tts-validate"
+import { handleTtsEventRequest } from "./router-tts-events"
 
 export function handleChatRequest(req: Request, pathname: string): Response | Promise<Response | null> | null {
   if (!pathname.startsWith("/api/chat")) return null
@@ -53,6 +54,10 @@ export function handleChatRequest(req: Request, pathname: string): Response | Pr
   // TTS split quality validation (local Ollama)
   const ttsValidResp = handleTTSValidateRequest(req, pathname)
   if (ttsValidResp !== null) return ttsValidResp
+
+  // TTS lifecycle event stream — broadcasts to SSE clients as tts_event
+  const ttsEventResp = handleTtsEventRequest(req, pathname)
+  if (ttsEventResp !== null) return ttsEventResp
 
   // SSE events stream, bundle version, history — router-events.ts
   const eventsResp = handleEventsRequest(req, pathname)
