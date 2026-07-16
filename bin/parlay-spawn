@@ -73,6 +73,20 @@ fi
 
 json_escape() { printf '%s' "$1" | jq -Rs .; }
 
+# Refuse a duplicate: if a herdr agent with this id is already live, creating a
+# second one leaves two identically-labeled "edgar" tabs (one a ghost) and is
+# confusing. Reclaim the name first (kill the old session + close its tab) or use
+# a different id. This is the up-front guard against same-name panes.
+if command -v herdr >/dev/null 2>&1; then
+  EXISTING_AGENT=$(herdr agent get "$AGENT_ID" 2>/dev/null | jq -r '.result.agent.name // empty' 2>/dev/null || true)
+  if [ -n "$EXISTING_AGENT" ]; then
+    echo "parlay-spawn: a herdr agent named '$AGENT_ID' already exists — refusing to create a duplicate." >&2
+    echo "  Reclaim the name first: 'herdr agent list' to find it, kill its process, then 'herdr tab close <its tab>'." >&2
+    echo "  Or spawn under a different agent-id." >&2
+    exit 1
+  fi
+fi
+
 echo "parlay-spawn: registering agent '$AGENT_ID' with Parlay at $PARLAY ..." >&2
 
 # 1. Register the agent so the tab exists.
@@ -98,10 +112,21 @@ FIRST, before anything else, enroll so the captain can reach you:
 1. Arm a persistent Monitor to receive captain messages on your channel:
    Monitor({ command: "PARLAY_SERVER=$PARLAY parlay monitor --agent $AGENT_ID", persistent: true })
 2. Post a reply so your tab shows "listening":
-   curl -s -X POST $PARLAY/api/chat/reply -H "Content-Type: application/json" -d '{"text":"Ready. Monitor armed, standing by.","agent":"$AGENT_ID","name":"$NAME","color":"$COLOR"}'
-   (Consult the pulse-agent skill at ~/.claude/.agents/skills/pulse-agent/SKILL.md if you need the full reply/poll contract.)
+   reply "Ready. Monitor armed, standing by."
+   Your identity is already set (PARLAY_AGENT_ID=$AGENT_ID), so 'reply' routes to YOUR channel — no url, no JSON, no id/name/color. That is the ONLY reply surface you need. (See the pulse-agent skill at ~/.claude/.agents/skills/pulse-agent/SKILL.md for the poll/contract details.)
 
-THEN work on this task and reply via the same curl endpoint when done:
+3. Load your durable memory (it survives restarts): run 'identity' to read who you are and what you have learned about yourself, and 'scratchpad' to read what you were doing. If your identity shows a "📎 Handoff: handoff-XXX" pointer, run 'handoff show handoff-XXX' for the full state from your last life. If you were revived after dying, this chain — identity → handoff → scratchpad — is how you recover; do it before you start.
+
+Your surfaces are dead simple and already keyed to you (PARLAY_AGENT_ID) — no paths, no /tmp, no JSON. All three are thin wrappers over the one parlay tool. Use them religiously:
+- reply '<message>'     — your ONLY reply channel to the captain.
+- scratchpad '<note>'   — jot anything down; read it back with bare 'scratchpad'. NEVER write throwaway files in /tmp; use this instead.
+- identity '<fact>'     — record something you learn about yourself (a trait, a failure mode, a lesson); read it with bare 'identity'.
+
+Watch your context budget: when you approach ~80% used, checkpoint to the captain via reply (what is done, next, committed), record the lesson with 'identity', jot open state to 'scratchpad', and suggest a fresh session — never churn silently to 100%, which wedges and kills the session mid-task.
+
+CLEAN SHUTDOWN / RESTART (work done, or context bloated/dying at the limit): just two steps — (1) write your handoff by running the 'handoff' skill, which creates a handoff bead; (2) run 'identity --submit <handoff-id>' with that bead id. That IS the whole shutdown: --submit pins the handoff to your identity AND reincarnates you — it restarts you with a fresh context that recovers itself via identity → handoff → scratchpad. You do NOT run sudoku, reincarnate, or any skill yourself; submitting the handoff is the shutdown. NEVER --submit before the handoff bead exists — without it the reborn you wakes with amnesia.
+
+THEN work on this task and reply with 'reply "<your message>"' — once to acknowledge, again when done:
 
 $PROMPT
 EOF
@@ -142,17 +167,28 @@ TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
 ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
 [ -n "$TAB_ID" ] && TAB_FLAG="--tab $TAB_ID"
 
-herdr agent start "$AGENT_ID" --cwd "$CWD" $FOCUS_FLAG $TAB_FLAG \
+# Roll back on failure: if agent start fails (e.g. name taken), close the tab we
+# just created so it does not linger as a ghost "$AGENT_ID" tab. Without this,
+# set -e aborts here and orphans the labeled tab — the exact two-same-name-tabs bug.
+if ! herdr agent start "$AGENT_ID" --cwd "$CWD" $FOCUS_FLAG $TAB_FLAG \
   --env "PARLAY_SPAWN_PROMPT=$STARTUP_PROMPT" \
   --env "PARLAY_SPAWN_MODEL=$MODEL" \
   --env "PARLAY_SERVER=$PARLAY" \
   --env "PARLAY_AGENT_ID=$AGENT_ID" \
-  -- bash -lc "$LAUNCH_SCRIPT"
+  -- bash -lc "$LAUNCH_SCRIPT"; then
+  echo "parlay-spawn: herdr agent start failed — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
+  [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
+  exit 1
+fi
 
 # Drop the tab's now-redundant root shell pane so the agent has the tab to
 # itself. Only after the agent pane exists — closing a tab's only pane closes
 # the tab (and a workspace's last tab closes the workspace).
 [ -n "$ROOT_PANE" ] && herdr pane close "$ROOT_PANE" >/dev/null 2>&1 || true
+
+# Seed the identity's LAUNCH SPEC (frontmatter) so the agent can reconstitute itself
+# on reincarnation — the identity fully describes how to relaunch it. Best-effort.
+identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" ${MODEL:+--model "$MODEL"} >/dev/null 2>&1 || true
 
 echo "parlay-spawn: done. Agent '$AGENT_ID' registered; terminal launched." >&2
 echo "parlay-spawn: watch it come live with: parlay subscribers | jq '.poll'" >&2
