@@ -234,89 +234,12 @@ func trimTrailingPunct(s string) string {
 	return trailingPunctRe.ReplaceAllString(s, "")
 }
 
-// runAction executes a matched command's action, appending actions to `out`.
-// Returns handled=false to signal "not handled — continue the pass" exactly like
-// the JS actions that return false (registry.ts:103), letting switch-tab fall
-// through to go-to-page.
-//
-// The `submit` command is intentionally NOT handled here — it is stateful and is
-// driven by the engine's per-stream submitMachine (engine.go), because in the
-// pure model the countdown is server-owned. runAction handles the stateless
-// commands (everything that maps 1:1 onto a client action with no timer).
-func runAction(spec commandSpec, m *matchResult, tabs []Tab, out *actionList) (handled bool) {
-	switch spec.id {
-	case "clear":
-		out.add(actClear())
-		return true
-
-	case "stop-speech":
-		// Silence speech + strip the trailing phrase from the buffer.
-		idx := lastIndexFold(m.value, m.matchedText)
-		var stripped string
-		if idx >= 0 {
-			stripped = strings.TrimRight(m.value[:idx], " \t\n")
-		} else {
-			stripped = m.value
-		}
-		out.add(actStopSpeech())
-		out.add(actSetText(stripped))
-		return true
-
-	case "flag-speech":
-		out.add(actFlagSpeech())
-		out.add(actClear())
-		return true
-
-	case "switch-tab":
-		id := resolveAgent(m.captures["agent"], tabs)
-		if id == "" {
-			return false // unknown agent — let go-to-page try
-		}
-		out.add(actSwitchTab(id))
-		out.add(actClear())
-		return true
-
-	case "archive-tab":
-		id := resolveAgent(m.captures["agent"], tabs)
-		if id == "" {
-			return false
-		}
-		out.add(actArchiveTab(id))
-		out.add(actClear())
-		return true
-
-	case "next-tab":
-		out.add(actNextTab())
-		out.add(actClear())
-		return true
-
-	case "prev-tab":
-		out.add(actPrevTab())
-		out.add(actClear())
-		return true
-
-	case "channel-list":
-		out.add(actOpenChannelPicker(pickerPrompt, buildPickerChannels(tabs)))
-		out.add(actClear())
-		return true
-
-	case "go-to-page":
-		raw := trimTrailingPunct(strings.ToLower(strings.TrimSpace(m.captures["page"])))
-		if raw == "" {
-			return false
-		}
-		url := "/" + strings.ReplaceAll(raw, " ", "-") + "/"
-		out.add(actNavigate(url))
-		out.add(actClear())
-		return true
-
-	case "submit":
-		// Handled by the stateful submitMachine, not here. Reaching this means
-		// the caller mis-routed; treat as not-handled so nothing fires by accident.
-		return false
-	}
-	return false
-}
+// The old runAction switch that hardcoded each command's behavior was deleted once
+// the manifest interpreter (interp.go) was proven to produce an identical
+// actionList for every command. Command behavior is now DATA (default_commands.json
+// / a loaded manifest), interpreted by interpretSequence + the closed registries.
+// Only the stateless resolvers/helpers below remain — they moved into named
+// registry entries (registries.go) but keep their exact logic.
 
 // lastIndexFold is a case-insensitive lastIndexOf, mirroring the JS
 // val.toLowerCase().lastIndexOf(matchedTail.toLowerCase()) used by the submit and

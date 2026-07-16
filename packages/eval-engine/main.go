@@ -125,7 +125,7 @@ func main() {
 
 	log.Printf("parlay-eval-engine (compiled Go) listening on http://%s", addr)
 	log.Printf("  push URL: %s", pushURL)
-	log.Printf("  commands: %d compiled", len(engine.specs))
+	log.Printf("  commands: %d compiled", len(engine.commands))
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("listen failed: %v", err)
 	}
