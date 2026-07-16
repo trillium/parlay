@@ -80,6 +80,15 @@ func main() {
 		push.pushSubmit(streamID, seq, base, tail, text)
 	}
 
+	// File layer: load a manifest from PARLAY_COMMANDS (or a commands.json next to
+	// the binary) over the embedded default, and fs-watch it for fail-closed
+	// hot-reload. No configured file ⇒ the embedded default is the whole story.
+	if path := installFileSource(engine, nil); path != "" {
+		log.Printf("  manifest source: %s (fs-watched, fail-closed)", path)
+	} else {
+		log.Printf("  manifest source: embedded default")
+	}
+
 	mux := http.NewServeMux()
 
 	// POST /eval — the hot path. Body: EvalRequest. Returns EvalResponse.
