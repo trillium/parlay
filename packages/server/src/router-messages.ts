@@ -100,14 +100,16 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
             const name       = String(body.name  ?? existing?.name  ?? agentId).trim() || agentId
             const color      = String(body.color ?? "").trim() || existing?.color || "#3FB950"
             const nicknames  = parseNicknames(body as Record<string, unknown>, existing?.nicknames)
-            const urls       = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : existing?.urls
+            const urls       = Array.isArray(body.urls)  ? body.urls.map(String).filter((u: string) => u.length > 0)  : existing?.urls
+            const path       = Array.isArray(body.path)  ? body.path.map(String).filter((u: string) => u.length > 0)  : existing?.path
             const changed    = !existing
               || existing.name  !== name
               || existing.color !== color
               || JSON.stringify(existing.nicknames ?? []) !== JSON.stringify(nicknames ?? [])
-              || JSON.stringify(existing.urls ?? []) !== JSON.stringify(urls ?? [])
+              || JSON.stringify(existing.urls  ?? []) !== JSON.stringify(urls  ?? [])
+              || JSON.stringify(existing.path  ?? []) !== JSON.stringify(path  ?? [])
             if (changed) {
-              const info = { id: agentId, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}) }
+              const info = { id: agentId, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}), ...(path?.length ? { path } : {}) }
               agents.set(agentId, info)
               broadcastToClients("agent_register", info)
               persistAgents()
@@ -136,11 +138,14 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           const id       = String(body.id    ?? "").trim()
           const name     = String(body.name  ?? id).trim() || id
           const color    = String(body.color ?? "").trim() || "#3FB950"
-          const nicknames = parseNicknames(body as Record<string, unknown>)
-          const urls      = Array.isArray(body.urls) ? body.urls.map(String).filter((u: string) => u.length > 0) : undefined
           if (!id) { controller.enqueue(enc.encode(JSON.stringify({ error: "id required" }))); controller.close(); return }
           const existing  = agents.get(id)
-          const info = { id, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}) }
+          // Unspecified fields fall back to whatever is already persisted — so
+          // re-registering without nicknames/urls/path doesn't wipe them.
+          const nicknames = parseNicknames(body as Record<string, unknown>, existing?.nicknames)
+          const urls      = Array.isArray(body.urls)  ? body.urls.map(String).filter((u: string) => u.length > 0)  : existing?.urls
+          const path      = Array.isArray(body.path)  ? body.path.map(String).filter((u: string) => u.length > 0)  : existing?.path
+          const info = { id, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}), ...(path?.length ? { path } : {}) }
           agents.set(id, info)
           broadcastToClients("agent_register", info)
           persistAgents()

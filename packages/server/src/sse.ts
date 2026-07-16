@@ -33,7 +33,8 @@ try {
       name:  String(a.name  ?? a.id),
       color: String(a.color ?? "#6b7280"),
       ...(Array.isArray(a.nicknames) && a.nicknames.length ? { nicknames: a.nicknames.map(String) } : {}),
-      ...(Array.isArray(a.urls) && a.urls.length ? { urls: a.urls.map(String) } : {}),
+      ...(Array.isArray(a.urls)      && a.urls.length      ? { urls:      a.urls.map(String)      } : {}),
+      ...(Array.isArray(a.path)      && a.path.length      ? { path:      a.path.map(String)      } : {}),
     })
   }
 } catch { /* first boot or unreadable — start empty */ }
