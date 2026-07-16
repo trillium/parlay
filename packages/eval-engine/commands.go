@@ -35,10 +35,12 @@ var builtins = []commandSpec{
 		description: "Report the last-spoken sentence as mispronounced"},
 	{id: "clear", phrases: []string{"change inside input", "change inside in input"}, mode: ModeTrailing, priority: 10,
 		description: "End the input with a clear phrase to empty the whole box"},
-	{id: "switch-tab", phrases: []string{"switch to {agent}", "go to {agent}", "show me {agent}"}, mode: ModeWhole, priority: 20,
+	{id: "switch-tab", phrases: []string{"switch to {agent}", "go to {agent}", "show me {agent}", "channel switch {agent}"}, mode: ModeWhole, priority: 20,
 		description: "Switch the active agent tab by name"},
 	{id: "archive-tab", phrases: []string{"archive {agent}", "archive tab {agent}"}, mode: ModeWhole, priority: 20,
 		description: "Archive an agent tab by name"},
+	{id: "channel-list", phrases: []string{"channel list", "list channels", "show channels"}, mode: ModeWhole, priority: 20,
+		description: "Open the agent switcher to show available channels"},
 	{id: "next-tab", phrases: []string{"next tab", "next agent"}, mode: ModeWhole, priority: 20,
 		description: "Switch to the next agent tab"},
 	{id: "prev-tab", phrases: []string{"previous tab", "previous agent", "last tab"}, mode: ModeWhole, priority: 20,
@@ -135,6 +137,11 @@ func runAction(spec commandSpec, m *matchResult, tabs []Tab, out *actionList) (h
 
 	case "prev-tab":
 		out.add(actPrevTab())
+		out.add(actClear())
+		return true
+
+	case "channel-list":
+		out.add(actOpenSwitcher())
 		out.add(actClear())
 		return true
 
