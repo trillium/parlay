@@ -6,6 +6,7 @@ import { msgs, agentInfo, es, channelStatus } from "./state"
 
 let panelEl: HTMLElement | null = null
 let refreshIv: ReturnType<typeof setInterval> | null = null
+let _timingData: Record<string, any> | null = null
 
 const B  = (n: number) => n < 1024 ? `${n}B` : n < 1048576 ? `${(n/1024).toFixed(1)}KB` : `${(n/1048576).toFixed(2)}MB`
 const MS = (n: number) => n < 1000 ? `${Math.round(n)}ms` : `${(n/1000).toFixed(2)}s`
@@ -44,6 +45,14 @@ function buildContent(): string {
   // SSE
   const sseState = !es ? "not connected" : ["CONNECTING","OPEN","CLOSED"][es.readyState] ?? "?"
 
+  // Input timing (server-side aggregates, keyed by device)
+  const timingSection = !_timingData || !Object.keys(_timingData).length
+    ? "  (no samples yet — start typing)"
+    : Object.entries(_timingData).map(([id, d]: [string, any]) => {
+        const c = d.cost, k = d.cadence
+        return `  ${d.ua.padEnd(18)} ${d.samples}smp | event→frame p50:${c.p50.toFixed(1)}ms p95:${c.p95.toFixed(1)}ms max:${c.max.toFixed(1)}ms${k ? ` | cadence p50:${k.p50.toFixed(0)}ms` : ""}`
+      }).join("\n")
+
   const lines = [
     "━━ Parlay Debug ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     `  Page: domReady ${nav ? MS(nav.domContentLoadedEventEnd) : "—"}  |  load ${nav ? MS(nav.loadEventEnd) : "—"}  |  uptime ${MS(performance.now())}`,
@@ -55,6 +64,8 @@ function buildContent(): string {
     `  oldest: ${oldestTs}  newest: ${newestTs}`,
     `─ Agents (${agentInfo.size}) ──────────────────────────────────────`,
     agentLines,
+    "─ Input timing (event→frame, server-side) ──────────",
+    timingSection,
     "─ SSE ──────────────────────────────────────────────",
     `  ${sseState}`,
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -80,5 +91,9 @@ export function toggleDebugPanel(): void {
   })
   panelEl.textContent = buildContent()
   document.body.appendChild(panelEl)
-  refreshIv = setInterval(() => { if (!panelEl) { clearInterval(refreshIv!); refreshIv = null; return }; panelEl.textContent = buildContent() }, 2000)
+  refreshIv = setInterval(async () => {
+    if (!panelEl) { clearInterval(refreshIv!); refreshIv = null; return }
+    try { _timingData = await fetch("/api/debug/input-timing").then(r => r.json()) } catch {}
+    panelEl.textContent = buildContent()
+  }, 2000)
 }
