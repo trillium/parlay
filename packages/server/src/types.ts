@@ -29,7 +29,8 @@ export interface AgentInfo {
   name:     string
   color:    string
   nicknames?: string[] // human-friendly aliases; first entry is the primary display name
-  urls?:    string[]   // pulse pages this agent owns or generated
+  urls?:     string[]  // pulse pages this agent owns or generated
+  path?:     string[]  // filesystem paths this agent is responsible for
 }
 
 export type SSEClient = {
