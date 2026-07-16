@@ -14,7 +14,6 @@ export interface ParlaySettings {
   hybridVoice:         boolean
   textScale:           number
   commandPhrases:      Record<string, string[]>
-  serverEvalEnabled:   boolean   // feat/server-side-eval — route eval to the compiled Go engine (default OFF)
   voiceSettleMs:       number    // eval up-channel debounce tuned to the dictation settle time
 }
 
@@ -31,7 +30,6 @@ const DEFAULTS: ParlaySettings = {
   hybridVoice:         false,
   textScale:           100,
   commandPhrases:      {},
-  serverEvalEnabled:   false,   // OFF by default — byte-for-byte today's local pipeline
   voiceSettleMs:       450,     // ~450ms: iOS live-dictation correction settle window
 }
 
@@ -96,7 +94,6 @@ export function handleParlaySettings(req: Request, pathname: string): Response |
                                       .filter(([, v]) => Array.isArray(v))
                                       .map(([k, v]) => [String(k), (v as unknown[]).map(String)]))
                                   : current.commandPhrases,
-            serverEvalEnabled:  body.serverEvalEnabled != null ? Boolean(body.serverEvalEnabled) : current.serverEvalEnabled,
             voiceSettleMs:      typeof body.voiceSettleMs === "number" && isFinite(body.voiceSettleMs)
                                   ? Math.min(3000, Math.max(0, body.voiceSettleMs)) : current.voiceSettleMs,
           }

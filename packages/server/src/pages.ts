@@ -1,4 +1,4 @@
-import { readdirSync, statSync, readFileSync } from "fs"
+import { readdirSync, statSync, readFileSync, watch } from "fs"
 import { join } from "path"
 import { homedir } from "os"
 import { CORS } from "./sse"
@@ -46,6 +46,30 @@ export function handlePagesRequest(req: Request, pathname: string): Response | n
   if (req.method !== "GET") return json({ error: "GET only" }, 405)
   if (!cache || Date.now() - cache.at > TTL_MS) cache = { at: Date.now(), pages: listPages() }
   return json({ pages: cache.pages }, 200)
+}
+
+// Watch ~/pulse-pages/ for new or removed pages and broadcast a PATCH to all
+// connected clients — eliminates polling; clients apply the diff in-place.
+export function watchPages(broadcast: (event: string, data: unknown) => void): void {
+  let debounce: ReturnType<typeof setTimeout> | null = null
+  try {
+    watch(PAGES_ROOT, { persistent: false }, () => {
+      if (debounce) clearTimeout(debounce)
+      debounce = setTimeout(() => {
+        debounce = null
+        const fresh = listPages()
+        const prev = cache?.pages ?? []
+        const prevTags = new Set(prev.map(p => p.tag))
+        const freshTags = new Set(fresh.map(p => p.tag))
+        const added = fresh.filter(p => !prevTags.has(p.tag))
+        const removed = prev.filter(p => !freshTags.has(p.tag)).map(p => p.tag)
+        if (added.length || removed.length) {
+          cache = { at: Date.now(), pages: fresh }
+          broadcast("pages_patch", { added, removed })
+        }
+      }, 500)
+    })
+  } catch { /* ~/pulse-pages may not exist at startup */ }
 }
 
 function json(data: unknown, status: number): Response {

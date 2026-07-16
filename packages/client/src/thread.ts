@@ -44,8 +44,10 @@ export function setThinking(on: boolean) {
 
 // ── Message rendering ─────────────────────────────────────────────────────────
 
-// Internal: creates and appends a message element; does NOT manage emptyEl
-export function _appendMsgEl(m: any) {
+// Internal: creates and appends a message element; does NOT manage emptyEl.
+// Pass skipScroll=true during batch loads (loadHistory, renderThread) to avoid
+// forcing thread.scrollHeight on every message — caller does one scroll at end.
+export function _appendMsgEl(m: any, skipScroll = false) {
   rmThinkEl()
   const cls = m.role === 'agent' ? 'agent' : 'user'
   const info = (cls === 'agent' && m.channel) ? agentInfo.get(m.channel) : null
@@ -166,7 +168,7 @@ export function _appendMsgEl(m: any) {
     }
   }
   if (thinking) addThinkEl()
-  scrollBottom()
+  if (!skipScroll) scrollBottom()
 }
 
 // Public: called for new arriving messages; manages emptyEl + tab unread
@@ -194,7 +196,7 @@ export function renderThread() {
     emptyEl.style.display = ''
   } else {
     emptyEl.style.display = 'none'
-    visible.forEach((m: any) => _appendMsgEl(m))
+    visible.forEach((m: any) => _appendMsgEl(m, true))
   }
   scrollBottom(true, true)
 }
@@ -211,7 +213,7 @@ export function loadHistory(history: any[]) {
       const ts = m.ts ? new Date(m.ts).getTime() : 0
       if (ts > (lastActivityByChannel[m.channel] ?? 0)) lastActivityByChannel[m.channel] = ts
     }
-    if (msgInView(m)) appendMsg(m)
+    if (msgInView(m)) { emptyEl.style.display = 'none'; _appendMsgEl(m, true) }
   })
   // Land at the bottom immediately — no animated catch-up scroll on page load
   scrollBottom(true, true)

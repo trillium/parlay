@@ -1,5 +1,6 @@
 import { esc } from './config'
 import { navigateWorkspace } from './commands/ctx'
+import { onSse } from './sse'
 
 // ── Fuzzy page-nav picker ─────────────────────────────────────────────────────
 // A command-palette-style modal (mirrors the settings modal's overlay) that
@@ -12,7 +13,8 @@ interface PageEntry { tag: string; title: string }
 let pages: PageEntry[] = []
 let filtered: PageEntry[] = []
 let selIdx = 0
-let loaded = false
+let loadedAt = 0
+const PAGES_TTL = 30_000
 
 export function injectPageNav() {
   const overlay = document.createElement('div')
@@ -38,7 +40,7 @@ export async function openPageNav() {
   if (!overlay || !search) return
   overlay.classList.add('open')
   search.value = ''
-  if (!loaded) await loadPages()
+  if (Date.now() - loadedAt > PAGES_TTL) await loadPages()
   applyFilter('')
   setTimeout(() => search.focus(), 30)
 }
@@ -52,7 +54,7 @@ async function loadPages() {
     const r = await fetch('/api/chat/pages')
     const j = await r.json()
     pages = Array.isArray(j.pages) ? j.pages : []
-    loaded = true
+    loadedAt = Date.now()
   } catch {
     pages = []
   }
@@ -121,3 +123,24 @@ function go(p: PageEntry) {
   closePageNav()
   navigateWorkspace(`/${p.tag}/`)
 }
+
+// Server-pushed page list updates — no polling needed. fs.watch on ~/pulse-pages/
+// fires when a directory is added/removed; the server diffs and broadcasts the delta.
+onSse('pages_patch', (patch: { added?: PageEntry[]; removed?: string[] }) => {
+  if (patch.removed?.length) {
+    const gone = new Set(patch.removed)
+    pages = pages.filter(p => !gone.has(p.tag))
+  }
+  if (patch.added?.length) {
+    const have = new Set(pages.map(p => p.tag))
+    for (const p of patch.added) if (!have.has(p.tag)) pages.push(p)
+    pages.sort((a, b) => a.tag.localeCompare(b.tag))
+    loadedAt = Date.now()   // treat the patch as a fresh load; suppress the next TTL fetch
+  }
+  // Re-render live if the picker is open
+  const overlay = document.getElementById('pa-nav-overlay')
+  if (overlay?.classList.contains('open')) {
+    const search = document.getElementById('pa-nav-search') as HTMLInputElement | null
+    applyFilter(search?.value ?? '')
+  }
+})

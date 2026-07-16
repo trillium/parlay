@@ -148,17 +148,19 @@ export function wireAnnotation(
   })
   _popupOk.addEventListener('click', confirmAnnotation)
 
-  _annSend.addEventListener('click', async () => {
-    if (!annotations.length || !_sendMsg) return
-    const page = document.title || location.pathname
-    const lines = annotations.map((a, i) => `${i + 1}. [${a.elementText}]: ${a.note}`).join('\n')
-    annotations.forEach(a => {
-      if (a.el && markerMap.has(a.el)) { markerMap.get(a.el)!.remove(); markerMap.delete(a.el) }
-    })
-    annotations.length = 0
-    renderAnnStrip()
-    await _sendMsg(`ANNOTATIONS on "${page}":\n${lines}`)
+  _annSend.addEventListener('click', () => { void sendAnnotations() })
+}
+
+export async function sendAnnotations(): Promise<void> {
+  if (!annotations.length || !_sendMsg) return
+  const page = document.title || location.pathname
+  const lines = annotations.map((a, i) => `${i + 1}. [${a.elementText}]: ${a.note}`).join('\n')
+  annotations.forEach(a => {
+    if (a.el && markerMap.has(a.el)) { markerMap.get(a.el)!.remove(); markerMap.delete(a.el) }
   })
+  annotations.length = 0
+  _renderStrip?.()
+  await _sendMsg(`ANNOTATIONS on "${page}":\n${lines}`)
 }
 
 export function doSetAnnotate(on: boolean) {

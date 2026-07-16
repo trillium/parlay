@@ -59,17 +59,18 @@ export function unarchiveChannel(id: string) {
   persistArchived()
 }
 
-// Persist the selected tab across refreshes.
-const ACTIVE_KEY = 'pa-active-channel'
+// Persist the selected tab per-page so choosing mechanic on /foo doesn't
+// bleed into /bar. Key is scoped to pathname; URL ownership still beats it.
+const activeKey = () => `pa-ch:${location.pathname}`
 let _restored = false
 function restoreActiveChannel() {
   if (_restored) return
   _restored = true
-  // URL ownership: agent whose registered urls match this page is the default — beats last-tab memory.
+  // URL ownership beats saved memory: agent whose urls[] match this page auto-selects.
   const owner = [...agentInfo.entries()].find(([, i]) => i.urls?.some(u => window.location.href.startsWith(u)))?.[0]
   if (owner) { setActiveChannel(owner); return }
   let saved: string | null = null
-  try { saved = localStorage.getItem(ACTIVE_KEY) } catch {}
+  try { saved = localStorage.getItem(activeKey()) } catch {}
   if (saved && agentInfo.has(saved)) setActiveChannel(saved)
 }
 
@@ -235,7 +236,7 @@ export function renderTabs() {
 
 export function switchChannel(ch: string) {
   setActiveChannel(ch)
-  try { localStorage.setItem(ACTIVE_KEY, ch) } catch {}   // persist the choice
+  try { localStorage.setItem(activeKey(), ch) } catch {}   // persist per-page
   unreadByChannel[ch] = 0
   renderTabs()
   if (_renderThread) _renderThread()

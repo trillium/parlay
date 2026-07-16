@@ -12,9 +12,50 @@ export const CSS_SETTINGS = `
     background: var(--pa-surf); border: 1px solid var(--pa-border);
     border-radius: 8px; padding: 20px 22px 18px;
     width: min(420px, 90vw);
+    /* Mobile-first: never taller than the viewport; the accordion keeps content
+       short, but a fully-expanded section can still scroll inside the modal. */
+    max-height: 90vh; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     box-shadow: 0 8px 40px rgba(0,0,0,.6);
     font-family: var(--pa-sans); color: var(--pa-body);
-    display: flex; flex-direction: column; gap: 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  /* Accordion groups: each <details> is one collapsible section. The <summary>
+     is a full-width tap target sized for a phone. Collapsed groups keep the
+     panel short and scannable so any setting is 1-2 taps away. */
+  .pa-settings-group {
+    border: 1px solid var(--pa-border); border-radius: 6px;
+    background: var(--pa-surf2);
+    overflow: hidden;
+  }
+  .pa-settings-summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px; min-height: 20px;
+    font-family: var(--pa-mono); font-size: 11px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase;
+    color: var(--pa-body);
+    transition: color .12s, background .12s;
+  }
+  .pa-settings-summary::-webkit-details-marker { display: none; }
+  .pa-settings-summary::after {
+    content: '▸'; margin-left: auto;
+    font-size: 10px; color: var(--pa-muted);
+    transition: transform .15s ease;
+  }
+  .pa-settings-group[open] > .pa-settings-summary::after { transform: rotate(90deg); }
+  .pa-settings-summary:hover { color: var(--pa-blue); background: color-mix(in srgb, var(--pa-blue) 6%, var(--pa-surf2)); }
+  .pa-settings-summary-tag {
+    font-size: 8px; font-weight: 700; letter-spacing: .08em;
+    padding: 2px 6px; border-radius: 3px;
+    color: var(--pa-blue);
+    background: color-mix(in srgb, var(--pa-blue) 14%, transparent);
+  }
+  .pa-settings-group-body {
+    display: flex; flex-direction: column; gap: 14px;
+    padding: 4px 14px 14px;
+    border-top: 1px solid var(--pa-border);
   }
 
   #pa-settings-modal h2 {
