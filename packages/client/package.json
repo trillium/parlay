@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "build": "bun build.ts",
+    "test": "bun test",
     "dev": "bun --watch build.ts"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20.10.6"
   }
 }
