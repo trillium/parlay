@@ -1,0 +1,146 @@
+{
+  "schema": "parlay.commands/v1",
+  "version": "2026-07-16.1",
+  "commands": [
+    {
+      "id": "stop-speech",
+      "phrases": ["spoken pause"],
+      "mode": "trailing",
+      "priority": 5,
+      "description": "End the input with this to instantly silence current speech",
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "stopSpeech" },
+          { "verb": "setText", "args": { "text": { "transform": "stripTrigger", "from": "buffer" } } }
+        ]
+      }
+    },
+    {
+      "id": "flag-speech",
+      "phrases": ["flag speech", "flag that"],
+      "mode": "whole",
+      "priority": 8,
+      "description": "Report the last-spoken sentence as mispronounced",
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "flagSpeech" },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "clear",
+      "phrases": ["change inside input", "change inside in input"],
+      "mode": "trailing",
+      "priority": 10,
+      "description": "End the input with a clear phrase to empty the whole box",
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "switch-tab",
+      "phrases": ["switch to {agent}", "go to {agent}", "show me {agent}", "channel switch {agent}"],
+      "mode": "whole",
+      "priority": 20,
+      "description": "Switch the active agent tab by name",
+      "emit": {
+        "kind": "sequence",
+        "onResolveFail": "fallthrough",
+        "actions": [
+          { "verb": "switchTab", "args": { "channel": { "resolve": "agent", "from": "{agent}" } } },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "archive-tab",
+      "phrases": ["archive {agent}", "archive tab {agent}"],
+      "mode": "whole",
+      "priority": 20,
+      "description": "Archive an agent tab by name",
+      "emit": {
+        "kind": "sequence",
+        "onResolveFail": "fallthrough",
+        "actions": [
+          { "verb": "archiveTab", "args": { "channel": { "resolve": "agent", "from": "{agent}" } } },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "channel-list",
+      "phrases": ["channel list", "list channels", "show channels"],
+      "mode": "whole",
+      "priority": 20,
+      "description": "Open the agent switcher to show available channels",
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "openChannelPicker", "args": { "prompt": "Say a channel name, nickname, or number", "channels": { "resolve": "channelList" } } },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "next-tab",
+      "phrases": ["next tab", "next agent"],
+      "mode": "whole",
+      "priority": 20,
+      "description": "Switch to the next agent tab",
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "nextTab" },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "prev-tab",
+      "phrases": ["previous tab", "previous agent", "last tab"],
+      "mode": "whole",
+      "priority": 20,
+      "description": "Switch to the previous agent tab",
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "prevTab" },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "go-to-page",
+      "phrases": ["go to {page}", "open {page}", "show {page}", "workspace {page}"],
+      "mode": "whole",
+      "priority": 25,
+      "description": "Open a Pulse page in the workspace pane",
+      "emit": {
+        "kind": "sequence",
+        "onResolveFail": "fallthrough",
+        "actions": [
+          { "verb": "navigate", "args": { "url": { "resolve": "page", "from": "{page}" } } },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "submit",
+      "phrases": ["bravely", "gravely", "briefly", "lap"],
+      "mode": "trailing",
+      "priority": 30,
+      "description": "End a message with this word to auto-send it after 1s",
+      "emit": {
+        "kind": "handler",
+        "handler": "submit",
+        "config": { "delayMs": 1000, "requireTail": true }
+      }
+    }
+  ]
+}
