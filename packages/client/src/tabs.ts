@@ -1,7 +1,10 @@
 import { esc, fmtTime } from './config'
-import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel, lastActivityByChannel, toolLogVisible } from './state'
+import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel, lastActivityByChannel, toolLogVisible, type AgentInfo } from './state'
 import { checkAgentOnline } from './tab-online'
-import { tabsEl, inputEl, connBanner, versionEl } from './dom'
+import { tabsEl, inputEl, connBanner, versionEl, urlsEl } from './dom'
+
+// Nickname takes precedence over name for all human-facing display.
+function displayName(info: AgentInfo): string { return info.nickname ?? info.name }
 import { sheetOpen, renderSheet } from './switcher'
 import { renderToolLog } from './toollog'
 import { PA_VERSION } from './version'
@@ -12,8 +15,9 @@ import { PA_VERSION } from './version'
 // is what goes, not the name. Falls back to the bare version with no channel.
 function updateVersionLabel(ch: string | null) {
   if (!versionEl) return
-  const name = ch && agentInfo.has(ch) ? agentInfo.get(ch)!.name : null
-  versionEl.textContent = name ? `v${PA_VERSION} · ${name}` : `v${PA_VERSION}`
+  const info = ch ? agentInfo.get(ch) : null
+  const label = info ? displayName(info) : null
+  versionEl.textContent = label ? `v${PA_VERSION} · ${label}` : `v${PA_VERSION}`
 }
 
 // ── Per-channel status (green = listening, grey = idle, hollow = offline) ────
@@ -87,17 +91,24 @@ function updateHeader(ch: string | null) {
   if (!subEl || !dotEl) return
   if (ch && agentInfo.has(ch)) {
     const info = agentInfo.get(ch)!
-    subEl.textContent = ` · ${info.name}`
+    subEl.textContent = ` · ${displayName(info)}`
     // Header dot carries the channel's live status, even in single-agent mode
     const st = statusOf(ch)
     dotEl.style.background = st === 'listening' ? (info.color || 'var(--pa-green)')
                            : st === 'idle'      ? 'var(--pa-muted)' : 'transparent'
     dotEl.style.boxShadow  = st === 'offline' ? 'inset 0 0 0 1.5px var(--pa-muted)' : ''
     dotEl.title = statusTooltip(ch)
+    // URL pills — clickable links to pulse pages this agent owns
+    if (urlsEl) {
+      const urls = info.urls ?? []
+      urlsEl.innerHTML = urls.map(u => `<a class="pa-url-pill" href="${esc(u)}" title="${esc(u)}" target="_blank">${esc(u.replace(/^https?:\/\/[^/]+/, '') || u)}</a>`).join('')
+      urlsEl.classList.toggle('visible', urls.length > 0)
+    }
   } else {
     subEl.textContent = ''
     dotEl.style.background = ''
     dotEl.style.boxShadow = ''
+    if (urlsEl) { urlsEl.innerHTML = ''; urlsEl.classList.remove('visible') }
   }
 }
 
@@ -135,14 +146,17 @@ export function renderTabs() {
   tabsEl.classList.add('visible')
   tabsEl.innerHTML = ''
 
-  const makeTab = (id: string, info: { name: string; color: string }) => {
+  const makeTab = (id: string, info: AgentInfo) => {
     const tab = document.createElement('button')
     tab.className = 'pa-tab' + (activeChannel === id ? ' active' : '') + (id === 'system' ? ' pa-tab-system' : '')
     tab.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
-    tab.title = id === 'system' ? 'Hook & tool events from all sessions' : statusTooltip(id)
+    const label = displayName(info)
+    // Tooltip: show status + id when nickname differs from id, plus any owned URLs
+    const urlHint = info.urls?.length ? `\n${info.urls.join('\n')}` : ''
+    tab.title = id === 'system' ? 'Hook & tool events from all sessions' : statusTooltip(id) + urlHint
     const count = unreadByChannel[id] || 0
-    const idLabel = id !== info.name.toLowerCase().replace(/\s+/g, '-') ? `<span class="pa-tab-id">${esc(id)}</span>` : ''
-    tab.innerHTML = `<span class="pa-tab-pip ${statusOf(id)}"></span><span class="pa-tab-label-wrap">${esc(info.name)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
+    const idLabel = id !== label.toLowerCase().replace(/\s+/g, '-') ? `<span class="pa-tab-id">${esc(id)}</span>` : ''
+    tab.innerHTML = `<span class="pa-tab-pip ${statusOf(id)}"></span><span class="pa-tab-label-wrap">${esc(label)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
     tab.addEventListener('click', () => switchChannel(id))
     tab.querySelector('.pa-tab-x')!.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -162,7 +176,7 @@ export function renderTabs() {
       const aListen = channelStatus[a] === 'listening' ? 1 : 0
       const bListen = channelStatus[b] === 'listening' ? 1 : 0
       if (bListen !== aListen) return bListen - aListen
-      return ai.name.localeCompare(bi.name)
+      return displayName(ai).localeCompare(displayName(bi))
     })
   for (const [id, info] of sortedAgents) makeTab(id, info)
   // System pseudo-tab always renders LAST; archiving it (the ×) is the
@@ -187,7 +201,7 @@ export function renderTabs() {
       row.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
       row.title = `Restore ${id}`
       const count = unreadByChannel[id] || 0
-      row.innerHTML = `<span class="pa-tab-pip"></span><span>${esc(info.name)}</span><span class="pa-arch-row-id">${esc(id)}</span>${count ? `<span class="pa-tab-unread visible" style="position:static">${count}</span>` : ''}`
+      row.innerHTML = `<span class="pa-tab-pip"></span><span>${esc(displayName(info))}</span><span class="pa-arch-row-id">${esc(id)}</span>${count ? `<span class="pa-tab-unread visible" style="position:static">${count}</span>` : ''}`
       row.addEventListener('click', () => {
         unarchiveChannel(id)   // opening an archived tab restores it
         switchChannel(id)

@@ -16,13 +16,15 @@
 //   annotate mode, drawer open/closed on mobile.
 
 export interface AgentInfo {
-  id:    string
-  name:  string
-  color: string
+  id:       string
+  name:     string
+  color:    string
+  nickname?: string    // short human-friendly alias; shown in place of name everywhere
+  urls?:    string[]   // pulse pages this agent owns or generated
 }
 
 // Multi-agent tabs
-export const agentInfo      = new Map<string, AgentInfo>()  // id → { id, name, color }
+export const agentInfo      = new Map<string, AgentInfo>()  // id → { id, name, color, nickname?, urls? }
 export let activeChannel: string | null = null              // null only while no agents exist
 export const unreadByChannel: Record<string, number> = {}  // id → count
 

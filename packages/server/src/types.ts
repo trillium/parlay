@@ -25,9 +25,11 @@ export interface ChatMessage {
 }
 
 export interface AgentInfo {
-  id:    string
-  name:  string
-  color: string
+  id:       string
+  name:     string
+  color:    string
+  nickname?: string    // short human-friendly alias; shown in place of name everywhere
+  urls?:    string[]   // pulse pages this agent owns or generated
 }
 
 export type SSEClient = {

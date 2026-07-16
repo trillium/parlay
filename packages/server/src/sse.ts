@@ -28,7 +28,13 @@ export function persistAgents(): void {
 try {
   const list = JSON.parse(readFileSync(AGENTS_PATH, "utf-8")) as AgentInfo[]
   for (const a of list) {
-    if (a?.id) agents.set(String(a.id), { id: String(a.id), name: String(a.name ?? a.id), color: String(a.color ?? "#6b7280") })
+    if (a?.id) agents.set(String(a.id), {
+      id:    String(a.id),
+      name:  String(a.name  ?? a.id),
+      color: String(a.color ?? "#6b7280"),
+      ...(a.nickname ? { nickname: String(a.nickname) } : {}),
+      ...(Array.isArray(a.urls) && a.urls.length ? { urls: a.urls.map(String) } : {}),
+    })
   }
 } catch { /* first boot or unreadable — start empty */ }
 

@@ -29,6 +29,7 @@ export const DRAWER_HTML = `
     </div>
     <div id="pa-conn-banner"></div>
     <div id="pa-tabs"></div>
+    <div id="pa-agent-urls"></div>
 
     <div id="pa-ann-strip">
       <div class="pa-ann-strip-head">
@@ -142,6 +143,7 @@ export let toolLog!: HTMLElement
 export let logBtn!: HTMLElement
 export let settingsGearBtn!: HTMLElement
 export let versionEl!: HTMLElement
+export let urlsEl!: HTMLElement
 
 export function bindDOMRefs() {
   backdrop   = document.getElementById('pa-backdrop')!
@@ -170,4 +172,5 @@ export function bindDOMRefs() {
   logBtn         = document.getElementById('pa-log-btn')!
   settingsGearBtn = document.getElementById('pa-settings-btn-gear')!
   versionEl      = document.getElementById('pa-version')!
+  urlsEl         = document.getElementById('pa-agent-urls')!
 }
