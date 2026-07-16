@@ -70,6 +70,7 @@ LOG="${TMPDIR:-/tmp}/reincarnate-$CLAUDE_PID.log"
 if [ -n "${AID:-}" ]; then RECEIPT_DIR="${PARLAY_AGENT_HOME:-$HOME/.parlay/agents}/${AID}"; else RECEIPT_DIR="$HOME/.parlay"; fi
 RECEIPT="$RECEIPT_DIR/reincarnations.log"
 mkdir -p "$RECEIPT_DIR" 2>/dev/null || true
+PARLAY="${PARLAY_SERVER:-http://localhost:31337}"   # for Change 3 self-verify
 
 # ── the external watcher: verify claude closed, then optionally reboot ──
 # A panel-agent reboot first clears any lingering dead herdr tab so parlay-spawn's
@@ -109,7 +110,29 @@ if [ "$REBOOT" = "1" ]; then
       if [ -z "\$_keep" ]; then echo "[\$(date '+%H:%M:%S')] WARNING: no live tab for ${AID:-} after reboot — relaunch may have failed"; fi
       [ "\$_extra" -gt 0 ] && echo "[\$(date '+%H:%M:%S')] reconciled: kept 1 tab (\$_keep), closed \$_extra duplicate(s) for ${AID:-}"
     fi
-    _receipt launched "\$_keep"
+    # ── Change 3: self-verify the reborn agent is live AND env-wired ──
+    # The definitive signal is the reborn agent polling ITS OWN parlay channel:
+    # that requires both a live process (came alive) and its identity wired
+    # (PARLAY_AGENT_ID) — precisely the two things an env-less duplicate lacked
+    # when bare \`reply\` failed with "no agent identity". Poll the subscribers
+    # endpoint up to 90s. Verified → receipt "verified"; otherwise a "verify_failed"
+    # receipt so a broken reincarnation is DISCOVERABLE, not silent.
+    if [ -n "${AID:-}" ]; then
+      _verified=0
+      for _ in \$(seq 1 90); do
+        if curl -s -m 3 "$PARLAY/api/chat/subscribers" 2>/dev/null | jq -e --arg id "${AID:-}" '.poll.channels[]? | select(.channel==\$id or .id==\$id)' >/dev/null 2>&1; then _verified=1; break; fi
+        sleep 1
+      done
+      if [ "\$_verified" = "1" ]; then
+        echo "[\$(date '+%H:%M:%S')] verified: ${AID:-} is live + env-wired (polling its parlay channel)"
+        _receipt verified "\$_keep"
+      else
+        echo "[\$(date '+%H:%M:%S')] VERIFY FAILED: ${AID:-} did not appear on its parlay channel within 90s — reincarnation may be broken"
+        _receipt verify_failed "\$_keep"
+      fi
+    else
+      _receipt launched "\$_keep"
+    fi
   else
     echo "[\$(date '+%H:%M:%S')] reboot FAILED"
     _receipt reboot_failed ""
