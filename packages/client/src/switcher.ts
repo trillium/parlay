@@ -1,6 +1,7 @@
 import { esc } from './config'
 import { agentInfo, activeChannel, unreadByChannel, channelStatus, lastActivityByChannel } from './state'
 import { archived, unarchiveChannel, switchChannel, statusOf } from './tabs'
+import { sendDebugSnapshot } from './settings-modal/debug'
 
 // ── Mobile agent switcher: floating button above the input → tap-friendly sheet ──
 
@@ -63,6 +64,7 @@ export function initAgentSwitcher() {
     }
   })
   document.getElementById('pa-sheet-close')?.addEventListener('click', () => sheet.classList.remove('open'))
+  document.getElementById('pa-sheet-debug')?.addEventListener('click', () => { sheet.classList.remove('open'); void sendDebugSnapshot() })
   // Control shortcuts: proxy the header buttons so all existing behavior carries over
   for (const btn of sheet.querySelectorAll<HTMLElement>('.pa-sheet-act')) {
     btn.addEventListener('click', () => {

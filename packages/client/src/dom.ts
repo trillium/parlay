@@ -72,6 +72,7 @@ export const DRAWER_HTML = `
         <button class="pa-sheet-act" data-proxy="pa-nav-btn">🧭 Pages</button>
         <button class="pa-sheet-act" data-proxy="pa-settings-btn-gear">⚙ Settings</button>
         <button class="pa-sheet-act" data-proxy="pa-ann-btn">✎ Annotate</button>
+        <button class="pa-sheet-act" id="pa-sheet-debug">🔍 Debug</button>
       </div>
     </div>
   </div>
