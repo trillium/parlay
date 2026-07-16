@@ -25,6 +25,7 @@ import {
   cmdSubscribers,
 } from "./commands"
 import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
+import { cmdVariant } from "./commands-variant"
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
@@ -42,6 +43,7 @@ async function main() {
     case "history":       return cmdHistory(args)
     case "monitor":       return cmdMonitor(args)
     case "launch":        return cmdLaunch(args)
+    case "variant":       return cmdVariant(args)
     case "lavish-import": return cmdLavishImport(args)
     case "help":
     case "--help":

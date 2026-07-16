@@ -22,6 +22,10 @@ Usage:
   parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
   parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
   parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
   parlay lavish-import            Import lavish sessions
   parlay help                     Show this help
 
@@ -43,6 +47,7 @@ const HELP: Record<string, string> = {
   history: `parlay history — print recent messages (server-bounded).\nUsage: parlay history [N] [--full]\n  N        How many messages (default 20)\n  --full   Untruncated text plus id and channel per message`,
   monitor: `parlay monitor — enroll with the relay and stream CHAT_MSG|id|role|text lines on stdout.\nUsage: parlay monitor --agent <id> [--legacy-poll]\n  --agent <id>    Agent channel to enroll + stream (required unless --legacy-poll)\n  --legacy-poll   Use the old independent poll loop with no relay (global feed if no --agent)\n\nDefault path registers <id> with the central relay (tools/relay/parlay-relay must\nbe running) and execs 'tail -F' on the agent's spool — ~1.2MB per agent, one relay\nfans out to all. See tools/RELAY_MONITOR.md.`,
   launch: `parlay launch — discover and launch agents defined in ~/.parlay/agents/.\nUsage: parlay launch          → list all known agents with live status\n       parlay launch <id>    → spawn the named agent via parlay-spawn (reads identity.md for name/color/cwd/model)\nOffline agents are clearly marked; spawning fires the standard identity→handoff→scratchpad recovery chain.`,
+  variant: `parlay variant — manage variant agents (isolated git-worktree forks of an existing agent).\nSubcommands:\n  launch <primary-id> [--label <suffix>] [--model MODEL]\n      Fork a primary into a new variant. Creates a git worktree at ~/.parlay/worktrees/<variant-id>.\n      Label defaults to wt1, wt2, … (auto-incremented). Variant id: <primary>-<label>.\n  list [<primary-id>]\n      List all variants, optionally filtered to a specific primary.\n  merge <variant-id>\n      Append novel identity facts + scratchpad notes from the variant into the primary.\n      Deduplicated by content; merged lines tagged [from: <variant-id>]. Idempotent.\n  teardown <variant-id> [--force]\n      Merge insights (unless --force), remove the git worktree, unregister from Parlay,\n      and delete the variant home. Refuses if unmerged insights exist unless --force.`,
   "lavish-import": `parlay lavish-import — import lavish sessions via the bundled importer.\nUsage: parlay lavish-import`,
 }
 
