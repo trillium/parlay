@@ -21,6 +21,7 @@ import {
   cmdLaunch,
   cmdMonitor,
   cmdSend,
+  cmdStats,
   cmdStatus,
   cmdSubscribers,
 } from "./commands"
@@ -42,6 +43,7 @@ async function main() {
     case "alert":         return cmdAlert(args)
     case "history":       return cmdHistory(args)
     case "monitor":       return cmdMonitor(args)
+    case "stats":         return cmdStats(args)
     case "launch":        return cmdLaunch(args)
     case "variant":       return cmdVariant(args)
     case "lavish-import": return cmdLavishImport(args)

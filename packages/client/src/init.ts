@@ -8,6 +8,7 @@
  */
 
 import { IS_STANDALONE, DESKTOP_BP } from './config'
+import { toggleDebugPanel } from './debug-panel'
 import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel, agentInfo } from './state'
 import { initCommands } from './commands'
 import { initPlugins } from './plugins'
@@ -165,6 +166,9 @@ applySettings(settings)
 injectPageNav()
 document.getElementById('pa-nav-btn')?.addEventListener('click', openPageNav)
 
+// ── Debug panel (Ctrl+Shift+D) ────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.shiftKey && e.key === 'D') { e.preventDefault(); toggleDebugPanel() } })
+
 // ── Annotation ────────────────────────────────────────────────────────────────
 wireAnnotation(
   annToggle, annStrip, annCount, annList, annSend,
@@ -192,10 +196,9 @@ initPlugins()    // plugin loader — before connect() so SSE subscriptions catc
 initLightbox()   // shared image lightbox — delegated over all .pa-img surfaces
 wireToolLogEvents()
 wireInputEvents()
-// Server-side eval (feat/server-side-eval): subscribe the action dispatcher to
-// the input_action SSE channel. onSse auto-reattaches across reconnects, so the
-// action channel survives connection drops with zero extra code. No-op unless the
-// serverEvalEnabled flag is on (the handler early-returns).
+// Server-side eval: subscribe the action dispatcher to the input_action SSE
+// channel. onSse auto-reattaches across reconnects, so the action channel
+// survives connection drops with zero extra code.
 wireServerEval(onSse)
 if (isDesktop() || IS_STANDALONE) openDrawer(true)
 connect()
