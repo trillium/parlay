@@ -153,13 +153,33 @@ export async function sendMsg(text: string, images?: string[]) {
 // in <1µs, serverOwnedFires stays 0, voice submit never works).
 const _evalPageEpoch: string = (crypto as any).randomUUID?.() ?? `e-${Date.now()}`
 
-function evalCtx() {
+// The tab set exactly as the eval wire contract expects it (id, name,
+// nicknames). Single source of truth so the main input AND the channel picker
+// send an identical, identically-ordered list — the contract requires the
+// numbering to stay stable across openChannelPicker and the picker-input POST.
+export function evalTabs(): { id: string; name: string; nicknames: string[] }[] {
+  return [...agentInfo.values()].map(a => ({ id: a.id, name: a.name, nicknames: a.nicknames ?? [] }))
+}
+
+export function evalDevice(): string {
+  return (window as any).__paDeviceId as string ?? 'unknown'
+}
+
+// Voice gate + settle knob, read fresh so a settings change takes effect with no
+// reload. Shared by the main input and the picker.
+export function evalVoice(): { voiceEnabled: boolean; settleMs: number } {
   const s = getSettings()
-  const device = (window as any).__paDeviceId as string ?? 'unknown'
   return {
     voiceEnabled: s.voiceEnabled,
     settleMs: typeof s.voiceSettleMs === 'number' ? s.voiceSettleMs : 450,
-    tabs: [...agentInfo.values()].map(a => ({ id: a.id, name: a.name, nicknames: a.nicknames ?? [] })),
+  }
+}
+
+function evalCtx() {
+  const device = evalDevice()
+  return {
+    ...evalVoice(),
+    tabs: evalTabs(),
     device,
     streamId: `eval-${device}-${_evalPageEpoch}`,
   }
