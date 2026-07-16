@@ -164,6 +164,32 @@ export async function cmdHistory(args: string[]) {
   nextStep("parlay send <text...>")
 }
 
+export async function cmdStats(args: string[]) {
+  if (helpWanted("stats", args)) return
+  const [msgs, agents] = await Promise.all([
+    getJSON<ChatMessage[]>("/api/chat/history?limit=2000"),
+    getJSON<AgentInfo[]>("/api/chat/agents"),
+  ])
+  if (!msgs.length) { console.log("0 messages."); nextStep("parlay history 20"); return }
+  const B = (n: number) => n < 1024 ? `${n}B` : `${(n / 1024).toFixed(1)}KB`
+  const sizes   = msgs.map(m => JSON.stringify(m).length)
+  const total   = sizes.reduce((a, b) => a + b, 0)
+  const largest = Math.max(...sizes)
+  const avg     = Math.round(total / sizes.length)
+  const userN   = msgs.filter(m => m.role === "user").length
+  const agentN  = msgs.filter(m => m.role === "agent").length
+  const imgN    = (msgs as any[]).filter(m => m.images?.length).length
+  const cardN   = (msgs as any[]).filter(m => m.type === "action_request").length
+  const oldest  = new Date(msgs[0].ts).toLocaleString()
+  const newest  = new Date(msgs[msgs.length - 1].ts).toLocaleString()
+  console.log(`messages: ${msgs.length}  |  est. ${B(total)}  |  avg ${B(avg)}  |  largest ${B(largest)}`)
+  console.log(`  user: ${userN}  agent: ${agentN}  |  images: ${imgN}  action_cards: ${cardN}`)
+  console.log(`  oldest: ${oldest}`)
+  console.log(`  newest: ${newest}`)
+  console.log(`agents: ${agents.length} registered`)
+  nextStep("Ctrl+Shift+D in the panel for client-side bundle/memory breakdown")
+}
+
 export async function cmdLavishImport(args: string[]) {
   if (helpWanted("lavish-import", args)) return
   parseArgs("lavish-import", args)
