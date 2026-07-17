@@ -27,7 +27,9 @@ type Manifest struct {
 }
 
 // CommandManifest is one command as data. Enabled is a pointer so an omitted field
-// defaults to true (an explicit false disables the command).
+// defaults to true (an explicit false disables the command). Platforms is the set of
+// surfaces the command is eligible on (empty ⇒ the default platform); every platform
+// listed must implement the verbs/handler the command emits (checked at load).
 type CommandManifest struct {
 	ID          string   `json:"id"`
 	Phrases     []string `json:"phrases"`
@@ -35,6 +37,7 @@ type CommandManifest struct {
 	Priority    int      `json:"priority"`
 	Description string   `json:"description"`
 	Enabled     *bool    `json:"enabled"`
+	Platforms   []string `json:"platforms,omitempty"`
 	Emit        Emit     `json:"emit"`
 }
 
@@ -191,6 +194,9 @@ func validateManifest(man *Manifest) error {
 			return fmt.Errorf("command %q: %w", c.ID, err)
 		}
 		if err := validateEmit(&c.Emit); err != nil {
+			return fmt.Errorf("command %q: %w", c.ID, err)
+		}
+		if err := validateCommandPlatforms(c); err != nil {
 			return fmt.Errorf("command %q: %w", c.ID, err)
 		}
 	}

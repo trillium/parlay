@@ -45,6 +45,7 @@ type EvalRequest struct {
 	VoiceEnabled bool      `json:"voiceEnabled"` // master gate (input.ts:100 / registry.ts:91)
 	Tabs         []Tab     `json:"tabs"`         // live agent tabs for {agent} resolution
 	Mode         string    `json:"mode"`         // "" = normal eval; "channel-select" = resolve text as a channel pick
+	Platform     string    `json:"platform"`     // "" = default (parlay); which surface this buffer belongs to
 
 	// Commands is an OPTIONAL per-request command manifest. When present and valid
 	// it wholly replaces the engine's command set FOR THIS REQUEST ONLY (contract
@@ -289,8 +290,14 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 	// otherwise the live file/embedded set (snapshotted so a concurrent hot-reload
 	// swap is race-free).
 	cmds := e.commandSet(req)
+	platform := requestPlatform(req)
 
 	for _, cc := range cmds {
+		// Platform scoping: skip commands not eligible for this request's surface, so
+		// a Herdr buffer never matches Parlay-only commands and vice versa.
+		if !platformEligible(&cc.cmd, platform) {
+			continue
+		}
 		matched := false
 		submitHandler := isSubmitHandler(cc.cmd.Emit)
 		if fired == "" {
