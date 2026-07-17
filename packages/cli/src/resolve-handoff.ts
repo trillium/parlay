@@ -23,7 +23,9 @@ export const DEFAULT_HANDOFF_STORE = "handoff"
 // store is unavailable or reports no active handoff — callers then demand an explicit
 // id rather than guessing. Never throws.
 export function resolveCurrentHandoff(store: string = DEFAULT_HANDOFF_STORE): string | undefined {
-  const r = spawnSync(store, ["show", "--current", "--json"], { encoding: "utf8" })
+  // Pass env explicitly so command resolution honors the live process.env.PATH
+  // (bun's spawnSync otherwise resolves against a cached PATH).
+  const r = spawnSync(store, ["show", "--current", "--json"], { encoding: "utf8", env: process.env })
   if (r.error || r.status !== 0 || !r.stdout) return undefined
   try {
     const parsed = JSON.parse(r.stdout)
