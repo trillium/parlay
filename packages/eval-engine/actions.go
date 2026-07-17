@@ -56,6 +56,9 @@ type ActionArg struct {
 	Channels []PickerChannel `json:"channels,omitempty"`
 	Prompt   string          `json:"prompt,omitempty"`
 
+	// openSenderPicker
+	Senders []PickerSender `json:"senders,omitempty"`
+
 	// noop
 	Reason string `json:"reason,omitempty"`
 }
@@ -70,6 +73,17 @@ type PickerChannel struct {
 	ID       string `json:"id"`
 	Label    string `json:"label"`
 	Nickname string `json:"nickname"`
+}
+
+// PickerSender is one entry in the authoritative ordered sender list the
+// backend hands the frontend via openSenderPicker. Same structure as PickerChannel.
+// Index is 1-based — it is the number the user speaks. Label is the display name
+// (contact name or phone number); Nickname is a secondary hint (e.g., last msg preview).
+type PickerSender struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`       // phone number or identifier
+	Label    string `json:"label"`    // display name
+	Nickname string `json:"nickname"` // hint (preview or last seen)
 }
 
 // actionList accumulates actions in emission order.
@@ -152,4 +166,22 @@ func actCloseChannelPicker() Action {
 // It reuses the existing Text *string arg field per the contract.
 func actPickerHint(text string) Action {
 	return Action{Verb: "pickerHint", Args: ActionArg{Text: strp(text)}}
+}
+
+// ── Sender picker verbs (mirror of channel picker for iMessage senders) ────────
+
+// actOpenSenderPicker hands the frontend the authoritative ordered sender list
+// plus the instruction prompt. The frontend renders a full-screen modal.
+func actOpenSenderPicker(prompt string, senders []PickerSender) Action {
+	return Action{Verb: "openSenderPicker", Args: ActionArg{Prompt: prompt, Senders: senders}}
+}
+
+// actCloseSenderPicker dismisses the sender picker modal.
+func actCloseSenderPicker() Action {
+	return Action{Verb: "closeSenderPicker"}
+}
+
+// actSenderPickerHint keeps the modal open and shows a transient hint after a no-match.
+func actSenderPickerHint(text string) Action {
+	return Action{Verb: "senderPickerHint", Args: ActionArg{Text: strp(text)}}
 }
