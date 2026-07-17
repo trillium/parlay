@@ -1,22 +1,38 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, openSync, readSync, closeSync } from "fs"
 import { join } from "path"
+import { homedir } from "os"
 
 // ── Session → agent channel map ──────────────────────────────────────────────
 // Processing signals (hook firings, tool activity) are stamped with the Claude
 // Code session_id that produced them, never with a Parlay channel. To route
 // that processing into the agent's own tab we need session_id → channel.
 //
-// The map is learned with ZERO new plumbing: every agent enrolls by running
-// `parlay monitor --agent <channel>`, and that command is itself captured in
-// tool-activity.jsonl as a Monitor/Bash tool_use carrying BOTH the session_id
-// and the `--agent <channel>`. The tool-activity tailer feeds those lines to
-// recordSessionChannel(); every other firing from that session then resolves.
+// TWO-LAYER LOOKUP (JSON-primary, command-parsing fallback):
+//
+// 1. PRIMARY — ~/exchange/parlay-agent-channels.json
+//    Agents explicitly declare their channel by writing or POSTing:
+//    { "<session_id>": "<channel>" }
+//    This is the preferred path — deterministic, no text-parsing, survives
+//    Pulse restarts without needing a `parlay monitor` arm first. Agents can
+//    declare via the API endpoint POST /api/chat/declare-channel or by writing
+//    the JSON file directly.
+//
+// 2. FALLBACK — tool-activity.jsonl scanning (original behavior)
+//    Every agent that runs `parlay monitor --agent <channel>` is captured in
+//    tool-activity.jsonl. The tool-activity tailer feeds those lines to
+//    recordSessionChannel(); that path still works unchanged for agents that
+//    haven't switched to JSON declaration yet.
 
+// Primary: JSON declaration file agents write to explicitly
+const DECLARE_PATH = join(homedir(), "exchange", "parlay-agent-channels.json")
+
+// Fallback: internal state learned from tool-activity.jsonl parsing
 const STATE_PATH = join(
   process.env.PAI_DIR ?? join(process.env.HOME ?? "", ".claude", "PAI"),
   "MEMORY", "STATE", "parlay-session-channels.json",
 )
 
+// In-memory map built from the fallback path
 const sessionChannel = new Map<string, string>()
 
 try {
@@ -33,6 +49,34 @@ function persist(): void {
   } catch { /* best-effort — the map re-learns from enrollment lines anyway */ }
 }
 
+// Read the primary JSON declaration file; returns a map of session_id → channel.
+// Never throws — returns empty object on any read/parse failure.
+function readDeclarations(): Record<string, string> {
+  try {
+    const raw = readFileSync(DECLARE_PATH, "utf-8")
+    const obj = JSON.parse(raw)
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj as Record<string, string>
+  } catch { /* file absent or malformed — normal on first run */ }
+  return {}
+}
+
+// Write a session→channel mapping to the primary JSON declaration file.
+export function declareChannel(sessionId: string, channel: string): void {
+  if (!sessionId || !channel) return
+  try {
+    mkdirSync(join(DECLARE_PATH, ".."), { recursive: true })
+    const existing = readDeclarations()
+    // Sticky: first declaration wins; a re-declare only updates if channel matches
+    if (!existing[sessionId]) {
+      existing[sessionId] = channel
+      writeFileSync(DECLARE_PATH, JSON.stringify(existing, null, 2) + "\n", "utf-8")
+    }
+  } catch { /* best-effort */ }
+}
+
+// Expose the declaration path so the router can serve it
+export const AGENT_CHANNELS_DECLARE_PATH = DECLARE_PATH
+
 export function recordSessionChannel(sessionId: string | undefined, channel: string | undefined): void {
   if (!sessionId || !channel) return
   // STICKY identity (first-enrollment-wins). A session's agent identity is set
@@ -48,7 +92,12 @@ export function recordSessionChannel(sessionId: string | undefined, channel: str
 }
 
 export function channelForSession(sessionId?: string): string | undefined {
-  return sessionId ? sessionChannel.get(sessionId) : undefined
+  if (!sessionId) return undefined
+  // Primary: check the explicit JSON declaration file first
+  const declarations = readDeclarations()
+  if (declarations[sessionId]) return String(declarations[sessionId])
+  // Fallback: use the in-memory map learned from tool-activity.jsonl parsing
+  return sessionChannel.get(sessionId)
 }
 
 // Extract the `--agent <channel>` an enrollment command targets. Matches both
