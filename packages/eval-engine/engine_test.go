@@ -231,15 +231,15 @@ func TestSubmitFiresServerSideAndCallsBack(t *testing.T) {
 	e := NewEngine()
 	var mu sync.Mutex
 	fires := []struct {
-		stream, tail string
-		base         int64
+		stream, tail, platform string
+		base                   int64
 	}{}
-	e.onSubmit = func(streamID string, seq, base int64, tail, text string) {
+	e.onSubmit = func(streamID string, seq, base int64, tail, text, platform string) {
 		mu.Lock()
 		fires = append(fires, struct {
-			stream, tail string
-			base         int64
-		}{streamID, tail, base})
+			stream, tail, platform string
+			base                   int64
+		}{streamID, tail, platform, base})
 		mu.Unlock()
 	}
 	eval(e, "ship it bravely", 7, nil)
@@ -256,13 +256,17 @@ func TestSubmitFiresServerSideAndCallsBack(t *testing.T) {
 	if fires[0].base != 7 {
 		t.Fatalf("fire should carry armed baseVersion 7, got %d", fires[0].base)
 	}
+	// The async fire must know which surface it lands on (default parlay here).
+	if fires[0].platform != "parlay" {
+		t.Fatalf("fire should carry the stream's platform 'parlay', got %q", fires[0].platform)
+	}
 }
 
 func TestSubmitSelfCancelsWhenTailChanges(t *testing.T) {
 	e := NewEngine()
 	fired := int32(0)
 	var mu sync.Mutex
-	e.onSubmit = func(string, int64, int64, string, string) {
+	e.onSubmit = func(string, int64, int64, string, string, string) {
 		mu.Lock()
 		fired++
 		mu.Unlock()
@@ -385,12 +389,12 @@ func TestResolveAgentMatchesNicknames(t *testing.T) {
 		spoken string
 		want   string
 	}{
-		{"boss", "mayor"},    // exact nickname
-		{"chief", "mayor"},   // exact second nickname
-		{"bos", "mayor"},     // substring nickname
-		{"mayor", "mayor"},   // exact name still works
-		{"cato", "cato"},     // id still works
-		{"nobody", ""},       // no match
+		{"boss", "mayor"},  // exact nickname
+		{"chief", "mayor"}, // exact second nickname
+		{"bos", "mayor"},   // substring nickname
+		{"mayor", "mayor"}, // exact name still works
+		{"cato", "cato"},   // id still works
+		{"nobody", ""},     // no match
 	}
 	for _, c := range cases {
 		if got := resolveAgent(c.spoken, tabs); got != c.want {
@@ -520,7 +524,7 @@ func TestSubmitRearmResetsCountdown(t *testing.T) {
 	e := NewEngine()
 	fires := int32(0)
 	var mu sync.Mutex
-	e.onSubmit = func(string, int64, int64, string, string) { mu.Lock(); fires++; mu.Unlock() }
+	e.onSubmit = func(string, int64, int64, string, string, string) { mu.Lock(); fires++; mu.Unlock() }
 	// Arm at t=0, re-arm at t=600ms (still trailing trigger) → only ONE fire,
 	// and it should be ~1000ms after the RE-arm, not the first arm.
 	eval(e, "draft one bravely", 1, nil)

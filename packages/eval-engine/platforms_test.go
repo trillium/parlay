@@ -102,6 +102,20 @@ func TestPlatformScopedManifestValidation(t *testing.T) {
 	}
 }
 
+// TestResponseEchoesPlatform proves the engine records the request's surface and
+// echoes it on the response — the observable half of "it knows which surface": a
+// Herdr request comes back tagged herdr, an untagged request comes back parlay. This
+// is the same platform the stream carries onto an async submit fire.
+func TestResponseEchoesPlatform(t *testing.T) {
+	e := NewEngine()
+	if got := evalPlatform(e, "hello there", 1, nil, "herdr").Platform; got != "herdr" {
+		t.Fatalf("herdr request should echo platform=herdr, got %q", got)
+	}
+	if got := evalPlatform(e, "hello there", 2, nil, "").Platform; got != "parlay" {
+		t.Fatalf("untagged request should echo the default platform=parlay, got %q", got)
+	}
+}
+
 // TestHerdrScopedOverrideFiresOnlyOnHerdr wires the whole dimension end to end: a
 // per-request override defines a Herdr-only command; it fires on a Herdr request and
 // is invisible on a Parlay request.
