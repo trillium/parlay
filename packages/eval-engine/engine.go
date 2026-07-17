@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -43,6 +45,15 @@ type EvalRequest struct {
 	VoiceEnabled bool      `json:"voiceEnabled"` // master gate (input.ts:100 / registry.ts:91)
 	Tabs         []Tab     `json:"tabs"`         // live agent tabs for {agent} resolution
 	Mode         string    `json:"mode"`         // "" = normal eval; "channel-select" = resolve text as a channel pick
+
+	// Commands is an OPTIONAL per-request command manifest. When present and valid
+	// it wholly replaces the engine's command set FOR THIS REQUEST ONLY (contract
+	// §Loading precedence: request > file > embedded, highest wins). This is how a
+	// client ships user-customized phrases (today's voiceSubmitPhrases generalize to
+	// it) with no server state. It is a raw message so an invalid override is simply
+	// ignored — the request still evaluates against the live file/embedded set —
+	// rather than failing the whole request at JSON-decode time.
+	Commands json.RawMessage `json:"commands,omitempty"`
 }
 
 type CursorPos struct {
@@ -78,12 +89,23 @@ type streamState struct {
 	timerGen      int64  // generation guard: a fired timer whose gen != current is stale
 }
 
+// compiledCommand pairs a manifest command (DATA) with its compiled matchers
+// (MACHINERY). The engine's live command set is a priority-sorted slice of these,
+// rebuilt whenever a new manifest is loaded (hot-reload) — the matchers are
+// compiled once per load, not per eval.
+type compiledCommand struct {
+	cmd      CommandManifest
+	matchers []CompiledMatcher
+}
+
 // Engine holds all live streams and the compiled command set.
 type Engine struct {
-	mu       sync.Mutex
-	streams  map[string]*streamState
-	specs    []commandSpec
-	matchers map[string][]CompiledMatcher // command id → compiled matchers (built once)
+	mu      sync.Mutex
+	streams map[string]*streamState
+	// commands is the live, priority-sorted, enabled-only command set the pass
+	// iterates. It comes from a Manifest (embedded default today; a loaded file or
+	// per-request override later), NEVER from a hardcoded switch.
+	commands []compiledCommand
 
 	// onSubmit is called when a SERVER-OWNED timer fires and decides to submit.
 	// The service layer wires this to push a submitNow over SSE (engine has no
@@ -135,22 +157,47 @@ func (s *Stats) snapshot() map[string]any {
 	}
 }
 
-// NewEngine builds the engine, compiling every command's matchers once (the
-// compiled-matcher cache from registry.ts:73-82, but eager since phrases are
-// static here — settings-driven rebinding is a documented future extension).
+// NewEngine builds the engine from the embedded default manifest, compiling every
+// command's matchers once. The command set is DATA (default_commands.json), not a
+// hardcoded slice; loadManifest swaps in a new set at runtime (hot-reload).
 func NewEngine() *Engine {
 	e := &Engine{
-		streams:  map[string]*streamState{},
-		specs:    append([]commandSpec(nil), builtins...),
-		matchers: map[string][]CompiledMatcher{},
+		streams: map[string]*streamState{},
 	}
-	// Sort by priority ascending — lower wins, first match ends the pass
-	// (registry.ts:21).
-	sort.SliceStable(e.specs, func(i, j int) bool { return e.specs[i].priority < e.specs[j].priority })
-	for _, spec := range e.specs {
-		e.matchers[spec.id] = compilePhrases(spec.phrases, spec.mode)
-	}
+	e.commands = compileManifest(embeddedManifest())
 	return e
+}
+
+// compileManifest turns a validated Manifest into the engine's live command set:
+// drop disabled commands, sort by priority ascending (lower wins, first match ends
+// the pass — registry.ts:21), and compile each command's phrases once. The
+// manifest is pre-validated, so every phrase is known to compile.
+func compileManifest(man *Manifest) []compiledCommand {
+	cmds := make([]compiledCommand, 0, len(man.Commands))
+	for _, c := range man.Commands {
+		if !c.isEnabled() {
+			continue
+		}
+		cmds = append(cmds, compiledCommand{
+			cmd:      c,
+			matchers: compilePhrases(c.Phrases, MatchMode(c.Mode)),
+		})
+	}
+	sort.SliceStable(cmds, func(i, j int) bool { return cmds[i].cmd.Priority < cmds[j].cmd.Priority })
+	return cmds
+}
+
+// SetCommands atomically swaps the engine's live command set from a validated
+// manifest (hot-reload). Compilation happens before the lock so the swap itself is
+// a single pointer assignment — an in-flight Eval either sees the whole old set or
+// the whole new set, never a torn mix. Callers must pass only a validated Manifest;
+// an empty set is impossible because validateManifest rejects zero commands (never
+// fall open to no commands).
+func (e *Engine) SetCommands(man *Manifest) {
+	cmds := compileManifest(man)
+	e.mu.Lock()
+	e.commands = cmds
+	e.mu.Unlock()
 }
 
 func (e *Engine) stream(id string) *streamState {
@@ -231,48 +278,94 @@ func (e *Engine) resolveChannelPick(req EvalRequest, out *actionList) {
 
 // runPass mirrors registry.ts:88-113: iterate commands by priority; first match
 // ends matching, but the submit machine's self-cancel (watch) runs every pass.
+// Every command's behavior now comes from its manifest emit — a declarative
+// `sequence` interpreted by interpretSequence, or a `handler` delegation (submit
+// arms the server-owned countdown). The old runAction switch is gone.
 func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 	value := req.Text
 	fired := ""
 
-	for _, spec := range e.specs {
+	// Resolve the command set for this pass: a valid per-request override wins,
+	// otherwise the live file/embedded set (snapshotted so a concurrent hot-reload
+	// swap is race-free).
+	cmds := e.commandSet(req)
+
+	for _, cc := range cmds {
 		matched := false
+		submitHandler := isSubmitHandler(cc.cmd.Emit)
 		if fired == "" {
-			for _, cm := range e.matchers[spec.id] {
+			for _, cm := range cc.matchers {
 				m := cm.match(value)
 				if m == nil {
 					continue
 				}
-				if spec.id == "submit" {
-					// Stateful: arm the SERVER-OWNED countdown instead of a direct
-					// action. matched=true so the self-cancel below won't disarm it.
-					e.armSubmit(req, m, out)
+				if submitHandler {
+					// Stateful handler: arm the SERVER-OWNED countdown instead of a
+					// direct action. matched=true so the self-cancel below won't disarm it.
+					e.armSubmit(req, m, out, submitDelay(cc.cmd.Emit))
 					matched = true
-					fired = spec.id
+					fired = cc.cmd.ID
 					break
 				}
-				handled := runAction(spec, m, req.Tabs, out)
+				handled := e.interpretSequence(&cc.cmd.Emit, m, MatchMode(cc.cmd.Mode), req.Tabs, out)
 				if !handled {
-					continue // not handled — try next phrase / later command
+					continue // not handled (onResolveFail:fallthrough) — try next phrase / later command
 				}
 				matched = true
-				fired = spec.id
+				fired = cc.cmd.ID
 				break
 			}
 		}
 		// watch(): the submit machine self-cancels the moment the buffer no longer
 		// ends with the armed trigger (builtins.ts:34-36).
-		if spec.id == "submit" && !matched {
+		if submitHandler && !matched {
 			e.cancelSubmit(req.StreamID, out, "tail-changed")
 		}
 	}
 	return fired
 }
 
-// armSubmit starts (or re-arms) the SERVER-OWNED 1000ms submit timer. This is the
-// crux of the pure model — the countdown that in the client build is a local
-// setTimeout now runs on the server, one network hop away from the live buffer.
-func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList) {
+// commandSet resolves which command set a request evaluates against, implementing
+// the request > file > embedded precedence. A per-request Commands override is
+// compiled and used ONLY if it parses+validates; an invalid override is ignored
+// (fail-closed to the live set), never a 400 — the request still evaluates. The
+// override is not cached: it is opt-in per request, so the common no-override hot
+// path pays nothing and only override-carrying requests pay the compile.
+func (e *Engine) commandSet(req EvalRequest) []compiledCommand {
+	if raw := bytes.TrimSpace(req.Commands); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) {
+		if man, err := parseManifest(raw); err == nil {
+			return compileManifest(man)
+		}
+		// Invalid override: fall through to the live file/embedded set.
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.commands
+}
+
+// isSubmitHandler reports whether an emit delegates to the stateful submit handler.
+func isSubmitHandler(emit Emit) bool {
+	return emit.Kind == "handler" && emit.Handler == "submit"
+}
+
+// submitDelay reads the submit handler's countdown from its config, defaulting to
+// submitDelayMs when unset. Validation already rejected a negative delayMs.
+func submitDelay(emit Emit) int {
+	if len(emit.Config) == 0 {
+		return submitDelayMs
+	}
+	var sc submitConfig
+	if err := json.Unmarshal(emit.Config, &sc); err == nil && sc.DelayMs > 0 {
+		return sc.DelayMs
+	}
+	return submitDelayMs
+}
+
+// armSubmit starts (or re-arms) the SERVER-OWNED submit timer (delayMs from the
+// handler's config, 1000ms by default). This is the crux of the pure model — the
+// countdown that in the client build is a local setTimeout now runs on the server,
+// one network hop away from the live buffer.
+func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList, delayMs int) {
 	st := e.stream(req.StreamID)
 	st.mu.Lock()
 	// Re-arm: clear any prior timer (builtins.ts:22 clearTimeout(submitTimer)).
@@ -285,7 +378,7 @@ func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList) {
 	st.submitBaseVer = req.Version
 	streamID := req.StreamID
 
-	st.submitTimer = time.AfterFunc(time.Duration(submitDelayMs)*time.Millisecond, func() {
+	st.submitTimer = time.AfterFunc(time.Duration(delayMs)*time.Millisecond, func() {
 		e.fireSubmit(streamID, gen)
 	})
 	st.mu.Unlock()
@@ -297,7 +390,7 @@ func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList) {
 	// Advisory armTimer so the client can render a "submitting in 1s…" countdown.
 	// The AUTHORITATIVE timer is the server one above; the client timer never
 	// submits on its own.
-	out.add(actArmTimer("submit", submitDelayMs))
+	out.add(actArmTimer("submit", delayMs))
 	out.add(actShowHint("submit-countdown", "auto-sending in 1s…", "info"))
 }
 
@@ -396,11 +489,16 @@ func (e *Engine) finish(req EvalRequest, st *streamState, out *actionList, fired
 
 // describeCommands returns the registered command table for /commands (debug).
 func (e *Engine) describeCommands() []map[string]any {
-	rows := make([]map[string]any, 0, len(e.specs))
-	for _, s := range e.specs {
+	e.mu.Lock()
+	cmds := e.commands
+	e.mu.Unlock()
+	rows := make([]map[string]any, 0, len(cmds))
+	for _, cc := range cmds {
+		s := cc.cmd
 		rows = append(rows, map[string]any{
-			"id": s.id, "priority": s.priority, "mode": string(s.mode),
-			"phrases": s.phrases, "description": s.description,
+			"id": s.ID, "priority": s.Priority, "mode": s.Mode,
+			"phrases": s.Phrases, "description": s.Description,
+			"emit": s.Emit.Kind,
 		})
 	}
 	return rows

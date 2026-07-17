@@ -325,27 +325,9 @@ func TestSwitchTabWinsWhenAgentKnown(t *testing.T) {
 	}
 }
 
-func TestRunActionSubmitIsNotHandledDirectly(t *testing.T) {
-	t.Parallel()
-	// runAction must refuse the submit id (it is driven by the stateful machine).
-	// Calling it directly returns handled=false and emits nothing.
-	out := &actionList{}
-	handled := runAction(commandSpec{id: "submit"}, &matchResult{}, nil, out)
-	if handled {
-		t.Errorf("runAction(submit) must return handled=false")
-	}
-	if len(out.items) != 0 {
-		t.Errorf("runAction(submit) must emit nothing; got %v", out.items)
-	}
-}
-
-func TestRunActionUnknownIdNotHandled(t *testing.T) {
-	t.Parallel()
-	out := &actionList{}
-	if runAction(commandSpec{id: "does-not-exist"}, &matchResult{}, nil, out) {
-		t.Errorf("unknown command id must return handled=false")
-	}
-	if len(out.items) != 0 {
-		t.Errorf("unknown command id must emit nothing")
-	}
-}
+// The old TestRunAction* tests were deleted with the runAction switch: submit is
+// now a handler (never routed through interpretSequence), and the interpreter only
+// ever runs known, pre-validated manifest commands, so both invariants those tests
+// guarded are now structural. Submit routing is covered by the engine submit tests;
+// unknown/invalid command shapes are rejected at load by the manifest validator
+// (see manifest_test.go).
