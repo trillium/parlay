@@ -1,13 +1,14 @@
 import { CHAT_BASE } from './config'
-import { draftSaveTimer, open, activeChannel, setDraftSaveTimer } from './state'
+import { draftSaveTimer, open, activeChannel, setDraftSaveTimer, agentInfo } from './state'
 import { inputEl, sendBtn } from './dom'
 import { armCompactTimer } from './sse'
 import { getSettings } from './settings-modal'
 import { scheduleEval, bumpInputVersion, applyEnvelope } from './commands'
 import type { ActionEnvelope } from './commands'
-import { agentInfo } from './state'
 import { wireAttachments, takePendingImages } from './attachments'
 import { resolvePinnedChannel } from './channel-pin'
+import { switchChannel } from './tabs'
+import { sampleInput } from './input-timing'
 
 // ── Auto-resize ───────────────────────────────────────────────────────────────
 
@@ -31,39 +32,6 @@ export function autoResize() {
 
 // Expose for draft SSE handler
 ;(window as any).__paAutoResize = autoResize
-
-// ── Input timing telemetry ────────────────────────────────────────────────────
-// Measures event-to-first-frame latency (input event → rAF) as a proxy for
-// browser responsiveness. Sampled every 5th keystroke; flushed to the server
-// in batches so the measurement itself adds no per-keystroke overhead.
-// Fire-and-forget — never awaited, never blocks typing.
-
-let _lastInputTs = 0, _sampleN = 0
-const _timingBatch: Array<{ sinceLastMs: number; costMs: number }> = []
-let _flushTimer: ReturnType<typeof setTimeout> | null = null
-
-function _flushTiming() {
-  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
-  if (!_timingBatch.length) return
-  const samples = _timingBatch.splice(0)
-  fetch('/api/debug/input-timing', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ device: draftClientId, ua: navigator.userAgent, samples }),
-  }).catch(() => {})
-}
-
-function _sampleInput() {
-  const now = performance.now()
-  const sinceLastMs = _lastInputTs ? now - _lastInputTs : 0
-  _lastInputTs = now
-  if (++_sampleN % 5 !== 0) return   // only sample every 5th keystroke
-  const t0 = now
-  requestAnimationFrame(() => {
-    _timingBatch.push({ sinceLastMs, costMs: performance.now() - t0 })
-    if (_timingBatch.length >= 20) _flushTiming()
-    else { if (_flushTimer) clearTimeout(_flushTimer); _flushTimer = setTimeout(_flushTiming, 5000) }
-  })
-}
 
 // ── Draft sync ────────────────────────────────────────────────────────────────
 
@@ -109,6 +77,45 @@ export function clearDraft() {
 
 export async function sendMsg(text: string, images?: string[]) {
   if ((!text && !images?.length) || sendBtn.disabled) return
+
+  // ── Local command intercepts (never sent to server) ───────────────────────
+  if (!images?.length) {
+    const t = text.trim().toLowerCase()
+
+    // Theme toggle: "light mode" / "dark mode" / "toggle theme" / "toggle dark" / "toggle light"
+    if (/^(light mode|dark mode|toggle (theme|dark|light|mode))$/.test(t)) {
+      const drawer = document.getElementById('pa-drawer')
+      if (drawer) {
+        const goLight = t === 'light mode' || (t.startsWith('toggle') && !drawer.classList.contains('pa-light'))
+        drawer.classList.toggle('pa-light', goLight)
+        try { localStorage.setItem('pa-theme', goLight ? 'light' : 'dark') } catch {}
+      }
+      inputEl.value = ''
+      autoResize()
+      clearDraft()
+      return
+    }
+
+    // Channel-switch: bare agent name or @name
+    const m = /^@?([\w-]+)$/.exec(text.trim())
+    if (m) {
+      const candidate = m[1].toLowerCase()
+      const exactId = [...agentInfo.keys()].find(id => id.toLowerCase() === candidate)
+      const prefixId = !exactId
+        ? [...agentInfo.keys()].find(id => id.toLowerCase().startsWith(candidate))
+        : undefined
+      const target = exactId ?? prefixId
+      if (target && target !== activeChannel) {
+        inputEl.value = ''
+        autoResize()
+        clearDraft()
+        switchChannel(target)
+        return
+      }
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // Kill any pending debounced draft save FIRST — a full-text draft PUT firing
   // mid-send is what refilled the box after send (mobile race, bug #4).
   clearTimeout(draftSaveTimer!)
@@ -194,7 +201,7 @@ function evalCtx() {
 export function wireInputEvents() {
   inputEl.addEventListener('input', () => {
     autoResize()
-    _sampleInput()
+    sampleInput(draftClientId)
     // PURE server-side eval: the client does NO local evaluation. Bump the
     // monotonic input version (the staleness token) and schedule a voice-settle
     // -debounced POST of the STABILIZED buffer to the compiled Go engine.

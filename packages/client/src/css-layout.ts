@@ -67,6 +67,27 @@ export const CSS_LAYOUT = `
     font-family: var(--pa-sans); font-size: 14px; color: var(--pa-body);
   }
   #pa-drawer.open { transform: translateX(0); }
+  /* Light mode — toggled via "light mode" / "dark mode" / "toggle theme" command */
+  #pa-drawer.pa-light {
+    --pa-ink:    #ffffff;
+    --pa-surf:   #f6f8fa;
+    --pa-surf2:  #eaeef2;
+    --pa-border: #d0d7de;
+    --pa-muted:  #57606a;
+    --pa-body:   #1f2328;
+    background: var(--pa-surf); border-right-color: var(--pa-border); color: var(--pa-body);
+    box-shadow: 4px 0 24px rgba(0,0,0,.15);
+  }
+  #pa-drawer.pa-light #pa-hdr { background: var(--pa-ink); border-bottom-color: var(--pa-border); }
+  #pa-drawer.pa-light #pa-thread::-webkit-scrollbar-thumb { background: var(--pa-border); }
+  #pa-drawer.pa-light .pa-bubble.user { background: color-mix(in srgb,var(--pa-blue) 12%,var(--pa-surf2)); border-color: color-mix(in srgb,var(--pa-blue) 22%,var(--pa-border)); color: var(--pa-body); }
+  #pa-drawer.pa-light .pa-bubble.agent { color: var(--pa-body); }
+  #pa-drawer.pa-light .pa-input-wrap { background: var(--pa-ink); border-top-color: var(--pa-border); }
+  #pa-drawer.pa-light textarea#pa-input { background: var(--pa-surf2); border-color: var(--pa-border); color: var(--pa-body); }
+  #pa-drawer.pa-light .pa-tabs { background: var(--pa-ink); border-bottom-color: var(--pa-border); }
+  #pa-drawer.pa-light .pa-tab { color: var(--pa-muted); border-color: transparent; }
+  #pa-drawer.pa-light .pa-tab.active { background: var(--pa-surf); color: var(--pa-body); border-color: var(--pa-border); }
+  #pa-drawer.pa-light .pa-debug-body { background: var(--pa-surf2); }
   #pa-hdr {
     flex-shrink: 0; padding: 11px 14px;
     background: var(--pa-ink); border-bottom: 1px solid var(--pa-border);

@@ -56,6 +56,36 @@ export function _appendMsgEl(m: any, skipScroll = false) {
   const agentColor = info ? info.color : 'var(--pa-green)'
   const agentInit  = agentLabel ? agentLabel.slice(0, 2).toUpperCase() : 'AG'
 
+  // ── Debug-snapshot attachment ─────────────────────────────────────────────
+  // User messages that are purely `[debug-snapshot]` content are not intended
+  // as conversation — attach them collapsed to the preceding message instead.
+  if (cls === 'user' && /^\*\*\[debug-snapshot\]\*\*/.test(m.text)) {
+    const target = thread.lastElementChild   // most recent row
+    const pill = document.createElement('div')
+    pill.className = 'pa-debug-pill'
+    pill.dataset.paId = m.id
+    const json = m.text.replace(/^\*\*\[debug-snapshot\]\*\*\s*```json\s*/,'').replace(/```\s*$/,'').trim()
+    pill.innerHTML = `<button class="pa-debug-toggle" title="Debug snapshot">📎 debug-snapshot <span class="pa-debug-ts">${fmtTime(m.ts)}</span></button><pre class="pa-debug-body" hidden>${esc(json)}</pre>`
+    pill.querySelector('.pa-debug-toggle')!.addEventListener('click', () => {
+      const body = pill.querySelector('.pa-debug-body') as HTMLElement
+      body.hidden = !body.hidden
+      pill.classList.toggle('pa-debug-open', !body.hidden)
+    })
+    if (target) {
+      target.appendChild(pill)
+    } else {
+      // No prior message — render as a tiny sysline so it's not lost
+      const sl = document.createElement('div')
+      sl.className = 'pa-sysline'
+      sl.dataset.paId = m.id
+      sl.innerHTML = `<span class="pa-sysline-src">debug</span><span class="pa-sysline-text">snapshot attached (no prior message)</span><span class="pa-sysline-ts">${fmtTime(m.ts)}</span>`
+      thread.appendChild(sl)
+    }
+    if (!skipScroll) scrollBottom()
+    return
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const el = document.createElement('div')
   el.dataset.paId = m.id
   el.className = `pa-msg ${cls}`
