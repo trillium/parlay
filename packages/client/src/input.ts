@@ -7,6 +7,7 @@ import { scheduleEval, bumpInputVersion, applyEnvelope } from './commands'
 import type { ActionEnvelope } from './commands'
 import { agentInfo } from './state'
 import { wireAttachments, takePendingImages } from './attachments'
+import { resolvePinnedChannel } from './channel-pin'
 
 // ── Auto-resize ───────────────────────────────────────────────────────────────
 
@@ -115,7 +116,10 @@ export async function sendMsg(text: string, images?: string[]) {
   sendBtn.disabled = true
   inputEl.disabled = true
   try {
-    const toAgent = activeChannel ?? ((window as any).__paLavishChannel as string | undefined)
+    // A deliberate page pin (resolvePinnedChannel) wins over active-tab drift so a
+    // send from a proxied page can't silently land on whatever tab is active; the
+    // pin is opt-in and escapable, so un-pinned pages route exactly as before.
+    const toAgent = resolvePinnedChannel() ?? activeChannel ?? ((window as any).__paLavishChannel as string | undefined)
     const r = await fetch(`${CHAT_BASE}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
