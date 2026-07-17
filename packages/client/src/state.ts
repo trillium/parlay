@@ -63,7 +63,18 @@ export function setLastId(v: string | null) { lastId = v }
 export function setEs(v: EventSource | null) { es = v }
 
 // Annotation state
-export const annotations: Array<{ elementText: string; note: string; el: HTMLElement }> = []
+// `el` is the LIVE DOM target and is optional: a rehydrated annotation (restored
+// from storage on reload) may have a note whose `locator` could not be resolved
+// on the fresh DOM — it stays in the strip WITHOUT a marker rather than being
+// dropped. `locator` is a serializable path (see annotation-store.ts) used to
+// re-find `el` across reloads.
+export interface Annotation {
+  elementText: string
+  note:        string
+  el?:         HTMLElement
+  locator?:    string
+}
+export const annotations: Annotation[] = []
 export let hoverEl: HTMLElement | null = null
 export let annotateTarget: HTMLElement | null = null
 export const markerMap = new WeakMap<HTMLElement, HTMLElement>()
