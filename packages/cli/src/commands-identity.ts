@@ -72,7 +72,7 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
     const color = fm.color || "#6b7280"
     const cwd = fm.cwd || process.cwd()
     const model = fm.model || ""
-    const recovery = `You are ${id}, reincarnated with a FRESH context. Before anything else, recover yourself: run 'identity' (it shows a pinned handoff pointer), then 'handoff show <that-id>' for full state, then 'scratchpad' for your working notes. Then re-enroll, tell the captain via 'reply' that you are back after a reincarnation, and resume where you left off.`
+    const recovery = `You are ${id}, restarted with a FRESH context after a context reset. Before anything else, recover yourself: run 'identity' (it shows a pinned handoff pointer), then 'handoff show <that-id>' for full state, then 'scratchpad' for your working notes. Then re-enroll, tell the captain via 'reply' that you are back after a context reset, and resume where you left off.`
     const spawnArgs = [id, name, color, recovery, "--cwd", cwd, ...(model ? ["--model", model] : [])]
     if (opts["--dry"] === true) { console.log(`identity --launch ${id} [dry] → parlay-spawn ${spawnArgs.map(a => JSON.stringify(a)).join(" ")}`); return }
     const { spawnSync } = require("child_process") as typeof import("child_process")
@@ -103,13 +103,13 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
   }
 
   // --handoff <id>: pin a pointer to the agent's current handoff bead at the top of
-  //   the file, so a revived agent reading its identity knows which handoff holds its
+  //   the file, so a reset agent reading its identity knows which handoff holds its
   //   full session state (`handoff show <id>`). Pin only — does not restart.
-  // --submit <id>: pin the pointer AND trigger reincarnation — the handoff act itself
+  // --submit <id>: pin the pointer AND trigger a context reset — the handoff act itself
   //   restarts the agent. It spawns an external watcher, kills this session, verifies
   //   it closed, and relaunches with a recovering context (identity → handoff →
-  //   scratchpad). No separate sudoku/reincarnate step; submitting the handoff IS the
-  //   shutdown. Add --dry to pin + preview the reincarnation without killing anything.
+  //   scratchpad). No separate sudoku/context-reset step; submitting the handoff IS the
+  //   shutdown. Add --dry to pin + preview the context reset without killing anything.
   const handoffId = (opts["--handoff"] as string | undefined)?.trim()
   const submitId  = (opts["--submit"]  as string | undefined)?.trim()
   const pinId = handoffId || submitId
@@ -125,9 +125,9 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
     body.splice(at, 0, pointer, "")
     writeFileSync(file, body.join("\n").replace(/\n{3,}/g, "\n\n"))
     if (!submitId) { console.log(`${kind} handoff pointer set for ${agent} → ${pinId}`); return }
-    // Submit: pointer pinned — now trigger reincarnation (this ends the session).
+    // Submit: pointer pinned — now trigger a context reset (this ends the session).
     const dry = opts["--dry"] === true
-    console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} reincarnation…`)
+    console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} context reset…`)
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const res = spawnSync("reincarnate", dry ? ["--reboot", "--dry"] : ["--reboot"], { stdio: "inherit" })
     if (res.error) return die(`identity --submit: could not run reincarnate — ${res.error.message}`)
@@ -135,7 +135,7 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
   }
 
   // --complete <store-item>: a SINGLE-USE agent signals its work is done and ENDS
-  // for good — no reincarnation. It closes the federated store item it was working
+  // for good — no context reset. It closes the federated store item it was working
   // (the store is the item's prefix, e.g. task-abc → `task close task-abc`), then
   // terminates the session (reincarnate with no --reboot = verified clean death).
   // The counterpart to --submit: --submit restarts a persistent agent; --complete
