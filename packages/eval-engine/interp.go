@@ -139,6 +139,7 @@ var verbArgSchema = map[string]map[string]bool{
 	"archiveTab":        {"channel": true},
 	"navigate":          {"url": true},
 	"openChannelPicker": {"prompt": true, "channels": true},
+	"openSenderPicker":  {"prompt": true, "senders": true},
 	"showHint":          {"id": true, "text": true, "kind": true},
 	"clearHint":         {"id": true},
 	"pickerHint":        {"text": true},
@@ -172,6 +173,17 @@ func applyArg(verb, name string, val any, arg *ActionArg) error {
 				return fmt.Errorf("openChannelPicker.channels wants a channel list")
 			}
 			arg.Channels = chans
+		}
+	case "openSenderPicker":
+		switch name {
+		case "prompt":
+			arg.Prompt = asString(val)
+		case "senders":
+			senders, ok := val.([]PickerSender)
+			if !ok {
+				return fmt.Errorf("openSenderPicker.senders wants a sender list")
+			}
+			arg.Senders = senders
 		}
 	case "showHint":
 		switch name {

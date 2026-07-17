@@ -47,6 +47,8 @@ var builtins = []commandSpec{
 		description: "Switch to the previous agent tab"},
 	{id: "go-to-page", phrases: []string{"go to {page}", "open {page}", "show {page}", "workspace {page}"}, mode: ModeWhole, priority: 25,
 		description: "Open a Pulse page in the workspace pane"},
+	{id: "reply-to", phrases: []string{"reply to", "reply", "message"}, mode: ModeWhole, priority: 22,
+		description: "Open the iMessage reply picker to send a message"},
 	{id: "submit", phrases: []string{"bravely", "gravely", "briefly", "lap"}, mode: ModeTrailing, priority: 30,
 		description: "End a message with this word to auto-send it after 1s"},
 }

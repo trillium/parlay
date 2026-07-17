@@ -73,6 +73,7 @@ var actionVerbs = map[string]bool{
 	"switchTab": true, "archiveTab": true, "nextTab": true, "prevTab": true,
 	"navigate": true, "stopSpeech": true, "flagSpeech": true,
 	"openChannelPicker": true, "closeChannelPicker": true, "pickerHint": true,
+	"openSenderPicker": true, "closeSenderPicker": true, "senderPickerHint": true,
 	"openSwitcher": true,
 }
 
