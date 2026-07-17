@@ -1,5 +1,6 @@
 import { esc } from './config'
 import { annotations, hoverEl, annotateTarget, markerMap, setHoverEl, setAnnotateTarget, setAnnotate } from './state'
+import { wireAnnotationStore, persistAnnotations, clearPersistedAnnotations } from './annotation-store'
 
 // openDrawer and sendMsg injected at wire time to avoid circular deps
 let _openDrawer: (() => void) | null = null
@@ -94,6 +95,7 @@ export function wireAnnotation(
         const a = annotations[i]
         if (a?.el && markerMap.has(a.el)) { markerMap.get(a.el)!.remove(); markerMap.delete(a.el) }
         annotations.splice(i, 1)
+        persistAnnotations()   // survive reload: mirror the removal to storage
         renderAnnStrip()
       })
     })
@@ -106,6 +108,7 @@ export function wireAnnotation(
     const elementText = (el.textContent || el.getAttribute('title') || el.tagName || 'element').trim().slice(0, 80)
     annotations.push({ elementText, note, el })
     addMarker(el, annotations.length)
+    persistAnnotations()   // survive reload: mirror the new annotation to storage
     hidePopup()
     renderAnnStrip()
     if (_openDrawer) _openDrawer()
@@ -149,6 +152,12 @@ export function wireAnnotation(
   _popupOk.addEventListener('click', confirmAnnotation)
 
   _annSend.addEventListener('click', () => { void sendAnnotations() })
+
+  // Hand the persistence layer the two closures it needs: a way to refresh the
+  // strip after rehydration, and a way to re-add a marker for a resolved target.
+  // initAnnotationPersistence() (called from init.ts after wireAnnotation) uses
+  // these to repopulate the strip from storage on load.
+  wireAnnotationStore(renderAnnStrip, addMarker)
 }
 
 export async function sendAnnotations(): Promise<void> {
@@ -159,6 +168,7 @@ export async function sendAnnotations(): Promise<void> {
     if (a.el && markerMap.has(a.el)) { markerMap.get(a.el)!.remove(); markerMap.delete(a.el) }
   })
   annotations.length = 0
+  clearPersistedAnnotations()   // sent annotations must not resurrect on reload
   _renderStrip?.()
   await _sendMsg(`ANNOTATIONS on "${page}":\n${lines}`)
 }
