@@ -92,23 +92,21 @@ func resolveAgent(spoken string, tabs []Tab) string {
 const pickerPrompt = "Say a channel name, nickname, or number"
 
 // buildPickerChannels turns the ordered tab set into the authoritative 1-based
-// channel list the picker speaks against. label = first nickname if present else
-// name; nickname = first nickname else "" (CHANNEL_PICKER_CONTRACT §Actions). The
-// order MUST match what a later channel-select request carries so numbers stay
+// channel list the picker speaks against. label = the channel NAME; nickname =
+// first nickname else "" — a SECONDARY hint the frontend renders as "Name (nick)"
+// (CHANNEL_PICKER_CONTRACT §Actions example: label "Mayor", nickname "boss"). The
+// previous code overrode label with the nickname, which hid the real name AND made
+// the frontend's "(nickname)" paren dead (it only draws when nickname != label).
+// The order MUST match what a later channel-select request carries so numbers stay
 // stable — both derive from the same client-sent tabs order.
 func buildPickerChannels(tabs []Tab) []PickerChannel {
 	channels := make([]PickerChannel, 0, len(tabs))
 	for i, t := range tabs {
-		first := firstNickname(t.Nicknames)
-		label := t.Name
-		if first != "" {
-			label = first
-		}
 		channels = append(channels, PickerChannel{
 			Index:    i + 1,
 			ID:       t.ID,
-			Label:    label,
-			Nickname: first,
+			Label:    t.Name,
+			Nickname: firstNickname(t.Nicknames),
 		})
 	}
 	return channels
