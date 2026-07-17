@@ -62,7 +62,9 @@ func TestFireSubmitStaleGenerationGuard(t *testing.T) {
 	e, fires := collectFires(t)
 	// Arm against a real request so submitTail/base are set.
 	m := &matchResult{matchedText: "bravely", value: "go bravely"}
-	e.armSubmit(EvalRequest{StreamID: "s1", Version: 5}, m, &actionList{})
+	// Delay is now data (submit handler config); these tests Stop the timer and
+	// fire synchronously, so the 1s value is inert — passed to satisfy the arm API.
+	e.armSubmit(EvalRequest{StreamID: "s1", Version: 5}, m, &actionList{}, 1000)
 
 	st := e.stream("s1")
 	st.mu.Lock()
@@ -96,7 +98,7 @@ func TestFireSubmitFreshGenerationCallsBack(t *testing.T) {
 		mu.Unlock()
 	}
 	m := &matchResult{matchedText: "gravely", value: "send gravely"}
-	e.armSubmit(EvalRequest{StreamID: "s2", Version: 9}, m, &actionList{})
+	e.armSubmit(EvalRequest{StreamID: "s2", Version: 9}, m, &actionList{}, 1000)
 	st := e.stream("s2")
 	st.mu.Lock()
 	curGen := st.timerGen
@@ -126,13 +128,13 @@ func TestArmSubmitReArmBumpsGenerationAndTail(t *testing.T) {
 	// Re-arming must Stop the prior timer, bump timerGen, and replace the tail.
 	e := NewEngine()
 	e.onSubmit = func(string, int64, int64, string, string) {}
-	e.armSubmit(EvalRequest{StreamID: "s", Version: 1}, &matchResult{matchedText: "bravely"}, &actionList{})
+	e.armSubmit(EvalRequest{StreamID: "s", Version: 1}, &matchResult{matchedText: "bravely"}, &actionList{}, 1000)
 	st := e.stream("s")
 	st.mu.Lock()
 	gen1, tail1 := st.timerGen, st.submitTail
 	st.mu.Unlock()
 
-	e.armSubmit(EvalRequest{StreamID: "s", Version: 2}, &matchResult{matchedText: "briefly"}, &actionList{})
+	e.armSubmit(EvalRequest{StreamID: "s", Version: 2}, &matchResult{matchedText: "briefly"}, &actionList{}, 1000)
 	st.mu.Lock()
 	gen2, tail2, base2 := st.timerGen, st.submitTail, st.submitBaseVer
 	if st.submitTimer != nil {
