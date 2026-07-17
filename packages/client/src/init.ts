@@ -30,6 +30,7 @@ import { trackFocusTitle } from './focus-title'
 import { injectPageNav, openPageNav } from './page-nav'
 import { injectCommandsModal } from './commands-modal'
 import { injectChannelPickerStyles } from './channel-picker'
+import { injectSenderPickerStyles } from './sender-picker'
 import {
   loadSettings, applySettings, isPageEnabled,
   injectSettingsModal, openSettingsModal,
@@ -175,6 +176,7 @@ applySettings(settings)
 injectPageNav()
 injectCommandsModal()
 injectChannelPickerStyles()   // full-screen voice channel-picker modal styles
+injectSenderPickerStyles()    // full-screen voice sender-picker modal styles
 document.getElementById('pa-nav-btn')?.addEventListener('click', openPageNav)
 
 // ── Debug panel (Ctrl+Shift+D) ────────────────────────────────────────────────
