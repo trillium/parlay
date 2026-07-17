@@ -79,32 +79,25 @@ func TestInterpreterGoldenActions(t *testing.T) {
 }
 
 // TestEmbeddedManifestValid proves the //go:embed default parses and validates
-// against the closed registries, and that it encodes exactly the ten builtins.
+// against the closed registries. The manifest is the ONLY command source — there
+// is no compiled mirror to compare against — so this asserts structural
+// invariants: schema, non-empty, unique ids, and non-empty phrase lists.
 func TestEmbeddedManifestValid(t *testing.T) {
 	man := embeddedManifest()
 	if man.Schema != manifestSchema {
 		t.Fatalf("schema = %q", man.Schema)
 	}
-	if len(man.Commands) != len(builtins) {
-		t.Fatalf("embedded manifest has %d commands, builtins has %d", len(man.Commands), len(builtins))
+	if len(man.Commands) == 0 {
+		t.Fatal("embedded manifest has no commands")
 	}
-	specByID := map[string]commandSpec{}
-	for _, s := range builtins {
-		specByID[s.id] = s
-	}
+	seen := map[string]bool{}
 	for _, c := range man.Commands {
-		s, ok := specByID[c.ID]
-		if !ok {
-			t.Fatalf("manifest command %q has no matching builtin", c.ID)
+		if seen[c.ID] {
+			t.Fatalf("duplicate command id %q", c.ID)
 		}
-		if c.Priority != s.priority {
-			t.Fatalf("%q priority = %d, want %d", c.ID, c.Priority, s.priority)
-		}
-		if MatchMode(c.Mode) != s.mode {
-			t.Fatalf("%q mode = %q, want %q", c.ID, c.Mode, s.mode)
-		}
-		if !reflect.DeepEqual(c.Phrases, s.phrases) {
-			t.Fatalf("%q phrases = %v, want %v", c.ID, c.Phrases, s.phrases)
+		seen[c.ID] = true
+		if len(c.Phrases) == 0 {
+			t.Fatalf("command %q has no phrases", c.ID)
 		}
 	}
 }

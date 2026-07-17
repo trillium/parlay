@@ -88,25 +88,25 @@ func TestClearTrailing(t *testing.T) {
 
 func TestBothClearPhrasesRegistered(t *testing.T) {
 	// Guard against regressing to a single hardcoded phrase: BOTH clear phrases
-	// must be present in the clear command spec.
-	for _, spec := range builtins {
-		if spec.id != "clear" {
+	// must be present in the clear command in the embedded manifest.
+	for _, c := range embeddedManifest().Commands {
+		if c.ID != "clear" {
 			continue
 		}
 		want := map[string]bool{"change inside input": false, "change inside in input": false}
-		for _, p := range spec.phrases {
+		for _, p := range c.Phrases {
 			if _, ok := want[p]; ok {
 				want[p] = true
 			}
 		}
 		for phrase, present := range want {
 			if !present {
-				t.Fatalf("clear spec missing required phrase %q; have %v", phrase, spec.phrases)
+				t.Fatalf("clear command missing required phrase %q; have %v", phrase, c.Phrases)
 			}
 		}
 		return
 	}
-	t.Fatalf("no clear command found in builtins")
+	t.Fatalf("no clear command found in embedded manifest")
 }
 
 func TestSwitchTabResolvesAgent(t *testing.T) {
