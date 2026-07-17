@@ -64,7 +64,7 @@ const stopSpeech: Command = {
 
 const switchTab: Command = {
   id: 'switch-tab',
-  phrases: ['switch to {agent}', 'go to {agent}', 'show me {agent}', 'channel switch {agent}'],
+  phrases: ['switch to {agent}', 'go to {agent}', 'show me {agent}', 'channel switch {agent}', 'channel {agent}'],
   matchMode: 'whole',
   priority: 20,
   description: 'Switch the active agent tab by name',
@@ -147,7 +147,7 @@ const channelList: Command = {
   id: 'channel-list',
   phrases: ['channel list', 'list channels', 'show channels'],
   matchMode: 'whole',
-  priority: 20,
+  priority: 19,
   description: 'Open the agent switcher to show available channels',
   action(ctx) {
     if (!sheetOpen()) document.getElementById('pa-fab')?.click()
