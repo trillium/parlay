@@ -219,7 +219,7 @@ export async function cmdLaunch(args: string[]) {
   if (targetId) {
     const a = known.find(k => k.id === targetId)
     if (!a) return die(`parlay launch: no known agent '${targetId}' — run 'parlay launch' to list available agents`, EXIT_USAGE)
-    const revival = "You have been reincarnated. Follow the recovery chain above (identity → handoff → scratchpad) to restore your state, then await the captain."
+    const revival = "Your context was reset. Follow the recovery chain above (identity → handoff → scratchpad) to restore your state, then await the captain."
     const spawnArgs = [a.id, a.name, a.color, revival, "--cwd", a.cwd, ...(a.model ? ["--model", a.model] : [])]
     process.stderr.write(`parlay launch: spawning ${a.id} via parlay-spawn …\n`)
     Bun.spawnSync(["parlay-spawn", ...spawnArgs], { stdio: ["inherit", "inherit", "inherit"] })
