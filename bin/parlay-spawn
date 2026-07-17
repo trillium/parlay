@@ -101,6 +101,12 @@ curl -s -X POST "$PARLAY/api/chat/reply" \
   -d "{\"text\":$(json_escape "Spawning… arming monitor and starting on the task."),\"agent\":$(json_escape "$AGENT_ID"),\"name\":$(json_escape "$NAME"),\"color\":$(json_escape "$COLOR")}" \
   >/dev/null || true
 
+# 2b. Write context.json for the agent (JSON file as primary for agent lookup).
+AGENT_DIR="$HOME/.parlay/agents/$AGENT_ID"
+mkdir -p "$AGENT_DIR"
+jq -n --arg id "$AGENT_ID" --arg name "$NAME" --arg color "$COLOR" \
+  '{id: $id, name: $name, color: $color}' > "$AGENT_DIR/context.json" || true
+
 # 3. Compose the startup prompt: enrollment instructions + the task.
 #    The fresh claude processes this as its first turn, so it arms the Monitor
 #    (making the tab "listening") and posts a ready reply before/while working.

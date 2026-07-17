@@ -4,6 +4,7 @@ import { agents, pollWaiters, CORS, broadcastToClients, persistAgents } from "./
 import { addMessage, broadcastAlert } from "./messages"
 import { unregisterAgent } from "./prune"
 import { handleSubscribersRequest } from "./router-subscribers"
+import { loadAgentContext } from "./agent-context"
 
 // Best-effort: sync primary nickname to herdr so the terminal tab label matches.
 // Fire-and-forget — failure is silently ignored.
@@ -75,7 +76,9 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
         try {
           const body    = await req.json()
           const text    = String(body.text  ?? "").trim()
-          const agentId = body.agent ? String(body.agent).trim() : undefined
+          // Try body.agent first; fall back to env var + context.json
+          const agentLookup = loadAgentContext(body.agent ? String(body.agent).trim() : undefined)
+          const agentId = agentLookup?.id
           // Optional action payload → message becomes an inline suggestion card
           let action: ChatAction | undefined
           if (body.action && typeof body.action === "object") {
