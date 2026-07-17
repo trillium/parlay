@@ -25,6 +25,7 @@ import {
   cmdStatus,
   cmdSubscribers,
 } from "./commands"
+import { cmdNickname } from "./commands-nickname"
 import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
 import { cmdVariant } from "./commands-variant"
 
@@ -35,6 +36,7 @@ async function main() {
     case "status":        return cmdStatus()
     case "subscribers":   return cmdSubscribers(args)
     case "agents":        return cmdAgents(args)
+    case "nickname":      return cmdNickname(args)
     case "send":          return cmdSend(args)
     case "say":
     case "reply":         return cmdSay(args)

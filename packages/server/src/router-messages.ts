@@ -141,8 +141,12 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           if (!id) { controller.enqueue(enc.encode(JSON.stringify({ error: "id required" }))); controller.close(); return }
           const existing  = agents.get(id)
           // Unspecified fields fall back to whatever is already persisted — so
-          // re-registering without nicknames/urls/path doesn't wipe them.
-          const nicknames = parseNicknames(body as Record<string, unknown>, existing?.nicknames)
+          // re-registering without nicknames/urls/path doesn't wipe them. But an
+          // EXPLICIT empty `nicknames: []` on this management endpoint is a clear
+          // (unlike /send auto-register, where empty must never clobber metadata).
+          const explicitClearNicks = Array.isArray(body.nicknames)
+            && (body.nicknames as unknown[]).map(String).map(s => s.trim()).filter(Boolean).length === 0
+          const nicknames = explicitClearNicks ? undefined : parseNicknames(body as Record<string, unknown>, existing?.nicknames)
           const urls      = Array.isArray(body.urls)  ? body.urls.map(String).filter((u: string) => u.length > 0)  : existing?.urls
           const path      = Array.isArray(body.path)  ? body.path.map(String).filter((u: string) => u.length > 0)  : existing?.path
           const info = { id, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}), ...(path?.length ? { path } : {}) }
