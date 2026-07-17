@@ -1,12 +1,12 @@
-# Reincarnation — the single-tab guarantee
+# Context reset — the single-tab guarantee
 
-> Reasoning for the reliability + observability hardening of `bin/reincarnate`
-> (Mayor brief, 2026-07-15). Companion to the code; read with `bin/reincarnate`
+> Reasoning for the reliability + observability hardening of `bin/context-reset`
+> (Mayor brief, 2026-07-15). Companion to the code; read with `bin/context-reset`
 > and `bin/parlay-spawn`.
 
 ## The failure this prevents
 
-A reincarnation once produced a **duplicate** herdr tab for one agent id. The
+A context reset once produced a **duplicate** herdr tab for one agent id. The
 env-less duplicate became the live conversational session, so bare `reply`
 failed with `no agent identity`. The old reboot used a **fail-open** pre-close:
 
@@ -21,7 +21,7 @@ If that close missed (tab not found, race, error), the relaunch created a
 
 ## The guarantee
 
-**After a `--reboot` reincarnation there is exactly one tab labelled `<id>`, and
+**After a `--reboot` context reset there is exactly one tab labelled `<id>`, and
 it is verified live + env-wired — or a failure receipt is written.**
 
 It rests on three layers, each of which alone narrows the window, and which
@@ -55,15 +55,17 @@ concurrent duplicate impossible; layer 3 is the belt to those suspenders.
 
 ## Observability (so a break is never silent)
 
-- **Durable receipt.** Every reincarnation appends one JSONL line to
+- **Durable receipt.** Every context reset appends one JSONL line to
   `${PARLAY_AGENT_HOME:-~/.parlay/agents}/<id>/reincarnations.log` (ISO-UTC ts,
   old claude pid, reboot cmd, outcome, reconciled tab id) — not just the
-  ephemeral `$TMPDIR` watcher log.
+  ephemeral `$TMPDIR` watcher log. (The receipt filename keeps its legacy
+  `reincarnations.log` name on purpose, so a rename never forks an agent's
+  existing append-only history to a new path.)
 - **Self-verify.** After relaunch the watcher polls the parlay subscribers
-  endpoint (≤90s) for the reborn agent to appear on **its own** channel. That
+  endpoint (≤90s) for the restarted agent to appear on **its own** channel. That
   requires both a live process *and* `PARLAY_AGENT_ID` wired — exactly the two
   properties the env-less duplicate lacked. Success → receipt `verified`;
-  timeout → receipt `verify_failed`, so a broken reincarnation is discoverable.
+  timeout → receipt `verify_failed`, so a broken context reset is discoverable.
 
 ## No regression
 
