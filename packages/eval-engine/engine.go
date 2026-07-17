@@ -45,6 +45,7 @@ type EvalRequest struct {
 	VoiceEnabled bool      `json:"voiceEnabled"` // master gate (input.ts:100 / registry.ts:91)
 	Tabs         []Tab     `json:"tabs"`         // live agent tabs for {agent} resolution
 	Mode         string    `json:"mode"`         // "" = normal eval; "channel-select" = resolve text as a channel pick
+	Platform     string    `json:"platform"`     // "" = default (parlay); which surface this buffer belongs to
 
 	// Commands is an OPTIONAL per-request command manifest. When present and valid
 	// it wholly replaces the engine's command set FOR THIS REQUEST ONLY (contract
@@ -73,6 +74,7 @@ type EvalResponse struct {
 	ProtocolV    int      `json:"v"`
 	EngineEvalNs int64    `json:"engineEvalNs"` // compiled eval time, nanoseconds
 	Fired        string   `json:"fired"`        // command id that fired, or "" (debug/observe)
+	Platform     string   `json:"platform"`     // the surface these actions target (echoes the request)
 }
 
 // streamState is the per-input-box server-side state: the armed submit timer and
@@ -81,6 +83,11 @@ type streamState struct {
 	mu          sync.Mutex
 	seq         int64
 	lastVersion int64
+	// platform is the surface this stream belongs to, recorded from the request so
+	// an ASYNC server-owned action (a submit fire) knows which surface to update —
+	// the sync path already returns to its caller, but a fire has no caller to
+	// return to. Defaults to parlay until a request names otherwise.
+	platform string
 
 	// Server-owned submit countdown.
 	submitTimer   *time.Timer
@@ -107,11 +114,12 @@ type Engine struct {
 	// per-request override later), NEVER from a hardcoded switch.
 	commands []compiledCommand
 
+	// onSubmit carries the stream's platform so the fire lands on the right surface.
 	// onSubmit is called when a SERVER-OWNED timer fires and decides to submit.
 	// The service layer wires this to push a submitNow over SSE (engine has no
 	// network of its own). base is the version armed against; tail is what to
 	// re-verify; text is the stripped remainder.
-	onSubmit func(streamID string, seq int64, base int64, tail, text string)
+	onSubmit func(streamID string, seq int64, base int64, tail, text, platform string)
 
 	// Observability counters (exposed at /stats).
 	stats Stats
@@ -229,6 +237,9 @@ func (e *Engine) Eval(req EvalRequest) EvalResponse {
 		return e.finish(req, st, out, "", start)
 	}
 	st.lastVersion = req.Version
+	// Record which surface this stream is on, so a later async submit fire on this
+	// stream knows where to land (the sync response already returns to its caller).
+	st.platform = requestPlatform(req)
 	st.mu.Unlock()
 
 	out := &actionList{}
@@ -289,8 +300,14 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 	// otherwise the live file/embedded set (snapshotted so a concurrent hot-reload
 	// swap is race-free).
 	cmds := e.commandSet(req)
+	platform := requestPlatform(req)
 
 	for _, cc := range cmds {
+		// Platform scoping: skip commands not eligible for this request's surface, so
+		// a Herdr buffer never matches Parlay-only commands and vice versa.
+		if !platformEligible(&cc.cmd, platform) {
+			continue
+		}
 		matched := false
 		submitHandler := isSubmitHandler(cc.cmd.Emit)
 		if fired == "" {
@@ -412,6 +429,7 @@ func (e *Engine) fireSubmit(streamID string, gen int64) {
 	}
 	tail := st.submitTail
 	base := st.submitBaseVer
+	platform := st.platform // the surface this fire must land on
 	st.submitTimer = nil
 	st.timerGen++ // consume this generation
 	seq := st.seq // the submitNow will get its own seq from pushSubmit
@@ -428,7 +446,7 @@ func (e *Engine) fireSubmit(streamID string, gen int64) {
 	// current buffer and send the remainder" — see dispatcher.ts submitNow.
 	if e.onSubmit != nil {
 		// seq is assigned inside onSubmit via nextSeq to keep ordering correct.
-		e.onSubmit(streamID, e.nextSeq(streamID), base, tail, "")
+		e.onSubmit(streamID, e.nextSeq(streamID), base, tail, "", platform)
 	}
 }
 
@@ -484,6 +502,7 @@ func (e *Engine) finish(req EvalRequest, st *streamState, out *actionList, fired
 		ProtocolV:    ProtocolVersion,
 		EngineEvalNs: ns,
 		Fired:        fired,
+		Platform:     requestPlatform(req),
 	}
 }
 
