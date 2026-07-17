@@ -1,5 +1,6 @@
 import { esc } from './config'
 import { annotations, hoverEl, annotateTarget, markerMap, setHoverEl, setAnnotateTarget, setAnnotate } from './state'
+import { openAnnotateMenu, wireAnnotateMenu } from './annotate-menu'
 import { wireAnnotationStore, persistAnnotations, clearPersistedAnnotations } from './annotation-store'
 
 // openDrawer and sendMsg injected at wire time to avoid circular deps
@@ -117,11 +118,15 @@ export function wireAnnotation(
     // drawer opens only when the user chooses to (send / trigger).
   }
 
+  // Tapping the annotate button opens a tiny routing menu (active vs enrolled
+  // channel + close) instead of arming immediately — the human picks WHERE the
+  // annotations go, then annotate mode arms via the injected callback. Tapping
+  // again while active is a quick exit. Arming leaves the page full-width; the
+  // strip (not the side drawer) is the queued-annotations surface.
+  wireAnnotateMenu(() => doSetAnnotate(true))
   _annToggle.addEventListener('click', () => {
-    const isActive = _annToggle.classList.contains('active')
-    doSetAnnotate(!isActive)
-    // Arming annotate mode leaves the page full-width — do NOT force the side
-    // drawer open. It steals working room on mobile; the strip is enough.
+    if (_annToggle.classList.contains('active')) { doSetAnnotate(false); return }
+    openAnnotateMenu(_annToggle)
   })
 
   // Explicit exit affordances: the strip's Done button and a global Escape key.
