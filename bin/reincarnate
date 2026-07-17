@@ -16,9 +16,12 @@
 #   reincarnate                             no reboot — verify death only (deliberate end, == sudoku + a receipt)
 #   reincarnate --dry                       print the plan; spawn nothing, kill nothing
 #
-# HARD RULE: never call this before you have written AND pinned your handoff
-# (handoff skill -> bead, then `identity --handoff <id>`), or the rebooted you wakes
-# with amnesia. Order is: handoff -> pin -> reincarnate.
+# HARD RULE: never call this before a handoff bead exists and is pinned, or the
+# rebooted you wakes with amnesia. Prefer the atomic path: `handoff` skill to mint the
+# bead, then IMMEDIATELY `identity --submit` (no id — it resolves+pins the current
+# handoff AND runs this), with nothing interposed. Do NOT hand-pin then call this in a
+# separate step: any gap between create and submit is a window a dying context can be
+# killed in. Order: handoff -> submit (which pins + reincarnates in one act).
 set -uo pipefail
 
 REBOOT=0; DRY=0; CMD=""
