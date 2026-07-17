@@ -276,8 +276,8 @@ func TestDescribeCommands(t *testing.T) {
 	t.Parallel()
 	e := NewEngine()
 	rows := e.describeCommands()
-	if len(rows) != len(builtins) {
-		t.Fatalf("describeCommands rows: got %d want %d", len(rows), len(builtins))
+	if want := len(embeddedManifest().Commands); len(rows) != want {
+		t.Fatalf("describeCommands rows: got %d want %d", len(rows), want)
 	}
 	// Rows are priority-sorted ascending (stop-speech pri 5 first).
 	if rows[0]["id"] != "stop-speech" {

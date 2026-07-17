@@ -5,53 +5,17 @@ import (
 	"strings"
 )
 
-// ── Built-in commands (Go port of packages/client/src/commands/builtins.ts) ────
+// ── Command matching helpers ────────────────────────────────────────────────────
 //
-// The nine built-ins, ported to compiled Go. Each command declares its id,
-// default phrases, match mode, and priority (lower wins; first match ends the
-// pass). The ACTION of each command, instead of touching a DOM CommandContext,
-// emits action-protocol verbs (see actions.go) that the client dispatcher applies.
+// Command DEFINITIONS do not live in compiled Go. They are data: the embedded
+// default_commands.json, overridable by a manifest file (commands.json next to
+// the binary, or PARLAY_COMMANDS — fs-watched, hot-swapped fail-closed) and by
+// a per-request EvalRequest.Commands override. See manifest.go / loader.go.
+// This file keeps only the matching machinery those manifests compile against.
 //
 // The one stateful command — `submit` — owns a 1s arm/verify/strip/submit timer.
-// In the PURE server-side model that timer lives HERE, on the server (see
-// engine.go submitMachine), not in the browser. That is the whole point of this
-// build: the captain wants to feel the network cost of a server-owned reflex.
-
-// commandSpec is the static description of a command.
-type commandSpec struct {
-	id          string
-	phrases     []string
-	mode        MatchMode
-	priority    int
-	description string
-}
-
-// builtins in registration order; the engine sorts by priority ascending.
-// Mirrors builtins.ts:134-136 exactly (same set, same priorities, same phrases).
-var builtins = []commandSpec{
-	{id: "stop-speech", phrases: []string{"spoken pause"}, mode: ModeTrailing, priority: 5,
-		description: "End the input with this to instantly silence current speech"},
-	{id: "flag-speech", phrases: []string{"flag speech", "flag that"}, mode: ModeWhole, priority: 8,
-		description: "Report the last-spoken sentence as mispronounced"},
-	{id: "clear", phrases: []string{"change inside input", "change inside in input"}, mode: ModeTrailing, priority: 10,
-		description: "End the input with a clear phrase to empty the whole box"},
-	{id: "switch-tab", phrases: []string{"switch to {agent}", "go to {agent}", "show me {agent}", "channel switch {agent}", "channel {agent}"}, mode: ModeWhole, priority: 20,
-		description: "Switch the active agent tab by name"},
-	{id: "archive-tab", phrases: []string{"archive {agent}", "archive tab {agent}"}, mode: ModeWhole, priority: 20,
-		description: "Archive an agent tab by name"},
-	{id: "channel-list", phrases: []string{"channel list", "list channels", "show channels"}, mode: ModeWhole, priority: 19,
-		description: "Open the agent switcher to show available channels"},
-	{id: "next-tab", phrases: []string{"next tab", "next agent"}, mode: ModeWhole, priority: 20,
-		description: "Switch to the next agent tab"},
-	{id: "prev-tab", phrases: []string{"previous tab", "previous agent", "last tab"}, mode: ModeWhole, priority: 20,
-		description: "Switch to the previous agent tab"},
-	{id: "go-to-page", phrases: []string{"go to {page}", "open {page}", "show {page}", "workspace {page}"}, mode: ModeWhole, priority: 25,
-		description: "Open a Pulse page in the workspace pane"},
-	{id: "reply-to", phrases: []string{"reply to", "reply", "message"}, mode: ModeWhole, priority: 22,
-		description: "Open the iMessage reply picker to send a message"},
-	{id: "submit", phrases: []string{"bravely", "gravely", "briefly", "lap"}, mode: ModeTrailing, priority: 30,
-		description: "End a message with this word to auto-send it after 1s"},
-}
+// In the PURE server-side model that timer lives on the server (see engine.go
+// submitMachine), not in the browser.
 
 // resolveAgentFn resolves a spoken {agent} capture against the live tab set the
 // client sent up. Port of ctx.ts:75-85 resolveAgent: exact id/name/nickname, then
