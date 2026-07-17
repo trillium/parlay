@@ -44,13 +44,30 @@ func TestEnvOr(t *testing.T) {
 	}
 }
 
+// manifestCmd fetches one embedded-manifest command by id. Post-migration the
+// hand-written runAction switch is gone; a command's effect is its declarative
+// `emit` interpreted by interpretSequence, so the fallthrough tests below drive
+// that path instead.
+func manifestCmd(t *testing.T, id string) CommandManifest {
+	t.Helper()
+	for _, c := range embeddedManifest().Commands {
+		if c.ID == id {
+			return c
+		}
+	}
+	t.Fatalf("no embedded-manifest command %q", id)
+	return CommandManifest{}
+}
+
 func TestRunActionGoToPageEmptyCaptureNotHandled(t *testing.T) {
 	t.Parallel()
 	// go-to-page with a blank {page} capture must return handled=false and emit
-	// nothing (the empty-slug guard, commands.go:306).
+	// nothing (the empty-slug guard, now enforced by the slugify resolver under
+	// onResolveFail:"fallthrough").
+	cmd := manifestCmd(t, "go-to-page")
 	out := &actionList{}
 	m := &matchResult{captures: map[string]string{"page": "   "}}
-	if runAction(commandSpec{id: "go-to-page"}, m, nil, out) {
+	if (&Engine{}).interpretSequence(&cmd.Emit, m, MatchMode(cmd.Mode), nil, out) {
 		t.Errorf("blank page capture must return handled=false")
 	}
 	if len(out.items) != 0 {
@@ -62,9 +79,10 @@ func TestRunActionSwitchTabEmptyCaptureNotHandled(t *testing.T) {
 	t.Parallel()
 	// switch-tab with an unresolvable/blank agent returns handled=false (falls
 	// through to go-to-page in the real pass).
+	cmd := manifestCmd(t, "switch-tab")
 	out := &actionList{}
 	m := &matchResult{captures: map[string]string{"agent": ""}}
-	if runAction(commandSpec{id: "switch-tab"}, m, nil, out) {
+	if (&Engine{}).interpretSequence(&cmd.Emit, m, MatchMode(cmd.Mode), nil, out) {
 		t.Errorf("blank agent capture must return handled=false")
 	}
 	if len(out.items) != 0 {
