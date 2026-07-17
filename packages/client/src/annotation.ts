@@ -111,13 +111,17 @@ export function wireAnnotation(
     persistAnnotations()   // survive reload: mirror the new annotation to storage
     hidePopup()
     renderAnnStrip()
-    if (_openDrawer) _openDrawer()
+    // Deliberately do NOT open the side drawer here: the annotation strip
+    // (count + Done button) already stays visible, so the user sees queued
+    // annotations without losing full-width working room on the page. The
+    // drawer opens only when the user chooses to (send / trigger).
   }
 
   _annToggle.addEventListener('click', () => {
     const isActive = _annToggle.classList.contains('active')
     doSetAnnotate(!isActive)
-    if (!isActive && _openDrawer) _openDrawer()
+    // Arming annotate mode leaves the page full-width — do NOT force the side
+    // drawer open. It steals working room on mobile; the strip is enough.
   })
 
   // Explicit exit affordances: the strip's Done button and a global Escape key.
