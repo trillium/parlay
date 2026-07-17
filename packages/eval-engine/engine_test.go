@@ -423,14 +423,14 @@ func TestChannelListEmitsOpenChannelPicker(t *testing.T) {
 		if len(chans) != 3 {
 			t.Fatalf("expected 3 channels, got %d", len(chans))
 		}
-		// index 1-based; label = first nickname if present else name.
-		if chans[0].Index != 1 || chans[0].ID != "main" || chans[0].Label != "main" || chans[0].Nickname != "main" {
+		// index 1-based; label = channel NAME, nickname = first nickname (secondary hint).
+		if chans[0].Index != 1 || chans[0].ID != "main" || chans[0].Label != "Main" || chans[0].Nickname != "main" {
 			t.Fatalf("channel[0] wrong: %+v", chans[0])
 		}
-		if chans[1].Index != 2 || chans[1].ID != "mayor" || chans[1].Label != "boss" || chans[1].Nickname != "boss" {
+		if chans[1].Index != 2 || chans[1].ID != "mayor" || chans[1].Label != "Mayor" || chans[1].Nickname != "boss" {
 			t.Fatalf("channel[1] wrong: %+v", chans[1])
 		}
-		// cato has no nickname → label falls back to name, nickname empty.
+		// cato has no nickname → label is name, nickname empty.
 		if chans[2].Index != 3 || chans[2].ID != "cato" || chans[2].Label != "Cato" || chans[2].Nickname != "" {
 			t.Fatalf("channel[2] wrong: %+v", chans[2])
 		}
