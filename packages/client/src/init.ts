@@ -52,6 +52,12 @@ if (!isPageEnabled(settings)) return
 injectDOM()
 bindDOMRefs()
 
+// Restore persisted theme preference
+try {
+  const theme = localStorage.getItem('pa-theme')
+  if (theme === 'light') document.getElementById('pa-drawer')?.classList.add('pa-light')
+} catch {}
+
 const { backdrop, trigger, badge, drawer, thread, connBanner, inputEl } = domRefs
 const { annToggle, annStrip, annCount, annList, annSend } = domRefs
 const { popup, popupLbl, popupIn, popupOk, popupCx, settingsGearBtn } = domRefs
