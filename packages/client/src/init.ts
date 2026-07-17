@@ -24,6 +24,8 @@ import { connect, setOpenDrawerFn, onSse } from './sse'
 import { switchChannel } from './tabs'
 import { wireInputEvents, loadDraft, sendMsg, wireServerEval } from './input'
 import { wireAnnotation, doSetAnnotate } from './annotation'
+import { initAnnotationPersistence } from './annotation-store'
+import { wireChannelPin } from './channel-pin'
 import { trackFocusTitle } from './focus-title'
 import { injectPageNav, openPageNav } from './page-nav'
 import { injectCommandsModal } from './commands-modal'
@@ -184,6 +186,7 @@ wireAnnotation(
   popup, popupLbl, popupIn, popupOk, popupCx,
   openDrawer, sendMsg,
 )
+initAnnotationPersistence()   // rehydrate saved annotations for this page (no-op until the persistence fix lands)
 
 // ── Scroll position restore ──────────────────────────────────────────────────
 ;(window as any).__paRestoreScroll = () => {
@@ -205,10 +208,9 @@ initPlugins()    // plugin loader — before connect() so SSE subscriptions catc
 initLightbox()   // shared image lightbox — delegated over all .pa-img surfaces
 wireToolLogEvents()
 wireInputEvents()
-// Server-side eval: subscribe the action dispatcher to the input_action SSE
-// channel. onSse auto-reattaches across reconnects, so the action channel
-// survives connection drops with zero extra code.
+// Server-side eval: subscribe the action dispatcher to input_action SSE (onSse auto-reattaches across reconnects).
 wireServerEval(onSse)
+wireChannelPin()   // mindful page→channel pin indicator + escape hatch (no-op until the mapper fix lands)
 
 // Agent-triggerable device commands via SSE: reload, reset-tts, ping.
 // Agents POST /api/chat/device-cmd to drive the client without needing the
