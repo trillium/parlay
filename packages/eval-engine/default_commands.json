@@ -35,7 +35,8 @@
       "phrases": ["change inside input", "change inside in input"],
       "mode": "trailing",
       "priority": 10,
-      "description": "End the input with a clear phrase to empty the whole box",
+      "description": "End the input with a clear phrase to empty the focused input",
+      "platforms": ["parlay", "herdr"],
       "emit": {
         "kind": "sequence",
         "actions": [
