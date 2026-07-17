@@ -46,6 +46,7 @@ var resolverRegistry = map[string]resolver{
 	"number":           resolveNumberR,
 	"channelList":      resolveChannelListR,
 	"channelSelection": resolveChannelSelectionR,
+	"recentSenders":    resolveRecentSendersR,
 }
 
 // transformRegistry is the closed set of named pure string transforms.
@@ -118,6 +119,15 @@ func resolveChannelListR(_ string, ctx *evalCtx) (any, bool) {
 func resolveChannelSelectionR(input string, ctx *evalCtx) (any, bool) {
 	id, _, ok := resolveChannelSelection(input, ctx.tabs)
 	return id, ok
+}
+
+// ── Sender resolver (for iMessage reply tool) ───────────────────────────────────
+
+// resolveRecentSendersR returns the list of recent iMessage senders, formatted
+// as PickerSender[] for the openSenderPicker action. On error, returns an empty list.
+func resolveRecentSendersR(_ string, ctx *evalCtx) (any, bool) {
+	senders := getRecentSenders(5)
+	return buildPickerSenders(senders), true
 }
 
 // ── Transform implementations ───────────────────────────────────────────────────

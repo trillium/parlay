@@ -132,6 +132,21 @@
       }
     },
     {
+      "id": "reply-to",
+      "phrases": ["reply to", "reply", "message"],
+      "mode": "whole",
+      "priority": 22,
+      "platforms": ["parlay"],
+      "description": "Open the iMessage reply picker to send a message",
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "openSenderPicker", "args": { "prompt": "Say a contact name or number", "senders": { "resolve": "recentSenders" } } },
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
       "id": "submit",
       "phrases": ["bravely", "gravely", "briefly", "lap"],
       "mode": "trailing",
