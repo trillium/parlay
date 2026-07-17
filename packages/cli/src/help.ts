@@ -9,6 +9,8 @@ Usage:
   parlay status                   Same as bare parlay
   parlay subscribers [--full]     Connection counts (--full: raw JSON)
   parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
   parlay send                     List agents you can message
   parlay send --<agent-id> <text> Send attributed message to that agent's channel
   parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
@@ -40,6 +42,7 @@ const HELP: Record<string, string> = {
   status: `parlay status — live snapshot: subscriber counts, agent list, last 3 messages.\nUsage: parlay [status]`,
   subscribers: `parlay subscribers — connection counts (panel clients, pollers, registered agents).\nUsage: parlay subscribers [--full]\n  --full   Print the raw JSON from /api/chat/subscribers`,
   agents: `parlay agents — registered agents, one per line (id, name, color).\nUsage: parlay agents [--full]\n  --full   Print the raw JSON from /api/chat/agents`,
+  nickname: `parlay nickname — assign voice nicknames so the channel picker + voice channel-switch resolve an agent by an easy spoken word.\nUsage: parlay nickname <nick> [<nick2> …]        set nicknames for THIS agent (PARLAY_AGENT_ID)\n       parlay nickname --agent <id> <nick> …     set nicknames for a named agent\n       parlay nickname --agent <id> --clear      remove all nicknames\nThe FIRST nickname becomes the picker's display label for that channel. Metadata-only\nupsert via /api/chat/register-agent — does not post a message. Re-running replaces the set.`,
   send: `parlay send — list or message another agent's channel (all messages visible to the human).\nUsage: parlay send                          → list agents you can message\n       parlay send --<agent-id> "text"     → send attributed message to that agent's channel\nExamples:\n  send                      # prints: send --mayor, send --shepherd, …\n  send --mayor "heads up"   # lands on mayor's channel; human sees it too\n  send --shepherd "done"    # attributed to PARLAY_AGENT_ID (auto-filled)\n  --from <id>               # override sender attribution (rarely needed)\nAll messages land on the target's SHARED human channel — no private side channels.\nThe receiving agent's monitor emits: CHAT_MSG|id|role|text|from:<sender>`,
   say: `parlay say — reply to your OWN Parlay channel with no boilerplate (for agents spawned by parlay-spawn).\nUsage: parlay say <text...>   |   echo "long reply" | parlay say\n  Identity comes from PARLAY_AGENT_ID (set at spawn); override with --agent <id>.\n  The server keeps your registered name/color, so you only supply the text.\n  Alias: parlay reply. Dead-simple wrapper on PATH: reply "<text>".`,
   scratchpad: `parlay scratchpad — your durable task notes, keyed by PARLAY_AGENT_ID (survives restarts).\nUsage: scratchpad '<note>'   append   |   scratchpad   read   |   scratchpad --clear | --path\n  Also: --agent <id>, and stdin (echo 'note' | scratchpad). Store: ~/.parlay/agents/<id>/scratchpad.md`,
