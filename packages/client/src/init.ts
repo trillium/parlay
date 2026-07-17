@@ -27,10 +27,7 @@ import { wireAnnotation, doSetAnnotate } from './annotation'
 import { initAnnotationPersistence } from './annotation-store'
 import { wireChannelPin } from './channel-pin'
 import { trackFocusTitle } from './focus-title'
-import { injectPageNav, openPageNav } from './page-nav'
-import { injectCommandsModal } from './commands-modal'
-import { injectChannelPickerStyles } from './channel-picker'
-import { injectSenderPickerStyles } from './sender-picker'
+import { initPickers } from './pickers'
 import {
   loadSettings, applySettings, isPageEnabled,
   injectSettingsModal, openSettingsModal,
@@ -172,12 +169,8 @@ injectSettingsModal()
 settingsGearBtn.addEventListener('click', openSettingsModal)
 applySettings(settings)
 
-// ── Page-nav picker ───────────────────────────────────────────────────────────
-injectPageNav()
-injectCommandsModal()
-injectChannelPickerStyles()   // full-screen voice channel-picker modal styles
-injectSenderPickerStyles()    // full-screen voice sender-picker modal styles
-document.getElementById('pa-nav-btn')?.addEventListener('click', openPageNav)
+// ── Voice pickers (channel + sender) ──────────────────────────────────────────
+initPickers()
 
 // ── Debug panel (Ctrl+Shift+D) ────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.shiftKey && e.key === 'D') { e.preventDefault(); toggleDebugPanel() } })
