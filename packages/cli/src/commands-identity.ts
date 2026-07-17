@@ -5,6 +5,7 @@ import { EXIT_USAGE } from "./config"
 import { die, postJSON } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
+import { resolveCurrentHandoff } from "./resolve-handoff"
 
 // Identity routes off PARLAY_AGENT_ID (parlay-spawn sets it in every spawned agent),
 // so no url/id/name/color/JSON — just the text. The server keeps the agent's
@@ -58,7 +59,12 @@ function writeFrontmatter(file: string, fm: Record<string, string>): void {
 
 async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
   if (helpWanted(kind, args)) return
-  const { positionals, opts } = parseArgs(kind, args, ["--clear", "--path", "--dry", "--register"], ["--agent", "--handoff", "--submit", "--complete", "--launch", "--name", "--color", "--model", "--cwd"])
+  // --handoff / --submit are BOOLEAN: their handoff id is OPTIONAL (given as a
+  // positional). Bare `identity --submit` resolves the current open handoff from the
+  // store, so `handoff create … && identity --submit` is one atomic act with nothing
+  // interposed, and a stranded create is recovered by a bare submit. --complete stays
+  // a value flag: auto-guessing which work item to close would be destructive.
+  const { positionals, opts } = parseArgs(kind, args, ["--clear", "--path", "--dry", "--register", "--handoff", "--submit"], ["--agent", "--complete", "--launch", "--name", "--color", "--model", "--cwd"])
 
   // --launch <id>: reconstitute an agent from its identity's launch spec (frontmatter)
   // via ONE template — "run the identity". Self-contained (the id is the value), so it
@@ -102,19 +108,29 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
     return
   }
 
-  // --handoff <id>: pin a pointer to the agent's current handoff bead at the top of
+  // --handoff [<id>]: pin a pointer to the agent's current handoff bead at the top of
   //   the file, so a revived agent reading its identity knows which handoff holds its
   //   full session state (`handoff show <id>`). Pin only — does not restart.
-  // --submit <id>: pin the pointer AND trigger reincarnation — the handoff act itself
+  // --submit [<id>]: pin the pointer AND trigger reincarnation — the handoff act itself
   //   restarts the agent. It spawns an external watcher, kills this session, verifies
   //   it closed, and relaunches with a recovering context (identity → handoff →
   //   scratchpad). No separate sudoku/reincarnate step; submitting the handoff IS the
   //   shutdown. Add --dry to pin + preview the reincarnation without killing anything.
-  const handoffId = (opts["--handoff"] as string | undefined)?.trim()
-  const submitId  = (opts["--submit"]  as string | undefined)?.trim()
-  const pinId = handoffId || submitId
-  if (pinId) {
+  // The id is OPTIONAL for both: given as a positional, else auto-resolved from the
+  //   handoff store's current open bead. That closes the create→submit death window —
+  //   `handoff create … && identity --submit` is atomic with nothing to interpose, and
+  //   a submit stranded after a bare create still finds and pins its own handoff.
+  const wantHandoff = opts["--handoff"] === true
+  const wantSubmit  = opts["--submit"]  === true
+  if (wantHandoff || wantSubmit) {
+    const submitId = wantSubmit
     if (submitId && kind !== "identity") return die(`parlay ${kind}: --submit is identity-only`, EXIT_USAGE)
+    // Id precedence: explicit positional, else the store's current open handoff.
+    const pinId = (positionals[0]?.trim()) || resolveCurrentHandoff()
+    if (!pinId) return die(
+      `parlay ${kind}: no handoff id given and none active in the handoff store — create one first (handoff create …) or pass the id`,
+      EXIT_USAGE,
+    )
     const header = `# ${kind === "identity" ? "Identity" : "Scratchpad"} — ${agent}`
     const marker = "> 📎 Handoff:"
     const pointer = `${marker} ${pinId} — run \`handoff show ${pinId}\` for full session state`
