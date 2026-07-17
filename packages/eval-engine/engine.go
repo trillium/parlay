@@ -253,6 +253,13 @@ func (e *Engine) Eval(req EvalRequest) EvalResponse {
 		return e.finish(req, st, out, "channel-select", start)
 	}
 
+	// SENDER-SELECT mode (mirror of channel-select for iMessage senders).
+	// Resolves spoken text to a sender (contact) ID or cancel word.
+	if req.Mode == "sender-select" {
+		e.resolveSenderPick(req, out)
+		return e.finish(req, st, out, "sender-select", start)
+	}
+
 	// CHECK A/B — voice-enabled master gate (input.ts:100, registry.ts:91). With
 	// voice off, NO command matching runs; typed text only submits via the
 	// client's Enter/button path (untouched by this build).
@@ -284,6 +291,32 @@ func (e *Engine) resolveChannelPick(req EvalRequest, out *actionList) {
 		out.add(actClear())
 	default:
 		out.add(actPickerHint(`No channel matched "` + strings.TrimSpace(req.Text) + `" — try again`))
+	}
+}
+
+// resolveSenderPick runs sender-select resolution (mirror of resolveChannelPick).
+// Actions emitted (same pattern as channel picker):
+//   - cancel word  → closeSenderPicker (+ clear).
+//   - hit          → store sender ID, close picker (TODO: TBD state management).
+//   - no match     → senderPickerHint (modal stays open; NO close).
+func (e *Engine) resolveSenderPick(req EvalRequest, out *actionList) {
+	// For now, get a fixed list of N senders. In production, this might be
+	// parameterized via the request (which sender list to show, etc.).
+	senders := getRecentSenders(5)
+
+	senderID, cancel, ok := resolveSenderSelection(req.Text, senders)
+	switch {
+	case cancel:
+		out.add(actCloseSenderPicker())
+		out.add(actClear())
+	case ok:
+		// TODO: emit an action to transition to compose mode for senderID.
+		// For now, just close the picker. Client will handle state (placeholder).
+		_ = senderID // TODO: store and use for compose state
+		out.add(actCloseSenderPicker())
+		out.add(actClear())
+	default:
+		out.add(actSenderPickerHint(`No contact matched "` + strings.TrimSpace(req.Text) + `" — try again`))
 	}
 }
 
