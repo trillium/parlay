@@ -19,12 +19,21 @@ export interface Action {
     // Channel picker (see docs/CHANNEL_PICKER_CONTRACT.md)
     prompt?: string
     channels?: PickerChannel[]
+    // Sender picker (mirror of channel picker for iMessage)
+    senders?: PickerSender[]
   }
 }
 
 // A single row in the channel-picker list. `index` is 1-based and is the number
 // the user speaks; `label` is the display name; `nickname` is a secondary hint.
 export interface PickerChannel {
+  index:    number
+  id:       string
+  label:    string
+  nickname: string
+}
+
+export interface PickerSender {
   index:    number
   id:       string
   label:    string
