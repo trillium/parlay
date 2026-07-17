@@ -32,14 +32,23 @@ export function openChannelPicker(prompt: string, channels: PickerChannel[]): vo
   overlay.id = OVERLAY_ID
   overlay.innerHTML = `
     <div id="pa-picker-panel" role="dialog" aria-modal="true" aria-label="Channel picker">
-      <div id="pa-picker-prompt">${esc(prompt)}</div>
+      <div id="pa-picker-head">
+        <div id="pa-picker-prompt">${esc(prompt)}</div>
+        <button id="pa-picker-close" type="button" aria-label="Close channel picker">✕</button>
+      </div>
       <ol id="pa-picker-list">${renderRows(channels)}</ol>
       <div id="pa-picker-hint" aria-live="polite"></div>
       <input id="${INPUT_ID}" type="text" autocomplete="off" autocapitalize="off"
              autocorrect="off" spellcheck="false"
              placeholder="Say a name, nickname, or number…" />
+      <div id="pa-picker-esc">Tap ✕, tap outside, or say “cancel” to close</div>
     </div>`
   document.body.appendChild(overlay)
+
+  // Visible close affordance — a tap target so the modal is dismissable without a
+  // keyboard or knowing the spoken cancel words (the phone had NO visible exit).
+  const closeBtn = document.getElementById('pa-picker-close')
+  if (closeBtn) closeBtn.addEventListener('click', () => closeChannelPicker())
 
   const input = document.getElementById(INPUT_ID) as HTMLInputElement | null
   if (input) {
@@ -157,15 +166,19 @@ export function injectChannelPickerStyles(): void {
   s.textContent = `
     #${OVERLAY_ID}{position:fixed;inset:0;z-index:20000;background:rgba(6,10,18,.82);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px}
     #pa-picker-panel{width:min(94vw,560px);max-height:88vh;display:flex;flex-direction:column;gap:16px;background:var(--pa-surf,#1e293b);border:1px solid var(--pa-border,#334155);border-radius:14px;padding:26px 24px;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+    #pa-picker-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
     #pa-picker-prompt{font-size:16px;font-weight:600;color:var(--pa-body,#e2e8f0);letter-spacing:.01em;line-height:1.35}
+    #pa-picker-close{flex:none;width:40px;height:40px;margin:-6px -4px 0 0;border-radius:9px;border:1px solid var(--pa-border,#334155);background:var(--pa-ink,#0f172a);color:var(--pa-muted,#94a3b8);font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+    #pa-picker-close:hover,#pa-picker-close:active{color:var(--pa-body,#e2e8f0);border-color:var(--pa-red,#f87171)}
+    #pa-picker-esc{font-size:12px;color:var(--pa-muted,#94a3b8);text-align:center;font-family:var(--pa-mono,monospace);letter-spacing:.01em}
     #pa-picker-list{list-style:none;margin:0;padding:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
     .pa-picker-row{display:flex;align-items:baseline;gap:6px;padding:9px 12px;border-radius:8px;background:color-mix(in srgb,var(--pa-border,#334155) 30%,transparent);font-size:16px;color:var(--pa-body,#e2e8f0);line-height:1.3}
-    .pa-picker-num{font-family:var(--pa-mono,monospace);font-weight:700;color:var(--pa-accent,#14b8a6);min-width:1.6em}
+    .pa-picker-num{font-family:var(--pa-mono,monospace);font-weight:700;color:var(--pa-blue,#58A6FF);min-width:1.6em}
     .pa-picker-label{font-weight:600}
     .pa-picker-nick{color:var(--pa-muted,#94a3b8);font-size:14px}
     #pa-picker-hint{display:none;font-size:13px;color:var(--pa-red,#f87171);font-family:var(--pa-mono,monospace);line-height:1.4}
     #pa-picker-hint.visible{display:block}
-    #${INPUT_ID}{width:100%;box-sizing:border-box;font-size:18px;padding:14px 16px;border-radius:10px;border:2px solid var(--pa-accent,#14b8a6);background:var(--pa-ink,#0f172a);color:var(--pa-body,#e2e8f0);outline:none;font-family:inherit}
+    #${INPUT_ID}{width:100%;box-sizing:border-box;font-size:18px;padding:14px 16px;border-radius:10px;border:2px solid var(--pa-blue,#58A6FF);background:var(--pa-ink,#0f172a);color:var(--pa-body,#e2e8f0);outline:none;font-family:inherit}
     #${INPUT_ID}::placeholder{color:var(--pa-dim,#64748b)}
     #${INPUT_ID}:focus{border-color:var(--pa-green,#34d399);box-shadow:0 0 0 3px color-mix(in srgb,var(--pa-green,#34d399) 22%,transparent)}
   `
