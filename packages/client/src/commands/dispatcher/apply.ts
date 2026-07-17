@@ -4,6 +4,7 @@ import { PROTOCOL_V } from './types'
 import { telemetry, renderOverlay, log, showCountdownHint, clearCountdownHint } from './telemetry'
 import { currentInputVersion, postSentAt } from './up'
 import { openChannelPicker, closeChannelPicker, pickerHint } from '../../channel-picker'
+import { openSenderPicker, closeSenderPicker, senderPickerHint } from '../../sender-picker'
 
 // ── Down-channel: apply an input_action envelope ───────────────────────────────
 
@@ -120,6 +121,17 @@ function applyAction(a: Action): ApplyResult {
         return 'applied'
       case 'pickerHint':
         pickerHint(a.args?.text ?? '')
+        return 'applied'
+      case 'openSenderPicker':
+        // Mirror of openChannelPicker for iMessage senders. Skip if empty.
+        if (a.args?.senders?.length)
+          openSenderPicker(a.args.prompt ?? 'Say a contact name or number', a.args.senders)
+        return 'applied'
+      case 'closeSenderPicker':
+        closeSenderPicker()
+        return 'applied'
+      case 'senderPickerHint':
+        senderPickerHint(a.args?.text ?? '')
         return 'applied'
       case 'archiveTab':
         if (a.args?.channel) _ctx.tabs.archive(a.args.channel)
