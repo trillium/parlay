@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# context-reset — clean self-restart for a persistent agent.
+#
+# Design (captain, 2026-07-15): a persistent agent (firstmate, a panel agent) can
+# restart itself FRESH — shedding a bloated context — without losing itself,
+# because on reboot it reloads identity -> handoff -> scratchpad and picks up where it
+# left off. The flow:
+#   1. spawn an EXTERNAL, detached process that OUTLIVES this agent
+#   2. run sudoku (kill this claude process)
+#   3. the external process VERIFIES claude closed
+#   4. if --reboot: the external process BOOTS the agent back up with a recovery prompt
+#
+# Usage:
+#   context-reset --reboot                    reboot a parlay panel agent (relaunch auto-derived from PARLAY_* env)
+#   context-reset --reboot --cmd '<launch>'   reboot with an explicit relaunch command (firstmate / custom hosts)
+#   context-reset                             no reboot — verify shutdown only (deliberate end, == sudoku + a receipt)
+#   context-reset --dry                       print the plan; spawn nothing, kill nothing
+#
+# HARD RULE: never call this before you have written AND pinned your handoff
+# (handoff skill -> bead, then `identity --handoff <id>`), or the rebooted you wakes
+# with amnesia. Order is: handoff -> pin -> context-reset.
+set -uo pipefail
+
+REBOOT=0; DRY=0; CMD=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --reboot) REBOOT=1; shift ;;
+    --cmd)    CMD="${2:-}"; shift 2 ;;
+    --dry)    DRY=1; shift ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "context-reset: unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+# ── locate this session's claude process (walk up, same as sudoku) ──
+if [ "${CLAUDECODE:-}" != "1" ]; then
+  echo "context-reset: not inside a Claude session (CLAUDECODE!=1) — nothing to reset." >&2
+  exit 1
+fi
+pid=$$; CLAUDE_PID=""
+while [ "$pid" -gt 1 ]; do
+  ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  [[ -z "$ppid" || "$ppid" -le 1 ]] && break
+  comm=$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d ' ')
+  [ "$comm" = "claude" ] && CLAUDE_PID="$ppid"
+  pid="$ppid"
+done
+[ -n "$CLAUDE_PID" ] || { echo "context-reset: could not find claude ancestor process." >&2; exit 1; }
+
+# ── derive the reboot command (only used with --reboot) ──
+# The identity IS the launch spec: reconstitute from it with one command. All the
+# vars (name/color/model/cwd/recovery prompt) live in the identity frontmatter and
+# template, not here — this just says "run the identity".
+if [ "$REBOOT" = "1" ] && [ -z "$CMD" ]; then
+  AID="${PARLAY_AGENT_ID:-}"
+  if [ -z "$AID" ]; then
+    echo "context-reset: --reboot needs either --cmd '<launch>' or PARLAY_AGENT_ID (so it knows which identity to run)." >&2
+    exit 2
+  fi
+  CMD="identity --launch $(printf '%q' "$AID")"
+fi
+
+# On-disk log/receipt filenames keep the legacy `reincarnate*` name ON PURPOSE:
+# renaming the command must NOT fork existing agents' append-only history to a new
+# path. These are data paths, not prose — leave them stable for continuity.
+LOG="${TMPDIR:-/tmp}/reincarnate-$CLAUDE_PID.log"
+
+# ── Change 2: durable, discoverable receipt (append-only) ──
+# The $TMPDIR watcher log is ephemeral and pid-named — forensically painful. Also
+# record every context reset to a stable per-agent path so a broken restart is
+# discoverable long after $TMPDIR is gone. Path computed here (baked into the
+# watcher) so the heredoc stays free of $HOME/$AID escaping.
+if [ -n "${AID:-}" ]; then RECEIPT_DIR="${PARLAY_AGENT_HOME:-$HOME/.parlay/agents}/${AID}"; else RECEIPT_DIR="$HOME/.parlay"; fi
+RECEIPT="$RECEIPT_DIR/reincarnations.log"   # legacy name kept deliberately (see note above)
+mkdir -p "$RECEIPT_DIR" 2>/dev/null || true
+PARLAY="${PARLAY_SERVER:-http://localhost:31337}"   # for Change 3 self-verify
+
+# ── the external watcher: verify claude closed, then optionally reboot ──
+# A panel-agent reboot first clears any lingering dead herdr tab so parlay-spawn's
+# duplicate-name guard doesn't block the relaunch.
+read -r -d '' WATCHER <<WSCRIPT || true
+echo "[\$(date '+%H:%M:%S')] watching claude PID $CLAUDE_PID for exit..."
+# Durable receipt writer: \$1=outcome \$2=new_tab. One jsonl line per context reset.
+_receipt() { jq -cn --arg ts "\$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson pid "$CLAUDE_PID" --arg cmd "$CMD" --arg outcome "\$1" --arg newtab "\${2:-}" --arg agent "${AID:-}" '{ts:\$ts,old_pid:\$pid,cmd:\$cmd,outcome:\$outcome,new_tab:\$newtab,agent:\$agent}' >> "$RECEIPT" 2>/dev/null || true; }
+for _ in \$(seq 1 120); do
+  kill -0 $CLAUDE_PID 2>/dev/null || { echo "[\$(date '+%H:%M:%S')] claude $CLAUDE_PID CLOSED (verified)"; CLOSED=1; break; }
+  sleep 1
+done
+if [ "\${CLOSED:-0}" != "1" ]; then echo "[\$(date '+%H:%M:%S')] TIMEOUT: claude $CLAUDE_PID still alive after 120s; NOT rebooting"; _receipt timeout ""; exit 1; fi
+if [ "$REBOOT" = "1" ]; then
+  _keep=""
+  # ── Change 1: reconcile to EXACTLY ONE live tab for this agent id ──
+  # herdr agents die with their tab, so closing every old/dead/ghost tab for this
+  # id BOTH frees the name (parlay-spawn's duplicate guard then permits the
+  # relaunch) AND kills the two-same-name-tabs bug. Reliable — replaces the old
+  # fail-open single-tab pre-close that let a ghost survive and duplicate.
+  _tabs_for() { herdr tab list 2>/dev/null | jq -r --arg id "\$1" '.result.tabs[]? | select(.label==\$id) | .tab_id' 2>/dev/null; }
+  if [ -n "${AID:-}" ] && command -v herdr >/dev/null 2>&1; then
+    for _t in \$(_tabs_for "${AID:-}"); do herdr tab close "\$_t" >/dev/null 2>&1 || true; done
+  fi
+  echo "[\$(date '+%H:%M:%S')] rebooting: $CMD"
+  if eval "$CMD"; then
+    echo "[\$(date '+%H:%M:%S')] reboot launched"
+    # Post-reconcile: the relaunch created the fresh tab. If a race left more than
+    # one tab for this id, keep the newest (max tab number) and close the rest.
+    if [ -n "${AID:-}" ] && command -v herdr >/dev/null 2>&1; then
+      sleep 1
+      _keep=\$(herdr tab list 2>/dev/null | jq -r --arg id "${AID:-}" '[.result.tabs[]? | select(.label==\$id)] | max_by(.number) | .tab_id // empty' 2>/dev/null)
+      _extra=0
+      for _t in \$(_tabs_for "${AID:-}"); do
+        if [ -n "\$_keep" ] && [ "\$_t" != "\$_keep" ]; then herdr tab close "\$_t" >/dev/null 2>&1 || true; _extra=\$((_extra+1)); fi
+      done
+      if [ -z "\$_keep" ]; then echo "[\$(date '+%H:%M:%S')] WARNING: no live tab for ${AID:-} after reboot — relaunch may have failed"; fi
+      [ "\$_extra" -gt 0 ] && echo "[\$(date '+%H:%M:%S')] reconciled: kept 1 tab (\$_keep), closed \$_extra duplicate(s) for ${AID:-}"
+    fi
+    # ── Change 3: self-verify the restarted agent is live AND env-wired ──
+    # The definitive signal is the restarted agent polling ITS OWN parlay channel:
+    # that requires both a live process (came alive) and its identity wired
+    # (PARLAY_AGENT_ID) — precisely the two things an env-less duplicate lacked
+    # when bare \`reply\` failed with "no agent identity". Poll the subscribers
+    # endpoint up to 90s. Verified → receipt "verified"; otherwise a "verify_failed"
+    # receipt so a broken context reset is DISCOVERABLE, not silent.
+    if [ -n "${AID:-}" ]; then
+      _verified=0
+      for _ in \$(seq 1 90); do
+        if curl -s -m 3 "$PARLAY/api/chat/subscribers" 2>/dev/null | jq -e --arg id "${AID:-}" '.poll.channels[]? | select(.channel==\$id or .id==\$id)' >/dev/null 2>&1; then _verified=1; break; fi
+        sleep 1
+      done
+      if [ "\$_verified" = "1" ]; then
+        echo "[\$(date '+%H:%M:%S')] verified: ${AID:-} is live + env-wired (polling its parlay channel)"
+        _receipt verified "\$_keep"
+      else
+        echo "[\$(date '+%H:%M:%S')] VERIFY FAILED: ${AID:-} did not appear on its parlay channel within 90s — context reset may be broken"
+        _receipt verify_failed "\$_keep"
+      fi
+    else
+      _receipt launched "\$_keep"
+    fi
+  else
+    echo "[\$(date '+%H:%M:%S')] reboot FAILED"
+    _receipt reboot_failed ""
+  fi
+else
+  echo "[\$(date '+%H:%M:%S')] no --reboot; staying dead. Clean end."
+  _receipt clean_end ""
+fi
+WSCRIPT
+
+if [ "$DRY" = "1" ]; then
+  echo "── context-reset --dry ──"
+  echo "claude PID : $CLAUDE_PID"
+  echo "reboot     : $REBOOT"
+  [ "$REBOOT" = "1" ] && echo "relaunch   : $CMD"
+  echo "watcher log: $LOG"
+  echo "(dry: no external process spawned, no sudoku, nothing killed)"
+  exit 0
+fi
+
+# ── spawn the external watcher DETACHED (survives claude's death), then sudoku ──
+nohup bash -c "$WATCHER" >"$LOG" 2>&1 </dev/null &
+disown 2>/dev/null || true
+echo "context-reset: external watcher launched (log: $LOG). Terminating claude $CLAUDE_PID (sudoku)..."
+sleep 1
+kill "$CLAUDE_PID"
