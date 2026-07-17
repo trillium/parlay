@@ -61,6 +61,21 @@ func getRecentSenders(n int) []Sender {
 	return senders
 }
 
+// buildPickerSenders converts a Sender list to PickerSender[] with 1-based indexing.
+// Mirrors buildPickerChannels for the sender picker.
+func buildPickerSenders(senders []Sender) []PickerSender {
+	pickers := make([]PickerSender, 0, len(senders))
+	for i, s := range senders {
+		pickers = append(pickers, PickerSender{
+			Index:    i + 1,
+			ID:       s.ID,
+			Label:    s.Label,
+			Nickname: s.Nickname,
+		})
+	}
+	return pickers
+}
+
 // resolveSenderSelection resolves a spoken utterance to a sender ID (or cancel).
 // Rules mirror resolveChannelSelection: number, exact match, substring, cancel words.
 func resolveSenderSelection(spoken string, senders []Sender) (id string, cancel bool, ok bool) {
