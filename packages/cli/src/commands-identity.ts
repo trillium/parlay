@@ -1,10 +1,24 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, appendFileSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
+import { spawnSync as _spawnSync } from "child_process"
 import { EXIT_USAGE } from "./config"
 import { die, postJSON } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
+
+// The self-restart script was renamed reincarnate → context-reset. The new name is
+// not yet on PATH everywhere (only ~/.local/bin/reincarnate is, and that now forwards
+// to bin/context-reset via a back-compat wrapper). To keep behavior IDENTICAL today
+// while moving call sites to the new name, resolve it lazily: prefer `context-reset`
+// if it is resolvable on PATH, otherwise fall back to the legacy `reincarnate` name
+// (which is on PATH and execs context-reset). Once a `~/.local/bin/context-reset`
+// symlink is deployed, the new name wins with no code change. See the FORGE report /
+// deploy note for the required symlink step.
+function contextResetCmd(): string {
+  const probe = _spawnSync("command", ["-v", "context-reset"], { shell: true, stdio: "ignore" })
+  return probe.status === 0 ? "context-reset" : "reincarnate"
+}
 
 // Identity routes off PARLAY_AGENT_ID (parlay-spawn sets it in every spawned agent),
 // so no url/id/name/color/JSON — just the text. The server keeps the agent's
@@ -129,15 +143,16 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
     const dry = opts["--dry"] === true
     console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} context reset…`)
     const { spawnSync } = require("child_process") as typeof import("child_process")
-    const res = spawnSync("reincarnate", dry ? ["--reboot", "--dry"] : ["--reboot"], { stdio: "inherit" })
-    if (res.error) return die(`identity --submit: could not run reincarnate — ${res.error.message}`)
+    const cmd = contextResetCmd()
+    const res = spawnSync(cmd, dry ? ["--reboot", "--dry"] : ["--reboot"], { stdio: "inherit" })
+    if (res.error) return die(`identity --submit: could not run ${cmd} — ${res.error.message}`)
     return
   }
 
   // --complete <store-item>: a SINGLE-USE agent signals its work is done and ENDS
   // for good — no context reset. It closes the federated store item it was working
   // (the store is the item's prefix, e.g. task-abc → `task close task-abc`), then
-  // terminates the session (reincarnate with no --reboot = verified clean death).
+  // terminates the session (context-reset with no --reboot = verified clean shutdown).
   // The counterpart to --submit: --submit restarts a persistent agent; --complete
   // ends a single-use one. Add --dry to preview without closing or killing.
   const completeId = (opts["--complete"] as string | undefined)?.trim()
@@ -153,8 +168,9 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
     }
     console.log(`identity --complete: single-use agent ending, no restart${dry ? " [dry — not killing]" : ""}…`)
     if (!dry) {
-      const r = spawnSync("reincarnate", [], { stdio: "inherit" })  // no --reboot → verify death only, then sudoku
-      if (r.error) return die(`identity --complete: could not run reincarnate — ${r.error.message}`)
+      const cmd = contextResetCmd()
+      const r = spawnSync(cmd, [], { stdio: "inherit" })  // no --reboot → verify shutdown only, then sudoku
+      if (r.error) return die(`identity --complete: could not run ${cmd} — ${r.error.message}`)
     }
     return
   }
