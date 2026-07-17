@@ -12,6 +12,7 @@ export interface ParlaySettings {
   voiceClearPhrases:   string[]
   voiceStopPhrase:     string
   hybridVoice:         boolean
+  localOnlyVoice:      boolean   // always use browser speechSynthesis; never contact Kokoro
   textScale:           number
   commandPhrases:      Record<string, string[]>
   voiceSettleMs:       number    // eval up-channel debounce tuned to the dictation settle time
@@ -28,6 +29,7 @@ const DEFAULTS: ParlaySettings = {
   voiceClearPhrases:   ["change inside in input"],
   voiceStopPhrase:     "spoken pause",
   hybridVoice:         false,
+  localOnlyVoice:      false,
   textScale:           100,
   commandPhrases:      {},
   voiceSettleMs:       450,     // ~450ms: iOS live-dictation correction settle window
@@ -87,6 +89,7 @@ export function handleParlaySettings(req: Request, pathname: string): Response |
             voiceClearPhrases:  Array.isArray(body.voiceClearPhrases) ? body.voiceClearPhrases.map(String) : current.voiceClearPhrases,
             voiceStopPhrase:    body.voiceStopPhrase != null ? String(body.voiceStopPhrase) : current.voiceStopPhrase,
             hybridVoice:        body.hybridVoice != null ? Boolean(body.hybridVoice) : current.hybridVoice,
+            localOnlyVoice:     body.localOnlyVoice != null ? Boolean(body.localOnlyVoice) : current.localOnlyVoice,
             textScale:          typeof body.textScale === "number" && isFinite(body.textScale)
                                   ? Math.min(160, Math.max(85, body.textScale)) : current.textScale,
             commandPhrases:     body.commandPhrases && typeof body.commandPhrases === "object" && !Array.isArray(body.commandPhrases)
