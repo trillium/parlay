@@ -146,6 +146,56 @@ and parameterizes them; it never authors them.
 New modes are a Go change (new entry-point), like new verbs. Commands within a
 normal pass are data.
 
+## Platform scoping (which surfaces a command runs on)
+
+A **platform** is a surface the engine can drive — the Parlay chat panel, a Herdr
+window, and (later) others. The same phrase can be eligible on several surfaces
+while meaning a **surface-specific effect**: `change inside input` clears the
+*focused input of whatever surface issued the request*, so on Herdr it clears
+Herdr's input, with zero Parlay-visual coupling. The action verb stays **abstract**
+(`clear` = "empty the focused input of this surface"); the platform's own
+executor/dispatcher makes it concrete.
+
+- `EvalRequest.platform` names the surface a buffer belongs to (`""` ⇒ the default,
+  `parlay` — backward compatible for existing callers).
+- A command declares `platforms: [...]` — the surfaces it is eligible on. Omitted ⇒
+  `[defaultPlatform]` (`parlay`), so today's builtins are unchanged. A command opts
+  INTO other surfaces explicitly.
+- The pass only consults commands whose `platforms` include the request's platform.
+
+```jsonc
+{ "id": "clear", "phrases": ["change inside input"], "mode": "trailing",
+  "priority": 10, "platforms": ["parlay", "herdr"],
+  "emit": { "kind": "sequence", "actions": [ { "verb": "clear" } ] } }
+```
+
+### The closed platform registry (machinery)
+
+Each platform declares **which verbs and handlers it implements**. The global verb
+vocabulary splits into per-surface subsets:
+
+| platform | implements |
+|----------|------------|
+| `parlay` | every action verb + every handler (the full visual surface) |
+| `herdr`  | the text-input verbs — `clear`, `setText`, `submitNow`, `noop`, `showHint`, `clearHint` — and NO handlers yet |
+
+Validation on every load: every platform a command targets must be registered, and
+every verb/handler it emits must be in that platform's set. A `herdr`-scoped command
+that emits `openChannelPicker` (a Parlay-visual verb) is **rejected at load** — the
+same auditable coupling the verb registry gives us, now per-surface. A command scoped
+to multiple platforms must satisfy the intersection (only emit what ALL of them
+implement).
+
+### Scoping vs. dispatch (deliberately separate)
+
+This is the **scoping** dimension only: which commands are eligible where, and what
+each surface is allowed to be told to do. **How** an action reaches a surface —
+through that surface's own client/dispatcher (like Parlay's browser today) or by the
+engine driving it headlessly (the autonomous, non-agent path) — is a separate
+DISPATCH layer that builds on top of this and does not change the scoping model. New
+platforms are a Go change (a new registry entry, like a new verb/mode); which
+commands run on them is data.
+
 ## Loading, precedence, reload
 
 The engine resolves its live command set from three layers, highest wins:
