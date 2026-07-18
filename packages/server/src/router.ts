@@ -14,8 +14,13 @@ import { handleEvalRequest } from "./eval-relay"
 import { handleTTSValidateRequest } from "./tts-validate"
 import { handleTtsEventRequest } from "./router-tts-events"
 import { handleDeviceCmdRequest } from "./router-device-cmd"
+import { handlePerfRequest } from "./router-perf"
 
 export function handleChatRequest(req: Request, pathname: string): Response | Promise<Response | null> | null {
+  // Performance monitoring: handle before /api/chat check since perf routes are /api/perf/*
+  const perfResp = handlePerfRequest(req, pathname)
+  if (perfResp !== null) return perfResp
+
   if (!pathname.startsWith("/api/chat")) return null
 
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
