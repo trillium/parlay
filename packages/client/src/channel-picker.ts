@@ -37,11 +37,11 @@ export function openChannelPicker(prompt: string, channels: PickerChannel[]): vo
         <button id="pa-picker-close" type="button" aria-label="Close channel picker">✕</button>
       </div>
       <ol id="pa-picker-list">${renderRows(channels)}</ol>
-      <div id="pa-picker-hint" aria-live="polite"></div>
-      <input id="${INPUT_ID}" type="text" autocomplete="off" autocapitalize="off"
-             autocorrect="off" spellcheck="false"
-             placeholder="Say a name, nickname, or number…" />
-      <div id="pa-picker-esc">Tap ✕, tap outside, or say “cancel” to close</div>
+      <div id=”pa-picker-hint” aria-live=”polite”></div>
+      <input id=”${INPUT_ID}” type=”text” autocomplete=”off” autocapitalize=”off”
+             autocorrect=”off” spellcheck=”false”
+             placeholder=”Say a name, nickname, or number…” />
+      <div id=”pa-picker-esc”><strong>Enter</strong> to select  •  Esc / tap ✕ to cancel</div>
     </div>`
   document.body.appendChild(overlay)
 
