@@ -118,15 +118,13 @@ export function wireAnnotation(
     // drawer opens only when the user chooses to (send / trigger).
   }
 
-  // Tapping the annotate button opens a tiny routing menu (active vs enrolled
-  // channel + close) instead of arming immediately — the human picks WHERE the
-  // annotations go, then annotate mode arms via the injected callback. Tapping
-  // again while active is a quick exit. Arming leaves the page full-width; the
-  // strip (not the side drawer) is the queued-annotations surface.
-  wireAnnotateMenu(() => doSetAnnotate(true))
+  // First click arms annotate mode. Second click (while active) opens the menu
+  // to choose routing, give feedback, or close. Arming leaves the page full-width;
+  // the strip (not the side drawer) is the queued-annotations surface.
+  wireAnnotateMenu(() => doSetAnnotate(false))
   _annToggle.addEventListener('click', () => {
-    if (_annToggle.classList.contains('active')) { doSetAnnotate(false); return }
-    openAnnotateMenu(_annToggle)
+    if (_annToggle.classList.contains('active')) { openAnnotateMenu(_annToggle); return }
+    doSetAnnotate(true)
   })
 
   // Explicit exit affordances: the strip's Done button and a global Escape key.

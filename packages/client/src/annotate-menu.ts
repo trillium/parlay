@@ -23,10 +23,10 @@ import { setSendTarget, getEnrolledChannel, currentSendTarget } from './channel-
 const MENU_ID = 'pa-annotate-menu'
 const STYLE_ID = 'pa-annotate-menu-style'
 
-// Injected by annotation.ts: turns annotate mode ON after a routing choice.
-let _arm: (() => void) | null = null
-export function wireAnnotateMenu(arm: () => void): void {
-  _arm = arm
+// Injected by annotation.ts: exit annotate mode when user chooses Close.
+let _exit: (() => void) | null = null
+export function wireAnnotateMenu(exit?: () => void): void {
+  _exit = exit
 }
 
 let _styleInjected = false
@@ -107,11 +107,10 @@ export function closeAnnotateMenu(): void {
   if (_keydown) { document.removeEventListener('keydown', _keydown, true); _keydown = null }
 }
 
-// Choose a routing target, dismiss, then arm annotate mode.
+// Choose a routing target and dismiss.
 function choose(mode: 'active' | 'enrolled'): void {
   setSendTarget(mode)
   closeAnnotateMenu()
-  _arm?.()
 }
 
 export function openAnnotateMenu(anchor?: HTMLElement): void {
@@ -132,7 +131,14 @@ export function openAnnotateMenu(anchor?: HTMLElement): void {
       disabled: !enrolled,
       onClick: enrolled ? () => choose('enrolled') : undefined,
     }),
-    row({ label: 'Close', cls: 'pa-am-close', onClick: closeAnnotateMenu }),
+    row({
+      label: 'Give feedback about annotate system',
+      onClick: () => {
+        closeAnnotateMenu()
+        // TODO: open feedback form or channel
+      },
+    }),
+    row({ label: 'Close', cls: 'pa-am-close', onClick: () => { closeAnnotateMenu(); _exit?.() } }),
   )
 
   // Position above the anchor when there's room, else below; clamped to viewport.
