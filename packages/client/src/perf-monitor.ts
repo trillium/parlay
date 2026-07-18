@@ -155,13 +155,10 @@ function analyzeAndReport(): void {
   let bottleneck: 'network' | 'js' | 'debounce' | 'balanced' | 'device'
   let recommendation = ''
 
-  // Device constraints take priority
-  if (lowPowerModes > metrics.samples.length * 0.5) {
+  // High memory is a legitimate device constraint (affects garbage collection pauses)
+  if (avgMemory && avgMemory > 120) {
     bottleneck = 'device'
-    recommendation = `⚠️ Low Power Mode detected on ${Math.round(lowPowerModes / metrics.samples.length * 100)}% of samples. This reduces CPU/GPU performance. Disable Low Power Mode or wait for battery charge.`
-  } else if (avgMemory && avgMemory > 100) {
-    bottleneck = 'device'
-    recommendation = `High memory usage (${avgMemory.toFixed(0)}MB heap). JavaScript bundle or TTS plugin consuming too much memory. Try disabling TTS plugin.`
+    recommendation = `High memory usage (${avgMemory.toFixed(0)}MB heap). JavaScript bundle or TTS plugin consuming too much memory. Try disabling TTS plugin to reduce heap pressure.`
   } else if (avgRtt > avgEngine * 10) {
     bottleneck = 'network'
     recommendation = `Network latency (${avgRtt.toFixed(0)}ms RTT) is the main bottleneck. Try optimizing server location or using a CDN.`
@@ -207,23 +204,20 @@ async function persistMetrics(): Promise<void> {
 function displayAnalysis(): void {
   if (!metrics.summary) return
 
-  // Gather additional device info for display
+  // Gather device telemetry (for context, not necessarily a bottleneck)
   const memSamples = metrics.samples.map(s => s.device.memoryHeapUsedMB).filter(m => m !== undefined) as number[]
   const avgMem = memSamples.length > 0 ? (memSamples.reduce((a, b) => a + b, 0) / memSamples.length).toFixed(0) : 'N/A'
-  const lowPowerCount = metrics.samples.filter(s => s.device.lowPowerMode).length
-  const lowPowerStatus = lowPowerCount > 0 ? `LOW POWER MODE (${lowPowerCount} samples)` : 'Normal'
   const battery = metrics.samples[0]?.device.battery
   const batteryStatus = battery ? `${Math.round(battery)}%` : 'N/A'
 
   const msg = `
 🔍 PERFORMANCE ANALYSIS (${metrics.samples.length} keystrokes)
 
-DEVICE STATUS:
+DEVICE TELEMETRY:
 - Battery: ${batteryStatus}
-- Power Mode: ${lowPowerStatus}
-- Memory Heap: ${avgMem}MB used
+- Memory Heap: ${avgMem}MB (Chrome/Blink only; N/A on Safari)
 
-PERFORMANCE BOTTLENECK: ${metrics.summary.bottleneck.toUpperCase()}
+BOTTLENECK DIAGNOSIS: ${metrics.summary.bottleneck.toUpperCase()}
 - Avg RTT: ${metrics.summary.avgRttMs.toFixed(0)}ms (max ${metrics.summary.maxRttMs.toFixed(0)}ms)
 - Avg Engine: ${metrics.summary.avgEngineMs.toFixed(1)}ms
 
