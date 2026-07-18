@@ -1,6 +1,7 @@
 import { setApi, speak, stopSpeak, speakFrom, playPause, initToggle, probeReadiness } from './speak/player'
 import { cacheStats, getClip, clipFetches } from './speak/cache'
 import { injectCorrectorStyles, openCorrector } from './speak/corrector'
+import { setAudioMuted, isAudioMuted } from './speak/audio-mute'
 
 // ── speak — Parlay plugin (#19) ──────────────────────────────────────────────
 // Owns everything audible: Kokoro-chunked playback with local fallback,
@@ -43,6 +44,7 @@ import { injectCorrectorStyles, openCorrector } from './speak/corrector'
       openCorrector(api)                     // …and the corrector expands (#19)
     }
     w.__paTts = { prefetch: getClip, cacheStats, fetches: clipFetches }
+    w.__paAudio = { mute: () => setAudioMuted(true), unmute: () => setAudioMuted(false), isMuted: isAudioMuted }
 
     initToggle()
 
