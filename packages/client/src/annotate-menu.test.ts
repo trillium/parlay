@@ -17,14 +17,15 @@ beforeEach(() => {
   _resetChannelPinForTests()   // back to default 'enrolled'
 })
 
-test('opens a 3-row menu (active / enrolled / close)', () => {
+test('opens a 4-row menu (active / enrolled / feedback / close)', () => {
   openAnnotateMenu()
   expect(menu()?.classList.contains('visible')).toBe(true)
   const labels = rows().map(r => r.querySelector('.pa-am-label')?.textContent ?? '')
-  expect(labels.length).toBe(3)
+  expect(labels.length).toBe(4)
   expect(labels[0]).toContain('active channel')
   expect(labels[1]).toContain('enrolled channel')
-  expect(labels[2]).toContain('Close')
+  expect(labels[2]).toContain('Give feedback')
+  expect(labels[3]).toContain('Close')
 })
 
 test('enrolled row is disabled when the page declares no pin', () => {
@@ -43,46 +44,50 @@ test('enrolled row is enabled and shows the channel name when a valid pin exists
   expect(enrolled.textContent).toContain('Mayor')
 })
 
-test('choosing "active" sets target, closes, and arms', () => {
+test('choosing "active" sets target and closes (no exit)', () => {
   agentInfo.set('mayor', { id: 'mayor', name: 'Mayor', color: '#fff' })
   ;(window as any).__paPinChannel = 'mayor'
-  let armed = 0
-  wireAnnotateMenu(() => { armed++ })
+  let exited = 0
+  wireAnnotateMenu(() => { exited++ })
   openAnnotateMenu()
   rows()[0].click()
   expect(currentSendTarget()).toBe('active')
-  expect(armed).toBe(1)
+  expect(exited).toBe(0)
   expect(menu()?.classList.contains('visible')).toBe(false)
 })
 
-test('choosing "enrolled" sets target, closes, and arms', () => {
+test('choosing "enrolled" sets target and closes (no exit)', () => {
   agentInfo.set('mayor', { id: 'mayor', name: 'Mayor', color: '#fff' })
   ;(window as any).__paPinChannel = 'mayor'
   setSendTarget('active')
-  let armed = 0
-  wireAnnotateMenu(() => { armed++ })
+  let exited = 0
+  wireAnnotateMenu(() => { exited++ })
   openAnnotateMenu()
   rows()[1].click()
   expect(currentSendTarget()).toBe('enrolled')
-  expect(armed).toBe(1)
+  expect(exited).toBe(0)
   expect(menu()?.classList.contains('visible')).toBe(false)
 })
 
-test('a disabled enrolled row does nothing when clicked', () => {
-  let armed = 0
-  wireAnnotateMenu(() => { armed++ })
+test('a disabled enrolled row cannot be clicked (has no handler)', () => {
+  let exited = 0
+  wireAnnotateMenu(() => { exited++ })
   openAnnotateMenu()
-  rows()[1].click()   // disabled (no pin)
-  expect(armed).toBe(0)
-  expect(menu()?.classList.contains('visible')).toBe(true)
+  const enrolled = rows()[1]
+  // Disabled rows have no click handler, so clicking doesn't change routing
+  const targetBefore = currentSendTarget()
+  enrolled.click()
+  const targetAfter = currentSendTarget()
+  expect(targetBefore).toEqual(targetAfter)   // routing unchanged
+  expect(exited).toBe(0)
 })
 
-test('Close dismisses without arming', () => {
-  let armed = 0
-  wireAnnotateMenu(() => { armed++ })
+test('Close dismisses and calls exit callback', () => {
+  let exited = 0
+  wireAnnotateMenu(() => { exited++ })
   openAnnotateMenu()
-  rows()[2].click()
-  expect(armed).toBe(0)
+  rows()[3].click()  // Close is now row 3 (feedback moved to 2)
+  expect(exited).toBe(1)
   expect(menu()?.classList.contains('visible')).toBe(false)
 })
 
@@ -92,6 +97,8 @@ test('the current target row shows a checkmark', () => {
   const checks = rows().map(r => r.querySelector('.pa-am-check')?.textContent ?? '')
   expect(checks[0]).toBe('✓')   // active is current
   expect(checks[1]).toBe('')
+  expect(checks[2]).toBe('')    // feedback has no checkmark
+  expect(checks[3]).toBe('')    // close has no checkmark
 })
 
 test('Escape closes the open menu', () => {
