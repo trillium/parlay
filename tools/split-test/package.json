@@ -1,0 +1,17 @@
+{
+  "name": "@parlay/split-test",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone split-testing tool for Parlay: isolated sandboxes, two-door and two-stack probe suites. Zero prod contact.",
+  "bin": {
+    "parlay-split": "./bin/parlay-split"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "bun src/cli.ts"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.14",
+    "typescript": "^7.0.2"
+  }
+}

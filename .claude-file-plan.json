@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "agent_id": "split-testing",
+  "declared_at": "2026-07-18T00:00:00Z",
+  "allowed_files": [
+    { "path": "tools/split-test/bin/parlay-split", "intent": "bash entrypoint wrapper dispatching to TS subcommands" },
+    { "path": "tools/split-test/src/cli.ts", "intent": "argument parsing and subcommand dispatch" },
+    { "path": "tools/split-test/src/env.ts", "intent": "port probing and parlay env contract helpers" },
+    { "path": "tools/split-test/src/sandbox.ts", "intent": "sandbox up/down: isolated server+relay+engine boot with env-isolation assertions" },
+    { "path": "tools/split-test/src/two-door.ts", "intent": "same-store two-front-door probe suite with soak mode" },
+    { "path": "tools/split-test/src/two-stack.ts", "intent": "two-checkout split-test: boot two sandboxes, run probe suite against each" },
+    { "path": "tools/split-test/src/probe.ts", "intent": "shared parlay HTTP probe primitives (register/send/poll)" },
+    { "path": "tools/split-test/src/manifest.ts", "intent": "PID + config manifest read/write under ~/.cache/parlay-split" },
+    { "path": "tools/split-test/src/table.ts", "intent": "PASS/FAIL comparison table renderer" },
+    { "path": "tools/split-test/tsconfig.json", "intent": "typecheck config for the split-test tool" },
+    { "path": "tools/split-test/package.json", "intent": "tool manifest for @parlay/split-test" },
+    { "path": "tools/split-test/README.md", "intent": "docs for all three modes, safety model, examples" }
+  ]
+}
