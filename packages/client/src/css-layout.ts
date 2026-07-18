@@ -117,4 +117,12 @@ export const CSS_LAYOUT = `
   }
   #pa-tts-btn:hover { color: var(--pa-body); border-color: var(--pa-muted); }
   #pa-tts-btn.active { color: var(--pa-blue); border-color: var(--pa-blue); }
+  #pa-mute-btn {
+    background: none; border: 1px solid var(--pa-border); color: var(--pa-muted);
+    font-family: var(--pa-mono); font-size: 10px; letter-spacing: .06em;
+    padding: 3px 8px; cursor: pointer; border-radius: 3px; flex-shrink: 0;
+    transition: color .12s, border-color .12s;
+  }
+  #pa-mute-btn:hover { color: var(--pa-body); border-color: var(--pa-muted); }
+  #pa-mute-btn.active { color: var(--pa-red); border-color: var(--pa-red); }
 `
