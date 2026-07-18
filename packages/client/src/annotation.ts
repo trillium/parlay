@@ -36,7 +36,7 @@ export function wireAnnotation(
 
   function isSkipped(el: Element | null): boolean {
     if (!el || el === document.body || el === document.documentElement) return true
-    return !!(el.closest('#pa-drawer') || el.closest('#pa-trigger') || el.closest('#pa-popup'))
+    return !!(el.closest('#pa-drawer') || el.closest('#pa-trigger') || el.closest('#pa-popup') || el === _annToggle || el.closest(_annToggle))
   }
 
   function hidePopup() { _popup.classList.remove('visible'); setAnnotateTarget(null) }
