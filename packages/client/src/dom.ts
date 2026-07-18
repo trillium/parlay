@@ -23,6 +23,7 @@ export const DRAWER_HTML = `
       <div class="pa-dot" id="pa-dot"></div>
       <div id="pa-title">Agent<span id="pa-sub"></span></div>
       <button id="pa-tts-btn" title="Toggle text-to-speech">TTS</button>
+      <button id="pa-mute-btn" title="Mute audio">🔕</button>
       <button id="pa-log-btn" title="Toggle tool activity log">⚡</button>
       <button id="pa-nav-btn" title="Jump to page">🧭</button>
       <button id="pa-settings-btn-gear" title="Parlay settings">⚙</button>
@@ -69,6 +70,7 @@ export const DRAWER_HTML = `
       <div id="pa-sheet-list"></div>
       <div id="pa-sheet-actions">
         <button class="pa-sheet-act" data-proxy="pa-tts-btn">🔊 TTS</button>
+        <button class="pa-sheet-act" data-proxy="pa-mute-btn">🔕 Mute audio</button>
         <button class="pa-sheet-act" data-proxy="pa-log-btn">⚡ Tool log</button>
         <button class="pa-sheet-act" data-proxy="pa-nav-btn">🧭 Pages</button>
         <button class="pa-sheet-act" data-proxy="pa-settings-btn-gear">⚙ Settings</button>

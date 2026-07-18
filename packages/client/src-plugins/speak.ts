@@ -3,6 +3,19 @@ import { cacheStats, getClip, clipFetches } from './speak/cache'
 import { injectCorrectorStyles, openCorrector } from './speak/corrector'
 import { setAudioMuted, isAudioMuted } from './speak/audio-mute'
 
+// ── Mute button initialization ────────────────────────────────────────────────
+function initMuteButton() {
+  const muteBtn = document.getElementById('pa-mute-btn')
+  if (!muteBtn) return
+  try { if (localStorage.getItem('pa-audio-muted') === '1') { setAudioMuted(true); muteBtn.classList.add('active') } } catch {}
+  muteBtn.addEventListener('click', () => {
+    const muted = !isAudioMuted()
+    setAudioMuted(muted)
+    muteBtn.classList.toggle('active', muted)
+    try { localStorage.setItem('pa-audio-muted', muted ? '1' : '0') } catch {}
+  })
+}
+
 // ── speak — Parlay plugin (#19) ──────────────────────────────────────────────
 // Owns everything audible: Kokoro-chunked playback with local fallback,
 // per-device TTS toggle, replay transport, readiness dots (#20), and the
@@ -47,6 +60,7 @@ import { setAudioMuted, isAudioMuted } from './speak/audio-mute'
     w.__paAudio = { mute: () => setAudioMuted(true), unmute: () => setAudioMuted(false), isMuted: isAudioMuted }
 
     initToggle()
+    initMuteButton()
 
     // Readiness probes (#20): mark dots green for blocks whose WAV is already
     // cached — on new messages and for bubbles rendered before we loaded.
