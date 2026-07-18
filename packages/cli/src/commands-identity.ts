@@ -33,6 +33,11 @@ export async function cmdSay(args: string[]) {
   let text = positionals.join(" ").trim()
   if (!text && !process.stdin.isTTY) text = (await Bun.stdin.text()).trim()
   if (!text) return die("parlay say: message text required (as arguments or piped on stdin)", EXIT_USAGE)
+
+  // Auto-convert localhost URLs to MacBook (Tailscale) equivalents so the captain can open them on his phone.
+  // Matches http://localhost:XXXX/... or http://127.0.0.1:XXXX/... and replaces with macbook:XXXX/...
+  text = text.replace(/https?:\/\/(localhost|127\.0\.0\.1):(\d+)(\/[^\s]*)?/g, "macbook:$2$3")
+
   const r = await postJSON<{ ok?: boolean; id?: string; error?: string }>("/api/chat/reply", { text, agent })
   if (r.error) return die(`say failed: ${r.error}`)
   console.log(`said as ${agent} (id ${r.id})`)
