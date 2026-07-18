@@ -119,6 +119,30 @@ func main() {
 		log.Printf("registered agent %q at startup", id)
 	}
 
+	// Resume agents from existing spools. The registry is in-memory only, so a
+	// relay restart would otherwise silently stop every enrolled agent's
+	// upstream poll loop while their monitors keep tailing dead spools —
+	// observed fleet-wide on 2026-07-17 (19 agents deaf until hand re-enrolled).
+	// A spool file is durable evidence of enrollment; re-register it at boot.
+	// register() is idempotent, so overlap with --agents is harmless.
+	if entries, err := os.ReadDir(runtimeDir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".chan") {
+				continue
+			}
+			id := strings.TrimSuffix(name, ".chan")
+			if !validAgentID(id) {
+				continue
+			}
+			if _, err := r.register(id); err != nil {
+				log.Printf("spool-resume register %q: %v", id, err)
+				continue
+			}
+			log.Printf("resumed agent %q from spool", id)
+		}
+	}
+
 	sockPath := filepath.Join(runtimeDir, "relay.sock")
 	ln, err := listenControl(sockPath)
 	if err != nil {
@@ -293,6 +317,15 @@ func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 			log.Printf("agent %q: skipping message with empty id/role", loop.id)
 			continue
 		}
+		if msg.Role != "user" && msg.Role != "agent" {
+			// Device-level events (role "tts_event", …) are resolved into poll
+			// waiters by the server but are NOT chat history: /api/chat/poll's
+			// after-index does not know their ids, so advancing lastID to one
+			// resets the upstream cursor to -1 and replays the channel's whole
+			// backlog (observed live 2026-07-17: an old captain message was
+			// redelivered after every TTS event). Don't spool, don't advance.
+			continue
+		}
 		lastID = msg.ID
 		if err := appendSpool(loop.spool, msg); err != nil {
 			// A spool write failure is not fatal to the loop — log and keep polling
@@ -369,7 +402,10 @@ func lastSpooledID(path string) string {
 			continue
 		}
 		parts := strings.SplitN(line, "|", 4)
-		if len(parts) >= 2 && parts[1] != "" {
+		// Only chat-history roles seed the cursor — spools written before the
+		// tts_event filter existed may end in event lines whose ids the poll
+		// after-index cannot resolve (cursor reset → backlog replay).
+		if len(parts) >= 3 && parts[1] != "" && (parts[2] == "user" || parts[2] == "agent") {
 			return parts[1]
 		}
 	}

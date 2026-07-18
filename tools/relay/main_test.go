@@ -290,6 +290,17 @@ func TestLastSpooledID_Resume(t *testing.T) {
 	if got := lastSpooledID(spool); got != "x2" {
 		t.Errorf("lastSpooledID = %q, want x2", got)
 	}
+
+	// A spool whose tail is a device-level event line (written before the
+	// tts_event filter existed) must seed from the last CHAT-HISTORY id: event
+	// ids are unknown to /api/chat/poll's after-index, and seeding one resets
+	// the cursor to -1 upstream and replays the channel's backlog.
+	if err := appendSpool(spool, &upstreamMessage{ID: "tts9", Role: "tts_event", Text: ""}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastSpooledID(spool); got != "x2" {
+		t.Errorf("lastSpooledID with trailing tts_event = %q, want x2", got)
+	}
 }
 
 // TestValidAgentID guards the path-traversal defense that keeps a spool inside
