@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# parlay-split — bash entrypoint for the Parlay split-testing tool.
+#
+# The captain wants an easy bash entrypoint; this resolves the tool's own source
+# relative to itself (so it works from any cwd and inside any worktree) and hands
+# off to the TypeScript CLI under bun. All args pass through verbatim.
+#
+# Safety model (enforced in TypeScript, restated here for the reader):
+#   - sandboxes bind FREE high ports (42000+), never 31337/31339/4343/31338/4242
+#   - relays run as plain background processes, never via launchctl
+#   - `sandbox down` kills exactly the PIDs it recorded, never a broad pkill
+#   - two-door only TARGETS external doors; it never binds them
+set -euo pipefail
+
+# Resolve this script's real directory, following symlinks.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+CLI="$BIN_DIR/../src/cli.ts"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "parlay-split: bun is required but not on PATH" >&2
+  exit 1
+fi
+
+exec bun "$CLI" "$@"
