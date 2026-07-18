@@ -156,8 +156,11 @@ export function openAnnotateMenu(anchor?: HTMLElement): void {
   m.style.top = Math.max(8, top) + 'px'
 
   // Dismiss on outside click or Escape (bubble phase, so annotation click handler runs first).
+  // Defer dismiss listener to next tick to avoid closing on the opening click.
   _dismiss = (e: Event) => { if (!m.contains(e.target as Node)) closeAnnotateMenu() }
   _keydown = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); closeAnnotateMenu() } }
-  document.addEventListener('click', _dismiss, false)
-  document.addEventListener('keydown', _keydown, true)
+  setTimeout(() => {
+    document.addEventListener('click', _dismiss, false)
+    document.addEventListener('keydown', _keydown, true)
+  }, 0)
 }
