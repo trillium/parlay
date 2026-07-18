@@ -13,6 +13,8 @@ interface PerfSample {
   relayMs: number
   settleMs: number
   keyCount: number
+  sttActive: boolean
+  sttListening: boolean
   device: {
     model: string
     battery?: number
@@ -47,8 +49,34 @@ const metrics: SessionMetrics = {
 let keyCount = 0
 let lastSampleTime = Date.now()
 
+// ── STT Activity Detection ──────────────────────────────────────────────────
+let sttState = { active: false, listening: false }
+
+function hookSpeechRecognition(): void {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  if (!SpeechRecognition) return
+
+  const originalConstruct = SpeechRecognition
+  const hooked = function (...args: any[]) {
+    const instance = new originalConstruct(...args)
+
+    instance.addEventListener('start', () => { sttState.active = true; sttState.listening = true })
+    instance.addEventListener('end', () => { sttState.active = false; sttState.listening = false })
+    instance.addEventListener('result', () => { sttState.listening = false })  // processing, not listening
+    instance.addEventListener('error', () => { sttState.active = false; sttState.listening = false })
+
+    return instance
+  }
+  hooked.prototype = originalConstruct.prototype
+  ;(window as any).SpeechRecognition = hooked
+  ;(window as any).webkitSpeechRecognition = hooked
+}
+
 // Hook into the existing telemetry system
 export function initPerfMonitor(getTelemetry: () => EvalTelemetry, getSettleMs: () => number): void {
+  // Set up STT detection (Web Speech API hooking)
+  hookSpeechRecognition()
+
   // Sample on every keystroke (every eval POST)
   const originalRenderOverlay = (window as any).__paRenderOverlay
   ;(window as any).__paRenderOverlay = () => {
@@ -66,6 +94,8 @@ export function initPerfMonitor(getTelemetry: () => EvalTelemetry, getSettleMs: 
         relayMs: t.lastRelayMs,
         settleMs: getSettleMs(),
         keyCount,
+        sttActive: sttState.active,
+        sttListening: sttState.listening,
         device: {
           model: getDeviceInfo(),
           battery: getBatteryLevel(),
@@ -143,7 +173,19 @@ function analyzeAndReport(): void {
   const engineTimes = metrics.samples.map(s => s.engineMs)
   const settleTimes = metrics.samples.map(s => s.settleMs)
   const memoryUsages = metrics.samples.map(s => s.device.memoryHeapUsedMB).filter(m => m !== undefined) as number[]
-  const lowPowerModes = metrics.samples.filter(s => s.device.lowPowerMode).length
+
+  // STT correlation: split samples by STT activity
+  const sttActiveSamples = metrics.samples.filter(s => s.sttActive)
+  const sttInactiveSamples = metrics.samples.filter(s => !s.sttActive)
+  const avgRttWithStt = sttActiveSamples.length > 0
+    ? sttActiveSamples.map(s => s.rttMs).reduce((a, b) => a + b, 0) / sttActiveSamples.length
+    : undefined
+  const avgRttWithoutStt = sttInactiveSamples.length > 0
+    ? sttInactiveSamples.map(s => s.rttMs).reduce((a, b) => a + b, 0) / sttInactiveSamples.length
+    : undefined
+  const sttCorrelation = (avgRttWithStt && avgRttWithoutStt)
+    ? (avgRttWithStt / avgRttWithoutStt).toFixed(2)
+    : undefined
 
   const avgRtt = rttTimes.reduce((a, b) => a + b, 0) / rttTimes.length
   const maxRtt = Math.max(...rttTimes)
@@ -152,11 +194,14 @@ function analyzeAndReport(): void {
   const avgMemory = memoryUsages.length > 0 ? memoryUsages.reduce((a, b) => a + b, 0) / memoryUsages.length : undefined
 
   // Determine bottleneck
-  let bottleneck: 'network' | 'js' | 'debounce' | 'balanced' | 'device'
+  let bottleneck: 'network' | 'js' | 'debounce' | 'balanced' | 'device' | 'stt'
   let recommendation = ''
 
-  // High memory is a legitimate device constraint (affects garbage collection pauses)
-  if (avgMemory && avgMemory > 120) {
+  // STT contention: if lag is significantly worse during active speech recognition
+  if (sttCorrelation && parseFloat(sttCorrelation) > 1.5 && sttActiveSamples.length > 0) {
+    bottleneck = 'stt'
+    recommendation = `Speech-to-text is consuming CPU, causing ${sttCorrelation}× slower keystroke response. STT and typing are competing for the main thread. Try: disable STT during typing, or use a background STT service that doesn't block the main thread.`
+  } else if (avgMemory && avgMemory > 120) {
     bottleneck = 'device'
     recommendation = `High memory usage (${avgMemory.toFixed(0)}MB heap). JavaScript bundle or TTS plugin consuming too much memory. Try disabling TTS plugin to reduce heap pressure.`
   } else if (avgRtt > avgEngine * 10) {
@@ -210,12 +255,30 @@ function displayAnalysis(): void {
   const battery = metrics.samples[0]?.device.battery
   const batteryStatus = battery ? `${Math.round(battery)}%` : 'N/A'
 
+  // STT correlation data
+  const sttActiveSamples = metrics.samples.filter(s => s.sttActive)
+  const sttInactiveSamples = metrics.samples.filter(s => !s.sttActive)
+  const sttSection = sttActiveSamples.length > 0
+    ? (() => {
+        const avgWithStt = sttActiveSamples.map(s => s.rttMs).reduce((a, b) => a + b, 0) / sttActiveSamples.length
+        const avgWithoutStt = sttInactiveSamples.length > 0
+          ? sttInactiveSamples.map(s => s.rttMs).reduce((a, b) => a + b, 0) / sttInactiveSamples.length
+          : avgWithStt
+        const ratio = (avgWithStt / avgWithoutStt).toFixed(2)
+        return `\nSTT CORRELATION:
+- Avg RTT with STT active: ${avgWithStt.toFixed(0)}ms
+- Avg RTT without STT: ${avgWithoutStt.toFixed(0)}ms
+- Correlation ratio: ${ratio}×`
+      })()
+    : ''
+
   const msg = `
 🔍 PERFORMANCE ANALYSIS (${metrics.samples.length} keystrokes)
 
 DEVICE TELEMETRY:
 - Battery: ${batteryStatus}
 - Memory Heap: ${avgMem}MB (Chrome/Blink only; N/A on Safari)
+- STT active during: ${sttActiveSamples.length} / ${metrics.samples.length} samples${sttSection}
 
 BOTTLENECK DIAGNOSIS: ${metrics.summary.bottleneck.toUpperCase()}
 - Avg RTT: ${metrics.summary.avgRttMs.toFixed(0)}ms (max ${metrics.summary.maxRttMs.toFixed(0)}ms)
