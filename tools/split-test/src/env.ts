@@ -19,24 +19,43 @@ export const RESERVED_PORTS: readonly number[] = [31337, 31338, 31339, 4242, 434
 export const SANDBOX_PORT_BASE = 42000
 export const SANDBOX_PORT_MAX = 42999
 
-/**
- * True if `port` currently has a listener (i.e. is NOT free to bind).
- * Uses an actual bind attempt, not a connect probe: a connect probe races
- * (nothing may be accepting yet) whereas a failed bind is authoritative.
- */
-export function portInUse(port: number, host = "127.0.0.1"): Promise<boolean> {
+/** True if something is already accepting connections on host:port. */
+function connectSucceeds(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = connect({ port, host })
+    const done = (v: boolean) => {
+      sock.destroy()
+      resolve(v)
+    }
+    sock.once("connect", () => done(true))
+    sock.once("error", () => done(false))
+    sock.setTimeout(400, () => done(false))
+  })
+}
+
+/** True if a fresh bind on host:port fails (something holds it, or it's blocked). */
+function bindFails(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const srv = createServer()
-    srv.once("error", () => {
-      // Any bind error — EADDRINUSE, EACCES, anything — means we could not prove
-      // this port free, so we treat it as in-use. Never hand out an unverified port.
-      resolve(true)
-    })
-    srv.once("listening", () => {
-      srv.close(() => resolve(false))
-    })
+    srv.once("error", () => resolve(true))
+    srv.once("listening", () => srv.close(() => resolve(false)))
     srv.listen(port, host)
   })
+}
+
+/**
+ * True if `port` is NOT safe to hand out. A port is in use if EITHER:
+ *   - a connect probe succeeds (something is accepting), OR
+ *   - a fresh bind fails.
+ * The connect probe is essential: bun's `serve()` binds with SO_REUSEADDR/
+ * reusePort, so a bind test ALONE reports a bun-held port as free — which would
+ * hand the same port to two sandboxes (observed: two-stack collided on 42000).
+ * The bind test still catches ports nothing is accepting on yet but which are
+ * otherwise unbindable. Either signal → in use.
+ */
+export async function portInUse(port: number, host = "127.0.0.1"): Promise<boolean> {
+  if (await connectSucceeds(port, host)) return true
+  return bindFails(port, host)
 }
 
 /**
