@@ -1,5 +1,7 @@
 import { getClip, clipKey, cacheHas } from './cache'
 import { reportTtsEvent } from './events'
+import { isAudioMuted } from './audio-mute'
+import { playBlob, stopBlobPlayback } from './playback'
 
 // ── Speak plugin: playback engine ────────────────────────────────────────────
 // Talks to core ONLY through window.__parlay.speechUi (block spans, highlight,
@@ -12,7 +14,6 @@ export function setApi(a: any) { api = a }
 let ttsEnabled = false
 let ttsVoice: SpeechSynthesisVoice | null = null
 let session = 0
-let _resolveCurrent: (() => void) | null = null
 let _resolveLocal: (() => void) | null = null
 
 const ttsAudio = () => document.getElementById('pa-tts-audio') as HTMLAudioElement | null
@@ -42,30 +43,9 @@ function speakingSpans(msgId: string | undefined, blocks: any[]): HTMLElement[] 
   return spans
 }
 
-function playBlob(blob: Blob): Promise<boolean> {
-  return new Promise((resolve) => {
-    const au = ttsAudio()
-    if (!au) { resolve(false); return }
-    const url = URL.createObjectURL(blob)
-    let settled = false
-    const done = (ok: boolean) => {
-      if (settled) return
-      settled = true
-      // Clear src + null handlers before revoke so iOS doesn't wedge <audio> on next play() (dead blob: URL).
-      au.onended = au.onerror = null; au.src = ''
-      URL.revokeObjectURL(url); _resolveCurrent = null; resolve(ok)
-    }
-    _resolveCurrent = () => done(true)
-    au.onended = () => done(true)
-    au.onerror = () => done(false)
-    au.src = url
-    au.play().catch(() => done(false))
-  })
-}
-
 function speakLocalBlock(text: string): Promise<void> {
   return new Promise((resolve) => {
-    if (!('speechSynthesis' in window)) { resolve(); return }
+    if (isAudioMuted() || !('speechSynthesis' in window)) { resolve(); return }
     const utt = new SpeechSynthesisUtterance(text)
     if (ttsVoice) utt.voice = ttsVoice
     utt.rate = 1.05
@@ -132,9 +112,7 @@ async function playHybrid(text: string, msgId?: string): Promise<void> {
 
 function hardStop() {
   try { if ('speechSynthesis' in window) speechSynthesis.cancel() } catch {}
-  const au = ttsAudio()
-  if (au) { try { au.pause(); au.currentTime = 0 } catch {} }
-  if (_resolveCurrent) _resolveCurrent()
+  stopBlobPlayback()
   if (_resolveLocal) _resolveLocal()
   ui().clearAllSpeechHighlights()
 }
