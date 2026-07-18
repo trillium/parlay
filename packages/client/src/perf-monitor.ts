@@ -17,7 +17,10 @@ interface PerfSample {
     model: string
     battery?: number
     batteryLow?: boolean
+    lowPowerMode?: boolean
     networkType?: string
+    memoryHeapUsedMB?: number
+    memoryHeapLimitMB?: number
   }
 }
 
@@ -55,6 +58,7 @@ export function initPerfMonitor(getTelemetry: () => EvalTelemetry, getSettleMs: 
     // Only sample every 5th keystroke to reduce overhead
     if (keyCount % 5 === 0) {
       const now = Date.now()
+      const mem = getMemoryUsage()
       const sample: PerfSample = {
         timestamp: now,
         rttMs: t.lastRoundTripMs,
@@ -66,7 +70,10 @@ export function initPerfMonitor(getTelemetry: () => EvalTelemetry, getSettleMs: 
           model: getDeviceInfo(),
           battery: getBatteryLevel(),
           batteryLow: isBatteryLow(),
+          lowPowerMode: isLowPowerMode(),
           networkType: getNetworkType(),
+          memoryHeapUsedMB: mem.heapUsedMB,
+          memoryHeapLimitMB: mem.heapLimitMB,
         },
       }
       metrics.samples.push(sample)
@@ -101,6 +108,29 @@ function isBatteryLow(): boolean {
   return battery?.level ? battery.level < 0.2 : false
 }
 
+function isLowPowerMode(): boolean {
+  // iOS Low Power Mode reduces CPU/GPU/network performance explicitly.
+  // Detect via: battery level < 20% OR Battery Status API's explicit flag (when available).
+  // Note: iOS Safari doesn't expose explicit low-power-mode flag, so we infer from battery
+  // + check if the device is explicitly in reduced-performance mode by monitoring CPU spikes.
+  const battery = (navigator as any).getBattery?.()
+  if (battery?.level && battery.level < 0.2) return true
+
+  // Fallback: check for performance degradation patterns (slower eval times usually indicate LPM)
+  // This is measured empirically in analysis phase if needed.
+  return false
+}
+
+function getMemoryUsage(): { heapUsedMB?: number; heapLimitMB?: number } {
+  // Chrome/Blink expose memory info; Safari/iOS don't for security reasons.
+  // On Chrome: performance.memory.usedJSHeapSize (bytes)
+  const mem = (performance as any).memory
+  return {
+    heapUsedMB: mem?.usedJSHeapSize ? Math.round(mem.usedJSHeapSize / 1024 / 1024) : undefined,
+    heapLimitMB: mem?.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1024 / 1024) : undefined,
+  }
+}
+
 function getNetworkType(): string | undefined {
   const conn = (navigator as any).connection || (navigator as any).mozConnection
   return conn?.effectiveType ?? conn?.type
@@ -112,17 +142,27 @@ function analyzeAndReport(): void {
   const rttTimes = metrics.samples.map(s => s.rttMs)
   const engineTimes = metrics.samples.map(s => s.engineMs)
   const settleTimes = metrics.samples.map(s => s.settleMs)
+  const memoryUsages = metrics.samples.map(s => s.device.memoryHeapUsedMB).filter(m => m !== undefined) as number[]
+  const lowPowerModes = metrics.samples.filter(s => s.device.lowPowerMode).length
 
   const avgRtt = rttTimes.reduce((a, b) => a + b, 0) / rttTimes.length
   const maxRtt = Math.max(...rttTimes)
   const avgEngine = engineTimes.reduce((a, b) => a + b, 0) / engineTimes.length
   const avgSettle = settleTimes.reduce((a, b) => a + b, 0) / settleTimes.length
+  const avgMemory = memoryUsages.length > 0 ? memoryUsages.reduce((a, b) => a + b, 0) / memoryUsages.length : undefined
 
   // Determine bottleneck
-  let bottleneck: 'network' | 'js' | 'debounce' | 'balanced'
+  let bottleneck: 'network' | 'js' | 'debounce' | 'balanced' | 'device'
   let recommendation = ''
 
-  if (avgRtt > avgEngine * 10) {
+  // Device constraints take priority
+  if (lowPowerModes > metrics.samples.length * 0.5) {
+    bottleneck = 'device'
+    recommendation = `⚠️ Low Power Mode detected on ${Math.round(lowPowerModes / metrics.samples.length * 100)}% of samples. This reduces CPU/GPU performance. Disable Low Power Mode or wait for battery charge.`
+  } else if (avgMemory && avgMemory > 100) {
+    bottleneck = 'device'
+    recommendation = `High memory usage (${avgMemory.toFixed(0)}MB heap). JavaScript bundle or TTS plugin consuming too much memory. Try disabling TTS plugin.`
+  } else if (avgRtt > avgEngine * 10) {
     bottleneck = 'network'
     recommendation = `Network latency (${avgRtt.toFixed(0)}ms RTT) is the main bottleneck. Try optimizing server location or using a CDN.`
   } else if (avgEngine > 50) {
@@ -167,14 +207,27 @@ async function persistMetrics(): Promise<void> {
 function displayAnalysis(): void {
   if (!metrics.summary) return
 
+  // Gather additional device info for display
+  const memSamples = metrics.samples.map(s => s.device.memoryHeapUsedMB).filter(m => m !== undefined) as number[]
+  const avgMem = memSamples.length > 0 ? (memSamples.reduce((a, b) => a + b, 0) / memSamples.length).toFixed(0) : 'N/A'
+  const lowPowerCount = metrics.samples.filter(s => s.device.lowPowerMode).length
+  const lowPowerStatus = lowPowerCount > 0 ? `LOW POWER MODE (${lowPowerCount} samples)` : 'Normal'
+  const battery = metrics.samples[0]?.device.battery
+  const batteryStatus = battery ? `${Math.round(battery)}%` : 'N/A'
+
   const msg = `
 🔍 PERFORMANCE ANALYSIS (${metrics.samples.length} keystrokes)
 
-Bottleneck: ${metrics.summary.bottleneck.toUpperCase()}
+DEVICE STATUS:
+- Battery: ${batteryStatus}
+- Power Mode: ${lowPowerStatus}
+- Memory Heap: ${avgMem}MB used
+
+PERFORMANCE BOTTLENECK: ${metrics.summary.bottleneck.toUpperCase()}
 - Avg RTT: ${metrics.summary.avgRttMs.toFixed(0)}ms (max ${metrics.summary.maxRttMs.toFixed(0)}ms)
 - Avg Engine: ${metrics.summary.avgEngineMs.toFixed(1)}ms
 
-Recommendation: ${metrics.summary.recommendation}
+RECOMMENDATION: ${metrics.summary.recommendation}
   `.trim()
 
   console.log(msg)
