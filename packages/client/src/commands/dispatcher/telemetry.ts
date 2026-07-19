@@ -48,20 +48,8 @@ function ensureOverlay(): HTMLElement {
 }
 
 export function renderOverlay(): void {
-  const t = telemetry
-  const el = ensureOverlay()
-  const engMs = t.lastEngineEvalNs / 1e6
-  el.textContent =
-    `SERVER-EVAL (compiled Go)\n` +
-    `engine ${engMs.toFixed(3)}ms | relay ${t.lastRelayMs.toFixed(1)}ms | RTT ${t.lastRoundTripMs.toFixed(0)}ms (max ${t.maxRoundTripMs.toFixed(0)})\n` +
-    `posts ${t.posts}  applied ${t.applied}  stale ${t.rejectedStale}  expired ${t.rejectedExpired}\n` +
-    `resyncs ${t.resyncs}  seqGaps ${t.seqGaps}  serverFires ${t.serverOwnedFires}`
-  // The comparison the captain asked for: is compiled speed still a win after
-  // the round trip? Flag it when the network dwarfs the eval.
-  if (t.lastRoundTripMs > 0 && engMs > 0) {
-    const ratio = t.lastRoundTripMs / engMs
-    el.textContent += `\nRTT is ${ratio.toFixed(0)}× the compiled eval time`
-  }
+  // SERVER-EVAL panel hidden per captain's request (2026-07-19)
+  return
 }
 
 export function log(...a: unknown[]): void {
