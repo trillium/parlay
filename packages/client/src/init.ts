@@ -21,9 +21,11 @@ import { renderThread } from './thread'
 import { scrollBottom } from './thread-scroll'
 import { wireToolLogEvents } from './toollog'
 import { connect, setOpenDrawerFn, onSse } from './sse'
-import { switchChannel } from './tabs'
-import { wireInputEvents, loadDraft, sendMsg, wireServerEval } from './input'
+import { wireInputEvents, loadDraft, sendMsg, wireServerEval, evalVoice } from './input'
 import { wireAnnotation, doSetAnnotate } from './annotation'
+import { wireDeviceCommands } from './device-cmd'
+import { initPerfMonitor } from './perf-monitor'
+import { telemetry } from './commands/dispatcher/telemetry'
 import { initAnnotationPersistence } from './annotation-store'
 import { wireChannelPin } from './channel-pin'
 import { trackFocusTitle } from './focus-title'
@@ -33,7 +35,6 @@ import {
   injectSettingsModal, openSettingsModal,
   getSettings,
 } from './settings-modal'
-import { sendDebugSnapshot } from './settings-modal/debug'
 import { loadStored } from './idb'
 
 // Idempotency guard — only one instance per page
@@ -213,24 +214,11 @@ wireInputEvents()
 wireServerEval(onSse)
 wireChannelPin()   // mindful page→channel pin indicator + escape hatch (no-op until the mapper fix lands)
 
-// Agent-triggerable device commands via SSE: reload, reset-tts, ping.
-// Agents POST /api/chat/device-cmd to drive the client without needing the
-// captain to press anything — useful for live debugging on mobile.
-onSse('device_cmd', (data: { cmd: string; args?: Record<string, string> }) => {
-  if (data.cmd === 'reload') { location.reload(); return }
-  if (data.cmd === 'reset-tts') { (window as any).__paResetTts?.(); return }
-  if (data.cmd === 'ping') { void sendDebugSnapshot(); return }
-  if (data.cmd === 'switch-channel') {
-    const ch = data.args?.channel
-    if (ch && agentInfo.has(ch)) { switchChannel(ch); openDrawer() }
-    return
-  }
-  if (data.cmd === 'list-channels') {
-    // Agent reads /api/chat/agents server-side; snapshot gives context
-    void sendDebugSnapshot()
-    return
-  }
-})
+// Performance monitoring: collect keystroke telemetry for analysis
+initPerfMonitor(() => telemetry, () => evalVoice().settleMs)
+
+// Agent-triggerable device commands (reload, reset-tts, ping, ...) — src/device-cmd.ts
+wireDeviceCommands(openDrawer)
 
 if (isDesktop() || IS_STANDALONE) openDrawer(true)
 
