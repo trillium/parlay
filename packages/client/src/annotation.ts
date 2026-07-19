@@ -1,4 +1,4 @@
-import { esc } from './config'
+import { esc, CHAT_BASE } from './config'
 import { annotations, hoverEl, annotateTarget, markerMap, setHoverEl, setAnnotateTarget, setAnnotate } from './state'
 import { openAnnotateMenu, wireAnnotateMenu } from './annotate-menu'
 import { wireAnnotationStore, persistAnnotations, clearPersistedAnnotations } from './annotation-store'
@@ -11,6 +11,7 @@ let _annList: HTMLElement, _annSend: HTMLElement
 let _renderStrip: (() => void) | null = null   // set in setupAnnotation; lets doSetAnnotate refresh the strip
 let _popup: HTMLElement, _popupLbl: HTMLElement
 let _popupIn: HTMLTextAreaElement, _popupOk: HTMLElement, _popupCx: HTMLElement
+let _popupAttachments: string[] = []
 
 // Per-message annotation entry point — assigned inside wireAnnotation (same
 // closure pattern as _renderStrip). Lets thread.ts open the annotation popup
@@ -18,6 +19,34 @@ let _popupIn: HTMLTextAreaElement, _popupOk: HTMLElement, _popupCx: HTMLElement
 let _annotateEl: ((el: HTMLElement, x: number, y: number) => void) | null = null
 export function annotateMessage(el: HTMLElement, x: number, y: number) {
   _annotateEl?.(el, x, y)
+}
+
+async function uploadFile(file: File): Promise<string | null> {
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    const r = await fetch(`${CHAT_BASE}/upload`, { method: 'POST', body: form })
+    const res = await r.json()
+    return res.ok && res.url ? res.url : null
+  } catch { return null }
+}
+
+function renderPopupAttachments() {
+  let attachStrip = _popup.querySelector('.pa-popup-attachments') as HTMLElement | null
+  if (!attachStrip && _popupAttachments.length > 0) {
+    attachStrip = document.createElement('div')
+    attachStrip.className = 'pa-popup-attachments'
+    attachStrip.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap'
+    _popupIn.parentNode?.insertBefore(attachStrip, _popupIn)
+  }
+  if (!attachStrip) return
+  attachStrip.innerHTML = _popupAttachments.map((url, i) =>
+    `<div class="pa-popup-chip" style="position:relative;display:inline-block;max-width:80px"><img src="${url.replace(/"/g, '%22')}" alt="" style="max-width:80px;max-height:60px;border-radius:4px"><button class="pa-popup-chip-x" data-i="${i}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;padding:0;border-radius:50%;background:#f00;color:#fff;border:none;cursor:pointer;font-size:12px">✕</button></div>`
+  ).join('')
+  attachStrip.querySelectorAll('.pa-popup-chip-x').forEach(btn => btn.addEventListener('click', () => {
+    _popupAttachments.splice(Number((btn as HTMLElement).dataset.i), 1)
+    renderPopupAttachments()
+  }))
 }
 
 export function wireAnnotation(
@@ -45,6 +74,8 @@ export function wireAnnotation(
     const label = (el.textContent || el.getAttribute('title') || el.tagName || 'element').trim().slice(0, 60)
     _popupLbl.textContent = `↗ "${label}"`
     _popupIn.value = ''
+    _popupAttachments = []
+    renderPopupAttachments()
     const W = window.innerWidth, H = window.innerHeight
     let left = x + 10, top = y + 10
     if (left + 270 > W) left = x - 280
@@ -104,10 +135,14 @@ export function wireAnnotation(
 
   function confirmAnnotation() {
     const note = _popupIn.value.trim()
-    if (!note || !annotateTarget) { hidePopup(); return }
+    if (!note && !_popupAttachments.length) { hidePopup(); return }
+    if (!annotateTarget) { hidePopup(); return }
     const el = annotateTarget
     const elementText = (el.textContent || el.getAttribute('title') || el.tagName || 'element').trim().slice(0, 80)
-    annotations.push({ elementText, note, el })
+    annotations.push({
+      elementText, note, el,
+      ..._popupAttachments.length && { attachments: [..._popupAttachments] }
+    })
     addMarker(el, annotations.length)
     persistAnnotations()   // survive reload: mirror the new annotation to storage
     hidePopup()
@@ -156,6 +191,19 @@ export function wireAnnotation(
     if (e.key === 'Escape') hidePopup()
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); confirmAnnotation() }
   })
+  _popupIn.addEventListener('paste', (e: ClipboardEvent) => {
+    const items = [...(e.clipboardData?.items ?? [])]
+    const files = items.filter(i => i.type.startsWith('image/'))
+      .map(i => i.getAsFile()).filter((f): f is File => !!f)
+    if (!files.length) return
+    e.preventDefault()
+    void (async () => {
+      for (const f of files.slice(0, 4)) {
+        const url = await uploadFile(f)
+        if (url) { _popupAttachments.push(url); renderPopupAttachments() }
+      }
+    })()
+  })
   _popupOk.addEventListener('click', confirmAnnotation)
 
   _annSend.addEventListener('click', () => { void sendAnnotations() })
@@ -170,7 +218,10 @@ export function wireAnnotation(
 export async function sendAnnotations(): Promise<void> {
   if (!annotations.length || !_sendMsg) return
   const page = document.title || location.pathname
-  const lines = annotations.map((a, i) => `${i + 1}. [${a.elementText}]: ${a.note}`).join('\n')
+  const lines = annotations.map((a, i) => {
+    const text = `${i + 1}. [${a.elementText}]: ${a.note}`
+    return a.attachments?.length ? `${text}\n   Attachments: ${a.attachments.join(' ')}` : text
+  }).join('\n')
   annotations.forEach(a => {
     if (a.el && markerMap.has(a.el)) { markerMap.get(a.el)!.remove(); markerMap.delete(a.el) }
   })

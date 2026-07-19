@@ -73,6 +73,7 @@ export interface Annotation {
   note:        string
   el?:         HTMLElement
   locator?:    string
+  attachments?: string[]
 }
 export const annotations: Annotation[] = []
 export let hoverEl: HTMLElement | null = null
