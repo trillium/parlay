@@ -36,6 +36,7 @@ import {
   getSettings,
 } from './settings-modal'
 import { loadStored } from './idb'
+import { initA11yPanel, openA11yPanel } from './a11y-panel'
 
 // Idempotency guard — only one instance per page
 ;(async () => {
@@ -175,6 +176,11 @@ function clearCompactTimer() {
 injectSettingsModal()
 settingsGearBtn.addEventListener('click', openSettingsModal)
 applySettings(settings)
+
+// ── Accessibility settings ───────────────────────────────────────────────────
+initA11yPanel()
+// Expose openA11yPanel globally so it can be called from settings menu or other places
+;(window as any).__paOpenA11y = openA11yPanel
 
 // ── Voice pickers (channel + sender) ──────────────────────────────────────────
 initPickers()
