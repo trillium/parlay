@@ -25,6 +25,7 @@ Usage:
   parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
   parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
   parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
   parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
   parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
   parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
@@ -58,6 +59,7 @@ const HELP: Record<string, string> = {
   launch: `parlay launch — discover and launch agents defined in ~/.parlay/agents/.\nUsage: parlay launch          → list all known agents with live status\n       parlay launch <id>    → spawn the named agent via parlay-spawn (reads identity.md for name/color/cwd/model)\nOffline agents are clearly marked; spawning fires the standard identity→handoff→scratchpad recovery chain.`,
   variant: `parlay variant — manage variant agents (isolated git-worktree forks of an existing agent).\nSubcommands:\n  launch <primary-id> [--label <suffix>] [--model MODEL]\n      Fork a primary into a new variant. Creates a git worktree at ~/.parlay/worktrees/<variant-id>.\n      Label defaults to wt1, wt2, … (auto-incremented). Variant id: <primary>-<label>.\n  list [<primary-id>]\n      List all variants, optionally filtered to a specific primary.\n  merge <variant-id>\n      Append novel identity facts + scratchpad notes from the variant into the primary.\n      Deduplicated by content; merged lines tagged [from: <variant-id>]. Idempotent.\n  teardown <variant-id> [--force]\n      Merge insights (unless --force), remove the git worktree, unregister from Parlay,\n      and delete the variant home. Refuses if unmerged insights exist unless --force.`,
   "lavish-import": `parlay lavish-import — import lavish sessions via the bundled importer.\nUsage: parlay lavish-import`,
+  "context-check": `parlay context-check — machine-readable rotation advisory for persistent agents.\nUsage: parlay context-check <pct> [--threshold <pct>]\n  <pct>              your current context usage (0–100). Accepts 85, 85%, or 0.85. YOU pass what\n                     your harness knows — Claude Code exposes no context gauge to a CLI.\n  --threshold <pct>  rotate at/above this (default 85).\nOutput + exit codes (scriptable): below → 'OK <pct>% (threshold <t>%)', exit 0;\n  at/above → 'ROTATE: create handoff now, then identity --submit …', exit 3; bad pct → exit 2.\nRotation loop: on ROTATE, write a handoff then 'identity --submit' (atomic — see identity --help).\n  The supervisor-respawn side lives in GasCity. Example:\n    parlay context-check 87 || { handoff create … && identity --submit; }`,
 }
 
 export function helpWanted(cmd: string, args: string[]): boolean {

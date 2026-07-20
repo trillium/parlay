@@ -145,6 +145,14 @@ export async function cmdDoctor(args: string[]) {
     : report("WARN", `eval-engine unreachable at ${ENGINE} — panel voice commands degraded`,
         "cd ~/code/parlay/packages/eval-engine && nohup ./parlay-eval-engine > engine.log 2>&1 &"))
 
+  // 7. Context rotation advisory (informational). Claude Code exposes no context gauge
+  // to a CLI, so we read CLAUDE_CONTEXT_PERCENTAGE if the harness set it; otherwise the
+  // percentage is unknown here. Either way, point at the rotation verb — the seam the
+  // supervisor-respawn loop (GasCity) hooks into.
+  const ctxRaw = (process.env.CLAUDE_CONTEXT_PERCENTAGE ?? "").trim()
+  const ctx = ctxRaw ? `${ctxRaw.replace(/%$/, "")}%` : "unknown"
+  console.log(`--    context: ${ctx} — rotate at ~85% (run: parlay context-check <pct>; on ROTATE, handoff + identity --submit)`)
+
   const fails = verdicts.filter(v => v === "FAIL").length
   const warns = verdicts.filter(v => v === "WARN").length
   console.log(fails ? `\n${fails} FAIL, ${warns} warn — fix the FAILs above` : `\nall clear (${warns} warn)`)
