@@ -29,6 +29,7 @@ import { cmdNickname } from "./commands-nickname"
 import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
 import { cmdVariant } from "./commands-variant"
 import { cmdDoctor, cmdHealth } from "./commands-doctor"
+import { cmdContextCheck } from "./commands-context-check"
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
@@ -48,6 +49,7 @@ async function main() {
     case "monitor":       return cmdMonitor(args)
     case "stats":         return cmdStats(args)
     case "doctor":        return cmdDoctor(args)
+    case "context-check": return cmdContextCheck(args)
     case "health":        return cmdHealth(args)
     case "launch":        return cmdLaunch(args)
     case "variant":       return cmdVariant(args)
