@@ -97,10 +97,15 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           }
           const images = Array.isArray(body.images) ? body.images.slice(0, 8).map(String).filter((u: string) => u.length <= 500) : []
           if (!text && !action && !images.length) { controller.enqueue(enc.encode(JSON.stringify({ error: "empty reply" }))); controller.close(); return }
+          let autoRegistered = false
           if (agentId) {
             // Upsert: a poll-auto-registered record (grey, name=id) gets the
             // real name/color on first reply that carries them.
             const existing   = agents.get(agentId)
+            // Track whether this is the first time this agent ID has been seen
+            // (robots-5l8: silent phantom-tab creation from typo'd agent IDs).
+            // Callers that check response.new_channel can detect the mismatch.
+            if (!existing) autoRegistered = true
             const name       = String(body.name  ?? existing?.name  ?? agentId).trim() || agentId
             const color      = String(body.color ?? "").trim() || existing?.color || "#3FB950"
             const nicknames  = parseNicknames(body as Record<string, unknown>, existing?.nicknames)
@@ -119,6 +124,7 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
               persistAgents()
               const primary = nicknames?.[0]; const oldPrimary = existing?.nicknames?.[0]
               if (primary && primary !== oldPrimary) herdrRename(agentId, primary)
+              if (autoRegistered) console.warn(`[parlay/reply] auto-registered new agent '${agentId}' on first reply — if this is a typo, use a pre-registered id`)
             }
           }
           const msg = addMessage("agent", text || action?.label || "", agentId, {
@@ -126,7 +132,10 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
             ...(images.length ? { images } : {}),
           })
           broadcastToClients("presence", { status: "idle" })
-          controller.enqueue(enc.encode(JSON.stringify({ ok: true, id: msg.id })))
+          // new_channel: true signals the agent id was auto-registered on this
+          // reply (robots-5l8 — not pre-registered via /api/chat/register-agent).
+          // A wrong id creates an invisible phantom tab; this flag lets callers detect it.
+          controller.enqueue(enc.encode(JSON.stringify({ ok: true, id: msg.id, ...(autoRegistered ? { new_channel: true } : {}) })))
         } catch { controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" }))) }
         controller.close()
       },
