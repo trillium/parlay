@@ -120,7 +120,8 @@ export async function handleRename(kind: MemKind, opts: Opts): Promise<boolean> 
   const reincLog = join(newDir, "reincarnations.log")
   if (existsSync(reincLog)) {
     const existing = readFileSync(reincLog, "utf8")
-    writeFileSync(reincLog, `[${new Date().toISOString()}] renamed from ${renameOld} to ${newId}\n` + existing)
+    const entry = JSON.stringify({ ts: new Date().toISOString(), event: "renamed", from: renameOld, to: newId })
+    writeFileSync(reincLog, existing.trimEnd() + "\n" + entry + "\n")
   }
 
   console.log(`identity renamed: ${renameOld} → ${newId} (store moved, re-registered; relaunch with: parlay identity --launch ${newId})`)

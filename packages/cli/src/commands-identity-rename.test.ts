@@ -30,8 +30,12 @@ test("--rename moves the store dir, updates context.json + identity.md id, logs 
   expect(fm.id).toBe("new-id")
 
   const log = readFileSync(join(home, "new-id", "reincarnations.log"), "utf8")
-  expect(log.split("\n")[0]).toMatch(/^\[.+\] renamed from old-id to new-id$/)
-  expect(log).toContain('"agent":"old-id"') // original content preserved below
+  const renameEntry = JSON.parse(log.trim().split("\n").at(-1)!)
+  expect(renameEntry.event).toBe("renamed")
+  expect(renameEntry.from).toBe("old-id")
+  expect(renameEntry.to).toBe("new-id")
+  expect(typeof renameEntry.ts).toBe("string")
+  expect(log).toContain('"agent":"old-id"') // original content preserved above
 
   expect(h.registerBodies.length).toBe(1)
   expect(h.registerBodies[0]).toMatchObject({ id: "new-id", name: "Old", color: "#ff0000" })
