@@ -7,6 +7,7 @@ import { die, postJSON } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
 import { resolveCurrentHandoff } from "./resolve-handoff"
+import { warnIfUnsubmittedHandoff } from "./say-guard"
 
 // The self-restart script was renamed reincarnate → context-reset. The new name is
 // not yet on PATH everywhere (only ~/.local/bin/reincarnate is, and that now forwards
@@ -33,6 +34,8 @@ export async function cmdSay(args: string[]) {
   let text = positionals.join(" ").trim()
   if (!text && !process.stdin.isTTY) text = (await Bun.stdin.text()).trim()
   if (!text) return die("parlay say: message text required (as arguments or piped on stdin)", EXIT_USAGE)
+  // Loud (stderr) warning if this send lands inside an unsubmitted handoff window.
+  warnIfUnsubmittedHandoff(agent)
   const r = await postJSON<{ ok?: boolean; id?: string; error?: string }>("/api/chat/reply", { text, agent })
   if (r.error) return die(`say failed: ${r.error}`)
   console.log(`said as ${agent} (id ${r.id})`)
@@ -139,8 +142,8 @@ async function cmdMem(kind: "scratchpad" | "identity", args: string[]) {
   if (wantHandoff || wantSubmit) {
     const submitId = wantSubmit
     if (submitId && kind !== "identity") return die(`parlay ${kind}: --submit is identity-only`, EXIT_USAGE)
-    // Id precedence: explicit positional, else the store's current open handoff.
-    const pinId = (positionals[0]?.trim()) || resolveCurrentHandoff()
+    // Id precedence: explicit positional, else this agent's newest open handoff.
+    const pinId = (positionals[0]?.trim()) || resolveCurrentHandoff(undefined, agent)
     if (!pinId) return die(
       `parlay ${kind}: no handoff id given and none active in the handoff store — create one first (handoff create …) or pass the id`,
       EXIT_USAGE,
