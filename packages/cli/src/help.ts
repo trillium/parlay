@@ -2,7 +2,7 @@
 
 import { SERVER } from "./config"
 
-export const USAGE = `parlay — talk to a Parlay chat server (${SERVER})
+export const USAGE = `parlay — talk to a Parlay chat server (current target: ${SERVER})
 
 Usage:
   parlay                          Live status: subscribers, agents, last 3 messages
@@ -37,7 +37,7 @@ Usage:
 Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
 
 Env:
-  PARLAY_SERVER   Server base URL (default http://localhost:4242)
+  PARLAY_SERVER   Server base URL (coded default http://localhost:4242; this fleet sets it to the Pulse server)
 `
 
 const HELP: Record<string, string> = {
