@@ -12,7 +12,7 @@ import { die } from "../http"
 export type MemKind = "scratchpad" | "identity"
 
 // Boolean + value flag tables for the mem dispatcher (parseArgs consumes both).
-export const MEM_BOOL_FLAGS = ["--clear", "--path", "--dry", "--register", "--handoff", "--submit", "--ephemeral", "--preserve", "--reap-ephemeral", "--mint-ephemeral"]
+export const MEM_BOOL_FLAGS = ["--clear", "--path", "--dry", "--register", "--handoff", "--dismiss-handoff", "--submit", "--ephemeral", "--preserve", "--reap-ephemeral", "--mint-ephemeral"]
 export const MEM_VALUE_FLAGS = ["--agent", "--complete", "--launch", "--name", "--color", "--model", "--cwd", "--rename", "--to", "--older-than"]
 
 // Root of the per-agent store: ${PARLAY_AGENT_HOME:-~/.parlay/agents}.
