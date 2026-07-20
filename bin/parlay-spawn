@@ -156,6 +156,10 @@ AGENT_DIR="$HOME/.parlay/agents/$AGENT_ID"
 mkdir -p "$AGENT_DIR"
 jq -n --arg id "$AGENT_ID" --arg name "$NAME" --arg color "$COLOR" \
   '{id: $id, name: $name, color: $color}' > "$AGENT_DIR/context.json" || true
+# Write a session-start sentinel (epoch seconds). The say-guard reads this to
+# distinguish handoffs created in a prior session ("inherited") from ones this
+# agent created itself. Overwrite on every spawn so the timestamp is always fresh.
+date +%s > "$AGENT_DIR/session-start" || true
 
 # 3. Compose the startup prompt: enrollment instructions + the task.
 #    The fresh claude processes this as its first turn, so it arms the Monitor

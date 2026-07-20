@@ -117,22 +117,30 @@ test("agent defaults to PARLAY_AGENT_ID when not passed explicitly", () => {
 
 // ── detectUnsubmittedHandoff: the say/reply warn condition ────────────────────────
 
+// Helper: a recent handoff (well within the 24h inherited threshold)
+const RECENT_ISO = new Date(Date.now() - 5 * 60 * 1000).toISOString()   // 5 minutes ago
+// Helper: a stale handoff (clearly older than 24h inherited threshold)
+const STALE_ISO  = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() // 48 hours ago
+
 test("detects an open handoff NOT yet pinned as unsubmitted (warn fires)", () => {
-  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-1bk", status: "open" }]) } })
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-1bk", status: "open", created: RECENT_ISO }]) } })
   // No pointer pinned in identity.md yet → the create→submit window is open.
-  expect(detectUnsubmittedHandoff(undefined, "handoff", "mayor")).toBe("handoff-1bk")
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "mayor")
+  expect(r?.id).toBe("handoff-1bk")
+  expect(r?.inherited).toBe(false)
 })
 
 test("does NOT flag when the open handoff is already the pinned pointer (submitted)", () => {
-  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-1bk", status: "open" }]) } })
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-1bk", status: "open", created: RECENT_ISO }]) } })
   // identity.md already pins handoff-1bk → submit happened; no warning.
   expect(detectUnsubmittedHandoff("handoff-1bk", "handoff", "mayor")).toBeUndefined()
 })
 
 test("flags a DIFFERENT open handoff even when an older pointer is pinned", () => {
-  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-new", status: "open" }]) } })
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-new", status: "open", created: RECENT_ISO }]) } })
   // A prior session pinned handoff-old; a fresh unsubmitted handoff-new is open now.
-  expect(detectUnsubmittedHandoff("handoff-old", "handoff", "mayor")).toBe("handoff-new")
+  const r = detectUnsubmittedHandoff("handoff-old", "handoff", "mayor")
+  expect(r?.id).toBe("handoff-new")
 })
 
 test("no warning when nothing is open (clean state)", () => {
@@ -141,6 +149,45 @@ test("no warning when nothing is open (clean state)", () => {
 })
 
 test("tolerates whitespace around the pinned pointer id", () => {
-  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-1bk", status: "open" }]) } })
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-1bk", status: "open", created: RECENT_ISO }]) } })
   expect(detectUnsubmittedHandoff("  handoff-1bk  ", "handoff", "mayor")).toBeUndefined()
+})
+
+// ── inherited detection: robots-3yy ──────────────────────────────────────────────
+
+test("inherited: true when handoff is older than 24h (no session-start given)", () => {
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-adz", status: "open", created: STALE_ISO }]) } })
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev")
+  expect(r?.id).toBe("handoff-adz")
+  expect(r?.inherited).toBe(true)
+})
+
+test("inherited: false when handoff is recent (< 24h, no session-start)", () => {
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-xyz", status: "open", created: RECENT_ISO }]) } })
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev")
+  expect(r?.inherited).toBe(false)
+})
+
+test("inherited: true when handoff created before sessionStartedAt (explicit)", () => {
+  const handoffCreated = new Date(Date.now() - 60 * 60 * 1000).toISOString()  // 1h ago
+  const sessionStart = Date.now() - 30 * 60 * 1000                             // 30min ago (after handoff)
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-prior", status: "open", created: handoffCreated }]) } })
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev", sessionStart)
+  expect(r?.id).toBe("handoff-prior")
+  expect(r?.inherited).toBe(true)
+})
+
+test("inherited: false when handoff created after sessionStartedAt (explicit)", () => {
+  const sessionStart = Date.now() - 60 * 60 * 1000                              // 1h ago
+  const handoffCreated = new Date(Date.now() - 30 * 60 * 1000).toISOString()   // 30min ago (after session start)
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-current", status: "open", created: handoffCreated }]) } })
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev", sessionStart)
+  expect(r?.inherited).toBe(false)
+})
+
+test("inherited: false when created field absent (conservative: assume current-session)", () => {
+  // No created field → can't determine age → conservative: not inherited
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-unknown", status: "open" }]) } })
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev")
+  expect(r?.inherited).toBe(false)
 })

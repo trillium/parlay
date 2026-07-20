@@ -66,9 +66,11 @@ async function cmdMem(kind: MemKind, args: string[]) {
   //   identity → handoff → scratchpad). Add --dry to preview without killing.
   // The id is OPTIONAL for both: given as a positional, else auto-resolved from the
   //   handoff store's current open bead — closing the create→submit death window.
-  const wantHandoff = opts["--handoff"] === true
-  const wantSubmit  = opts["--submit"]  === true
-  if (wantHandoff || wantSubmit) {
+  const wantHandoff  = opts["--handoff"]         === true
+  const wantDismiss  = opts["--dismiss-handoff"] === true
+  const wantSubmit   = opts["--submit"]          === true
+  if (wantHandoff || wantDismiss || wantSubmit) {
+    if (wantDismiss && kind !== "identity") return die(`parlay ${kind}: --dismiss-handoff is identity-only`, EXIT_USAGE)
     const submitId = wantSubmit
     if (submitId && kind !== "identity") return die(`parlay ${kind}: --submit is identity-only`, EXIT_USAGE)
     // Id precedence: explicit positional, else this agent's newest open handoff.
@@ -86,7 +88,14 @@ async function cmdMem(kind: MemKind, args: string[]) {
     const at = body[h + 1]?.trim() === "" ? h + 2 : h + 1
     body.splice(at, 0, pointer, "")
     writeFileSync(file, body.join("\n").replace(/\n{3,}/g, "\n\n"))
-    if (!submitId) { console.log(`${kind} handoff pointer set for ${agent} → ${pinId}`); return }
+    if (!submitId) {
+      if (wantDismiss) {
+        console.log(`identity: dismissed stale handoff ${pinId} for ${agent} — nag suppressed, context NOT reset.`)
+      } else {
+        console.log(`${kind} handoff pointer set for ${agent} → ${pinId}`)
+      }
+      return
+    }
     const dry = opts["--dry"] === true
     console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} context reset…`)
     const { spawnSync } = require("child_process") as typeof import("child_process")
