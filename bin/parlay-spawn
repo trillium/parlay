@@ -33,12 +33,16 @@ PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
 usage() {
   cat >&2 <<EOF
 Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus]
+       parlay-spawn --ephemeral <initial-prompt> [--cwd PATH] [--model MODEL] [--focus]
 
   agent-id        kebab-slug, stable across restarts (e.g. code-reviewer)
   display-name    tab header text (e.g. "Code Reviewer")
   hex-color       tab accent color (e.g. "#c084fc")
   initial-prompt  the task the spawned agent should work
 
+  --ephemeral     mint a random hash identity (id="eph-XXXXXXXX", derived name,
+                  deterministic color) instead of id/name/color positionals.
+                  Must be the FIRST arg — cannot combine with an explicit agent-id.
   --cwd PATH      working directory for the spawned claude (default: \$HOME)
   --focus         focus the new terminal (default: launched --no-focus)
   --model MODEL   pin the claude model (e.g. sonnet, opus, haiku, or a full
@@ -49,6 +53,50 @@ EOF
   exit 2
 }
 
+# ── Ephemeral hash-identity path ────────────────────────────────────────────
+# `parlay-spawn --ephemeral "<prompt>" [--cwd PATH] [--model MODEL] [--focus]`
+# mints a random hash identity (id="eph-XXXXXXXX", derived name, deterministic
+# color) instead of taking id/name/color positionals. Mutually exclusive with an
+# explicit agent-id: --ephemeral must be the FIRST arg. The mint step seeds the
+# store (context.json + identity.md with `ephemeral: true`), so the ephemeral
+# path skips the trailing named-agent --register (mint already did it).
+EPHEMERAL=0
+if [ "${1:-}" = "--ephemeral" ]; then
+  EPHEMERAL=1
+  shift
+  [ $# -lt 1 ] && { echo "parlay-spawn: --ephemeral requires a prompt" >&2; usage; }
+  PROMPT="$1"; shift
+
+  # Parse the ephemeral tail flags first — --cwd/--model must be known before the
+  # mint so they land in the seeded frontmatter.
+  CWD="$HOME"
+  FOCUS_FLAG="--no-focus"
+  MODEL=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --cwd)       CWD="$2"; shift 2 ;;
+      --focus)     FOCUS_FLAG="--focus"; shift ;;
+      --model)     MODEL="$2"; shift 2 ;;
+      --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
+      *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
+    esac
+  done
+
+  # Mint id/name/color and seed the store. Prints a TAB-separated "<id>\t<name>\t<color>"
+  # line (name contains a space, so tabs keep the three fields unambiguous).
+  MINT=$(PARLAY_SERVER="$PARLAY" parlay identity --mint-ephemeral --cwd "$CWD" ${MODEL:+--model "$MODEL"}) \
+    || { echo "parlay-spawn: --ephemeral mint failed (is the parlay CLI on PATH?)" >&2; exit 1; }
+  AGENT_ID=$(printf '%s' "$MINT" | cut -f1)
+  NAME=$(printf '%s' "$MINT" | cut -f2)
+  COLOR=$(printf '%s' "$MINT" | cut -f3)
+  if [ -z "$AGENT_ID" ] || [ -z "$NAME" ] || [ -z "$COLOR" ]; then
+    echo "parlay-spawn: --ephemeral mint returned an unusable identity: '$MINT'" >&2
+    exit 1
+  fi
+  echo "parlay-spawn: minted ephemeral identity $AGENT_ID ($NAME, $COLOR)" >&2
+fi
+
+if [ "$EPHEMERAL" -eq 0 ]; then
 [ $# -lt 4 ] && usage
 
 AGENT_ID="$1"; NAME="$2"; COLOR="$3"; PROMPT="$4"; shift 4
@@ -61,9 +109,11 @@ while [ $# -gt 0 ]; do
     --cwd)   CWD="$2"; shift 2 ;;
     --focus) FOCUS_FLAG="--focus"; shift ;;
     --model) MODEL="$2"; shift 2 ;;
+    --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
 done
+fi
 
 # Validate agent id shape (kebab-slug).
 if ! printf '%s' "$AGENT_ID" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
@@ -194,7 +244,11 @@ fi
 
 # Seed the identity's LAUNCH SPEC (frontmatter) so the agent can reconstitute itself
 # on context reset — the identity fully describes how to relaunch it. Best-effort.
-identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" ${MODEL:+--model "$MODEL"} >/dev/null 2>&1 || true
+# Ephemeral agents were already seeded by the mint step (with `ephemeral: true`);
+# re-registering here without --ephemeral would strip that marker, so skip it.
+if [ "$EPHEMERAL" -eq 0 ]; then
+  identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" ${MODEL:+--model "$MODEL"} >/dev/null 2>&1 || true
+fi
 
 echo "parlay-spawn: done. Agent '$AGENT_ID' registered; terminal launched." >&2
 echo "parlay-spawn: watch it come live with: parlay subscribers | jq '.poll'" >&2
