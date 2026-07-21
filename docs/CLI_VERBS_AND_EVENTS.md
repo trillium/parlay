@@ -4,9 +4,15 @@
 > ~/.local/bin/mechanic-dispatch <ticket-id>` trigger, parlay-native.
 > (1) how to author a `parlay <verb>` subcommand; (2) whether parlay has an
 > event/subscribe surface an external write can fire, and if not, the
-> parlay-native way to add one — generalized to ONE "bead status-change → event
-> → act" fabric serving both `robots-create → mechanic` and
-> `request-close → notify-requester` (§2.5).
+> parlay-native way to add one — generalized to ONE fabric serving both
+> `robots-create → mechanic` and `request-close → notify-requester` (§2.5).
+>
+> **Layer boundary (decision-4zr):** beads owns EMIT (app-blind on-status-change
+> hook — a beads dependency), **parlay owns SUBSCRIBE + ROUTE + DELIVER** (watch
+> registry + matcher + channel/command delivery; §2.4), firstmate is the consumer.
+> Contract: **subscribe → emit → route → wake.** This doc designs **parlay's half**
+> to that boundary; the poll-daemon is demoted to an interim bridge for the missing
+> emit.
 >
 > **NOT** `docs/COMMAND_DESIGN_CONTRACT.md` — that governs the Go voice/phrase
 > **eval-engine** (spoken panel commands), a different subsystem entirely.
@@ -113,96 +119,106 @@ plain event JSONL by default — but two facts open a path:
   surface, though `bd hooks` appears git-commit-oriented and may not cover
   create-time events (unverified).
 
-### 2.4 Recommendation — poll-daemon MVP now, tailer-on-bd-event later
+### 2.4 The architecture — layer boundary (decision-4zr)
 
-**MVP (build this to unblock dogfooding): a standalone poll-trigger daemon.**
-A small bun script — `tools/robots-trigger/index.ts`, exposed as
-`parlay robots-watch` (Part 1) and/or run under launchd (`com.pai.robots-trigger`,
-alongside the other `com.pai.*` agents) — that every ~15s:
-1. runs `robots ready --json`,
-2. diffs ticket ids against a persisted seen-set
-   (`~/.parlay/robots-trigger/seen.json` — the cursor, mirroring the tailers'
-   byte-offset),
-3. for each **new** open ticket, execs `mechanic-dispatch <id>` (which itself is
-   idempotent: checks if the zone's mechanic is live, launches via `parlay-spawn`
-   only if not).
+**Ruling (decision-4zr, extends decision-3ae):** the fabric splits by layer, and
+**the boundary is the answer.** Contract: **subscribe → emit → route → wake.**
 
-Why this first: **zero server change, zero dependency on unverified bd internals,
-robust** (a missed poll just fires next tick; the seen-set prevents double-fire;
-`mechanic-dispatch` is already idempotent so even a double-fire is safe). It is
-the parlay-native cursor-diff-fire loop, sourced from a CLI instead of a file. It
-matches `mechanic-dispatch`'s own header note ("a daemon polling `robots ready`").
-Latency is the poll interval (seconds) — fine for this flow.
+| Layer | Owner | Responsibility | App-aware? |
+|---|---|---|---|
+| **EMIT** | **beads/bd** (dependency, NOT parlay) | a generic on-status-change hook: "bead X open→closed", durable in the store's commitments layer | **No** — app-blind, knows nothing of agents/channels |
+| **SUBSCRIBE + ROUTE + DELIVER** | **parlay** (build this) | the watch registry, the matcher, and delivery to a live channel or command | **Yes** — agent/channel knowledge lives ONLY here |
+| **CONSUME** | **firstmate** (and any launcher) | registers a watch, gets woken | policy, not mechanism |
 
-**Evolution (lower latency, folds into Pulse): bd-event → JSONL → server tailer.**
-If/when a `bd` post-create/`set-state` hook can append
-`{ticket-id, zone}` to a `robots-events.jsonl`, add `startRobotsTailer()` in the
-parlay server modeled byte-for-byte on `hook-tailer.ts`, but firing
-`mechanic-dispatch` (via `Bun.spawn`) instead of `addMessage`. Sub-second latency,
-one process, no polling. Gated on confirming bd can emit create events to a file
-(open question below).
+Why the boundary: beads emitting *who-cares/delivery* would reach UP a layer into
+agents/channels — the inverse of the robots-5cz sin — and force every store to
+reinvent delivery. parlay deciding *when to emit* would couple routing to store
+internals. So the store logs the event as a durable fact; **parlay delivers it.**
+Same fabric as `robots→mechanic-dispatch` (store emits, parlay routes) — one
+mechanism, unifying question-hx9's two consumers.
 
-**Stopgap (no infra, not really an event): inline call.** The filing agent runs
-`mechanic-dispatch <id>` right after `robots create`. Zero build, but couples the
-trigger to whoever files and misses out-of-band / non-agent writes — a bridge,
-not the durable mechanism.
+#### Parlay's half — build to this boundary
+1. **SUBSCRIBE — a watch registry + `parlay watch` verb** (Part 1 authoring).
+   `parlay watch add --store <s> --bead <id|pattern> --on <transition> --deliver <target>`
+   persists a row to `~/.parlay/watches.json`:
+   ```jsonc
+   { "store":"task", "match":{"bead":"task-y9xb","transition":"open->closed"},
+     "deliver":{"kind":"notify","channel":"mayor","template":"{bead} done: {close_note}"} }
+   ```
+   `deliver.kind` is polymorphic: **`notify`** (→ `parlay send --<channel>` / `say`,
+   parlay's channel knowledge) or **`exec`** (→ run a command, e.g.
+   `mechanic-dispatch {id}`). Patterns (`store:robots`, `label:zone:*`) cover the
+   robots case where there's no single pre-known bead id.
+2. **INGEST — consume the store-emitted event.** Parlay is already an HTTP server,
+   so the clean seam is a small endpoint **`POST /api/events/bead-status`** that the
+   beads emit hook calls with `{store, bead, from, to, labels, note, ts}`. (Fallback
+   if the hook can't do HTTP: the emit hook appends a JSONL and parlay tails it via a
+   `startBeadEventTailer()` modeled on `hook-tailer.ts` — §2.2. Either transport is
+   fine; the point is parlay owns everything from ingest onward.)
+3. **ROUTE — match** the event against `watches.json` (store + bead/pattern +
+   transition). A closed handler registry, data-driven — new consumer = a new watch
+   row, not new machinery.
+4. **DELIVER — `notify`** posts to the matched channel (`parlay say --agent
+   <channel>`); **`exec`** spawns the command (`Bun.spawn(["mechanic-dispatch", id])`,
+   idempotent). Firstmate's monitor then wakes and reads the result — it owns nothing
+   here but the watch registration and the consumption.
 
-**Recommended path:** ship the **poll-daemon MVP** (§2.4), keep the seen-set +
-`mechanic-dispatch` idempotency as the safety net, and revisit the server-tailer
-only if poll latency ever matters. It is the smallest parlay-native thing that
-makes `new robots row → mechanic launched` real.
+**The beads dependency (note, don't build):** the EMIT hook is a **beads/bd
+concern** — a generic on-status-change hook that fires "bead open→closed" durably
+and app-blind. Parlay's half is designed to consume whatever shape that emit takes
+(HTTP post or JSONL append). *File this as a beads task; parlay's half can be built
+and unit-tested against a synthetic event before the real emit exists.*
 
-### 2.5 Generalize: ONE bead-event fabric, two consumers
-The trigger must not be robots-specific. The requirement (question-hx9) is a
-single primitive — **"bead status-change → event → act"** — serving both:
+#### Interim bridge (until beads EMIT ships): the poll-daemon
+Because the EMIT hook is a separate (beads) deliverable, parlay can **stand in for
+the missing emit** with a poll loop that synthesizes the event — a `parlay watch`
+daemon that polls `<store> list/ready --json`, diffs a persisted cursor
+(`~/.parlay/watches/seen.json`, mirroring the tailers' byte-offset), and feeds any
+detected transition **into the same ROUTE+DELIVER path** as a real emit would. This
+unblocks dogfooding with zero beads change; when beads EMIT lands, the poll source
+is swapped for the ingest endpoint and **subscribe/route/deliver are unchanged**.
+Build the router to the event *shape*, not the poll — the poll is a replaceable
+source, not the design.
 
-| Consumer | Trigger | Event → action |
-|---|---|---|
-| **robots → mechanic** | a robots bead is **created** (open) | run `mechanic-dispatch <id>` (launch/route the zone's mechanic) |
-| **request-close → requester** | a request bead (e.g. this `question-hx9`) is **closed** | **notify its requester** — post `parlay reply`/`say` to the requester's channel so firstmate learns the answer is ready without polling |
+Latency is the poll interval (seconds) — fine now; the endpoint path is sub-second
+later. `mechanic-dispatch` idempotency + the cursor make a double-fire safe.
 
-Both are `(store, status-change, bead) → host action`. The generalization:
+### 2.5 One fabric, two consumers (both ride subscribe→emit→route→wake)
+| Consumer | Watch (SUBSCRIBE) | Emit (beads) | Deliver (parlay) |
+|---|---|---|---|
+| **robots → mechanic** | `store:robots, on:created` → `exec mechanic-dispatch {id}` | new robots bead open | spawn `mechanic-dispatch {id}` (resolves zone→agent, launches via parlay-spawn) |
+| **request-close → requester** | `bead:<request>, on:open->closed` → `notify {requester-channel}` | request bead closed | `parlay say --agent <requester> "{bead} done: {close_note}"` — firstmate wakes |
 
-- **Event source.** `bd set-state` already **"creates an event bead (source of
-  truth)"**, so status changes are *already* recorded as beads inside each store —
-  a native, store-agnostic event stream. A create is likewise observable (a new
-  open bead). Either source (event-bead stream, or a diff of `<store> list --json`
-  / `ready --json`) feeds the same loop.
-- **Router.** One config maps `(store, event-type[, label]) → handler`:
-  - `robots` + `created` → `mechanic-dispatch {id}`
-  - `questions`/`task` + `closed` + has a requester → `notify-requester {id}`
-    (resolve requester from the bead's assignee/requester field → `parlay say
-    --agent <requester-channel> "<bead> closed: <close-note>"`).
-  New consumer = a new row, not new machinery — the same shape as adding a CLI
-  verb (Part 1) or a phrase command in the voice engine: **closed handler
-  registry, data-driven routing.**
-- **Subscriber model.** "Requester" is the subscription. A bead names who wants to
-  know; closing it emits to exactly that subscriber. This is the parlay-native
-  equivalent of firstmate's status-file wake — the store *is* the message bus, the
-  event bead *is* the message, `parlay say` *is* the delivery.
-
-So the recommended poll-daemon (§2.4) should be authored **generically from day
-one**: poll each watched store for status changes, diff against the seen-set, and
-**dispatch through the router** — not hardcode `mechanic-dispatch`. The robots
-case is the first row; request-close-notify is the second, and it's what makes
-"closing the bead is how firstmate learns you finished" an *event*, not a
-convention someone has to remember.
+Both are the *same* mechanism at different `deliver.kind`s. firstmate is the
+**consumer** in both: it registers the watch and gets woken; it owns no emit and no
+delivery (decision-3ae — policy, not mechanism). "Closing the bead is how firstmate
+learns you finished" becomes a real **event** (subscribe→emit→route→wake), not a
+convention someone must remember to honor.
 
 ### 2.6 Open questions
-1. **Can `bd`/`robots` emit create events to a file (for the tailer path)?**
-   `bd set-state` creates event beads and `bd hooks` exists, but neither is
-   confirmed to fire on plain `create` or to write a tailable JSONL. Needs a
-   `bd hooks --help` dig before committing to the tailer evolution. *Until then,
-   the poll-daemon needs none of this.*
-2. **Where does the daemon run — launchd `com.pai.*`, or inside Pulse?** *Rec:*
-   launchd for the MVP (independent lifecycle, survives Pulse restarts, matches
-   the other PAI agents); migrate into Pulse only with the tailer path.
-3. **Zone resolution.** `mechanic-dispatch` reads the zone from a `zone:<x>`
-   ticket label, falling back to `default`. The trigger should pass nothing and
-   let dispatch resolve — but this assumes filers stamp `zone:` labels. Worth a
-   convention note (agents stamp `zone:` on `robots create`) so routing isn't
-   always `default`.
-4. **Poll interval + backpressure.** 15s is a guess; a burst of new tickets
-   spawns several mechanics at once. `mechanic-dispatch`'s liveness check
-   dedupes per-zone, so concurrent tickets in one zone collapse to one launch —
-   but confirm that's the desired batching before tuning the interval.
+1. **[beads dependency] What shape does the EMIT hook take?** decision-4zr puts
+   EMIT in beads/bd. Does the on-status-change hook `POST` to parlay, or append a
+   JSONL parlay tails? *Rec:* HTTP POST to `/api/events/bead-status` (parlay is
+   already a server; push beats poll). Parlay's half consumes either — file the
+   beads task, build parlay's ingest to accept both. `bd hooks` today looks
+   git-commit-oriented; confirm it can fire on status-change, not just commit.
+2. **[interim] Where does the poll-bridge run — launchd `com.pai.*`, or inside
+   Pulse?** *Rec:* launchd for the interim bridge (independent lifecycle, survives
+   Pulse restarts). The durable ingest endpoint lives in the Pulse server; the
+   poll-bridge is retired once EMIT ships.
+3. **Watch-registry authority + lifecycle.** Who writes `watches.json` — only
+   `parlay watch` verbs, or may firstmate hand-edit? And when is a watch removed —
+   one-shot (auto-drop after first delivery, right for request-close) vs standing
+   (robots `on:created`)? *Rec:* `parlay watch` verbs own it; a watch carries
+   `once:true|false` (request-close = once, robots = standing).
+4. **Zone resolution (robots consumer).** `mechanic-dispatch` reads zone from a
+   `zone:<x>` label, else `default`. *Rec:* the watch passes nothing; dispatch
+   resolves — but that assumes filers stamp `zone:` on `robots create`; make it a
+   convention or routing is always `default`.
+5. **Delivery reliability.** If the target channel is offline at delivery, does the
+   notify drop or queue? *Rec:* parlay already persists agent registry + history;
+   a `notify` to an offline channel should land in that channel's history so the
+   consumer sees it on next poll — not silently dropped.
+6. **Backpressure (robots consumer).** A burst of new beads spawns several mechanics;
+   `mechanic-dispatch`'s per-zone liveness check collapses same-zone concurrency to
+   one launch — confirm that batching is desired before tuning cadence.
