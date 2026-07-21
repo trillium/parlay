@@ -218,15 +218,32 @@ async function routeEvent(ev: RouteEvent, bead: Bead | undefined, verbose: boole
   const key = `${ev.store}:${ev.kind}`
   switch (key) {
     case "robots:created":
-      if (verbose) process.stderr.write(`robots-watch: [stub] robots:created ${ev.id} → mechanic-dispatch\n`)
-      return // handler (a) — feature 3
+      return handleRobotsCreated(ev, verbose) // handler (a)
     case "questions:closed":
     case "task:closed":
       if (verbose) process.stderr.write(`robots-watch: [stub] ${key} ${ev.id} → notify-requester\n`)
       return // handler (b) — feature 4
     default:
       if (verbose) process.stderr.write(`robots-watch: no route for ${key} (${ev.id})\n`)
-      // Reference bead so the param is used until handlers land; no behavior.
       void bead
+  }
+}
+
+// ── Handler (a): robots bead CREATED → mechanic-dispatch <id> ─────────────────
+// mechanic-dispatch is idempotent (checks if the zone's mechanic is live and
+// launches via parlay-spawn only if not) and resolves the zone from the ticket's
+// `zone:<x>` label itself — so we pass only the id. spawnSync: it returns after
+// its own launch logic (parlay-spawn detaches the herdr terminal).
+function handleRobotsCreated(ev: RouteEvent, verbose: boolean): void {
+  const r = spawnSync("mechanic-dispatch", [ev.id], { encoding: "utf8", env: process.env })
+  if (r.error) {
+    process.stderr.write(`robots-watch: mechanic-dispatch not runnable for ${ev.id}: ${r.error.message}\n`)
+    return
+  }
+  const out = [r.stdout, r.stderr].filter(Boolean).join("").trim()
+  if (r.status === 0) {
+    process.stderr.write(`robots-watch: dispatched mechanic for ${ev.id}${verbose && out ? ` — ${out}` : ""}\n`)
+  } else {
+    process.stderr.write(`robots-watch: mechanic-dispatch ${ev.id} exited ${r.status}: ${out}\n`)
   }
 }
