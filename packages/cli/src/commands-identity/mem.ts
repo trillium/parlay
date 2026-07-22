@@ -61,18 +61,25 @@ async function cmdMem(kind: MemKind, args: string[]) {
   // --handoff [<id>]: pin a pointer to the agent's current handoff bead at the top
   //   of the file, so a reset agent knows which handoff holds its full state. Pin
   //   only — does not restart.
-  // --submit [<id>]: pin the pointer AND trigger a context reset — the handoff act
-  //   itself restarts the agent (kills this session, relaunches recovering via
-  //   identity → handoff → scratchpad). Add --dry to preview without killing.
-  // The id is OPTIONAL for both: given as a positional, else auto-resolved from the
-  //   handoff store's current open bead — closing the create→submit death window.
+  // --submit [<id>]: pin the pointer AND trigger a context reset WITH --reboot — the
+  //   handoff act itself restarts the agent (kills this session, relaunches
+  //   recovering via identity → handoff → scratchpad). Add --dry to preview.
+  // --park [<id>]: pin the pointer AND trigger a context reset WITHOUT --reboot —
+  //   the agent shuts down and does NOT relaunch. The bound bead is left OPEN so the
+  //   work resumes later (a future spawn — manual or mechanic-dispatch — recovers via
+  //   identity → handoff → scratchpad). The middle of the three-exit model
+  //   (decision-q3x): bead-open + continue-now → --submit; bead-open + pause →
+  //   --park; bead-closed + done → --complete. Add --dry to preview.
+  // The id is OPTIONAL for all three: given as a positional, else auto-resolved from
+  //   the handoff store's current open bead — closing the create→submit death window.
   const wantHandoff  = opts["--handoff"]         === true
   const wantDismiss  = opts["--dismiss-handoff"] === true
   const wantSubmit   = opts["--submit"]          === true
-  if (wantHandoff || wantDismiss || wantSubmit) {
+  const wantPark     = opts["--park"]            === true
+  if (wantHandoff || wantDismiss || wantSubmit || wantPark) {
     if (wantDismiss && kind !== "identity") return die(`parlay ${kind}: --dismiss-handoff is identity-only`, EXIT_USAGE)
-    const submitId = wantSubmit
-    if (submitId && kind !== "identity") return die(`parlay ${kind}: --submit is identity-only`, EXIT_USAGE)
+    if (wantSubmit && kind !== "identity") return die(`parlay ${kind}: --submit is identity-only`, EXIT_USAGE)
+    if (wantPark && kind !== "identity") return die(`parlay ${kind}: --park is identity-only`, EXIT_USAGE)
     // Id precedence: explicit positional, else this agent's newest open handoff.
     const pinId = (positionals[0]?.trim()) || resolveCurrentHandoff(undefined, agent)
     if (!pinId) return die(
@@ -88,7 +95,8 @@ async function cmdMem(kind: MemKind, args: string[]) {
     const at = body[h + 1]?.trim() === "" ? h + 2 : h + 1
     body.splice(at, 0, pointer, "")
     writeFileSync(file, body.join("\n").replace(/\n{3,}/g, "\n\n"))
-    if (!submitId) {
+    // Pin-only paths (--handoff, --dismiss-handoff): write the pointer, no reset.
+    if (!wantSubmit && !wantPark) {
       if (wantDismiss) {
         console.log(`identity: dismissed stale handoff ${pinId} for ${agent} — nag suppressed, context NOT reset.`)
       } else {
@@ -97,9 +105,17 @@ async function cmdMem(kind: MemKind, args: string[]) {
       return
     }
     const dry = opts["--dry"] === true
-    console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} context reset…`)
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const cmd = contextResetCmd()
+    // --park: shut down WITHOUT --reboot, leaving the bead OPEN to resume later.
+    if (wantPark) {
+      console.log(`identity parked for ${agent} — handoff ${pinId} pinned, bead left OPEN; ${dry ? "previewing" : "triggering"} shutdown WITHOUT restart…`)
+      const res = spawnSync(cmd, dry ? ["--dry"] : [], { stdio: "inherit" })
+      if (res.error) return die(`identity --park: could not run ${cmd} — ${res.error.message}`)
+      return
+    }
+    // --submit: reset WITH --reboot — relaunch fresh, recovering itself.
+    console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} context reset…`)
     const res = spawnSync(cmd, dry ? ["--reboot", "--dry"] : ["--reboot"], { stdio: "inherit" })
     if (res.error) return die(`identity --submit: could not run ${cmd} — ${res.error.message}`)
     return
