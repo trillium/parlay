@@ -5,8 +5,12 @@
 // Request:  { "text": string, "model"?: string }
 // Response: { blocks, evaluation: { overall_score, verdict, issues, suggestion }, ms }
 //
-// The split algorithm here mirrors speech-highlight.ts splitBlocksRaw exactly;
-// keep both in sync when the 60-char threshold or regex changes.
+// The split algorithm here mirrors the pure splitBlocksRaw in
+// packages/client/src/speech-segment.ts; keep both in sync when the 60-char
+// threshold or regex changes. NOTE: this mirror does not yet carry the client's
+// link-boundary deferral (task-1h47) — it can still split a URL that straddles a
+// sentence boundary, so its block preview may differ from the live panel on
+// link-containing text.
 
 import { CORS } from "./sse"
 
@@ -16,7 +20,7 @@ const TIMEOUT_MS = 30_000
 
 interface SplitBlock { synth: string; raw: string }
 
-// Mirror of splitBlocksRaw in packages/client/src/speech-highlight.ts
+// Mirror of splitBlocksRaw in packages/client/src/speech-segment.ts
 function splitBlocksRaw(text: string): SplitBlock[] {
   const parts = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
   const blocks: SplitBlock[] = []
