@@ -6,11 +6,10 @@
 // Response: { blocks, evaluation: { overall_score, verdict, issues, suggestion }, ms }
 //
 // The split algorithm here mirrors the pure splitBlocksRaw in
-// packages/client/src/speech-segment.ts; keep both in sync when the 60-char
-// threshold or regex changes. NOTE: this mirror does not yet carry the client's
-// link-boundary deferral (task-1h47) — it can still split a URL that straddles a
-// sentence boundary, so its block preview may differ from the live panel on
-// link-containing text.
+// packages/client/src/speech-segment.ts exactly — including the task-1h47
+// link-boundary deferral, so a URL that straddles a sentence boundary stays whole
+// and the block preview matches the live panel. Keep both in sync when the 60-char
+// threshold, sentence regex, or link grammar changes.
 
 import { CORS } from "./sse"
 
@@ -20,16 +19,38 @@ const TIMEOUT_MS = 30_000
 
 interface SplitBlock { synth: string; raw: string }
 
-// Mirror of splitBlocksRaw in packages/client/src/speech-segment.ts
+// Mirror of linkRanges in packages/client/src/speech-segment.ts — char ranges of
+// links in the raw text, used to keep passage boundaries off the middle of an anchor.
+function linkRanges(text: string): { start: number; end: number }[] {
+  const re = /\[[^\]]+\]\((?:https?:\/\/[^\s)]+)\)|(?:https?:\/\/[^\s"']+)/g
+  const ranges: { start: number; end: number }[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) ranges.push({ start: m.index, end: m.index + m[0].length })
+  return ranges
+}
+
+// A boundary strictly inside a link would split the anchor across two blocks.
+function insideLink(pos: number, links: { start: number; end: number }[]): boolean {
+  return links.some((l) => pos > l.start && pos < l.end)
+}
+
+// Mirror of splitBlocksRaw in packages/client/src/speech-segment.ts. A block
+// boundary that would land INSIDE a link is deferred until past the link, so a URL
+// spanning two sentences stays whole in the passage it STARTS in (task-1h47).
 function splitBlocksRaw(text: string): SplitBlock[] {
-  const parts = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
+  const links = linkRanges(text)
   const blocks: SplitBlock[] = []
-  let cur = ""
-  for (const p of parts) {
-    cur += p
-    if (cur.trim().length >= 60) { blocks.push({ synth: cur.trim(), raw: cur }); cur = "" }
+  let start = 0 // char offset of the start of the pending block within `text`
+  for (const m of text.matchAll(/[^.!?\n]+[.!?]*\s*/g)) {
+    const boundary = m.index + m[0].length
+    const cur = text.slice(start, boundary)
+    if (cur.trim().length >= 60 && !insideLink(boundary, links)) {
+      blocks.push({ synth: cur.trim(), raw: cur })
+      start = boundary
+    }
   }
-  if (cur.trim()) blocks.push({ synth: cur.trim(), raw: cur })
+  const tail = text.slice(start)
+  if (tail.trim()) blocks.push({ synth: tail.trim(), raw: tail })
   return blocks.length ? blocks : [{ synth: text.trim(), raw: text }]
 }
 

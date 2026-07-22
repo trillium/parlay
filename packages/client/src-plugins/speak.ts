@@ -29,12 +29,15 @@ function initMuteButton() {
   setup(api: any) {
     setApi(api)
     injectCorrectorStyles(api)
-    // Readiness dot styling (#20): grey until the WAV exists, green when ready
+    // Readiness dot styling (#20): grey until the WAV exists, green when ready.
+    // task-1h47: dots are now `.pa-replay-dot` in a compact `.pa-dots` row, and the
+    // active/spoken dot is flagged with `.pa-replay-dot-active` (synced by
+    // highlightBlock) rather than derived from a `.pa-block` wrapper.
     api.ui.injectStyle(`
-      .pa-dot-btn::before { background: color-mix(in srgb, var(--pa-muted) 35%, transparent) !important; border-color: color-mix(in srgb, var(--pa-muted) 60%, transparent) !important; }
-      .pa-dot-btn.ready::before { background: color-mix(in srgb, var(--pa-green) 30%, transparent) !important; border-color: color-mix(in srgb, var(--pa-green) 65%, transparent) !important; }
-      .pa-dot-btn.ready:hover::before { background: var(--pa-green) !important; }
-      .pa-block:has(.pa-sb.pa-speaking-block) .pa-dot-btn::before { background: var(--pa-amber) !important; border-color: var(--pa-amber) !important; }
+      .pa-replay-dot::before { background: color-mix(in srgb, var(--pa-muted) 35%, transparent) !important; border-color: color-mix(in srgb, var(--pa-muted) 60%, transparent) !important; }
+      .pa-replay-dot.ready::before { background: color-mix(in srgb, var(--pa-green) 30%, transparent) !important; border-color: color-mix(in srgb, var(--pa-green) 65%, transparent) !important; }
+      .pa-replay-dot.ready:hover::before { background: var(--pa-green) !important; }
+      .pa-replay-dot.pa-replay-dot-active::before { background: var(--pa-amber) !important; border-color: var(--pa-amber) !important; }
     `)
 
     // Global speech hooks — core and thread transport call through these
