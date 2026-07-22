@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Tracked post-commit hook: COMMIT = DELIVERY (captain directive 2026-07-18).
+# After any commit on the MAIN checkout that changes panel build inputs, rebuild
+# and deliver the bundle. build.ts fails loud on compile errors (stale bundle
+# left untouched) and broadcasts /api/chat/reload to live panels on success.
+# Complements: pre-commit PA_VERSION auto-bump + the com.parlay.bundle-rebuild
+# launchd WatchPaths agent (covers uncommitted live-dev edits to version.ts).
+# This hook closes the paths pre-commit misses: merges, PA_BUMP=none, --no-verify.
+set -uo pipefail  # NOT -e: a delivery failure must never read as a commit failure
+
+MAIN_CHECKOUT="/Users/trilliumsmith/code/parlay"
+LOG="$HOME/Library/Logs/parlay/bundle-rebuild.out.log"
+TOP="$(git rev-parse --show-toplevel)"
+
+# Worktree commits (treehouse leases, feature isolation) must never deploy.
+if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
+  echo "[post-commit] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  exit 0
+fi
+
+# What this commit changed (first-parent diff also covers merge commits).
+if git rev-parse -q --verify HEAD^ >/dev/null 2>&1; then
+  CHANGED="$(git diff --name-only HEAD^ HEAD)"
+else
+  CHANGED="$(git diff-tree --no-commit-id --name-only -r HEAD)"
+fi
+
+echo "$CHANGED" | grep -qE '^packages/client/(src|src-plugins)/|^packages/client/build\.ts' || exit 0
+
+echo "[post-commit] $(date +%FT%T) delivering $(git log -1 --format='%h %s' | head -c 80)" >> "$LOG"
+if ( cd "$MAIN_CHECKOUT/packages/client" && "$HOME/.bun/bin/bun" build.ts ) >> "$LOG" 2>&1; then
+  echo "[post-commit] delivered" >> "$LOG"
+else
+  echo "[post-commit] DELIVERY FAILED — bundle unchanged; fix and run 'bun build.ts' in packages/client" >> "$LOG"
+fi

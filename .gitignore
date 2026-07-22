@@ -3,3 +3,13 @@ dist
 .env
 packages/client/pulse-agent.js
 packages/client/plugins/
+
+# Build/runtime junk that kept leaking into git status (tree-hygiene, decision-u6v).
+*.log
+*.bak-*
+packages/eval-engine/eval-engine
+interceptor-screenshot-*.png
+packages/server/server.js
+packages/server/src/parlay-ui.js
+.claude-file-plan.json
+.worktrees/
