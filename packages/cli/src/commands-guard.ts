@@ -85,6 +85,18 @@ export function emitTangleBanner(root: string, branch: string, readOnly: boolean
   process.stderr.write(lines.join("\n") + "\n")
 }
 
+// Resolve the MAIN (primary) worktree for the repo containing <dir>. `git
+// worktree list --porcelain` always lists the main worktree first, so its first
+// "worktree <path>" line is the primary — the checkout the tangle guard must
+// watch, even when called from inside a linked variant worktree. Returns "" if
+// <dir> is not in a git repo.
+export function mainWorktreePath(dir: string): string {
+  const r = sh("git", ["-C", dir, "worktree", "list", "--porcelain"])
+  if (!r.ok) return ""
+  const m = r.out.match(/^worktree (.+)$/m)
+  return m ? m[1] : ""
+}
+
 // Run the tangle check against <root> and emit the banner if tangled. Returns the
 // offending branch (or ""). Importable so variant launch/teardown/monitor can run
 // the runtime backstop inline. Silent (no banner) for every healthy state.

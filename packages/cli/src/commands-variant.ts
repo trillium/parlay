@@ -9,6 +9,7 @@ import { EXIT_USAGE } from "./config"
 import { die, postJSON } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
+import { guardRepo, mainWorktreePath } from "./commands-guard"
 
 const AGENTS_DIR  = join(homedir(), ".parlay", "agents")
 const WKTREES_DIR = join(homedir(), ".parlay", "worktrees")
@@ -85,6 +86,10 @@ export async function cmdVariantLaunch(args: string[]) {
   const cwd     = fm.cwd || homedir()
   const gitRoot = sh("git", ["-C", cwd, "rev-parse", "--show-toplevel"])
   if (!gitRoot.ok) return die(`parlay variant launch: '${primaryId}' cwd '${cwd}' is not in a git repo — variants require git`, EXIT_USAGE)
+  // Runtime tangle backstop (task-ttza C4): before spawning another variant, alarm
+  // if the PRIMARY is already stranded on a feature branch — a prior agent likely
+  // branched/committed in the primary instead of its own worktree. Advisory only.
+  guardRepo(mainWorktreePath(gitRoot.out) || gitRoot.out)
   mkdirSync(WKTREES_DIR, { recursive: true })
   const wkPath = join(WKTREES_DIR, variantId)
   const branch = `parlay-variant/${variantId}`
@@ -152,6 +157,10 @@ export async function cmdVariantTeardown(args: string[]) {
   if (iN + sN > 0) console.log(`auto-merged ${iN} identity + ${sN} scratchpad into ${pId}`)
   const wkPath = join(WKTREES_DIR, variantId)
   if (existsSync(wkPath)) {
+    // Tangle backstop on teardown too: check the PRIMARY (not this variant's own
+    // worktree) so a stranded primary surfaces on the next fleet action. Advisory.
+    const primary = mainWorktreePath(wkPath)
+    if (primary) guardRepo(primary)
     const root = sh("git", ["-C", wkPath, "rev-parse", "--show-toplevel"])
     if (root.ok) { const r = sh("git", ["-C", root.out, "worktree", "remove", "--force", wkPath]); if (!r.ok) process.stderr.write(`warn: worktree remove failed — ${r.err}\n`) }
   }
