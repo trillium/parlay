@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { detectEvents, type StoreState } from "./commands-robots-watch"
+import { detectEvents, notifyChannels, type StoreState } from "./commands-robots-watch"
 
 // The pure diff core is the risky part (seed vs transition, no history replay).
 
@@ -58,4 +58,19 @@ test("reopen (closed→open) does not fire created (already known id)", () => {
   const curr: StoreState = { "task-1": "open" }
   const r = detectEvents(prev, curr, "task", ["created", "closed"])
   expect(r.events).toEqual([])
+})
+
+// notifyChannels — the notify:<channel> subscription parse (handler b)
+
+test("notifyChannels extracts channels from notify: labels", () => {
+  expect(notifyChannels(["cat-work", "notify:mayor", "notify:shepherd"])).toEqual(["mayor", "shepherd"])
+})
+
+test("notifyChannels returns [] with no notify: label", () => {
+  expect(notifyChannels(["cat-work", "zone:beads"])).toEqual([])
+  expect(notifyChannels(undefined)).toEqual([])
+})
+
+test("notifyChannels trims and ignores empty targets", () => {
+  expect(notifyChannels(["notify: mayor ", "notify:"])).toEqual(["mayor"])
 })
