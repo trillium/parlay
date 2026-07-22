@@ -1,3 +1,4 @@
+import '../happydom' // registers DOM before the imports below; CWD-independent
 import { test, expect, describe, beforeEach, afterEach, mock } from 'bun:test'
 import {
   openChannelPicker, closeChannelPicker, pickerHint, pickerIsOpen,
