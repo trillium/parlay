@@ -1,3 +1,4 @@
+import '../happydom' // registers DOM before the imports below; CWD-independent
 import { test, expect, describe, beforeEach, afterEach } from 'bun:test'
 import { annotations, markerMap, type Annotation } from './state'
 import {
