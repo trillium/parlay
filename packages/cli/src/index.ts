@@ -28,6 +28,7 @@ import {
 import { cmdNickname } from "./commands-nickname"
 import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
 import { cmdVariant } from "./commands-variant"
+import { cmdGuard } from "./commands-guard"
 import { cmdDoctor, cmdHealth } from "./commands-doctor"
 import { cmdContextCheck } from "./commands-context-check"
 import { cmdRobotsWatch } from "./commands-robots-watch"
@@ -57,6 +58,7 @@ async function main() {
     case "health":        return cmdHealth(args)
     case "launch":        return cmdLaunch(args)
     case "variant":       return cmdVariant(args)
+    case "guard":         return cmdGuard(args)
     case "lavish-import": return cmdLavishImport(args)
     case "help":
     case "--help":
