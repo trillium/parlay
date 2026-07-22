@@ -22,7 +22,7 @@ const bubbleOf = (msgId?: string) => msgId ? document.querySelector(`[data-pa-id
 // Dot readiness (#20): grey until the block's WAV is available, green when ready
 export function markReady(msgId: string | undefined, i: number, ready: boolean) {
   if (!msgId) return
-  const dot = document.querySelector(`[data-pa-id="${msgId}"] .pa-block[data-bi="${i}"] .pa-dot-btn`)
+  const dot = document.querySelector(`[data-pa-id="${msgId}"] .pa-replay-dot[data-bi="${i}"]`)
   dot?.classList.toggle('ready', ready)
 }
 export async function probeReadiness(msgId: string, text: string) {
