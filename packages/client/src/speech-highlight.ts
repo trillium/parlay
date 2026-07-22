@@ -22,10 +22,10 @@ export function blocksHtml(text: string): string {
   if (!text.trim()) return ''
   const blocks = splitBlocksRaw(text)
   const spans = blocks.map((b, i) =>
-    `<span class="pa-sb" data-bi="${i}" role="button" tabindex="0" title="Tap to re-read this passage">${linkify(esc(b.raw))}</span>`
+    `<span class="pa-sb" data-bi="${i}" title="Tap to re-read this passage">${linkify(esc(b.raw))}</span>`
   ).join('')
   const dots = blocks.map((_, i) =>
-    `<button class="pa-dot" data-bi="${i}" title="Re-read passage ${i + 1}"></button>`
+    `<button class="pa-replay-dot" data-bi="${i}" title="Re-read passage ${i + 1}"></button>`
   ).join('')
   return `<div class="pa-para">${spans}</div>`
     + `<div class="pa-dots">${dots}</div>`
@@ -77,7 +77,7 @@ export function highlightBlock(spans: HTMLElement[] | null, active: number) {
   // Sync the progress dots in the same message so the active dot follows the
   // spoken passage (task-1h47: dots kept as reading-progress, decoupled from text).
   const root = spans?.[0]?.closest('[data-pa-id]')
-  root?.querySelectorAll('.pa-dot').forEach((d, i) => d.classList.toggle('pa-dot-active', i === active))
+  root?.querySelectorAll('.pa-replay-dot').forEach((d, i) => d.classList.toggle('pa-replay-dot-active', i === active))
 }
 
 export function clearAllSpeechHighlights() {

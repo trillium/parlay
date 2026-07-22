@@ -28,6 +28,21 @@ test("a URL with internal dots is never split across passages (task-1h47)", () =
   }
 })
 
+test("leading newline/punctuation keeps offsets aligned so a link is never split", () => {
+  // A leading '\n' is dropped by the sentence regex; the boundary offset must
+  // still track the ACTUAL position in `text` (matchAll m.index) or insideLink
+  // would check the wrong spot and cut the URL.
+  const url = "https://example.com/a.b.c/page"
+  const t = `\n\nHere is a long enough opening clause to force a passage break near the link ${url} here, and then a good deal more trailing text that is plenty long to stand on its own.`
+  const blocks = splitBlocksRaw(t)
+  expect(blocks.filter((b) => b.raw.includes(url)).length).toBe(1)
+  for (const b of blocks) {
+    if (b.raw.includes("https://example.com")) expect(b.raw).toContain(url)
+  }
+  // Raw-concat invariant holds even with the dropped leading newline.
+  expect(blocks.map((b) => b.raw).join("")).toBe(t)
+})
+
 test("multiple passages still form when there are no links (normal segmentation)", () => {
   const t = "Sentence one is long enough to be a block. Sentence two is also long enough here. Three."
   expect(splitBlocksRaw(t).length).toBeGreaterThan(1)
