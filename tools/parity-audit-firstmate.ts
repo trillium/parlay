@@ -49,12 +49,9 @@ const probe = {
   effortSpawn: /--effort\b/.test(spawnSrc),
   modeSpawn: /--mode\b/.test(spawnSrc),
   projectSpawn: /--project\b/.test(spawnSrc),
-  // C4: the runtime worktree-tangle guard ported from fm-guard. Landed = the
-  // `parlay guard` verb dispatches AND the variant lifecycle calls guardRepo().
-  tangleGuardBuilt:
-    /case "guard"/.test(cliIndex) &&
-    /export function guardRepo/.test(read(`${PL}/packages/cli/src/commands-guard.ts`)) &&
-    /guardRepo\(/.test(read(`${PL}/packages/cli/src/commands-variant.ts`)),
+  // C5: crew-dispatch is only legitimately STAYS-FIRSTMATE if the fold doc
+  // actually states the retention + re-activation sequencing (task-8io0).
+  crewDispatchRetentionStated: /crew-dispatch/i.test(foldDoc) && /STAYS[- ]FIRSTMATE/i.test(foldDoc) && /re-activ/i.test(foldDoc),
 }
 
 // ---- open fix tasks (contraction ledger) ---------------------------------
@@ -97,7 +94,7 @@ const M: Row[] = [
   { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "— (dropped v1)", verdict: "MISSING", fix: "C3", note: "'thin loop later' = deferral not coverage" },
   { cap: "Multi-harness (codex/opencode/pi/grok)", fm: "fm-harness.sh + adapters", parlay: "deferred primitive, seam scaffolded (§3.4)", verdict: "DEFERRED", note: "built LAST; claude-only until then" },
   { cap: "Runtime backend (tmux/zellij/orca/cmux)", fm: "fm-backend.sh", parlay: "firstmate-retained (herdr-only by design)", verdict: "DROP-justified", note: "decision-3ae does not ask parlay to own backends" },
-  { cap: "Crew-dispatch profiles + quota-balanced", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: "firstmate POLICY (retention unstated)", verdict: "MISSING", fix: "C5", note: "policy stays fm, but unstated + inert w/o deferred harness" },
+  { cap: "Crew-dispatch profiles + quota-balanced", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: "firstmate POLICY, retention stated (§3.4a)", verdict: "STAYS-FIRSTMATE", note: "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" },
 
   // --- brief / meta / identity ---
   { cap: "Structured brief contract", fm: "fm-brief.sh", parlay: "enrollment + appended task contract (§3.1)", verdict: "COVERED-alternate", built: /## Definition of done/.test(spawnSrc) },
@@ -110,7 +107,7 @@ const M: Row[] = [
   { cap: "Event-driven watcher (absorb-when-working)", fm: "fm-watch.sh", parlay: "bridge reuses fm-watch → Slice 3 primitive", verdict: "DEFERRED" },
   { cap: "Authoritative current-state read", fm: "fm-crew-state.sh", parlay: "Slice 3 crew-state (richer oracle)", verdict: "DEFERRED", note: "parlay adds tab-liveness + subscriber presence" },
   { cap: "Durable wake queue", fm: "fm-wake-drain + .wake-queue", parlay: "(rolls into Slice 3 supervise primitive)", verdict: "DEFERRED" },
-  { cap: "Worktree-tangle runtime guard", fm: "fm-guard.sh", parlay: "parlay guard — tangle+liveness backstop, wired into variant lifecycle (C4)", verdict: "COVERED-alternate", built: probe.tangleGuardBuilt, note: "runtime banner + non-destructive restore + --beat liveness beacon; anchored on the variant worktree primitive" },
+  { cap: "Worktree-tangle runtime guard", fm: "fm-guard.sh", parlay: "brief assertion ported; runtime alarm NOT", verdict: "MISSING", fix: "C4", note: "upstream guard ≠ runtime backstop" },
   { cap: "Turn-end guard hooks", fm: "fm-turnend-guard.sh", parlay: "deferred w/ harness primitive (§3.4)", verdict: "DEFERRED" },
   { cap: "Away-mode unattended sub-supervision", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: "— (unaddressed)", verdict: "MISSING", fix: "C2", note: "no home: not in Slice 3 scope, not clearly fm-retained" },
   { cap: "Steer agent (captain→crewmate)", fm: "fm-send.sh", parlay: "parlay send/say --agent + monitor", verdict: "COVERED-same", built: probe.verb("send") && probe.verb("say") },
@@ -159,6 +156,11 @@ for (const r of M) {
     if (!r.fix) problems.push(`MISSING w/o fix tag: ${r.cap}`)
     else if (!hasFixTask(r.fix)) problems.push(`MISSING "${r.cap}" → no open fix task tagged parlay-fold ${r.fix}`)
   }
+}
+// C5 (task-8io0): the crew-dispatch row is only a legitimate STAYS-FIRSTMATE if the
+// fold doc actually states retention + re-activation. Regress to a problem otherwise.
+if (/Crew-dispatch/.test(M.find(r => /Crew-dispatch/.test(r.cap))?.cap ?? "") && !probe.crewDispatchRetentionStated) {
+  problems.push(`Crew-dispatch marked STAYS-FIRSTMATE but fold doc does not state retention + re-activation (see §3.4a)`)
 }
 
 // ---- render --------------------------------------------------------------
