@@ -51,16 +51,24 @@ export function routeEvent(ev: RouteEvent, bead: Bead | undefined, verbose: bool
 // launches via parlay-spawn only if not) and resolves the zone from the ticket's
 // `zone:<x>` label itself — so we pass only the id.
 function handleRobotsCreated(ev: RouteEvent, verbose: boolean): void {
-  const r = spawnSync("mechanic-dispatch", [ev.id], { encoding: "utf8", env: process.env })
+  dispatchMechanic(ev.id, verbose)
+}
+
+// The reusable dispatch: spawn `mechanic-dispatch <id>` (idempotent — checks the
+// zone's mechanic liveness and launches via parlay-spawn only if down). Shared by
+// the POLL path (handler a) and the TAILER fast path (robots-tail, task-jif2), so
+// both triggers converge on one dispatch. Failure-isolated: never throws.
+export function dispatchMechanic(id: string, verbose: boolean): void {
+  const r = spawnSync("mechanic-dispatch", [id], { encoding: "utf8", env: process.env })
   if (r.error) {
-    process.stderr.write(`robots-watch: mechanic-dispatch not runnable for ${ev.id}: ${r.error.message}\n`)
+    process.stderr.write(`robots-watch: mechanic-dispatch not runnable for ${id}: ${r.error.message}\n`)
     return
   }
   const out = [r.stdout, r.stderr].filter(Boolean).join("").trim()
   if (r.status === 0) {
-    process.stderr.write(`robots-watch: dispatched mechanic for ${ev.id}${verbose && out ? ` — ${out}` : ""}\n`)
+    process.stderr.write(`robots-watch: dispatched mechanic for ${id}${verbose && out ? ` — ${out}` : ""}\n`)
   } else {
-    process.stderr.write(`robots-watch: mechanic-dispatch ${ev.id} exited ${r.status}: ${out}\n`)
+    process.stderr.write(`robots-watch: mechanic-dispatch ${id} exited ${r.status}: ${out}\n`)
   }
 }
 

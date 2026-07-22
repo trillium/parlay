@@ -8,7 +8,8 @@ import type { StoreState } from "./detect"
 
 export type Cursor = Record<string, StoreState>
 
-function stateDir(): string {
+// Shared state dir for both the poll cursor and the tailer offset.
+export function stateDir(): string {
   const base = process.env.PARLAY_STATE_HOME || join(homedir(), ".parlay")
   return join(base, "robots-watch")
 }
