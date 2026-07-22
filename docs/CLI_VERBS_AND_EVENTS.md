@@ -32,7 +32,7 @@ verb is a 3–4 file edit, no framework.
 |---|---|
 | `index.ts` | The dispatcher. A single `switch (cmd)` maps a verb string → `cmdX(args)`. This is the entry (`#!/usr/bin/env bun`). |
 | `commands.ts` | Home for most handlers (`cmdStatus`, `cmdSend`, `cmdMonitor`, …). One exported `async function cmd<Name>(args: string[])` per verb. |
-| `commands-*.ts` / `commands-<name>/` | Split-out handlers for bigger surfaces: `commands-identity/` (say/scratchpad/identity/lifecycle), `commands-nickname.ts`, `commands-doctor.ts` (`cmdDoctor`/`cmdHealth`), `commands-variant.ts`, `commands-context-check.ts`. Same shape, just their own file when a verb grows. |
+| `commands-*.ts` / `commands-<name>/` | Split-out handlers for bigger surfaces: `commands-identity/` (say/scratchpad/identity/lifecycle), `commands-nickname.ts`, `commands-doctor.ts` (`cmdDoctor`/`cmdHealth`), `commands-variant.ts`, `commands-context-check.ts`, `commands-robots-watch/` (`detect`/`cursor`/`handlers`/`index` — the §2.4 interim bridge). Same shape, just their own file when a verb grows. |
 | `args.ts` | The flag parser. `parseArgs(cmd, args, boolFlags[], valueFlags[])` → `{ positionals, opts }`. Verbs declare their own bool/value flag tables (see `MEM_BOOL_FLAGS`/`MEM_VALUE_FLAGS` in `commands-identity/store.ts` for the pattern). |
 | `help.ts` | `USAGE` (the top-level listing printed by `parlay help`) + per-command help strings. `helpWanted(cmd, args)` short-circuits `--help`. |
 | `config.ts` | `PARLAY_SERVER` base URL + exit codes (`EXIT_USAGE=2`). |
@@ -171,14 +171,29 @@ and unit-tested against a synthetic event before the real emit exists.*
 
 #### Interim bridge (until beads EMIT ships): the poll-daemon
 Because the EMIT hook is a separate (beads) deliverable, parlay can **stand in for
-the missing emit** with a poll loop that synthesizes the event — a `parlay watch`
-daemon that polls `<store> list/ready --json`, diffs a persisted cursor
-(`~/.parlay/watches/seen.json`, mirroring the tailers' byte-offset), and feeds any
-detected transition **into the same ROUTE+DELIVER path** as a real emit would. This
-unblocks dogfooding with zero beads change; when beads EMIT lands, the poll source
-is swapped for the ingest endpoint and **subscribe/route/deliver are unchanged**.
-Build the router to the event *shape*, not the poll — the poll is a replaceable
-source, not the design.
+the missing emit** with a poll loop that synthesizes the event.
+
+**Shipped 2026-07-21 as `parlay robots-watch`**
+(`packages/cli/src/commands-robots-watch/{detect,cursor,handlers,index}.ts`, `parlay
+robots-watch --help`): polls each watched store's `<store> list --all --json --limit
+0`, diffs a persisted cursor (`$PARLAY_STATE_HOME/robots-watch/cursor.json`, default
+`~/.parlay/…`, mirroring the tailers' byte-offset), and feeds any detected
+transition into a handler table keyed by `<store>:<kind>` (`WATCHES` in
+`handlers.ts`) — the MVP's stand-in for the generic `parlay watch add` registry
+described above: today a new consumer is a new row in `WATCHES` plus a `case` in
+`routeEvent`, not yet a data-driven `watches.json`. Two handlers ship: robots
+`created` → spawn `mechanic-dispatch <id>`; `questions`/`task` `closed` → `parlay
+send --<channel>` for each `notify:<channel>` label on the bead (the label IS the
+lightweight SUBSCRIBE for this MVP — no label, no subscriber, skip). First sighting
+of a store seeds its cursor and fires nothing, so startup never replays history.
+Both the store poll and every handler are failure-isolated (a bad store or a
+failing handler logs and the pass continues) and the whole poll pass is wrapped so
+one bad pass can't kill the daemon loop.
+
+This unblocks dogfooding with zero beads change; when beads EMIT lands, the poll
+source is swapped for the ingest endpoint and **subscribe/route/deliver are
+unchanged**. Build the router to the event *shape*, not the poll — the poll is a
+replaceable source, not the design.
 
 Latency is the poll interval (seconds) — fine now; the endpoint path is sub-second
 later. `mechanic-dispatch` idempotency + the cursor make a double-fire safe.
@@ -205,12 +220,18 @@ convention someone must remember to honor.
 2. **[interim] Where does the poll-bridge run — launchd `com.pai.*`, or inside
    Pulse?** *Rec:* launchd for the interim bridge (independent lifecycle, survives
    Pulse restarts). The durable ingest endpoint lives in the Pulse server; the
-   poll-bridge is retired once EMIT ships.
+   poll-bridge is retired once EMIT ships. **Still open** — `parlay robots-watch`
+   ships as a plain long-running loop (`--interval`/`--once`); no launchd plist
+   wires it up yet.
 3. **Watch-registry authority + lifecycle.** Who writes `watches.json` — only
    `parlay watch` verbs, or may firstmate hand-edit? And when is a watch removed —
    one-shot (auto-drop after first delivery, right for request-close) vs standing
    (robots `on:created`)? *Rec:* `parlay watch` verbs own it; a watch carries
-   `once:true|false` (request-close = once, robots = standing).
+   `once:true|false` (request-close = once, robots = standing). **MVP answer:**
+   there is no `watches.json` or `parlay watch` verb yet — `robots-watch` ships
+   with the two consumers hardcoded as the `WATCHES` table in `handlers.ts` (both
+   standing, no once-flag). This question is still open for whenever a third
+   consumer needs a registry instead of a code change.
 4. **Zone resolution (robots consumer).** `mechanic-dispatch` reads zone from a
    `zone:<x>` label, else `default`. *Rec:* the watch passes nothing; dispatch
    resolves — but that assumes filers stamp `zone:` on `robots create`; make it a
