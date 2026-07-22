@@ -30,10 +30,38 @@ set -euo pipefail
 
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
 
+# Absolute path to THIS script, so the batch loop can re-exec us in single mode
+# regardless of the cwd or relative path used to invoke us (mirror fm-spawn.sh's
+# $FM_ROOT/bin/fm-spawn.sh self-reference).
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+# Deterministic, readable hex color from an id — a bash port of colorFromId()
+# in packages/cli/src/identity-ephemeral.ts (FNV-1a 32-bit, each channel squeezed
+# into 40–220 so no tab accent is too dark or too washed out). Same id ⇒ same
+# color, so a batch-spawned agent paints the same accent every launch, matching
+# the ephemeral-identity convention. Bash arithmetic is 64-bit here, so masking
+# with 0xffffffff after each step reproduces the JS `>>> 0` wraparound.
+color_from_id() {
+  local id="$1"
+  local h=2166136261 i=0 c
+  local len=${#id}
+  while [ "$i" -lt "$len" ]; do
+    c=$(printf '%d' "'${id:$i:1}")
+    h=$(( (h ^ c) & 0xffffffff ))
+    h=$(( (h * 16777619) & 0xffffffff ))
+    i=$((i + 1))
+  done
+  local r=$(( 40 + (h & 0xff) % 181 ))
+  local g=$(( 40 + ((h >> 8) & 0xff) % 181 ))
+  local b=$(( 40 + ((h >> 16) & 0xff) % 181 ))
+  printf '#%02x%02x%02x' "$r" "$g" "$b"
+}
+
 usage() {
   cat >&2 <<EOF
 Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus]
        parlay-spawn --ephemeral <initial-prompt> [--cwd PATH] [--model MODEL] [--focus]
+       parlay-spawn <id>=<repo> [<id>=<repo> ...] --prompt TEXT [--model M] [--color HEX] [--focus]
 
   agent-id        kebab-slug, stable across restarts (e.g. code-reviewer)
   display-name    tab header text (e.g. "Code Reviewer")
@@ -47,6 +75,14 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
   --focus         focus the new terminal (default: launched --no-focus)
   --model MODEL   pin the claude model (e.g. sonnet, opus, haiku, or a full
                   model id); default: session default with sonnet fallback
+
+Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
+  treated as one and spawned by re-execing this script in single mode. The <repo>
+  becomes that agent's --cwd; the display name is the id and the tab color is
+  derived from it (or shared via --color). A shared --prompt is required and given
+  to every agent; --model/--focus/--color are shared too. A failed pair is reported
+  and skipped, the rest still launch, and the batch exits non-zero if any failed.
+    parlay-spawn fix-a=~/code/foo add-b=~/code/bar --prompt "Do the thing" --model sonnet
 
 Env: PARLAY_SERVER (default http://localhost:31337)
 EOF
@@ -94,6 +130,86 @@ if [ "${1:-}" = "--ephemeral" ]; then
     exit 1
   fi
   echo "parlay-spawn: minted ephemeral identity $AGENT_ID ($NAME, $COLOR)" >&2
+fi
+
+# ── Batch dispatch (thin loop) ──────────────────────────────────────────────
+# When the FIRST arg is an `id=repo` pair — it contains an '=' and the id-part
+# (before the '=') has no '/' — treat every positional as one pair and spawn each
+# by re-execing this script in single mode. This is the parlay port of firstmate's
+# fm-spawn.sh batch (`fm-spawn.sh fix-a=projects/foo add-b=projects/bar`): the loop
+# lives here in bash so callers never hand-write it. A single-task invocation
+# never carries an '=' in arg one (agent ids are bare kebab slugs), and an id that
+# contains '/' is not a pair, so both fall straight through to the single path.
+#
+# Differences from firstmate: there is no per-id brief file, so a shared --prompt
+# is REQUIRED and handed to every agent; the <repo> becomes each agent's --cwd; the
+# display name is the id and the color is derived from it (colorFromId), or set for
+# the whole batch with --color. --model/--focus are forwarded to every pair.
+# A failed pair is reported and skipped; the rest still launch; exit is non-zero if
+# any pair failed (rc=1 spawn failure, rc=2 bad arg / missing --prompt).
+if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
+  _first="$1"
+  case "$_first" in
+    -* ) : ;;                              # a flag, not a pair → not batch
+    *=* )
+      _idpart="${_first%%=*}"
+      case "$_idpart" in
+        */* ) : ;;                          # slash in id-part → not a pair
+        * )
+          # Batch mode. Separate pairs (positionals) from shared flags.
+          PAIRS=()
+          BATCH_PROMPT=""
+          BATCH_MODEL=""
+          BATCH_COLOR=""
+          BATCH_FOCUS="--no-focus"
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              --prompt) BATCH_PROMPT="$2"; shift 2 ;;
+              --model)  BATCH_MODEL="$2"; shift 2 ;;
+              --color)  BATCH_COLOR="$2"; shift 2 ;;
+              --focus)  BATCH_FOCUS="--focus"; shift ;;
+              --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
+              --ephemeral) echo "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs" >&2; exit 2 ;;
+              -*)       echo "parlay-spawn: unknown batch flag: $1" >&2; exit 2 ;;
+              *)        PAIRS+=("$1"); shift ;;
+            esac
+          done
+
+          if [ -z "$BATCH_PROMPT" ]; then
+            echo "parlay-spawn: batch dispatch requires a shared --prompt (the brief handed to every spawned agent)" >&2
+            exit 2
+          fi
+
+          rc=0
+          for pair in ${PAIRS[@]+"${PAIRS[@]}"}; do
+            case "$pair" in
+              *=*) : ;;
+              *) echo "parlay-spawn: batch dispatch expects every argument as id=repo; got '$pair'" >&2; rc=2; continue ;;
+            esac
+            _bid="${pair%%=*}"
+            _brepo="${pair#*=}"
+            # Expand a leading ~ so `id=~/code/foo` resolves (mid-word tildes are
+            # not expanded by the shell).
+            case "$_brepo" in
+              "~")   _brepo="$HOME" ;;
+              "~/"*) _brepo="$HOME/${_brepo#\~/}" ;;
+            esac
+            _bcolor="${BATCH_COLOR:-$(color_from_id "$_bid")}"
+            _shared=(--cwd "$_brepo")
+            [ -n "$BATCH_MODEL" ] && _shared+=(--model "$BATCH_MODEL")
+            [ "$BATCH_FOCUS" = "--focus" ] && _shared+=(--focus)
+            if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
+              :
+            else
+              echo "batch: FAILED to spawn $_bid ($_brepo)" >&2
+              rc=1
+            fi
+          done
+          exit "$rc"
+          ;;
+      esac
+      ;;
+  esac
 fi
 
 if [ "$EPHEMERAL" -eq 0 ]; then
