@@ -181,6 +181,17 @@ set:
 - record `worktree=`/`project=` in the frontmatter (3.2), which arms safe teardown
   (3.7).
 
+The brief's isolation assertion is the *brief-time* guard; the *runtime* backstop
+for the same failure mode (an agent that branched/committed in the PRIMARY checkout
+instead of its worktree, stranding the primary on a feature branch) shipped as the
+**`parlay guard`** verb (contraction **C4**, ported from firstmate's `fm-guard.sh`
+per `AGENTS.md §8`). It is advisory-only — WARNS with a bordered banner + a
+non-destructive `git checkout <default>` restore, never blocks — and is wired into
+the variant lifecycle: `parlay variant launch`/`teardown` call `guardRepo(<primary>)`
+so a stranded primary surfaces on the next fleet action. It also carries a
+`--beat`/liveness beacon so a missing watcher heartbeat is alarmed while variants
+are in flight. See `parlay guard --help` and `commands-guard.ts`.
+
 ### 3.4 Harness / model / effort — **DEFERRED parlay-native primitive** (re-scoped by decision-3ae)
 decision-3ae lists **harness adapters + turn-end hooks** as MECHANISM to migrate to
 parlay — so this is *not* a permanent DROP, it is a **deferred parlay-native
