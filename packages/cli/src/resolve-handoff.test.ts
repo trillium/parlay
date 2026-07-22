@@ -185,9 +185,25 @@ test("inherited: false when handoff created after sessionStartedAt (explicit)", 
   expect(r?.inherited).toBe(false)
 })
 
-test("inherited: false when created field absent (conservative: assume current-session)", () => {
-  // No created field → can't determine age → conservative: not inherited
+test("inherited: true when age is unknown (robots-qkr: safe default, no destructive nag)", () => {
+  // No timestamp → can't prove it's from this session → default to the gentle,
+  // reversible warning (--dismiss-handoff), never the context-resetting --submit nag.
   stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-unknown", status: "open" }]) } })
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev")
+  expect(r?.inherited).toBe(true)
+})
+
+test("inherited: reads the store's real created_at field (robots-qkr regression)", () => {
+  // The bd/handoff store emits `created_at`, NOT `created`. A stale created_at must be
+  // recognized as inherited — proving the field-name fix (was always undefined before).
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-real", status: "open", created_at: STALE_ISO }]) } })
+  const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev")
+  expect(r?.id).toBe("handoff-real")
+  expect(r?.inherited).toBe(true)
+})
+
+test("inherited: false for a recent created_at (real field, current-session handoff)", () => {
+  stubStore("handoff", { list: { json: JSON.stringify([{ id: "handoff-fresh", status: "open", created_at: RECENT_ISO }]) } })
   const r = detectUnsubmittedHandoff(undefined, "handoff", "brain-dev")
   expect(r?.inherited).toBe(false)
 })
