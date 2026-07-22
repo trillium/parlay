@@ -31,6 +31,19 @@ function shSafe(cmd: string): string {
 
 interface Commit { hash: string; subject: string; body: string }
 
+function pushTag(tag: string): number {
+  try {
+    sh(`git push origin ${tag}`)
+    console.log(`gate-tag: pushed ${tag} to origin`)
+    return 0
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    console.error(`gate-tag: push of ${tag} failed — ${detail}`)
+    console.error(`  the local tag exists; re-run with --apply --push to retry the push.`)
+    return 1
+  }
+}
+
 // Newest v* tag by version order (not creation date — reorders survive).
 // for-each-ref never columnizes (unlike `git tag --list`, which honors column.ui).
 function lastTag(override?: string): string | null {
@@ -76,10 +89,21 @@ function main(): number {
   const push = args.includes("--push")
   const fromIdx = args.indexOf("--from")
   const from = fromIdx >= 0 ? args[fromIdx + 1] : undefined
+  if (from !== undefined && !/^v?\d+\.\d+\.\d+$/.test(from)) {
+    console.error(`gate-tag: --from '${from ?? ""}' must be a vX.Y.Z version tag.`)
+    return 2
+  }
 
-  // Idempotency: already tagged at HEAD?
+  // Idempotency: already tagged at HEAD? If a push was requested, re-attempt it
+  // (a prior run may have created the tag locally but failed to push) so a gate
+  // retry recovers instead of no-op-exiting with the tag missing from origin.
   const existing = headVTags()
   if (existing.length) {
+    if (push) {
+      let rc = 0
+      for (const t of existing) rc = pushTag(t) || rc
+      return rc
+    }
     console.log(`gate-tag: HEAD already tagged ${existing.join(", ")} — nothing to do.`)
     return 0
   }
@@ -131,11 +155,9 @@ function main(): number {
   execSync(`git tag -a ${tag} -F -`, { input: message })
   console.log(`gate-tag: created annotated tag ${tag}`)
   if (push) {
-    sh(`git push origin ${tag}`)
-    console.log(`gate-tag: pushed ${tag} to origin`)
-  } else {
-    console.log(`  (local only — push with: git push origin ${tag})`)
+    return pushTag(tag)
   }
+  console.log(`  (local only — push with: git push origin ${tag})`)
   return 0
 }
 
