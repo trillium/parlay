@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Tracked post-merge hook: MERGE = DELIVERY (runs after merge commits AND
+# fast-forwards — the exact path that shipped a stale bundle on 2026-07-18,
+# when main advanced past the built 4.17.5 with no rebuild trigger).
+# Same guards as post-commit; see that file for the full pipeline map.
+set -uo pipefail
+
+MAIN_CHECKOUT="/Users/trilliumsmith/code/parlay"
+LOG="$HOME/Library/Logs/parlay/bundle-rebuild.out.log"
+TOP="$(git rev-parse --show-toplevel)"
+
+if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
+  echo "[post-merge] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  exit 0
+fi
+
+CHANGED="$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null || true)"
+echo "$CHANGED" | grep -qE '^packages/client/(src|src-plugins)/|^packages/client/build\.ts' || exit 0
+
+echo "[post-merge] $(date +%FT%T) delivering $(git log -1 --format='%h %s' | head -c 80)" >> "$LOG"
+if ( cd "$MAIN_CHECKOUT/packages/client" && "$HOME/.bun/bin/bun" build.ts ) >> "$LOG" 2>&1; then
+  echo "[post-merge] delivered" >> "$LOG"
+else
+  echo "[post-merge] DELIVERY FAILED — bundle unchanged; fix and run 'bun build.ts' in packages/client" >> "$LOG"
+fi

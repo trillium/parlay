@@ -25,17 +25,21 @@ import {
   cmdStatus,
   cmdSubscribers,
 } from "./commands"
+import { cmdStatusVerb } from "./commands-status"
 import { cmdNickname } from "./commands-nickname"
 import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
 import { cmdVariant } from "./commands-variant"
+import { cmdGuard } from "./commands-guard"
 import { cmdDoctor, cmdHealth } from "./commands-doctor"
 import { cmdContextCheck } from "./commands-context-check"
+import { cmdRobotsWatch } from "./commands-robots-watch"
+import { cmdRobotsTail } from "./commands-robots-watch/tail"
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
   switch (cmd) {
-    case undefined:
-    case "status":        return cmdStatus()
+    case undefined:       return cmdStatus()          // bare `parlay` = panel/fleet snapshot
+    case "status":        return cmdStatusVerb(args)  // fold §3.6 keyed status verb (was a redundant alias of bare `parlay`; retired → task-ve2v)
     case "subscribers":   return cmdSubscribers(args)
     case "agents":        return cmdAgents(args)
     case "nickname":      return cmdNickname(args)
@@ -50,9 +54,12 @@ async function main() {
     case "stats":         return cmdStats(args)
     case "doctor":        return cmdDoctor(args)
     case "context-check": return cmdContextCheck(args)
+    case "robots-watch":  return cmdRobotsWatch(args)
+    case "robots-tail":   return cmdRobotsTail(args)
     case "health":        return cmdHealth(args)
     case "launch":        return cmdLaunch(args)
     case "variant":       return cmdVariant(args)
+    case "guard":         return cmdGuard(args)
     case "lavish-import": return cmdLavishImport(args)
     case "help":
     case "--help":
