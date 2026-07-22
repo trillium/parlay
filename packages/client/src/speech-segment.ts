@@ -27,20 +27,21 @@ function insideLink(pos: number, links: { start: number; end: number }[]): boole
 // so a URL spanning two sentences stays whole in the passage it STARTS in
 // (task-1h47: never split a link anchor across passages/spans).
 export function splitBlocksRaw(text: string): RawBlock[] {
-  const parts = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
   const links = linkRanges(text)
   const blocks: RawBlock[] = []
-  let cur = ''
-  let offset = 0 // char offset of the start of `cur` within `text`
-  for (const p of parts) {
-    cur += p
-    const boundary = offset + cur.length
+  let start = 0 // char offset of the start of the pending block within `text`
+  for (const m of text.matchAll(/[^.!?\n]+[.!?]*\s*/g)) {
+    // Boundary is the ACTUAL end position of this match in `text`, so it stays
+    // aligned with linkRanges even when the sentence regex drops a leading
+    // newline/`.`/`!`/`?`. Slicing `text` also keeps the raw-concat invariant.
+    const boundary = m.index + m[0].length
+    const cur = text.slice(start, boundary)
     if (cur.trim().length >= 60 && !insideLink(boundary, links)) {
       blocks.push({ synth: cur.trim(), raw: cur })
-      offset = boundary
-      cur = ''
+      start = boundary
     }
   }
-  if (cur.trim()) blocks.push({ synth: cur.trim(), raw: cur })
+  const tail = text.slice(start)
+  if (tail.trim()) blocks.push({ synth: tail.trim(), raw: tail })
   return blocks.length ? blocks : [{ synth: text.trim(), raw: text }]
 }
