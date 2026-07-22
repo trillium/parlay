@@ -1,5 +1,30 @@
 import { test, expect } from "bun:test"
-import { chunk, jitterMs, staggerDeliver } from "./alert-stagger"
+import { chunk, jitterMs, staggerDeliver, resolveAlertMode } from "./alert-stagger"
+
+// resolveAlertMode — the pure delivery decision (no network, no fleet needed).
+const base = { stagger: false, noStagger: false, hasAgent: false, fleetSize: 3, threshold: 8 }
+
+test("single --agent → single, regardless of everything else", () => {
+  expect(resolveAlertMode({ ...base, hasAgent: true, stagger: true, fleetSize: 100 })).toBe("single")
+})
+
+test("--no-stagger → immediate, even on a huge fleet", () => {
+  expect(resolveAlertMode({ ...base, noStagger: true, fleetSize: 100 })).toBe("immediate")
+})
+
+test("explicit --stagger → stagger when anyone is enrolled, immediate when fleet empty", () => {
+  expect(resolveAlertMode({ ...base, stagger: true, fleetSize: 1 })).toBe("stagger")
+  expect(resolveAlertMode({ ...base, stagger: true, fleetSize: 0 })).toBe("immediate")
+})
+
+test("auto: small fleet (<= threshold) → immediate", () => {
+  expect(resolveAlertMode({ ...base, fleetSize: 8, threshold: 8 })).toBe("immediate")
+})
+
+test("auto: large fleet (> threshold) → stagger without the flag", () => {
+  expect(resolveAlertMode({ ...base, fleetSize: 9, threshold: 8 })).toBe("stagger")
+  expect(resolveAlertMode({ ...base, fleetSize: 50, threshold: 8 })).toBe("stagger")
+})
 
 test("chunk splits into batches of size, last is remainder", () => {
   expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]])

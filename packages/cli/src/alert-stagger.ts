@@ -13,8 +13,36 @@ import type { AgentInfo } from "./types"
 
 const DEFAULT_INTERVAL_SEC = 1.5
 const DEFAULT_BATCH = 1
+const DEFAULT_AUTO_THRESHOLD = 8 // fleet size above which a bare alert auto-staggers
 
 type AlertResult = { ok?: boolean; channels?: number; delivered?: number; error?: string }
+
+export type AlertMode = "single" | "immediate" | "stagger"
+
+// Decide how to deliver, given the flags and the live fleet size. Pure → unit-tested
+// so this never needs a live fleet to verify. A large fleet auto-staggers even
+// without --stagger, so a routine broadcast can't accidentally thunder the herd;
+// --no-stagger always forces immediate; a single --agent has nothing to stagger.
+export function resolveAlertMode(o: {
+  stagger: boolean
+  noStagger: boolean
+  hasAgent: boolean
+  fleetSize: number
+  threshold: number
+}): AlertMode {
+  if (o.hasAgent) return "single"
+  if (o.noStagger) return "immediate"
+  if (o.stagger) return o.fleetSize > 0 ? "stagger" : "immediate"
+  return o.fleetSize > o.threshold ? "stagger" : "immediate" // auto
+}
+
+// A positive number from an env var, or the fallback (silently ignores a bad value).
+function envNum(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
 
 // Split ids into batches of `size` (>=1). Pure.
 export function chunk<T>(arr: T[], size: number): T[][] {
@@ -84,12 +112,12 @@ export async function staggerDeliver(
 
 export async function cmdAlert(args: string[]): Promise<void> {
   if (helpWanted("alert", args)) return
-  const { positionals, opts } = parseArgs("alert", args, ["--stagger"], ["--agent", "--interval", "--batch"])
+  const { positionals, opts } = parseArgs("alert", args, ["--stagger", "--no-stagger"], ["--agent", "--interval", "--batch"])
   const text = positionals.join(" ").trim()
   if (!text) return die("parlay alert: message text required", EXIT_USAGE)
 
   const agent = opts["--agent"] as string | undefined
-  // A single named agent has nothing to stagger — deliver immediately.
+  // A single named agent has nothing to stagger — deliver immediately (no fetch).
   if (agent) {
     const r = await postAlert({ text, agents: [agent] })
     if (r.error) return die(`alert failed: ${r.error}`)
@@ -97,13 +125,21 @@ export async function cmdAlert(args: string[]): Promise<void> {
     return nextStep("parlay subscribers")
   }
 
-  const interval = posNum(opts["--interval"] as string | undefined, DEFAULT_INTERVAL_SEC, "--interval")
-  const batch = posNum(opts["--batch"] as string | undefined, DEFAULT_BATCH, "--batch")
+  const forceStagger = opts["--stagger"] === true
+  const forceImmediate = opts["--no-stagger"] === true
+  // --no-stagger forces immediate without even enumerating the fleet.
+  if (forceImmediate) return immediateBroadcast(text)
 
-  // Default: immediate broadcast (unchanged). --stagger opts into spread delivery.
-  if (opts["--stagger"] !== true) return immediateBroadcast(text)
+  const interval = posNum(opts["--interval"] as string | undefined, envNum("PARLAY_ALERT_STAGGER_INTERVAL", DEFAULT_INTERVAL_SEC), "--interval")
+  const batch = posNum(opts["--batch"] as string | undefined, envNum("PARLAY_ALERT_STAGGER_BATCH", DEFAULT_BATCH), "--batch")
+  const threshold = envNum("PARLAY_ALERT_STAGGER_THRESHOLD", DEFAULT_AUTO_THRESHOLD)
 
+  // Auto-stagger above the fleet threshold, even without --stagger, so a routine
+  // broadcast to a big fleet can't thunder the herd. Enumerate to know the size.
   const agents = await getJSON<AgentInfo[]>("/api/chat/agents")
-  if (agents.length === 0) return immediateBroadcast(text) // nobody enrolled — nothing to stagger
-  return staggerDeliver(text, agents.map((a) => a.id), interval, batch, "manual")
+  const mode = resolveAlertMode({ stagger: forceStagger, noStagger: false, hasAgent: false, fleetSize: agents.length, threshold })
+  if (mode === "stagger") {
+    return staggerDeliver(text, agents.map((a) => a.id), interval, batch, forceStagger ? "manual" : `auto: fleet ${agents.length} > ${threshold}`)
+  }
+  return immediateBroadcast(text)
 }
