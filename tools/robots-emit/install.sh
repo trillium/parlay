@@ -6,7 +6,7 @@
 #   status:    tools/robots-emit/install.sh --status
 set -eu
 
-SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 SRC="$SELF_DIR/robots"
 DEST="$HOME/.local/bin/robots"
 BAK="$HOME/.local/bin/robots.pre-jif2.bak"
