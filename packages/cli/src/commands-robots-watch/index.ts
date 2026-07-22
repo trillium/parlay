@@ -52,19 +52,23 @@ export async function cmdRobotsWatch(args: string[]): Promise<void> {
       ` (handlers: robots-created→mechanic-dispatch, request-closed→notify)\n`,
   )
 
-  pollOnce(verbose)
+  runPollOnce(verbose)
   if (once) return
 
   // Continuous loop for the launchd daemon.
   // eslint-disable-next-line no-constant-condition
   while (true) {
     await Bun.sleep(intervalSec * 1000)
-    try {
-      pollOnce(verbose)
-    } catch (err) {
-      // A single bad pass must never kill the daemon — log and retry next tick.
-      process.stderr.write(`robots-watch: poll pass failed (continuing): ${String(err)}\n`)
-    }
+    runPollOnce(verbose)
+  }
+}
+
+// A single bad pass must never kill the daemon — log and continue.
+function runPollOnce(verbose: boolean): void {
+  try {
+    pollOnce(verbose)
+  } catch (err) {
+    process.stderr.write(`robots-watch: poll pass failed (continuing): ${String(err)}\n`)
   }
 }
 
