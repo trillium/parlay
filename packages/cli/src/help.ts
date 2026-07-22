@@ -5,8 +5,9 @@ import { SERVER } from "./config"
 export const USAGE = `parlay — talk to a Parlay chat server (current target: ${SERVER})
 
 Usage:
-  parlay                          Live status: subscribers, agents, last 3 messages
-  parlay status                   Same as bare parlay
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
   parlay subscribers [--full]     Connection counts (--full: raw JSON)
   parlay agents [--full]          List registered agents (--full: raw JSON)
   parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
@@ -44,7 +45,7 @@ Env:
 `
 
 const HELP: Record<string, string> = {
-  status: `parlay status — live snapshot: subscriber counts, agent list, last 3 messages.\nUsage: parlay [status]`,
+  status: `parlay status — the fold's agent→supervisor keyed status verb (§3.6). Ports firstmate's grammar '<verb> [key=<slug>]: <note>'.\nUsage: parlay status <verb> [--key <slug>] <note...>   append a keyed status line\n       parlay status                                   read THIS agent's status file\n  Verbs: working, needs-decision, blocked, paused, done, failed, resolved.\n  Sink: \$PARLAY_STATUS_FILE when set (firstmate injects it at spawn; its fm-watch loop reads it),\n        else ~/.parlay/agents/<id>/status keyed by PARLAY_AGENT_ID. Same verb, two homes.\n  --key <slug>  open/close a durable keyed decision (slug chars [A-Za-z0-9._-]); a bare needs-decision\n                uses key 'default', and 'resolved [--key <slug>]' closes the matching open decision.\nNOTE: 'status' was formerly a redundant alias of bare 'parlay'. The panel/fleet snapshot now lives ONLY\n      on bare 'parlay'; this name was repurposed for the fold verb (task-ve2v resolves the C1 collision).`,
   subscribers: `parlay subscribers — connection counts (panel clients, pollers, registered agents).\nUsage: parlay subscribers [--full]\n  --full   Print the raw JSON from /api/chat/subscribers`,
   agents: `parlay agents — registered agents, one per line (id, name, color).\nUsage: parlay agents [--full]\n  --full   Print the raw JSON from /api/chat/agents`,
   nickname: `parlay nickname — assign voice nicknames so the channel picker + voice channel-switch resolve an agent by an easy spoken word.\nUsage: parlay nickname <nick> [<nick2> …]        set nicknames for THIS agent (PARLAY_AGENT_ID)\n       parlay nickname --agent <id> <nick> …     set nicknames for a named agent\n       parlay nickname --agent <id> --clear      remove all nicknames\nThe FIRST nickname becomes the picker's display label for that channel. Metadata-only\nupsert via /api/chat/register-agent — does not post a message. Re-running replaces the set.`,
