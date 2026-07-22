@@ -181,6 +181,18 @@ set:
 - record `worktree=`/`project=` in the frontmatter (3.2), which arms safe teardown
   (3.7).
 
+The brief assertion above is the **upstream** guard (it fires at intake, before
+work). The **runtime** backstop is firstmate's `fm-guard.sh` tangle+liveness alarm
+(AGENTS.md §8), ported as **`parlay guard`** (C4). On every fleet action it checks
+the PRIMARY checkout the worktrees branch from: if a parlay agent branched/committed
+in the primary instead of its own worktree, it prints a bordered stderr banner
+naming the offending branch + a non-destructive `git checkout <default>` restore
+(detached HEAD — how linked worktrees legitimately sit — never trips it), and warns
+when the watcher-liveness beacon is stale with variants in flight (`parlay guard
+--beat` is the watcher heartbeat). Wired into `parlay variant` launch/teardown now;
+the future `--worktree` spawn path and the Slice 3 supervise primitive call the same
+`guardRepo()`. Advisory — always exits 0, never blocks.
+
 ### 3.4 Harness / model / effort — **DEFERRED parlay-native primitive** (re-scoped by decision-3ae)
 decision-3ae lists **harness adapters + turn-end hooks** as MECHANISM to migrate to
 parlay — so this is *not* a permanent DROP, it is a **deferred parlay-native
