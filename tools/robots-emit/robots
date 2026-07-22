@@ -1,0 +1,35 @@
+#!/bin/sh
+# robots — brain-federation wrapper pinned to the robots store, PLUS a create-emit
+# hook (task-jif2). On `robots create`, after bd succeeds, append the new bead id
+# to a byte-offset-tailable events stream so `parlay robots-tail` push-dispatches a
+# mechanic with sub-~1s latency. EVERYTHING except the `create` subcommand is
+# byte-identical to the original wrapper (plain `exec bd "$@"`), so the emit hook
+# can only ever affect `robots create` — never list/show/close/label/etc.
+#
+# Canonical source: ~/code/parlay/tools/robots-emit/robots (installed to
+# ~/.local/bin/robots by tools/robots-emit/install.sh, which backs up the original).
+export BEADS_DIR="$HOME/data/robots/.beads"
+export BD_NAME=robots
+export BRAIN_KNOWLEDGE_ROOT="$HOME/data/robots"
+export BRAIN_EXFIL_FLAT=1
+
+ROBOTS_EVENTS_FILE="${ROBOTS_EVENTS_FILE:-$HOME/data/robots/events.jsonl}"
+
+if [ "$1" = "create" ]; then
+  # Capture stdout to scrape the new id and echo it back unchanged; stderr flows
+  # through normally. Command substitution strips trailing newlines, so re-add one.
+  out=$(bd "$@")
+  code=$?
+  printf '%s\n' "$out"
+  if [ "$code" -eq 0 ]; then
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # Match bd's own "Created issue: robots-XXX" line so ids inside a title/desc
+    # never trigger a false emit. Emit one line per created id (batch-safe).
+    printf '%s' "$out" | grep -oE 'Created issue: robots-[a-z0-9]+' | sed 's/^Created issue: //' | while IFS= read -r id; do
+      [ -n "$id" ] && printf '{"id":"%s","created_at":"%s","source":"robots-create"}\n' "$id" "$ts" >> "$ROBOTS_EVENTS_FILE" 2>/dev/null || true
+    done
+  fi
+  exit "$code"
+fi
+
+exec bd "$@"
