@@ -131,18 +131,9 @@ export async function cmdSend(args: string[]) {
   nextStep(`parlay history 5`)
 }
 
-export async function cmdAlert(args: string[]) {
-  if (helpWanted("alert", args)) return
-  const { positionals, opts } = parseArgs("alert", args, [], ["--agent"])
-  const agent = opts["--agent"] as string | undefined
-  const text = positionals.join(" ").trim()
-  if (!text) return die("parlay alert: message text required", EXIT_USAGE)
-  const body = agent ? { text, agents: [agent] } : { text }
-  const r = await postJSON<{ ok?: boolean; channels?: number; delivered?: number; error?: string }>("/api/chat/alert", body)
-  if (r.error) return die(`alert failed: ${r.error}`)
-  console.log(`alert sent to ${r.channels} channel(s), delivered to ${r.delivered} live poller(s)`)
-  nextStep("parlay subscribers")
-}
+// cmdAlert lives in ./alert-stagger (immediate broadcast default + --stagger
+// fan-out); re-exported here so the dispatcher import path is unchanged.
+export { cmdAlert } from "./alert-stagger"
 
 export async function cmdMonitor(args: string[]) {
   return runMonitor(args, { server: SERVER, exitUsage: EXIT_USAGE, die, helpWanted, parseArgs })
