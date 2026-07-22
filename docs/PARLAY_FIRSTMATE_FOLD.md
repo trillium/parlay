@@ -201,6 +201,36 @@ in parlay. Sequencing:
   ask parlay to own multiple session backends. `fm-backend.sh`'s multi-backend verb
   layer stays firstmate's problem if it ever needs tmux; parlay's substrate is herdr.
 
+#### 3.4a Crew-dispatch profiles + quota-balanced selection — **STAYS-FIRSTMATE POLICY (re-activates with the harness primitive)**
+Firstmate's `config/crew-dispatch.json` + `bin/fm-dispatch-select.sh` implement the
+per-task *selection* of harness/model/effort, including the deterministic
+quota-balanced load-balancing described in firstmate `AGENTS.md` §4 (round-robin a
+task across eligible harnesses weighted by remaining quota, deterministically so two
+supervisors pick the same target). This is **POLICY — the what-to-spawn decision —
+and it correctly STAYS FIRSTMATE under decision-3ae**: parlay owns the harness
+*mechanism* (the adapter primitive, §3.4), firstmate owns the *choice* of which
+harness/model/effort a given task gets. It is **not a contraction** — parlay never
+claimed this decision, and the fold does not move it.
+
+Two things this fold makes explicit so the capability is not silently lost:
+- **Retention is now stated.** Crew-dispatch (`crew-dispatch.json` +
+  `fm-dispatch-select.sh`) is firstmate-retained policy. It composes parlay's future
+  harness-adapter primitive (§3.4) via `parlay-spawn --harness/--model/--effort` once
+  those land — firstmate selects, parlay executes. No parlay-side reimplementation.
+- **Re-activation is sequenced.** The quota-balanced multi-harness path is **inert
+  until the deferred harness-adapter primitive ships** (§3.4, built LAST): with parlay
+  claude-only, `fm-dispatch-select.sh` has exactly one eligible target and the
+  balancer is a no-op. When the harness primitive lands and adds real
+  codex/opencode/pi/grok targets, crew-dispatch re-activates as-is — it selects,
+  passes `--harness` through to the new primitive, and load-balancing becomes live.
+  The seam scaffolded in §3.4 (`launch_template(harness)`) is exactly the consumer
+  crew-dispatch will drive; **track this re-activation against the §3.4 harness
+  milestone**, not as a slices 0–3 deliverable.
+
+The `--effort` / `--model` pass-throughs (§3.4) are the slice-1 down-payment on this
+seam: they let crew-dispatch's model/effort *dimensions* work today, with only the
+harness *dimension* waiting on the deferred primitive.
+
 ### 3.5 Delivery mode + yolo — **ADAPT (thin)** (slice 1 for `report`, slice 2 for `branch`/`pr`)
 Firstmate has three ship modes + scout, and an orthogonal yolo. Parlay's agents
 are conversational, so start minimal:
@@ -749,6 +779,9 @@ slices*, not "never parlay's" — the harness primitive is deferred-not-dropped.
 
 - **No multi-harness support in slices 0–3** (claude only). The harness-adapter
   primitive is decision-3ae MECHANISM, built LAST (§3.4) with the seam scaffolded now.
+- No **crew-dispatch / quota-balanced harness selection** in parlay — that is
+  firstmate POLICY and STAYS FIRSTMATE (§3.4a). It is retained-not-dropped and
+  re-activates against the §3.4 harness milestone; parlay never owned this choice.
 - **No pluggable session backend** (herdr only) — genuinely out of scope, not deferred.
 - No `no-mistakes` validation pipeline (that's firstmate POLICY, stays firstmate).
 - No secondmate machinery in these slices (a MIXED item, split in Slice 4).
