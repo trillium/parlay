@@ -32,7 +32,7 @@ verb is a 3–4 file edit, no framework.
 |---|---|
 | `index.ts` | The dispatcher. A single `switch (cmd)` maps a verb string → `cmdX(args)`. This is the entry (`#!/usr/bin/env bun`). |
 | `commands.ts` | Home for most handlers (`cmdStatus`, `cmdSend`, `cmdMonitor`, …). One exported `async function cmd<Name>(args: string[])` per verb. |
-| `commands-*.ts` / `commands-<name>/` | Split-out handlers for bigger surfaces: `commands-identity/` (say/scratchpad/identity/lifecycle), `commands-nickname.ts`, `commands-doctor.ts` (`cmdDoctor`/`cmdHealth`), `commands-variant.ts`, `commands-context-check.ts`, `commands-robots-watch/` (`detect`/`cursor`/`handlers`/`index` — the §2.4 interim bridge). Same shape, just their own file when a verb grows. |
+| `commands-*.ts` / `commands-<name>/` | Split-out handlers for bigger surfaces: `commands-identity/` (say/scratchpad/identity/lifecycle), `commands-nickname.ts`, `commands-doctor.ts` (`cmdDoctor`/`cmdHealth`), `commands-variant.ts`, `commands-context-check.ts`, `commands-status.ts` (`cmdStatusVerb` — the fold §3.6 keyed status verb; see the note below), `commands-robots-watch/` (`detect`/`cursor`/`handlers`/`index` — the §2.4 interim bridge). Same shape, just their own file when a verb grows. |
 | `args.ts` | The flag parser. `parseArgs(cmd, args, boolFlags[], valueFlags[])` → `{ positionals, opts }`. Verbs declare their own bool/value flag tables (see `MEM_BOOL_FLAGS`/`MEM_VALUE_FLAGS` in `commands-identity/store.ts` for the pattern). |
 | `help.ts` | `USAGE` (the top-level listing printed by `parlay help`) + per-command help strings. `helpWanted(cmd, args)` short-circuits `--help`. |
 | `config.ts` | `PARLAY_SERVER` base URL + exit codes (`EXIT_USAGE=2`). |
@@ -70,6 +70,29 @@ manifest, no codegen, no server change unless the verb calls a server endpoint.
 one-line bash wrappers that `exec bun …/cli/src/index.ts <verb> "$@"` (see
 `bin/parlay`). A new agent-facing verb usually wants a matching wrapper so agents
 call `foo …` not `parlay foo …`.
+
+#### The `status` verb — a name repurposed, not overloaded (fold §3.6, task-ve2v)
+
+The parity audit (task-4bad) flagged a collision (contraction **C1**): the fold's
+new agent→supervisor status verb wanted the name `status`, but `parlay status`
+already existed. Resolution: the old `status` was **only a redundant fall-through
+alias of bare `parlay`** — `case undefined: case "status": return cmdStatus()` —
+carrying zero unique behavior. So it was **retired**, and the name rebound:
+
+- **bare `parlay`** → the panel/fleet snapshot (`cmdStatus`, unchanged). This is
+  where the snapshot lives now — full stop.
+- **`parlay status <verb> [--key <slug>] <note…>`** → APPEND a keyed line to the
+  agent's status stream (`cmdStatusVerb` in `commands-status.ts`).
+- **`parlay status`** (bare) → READ this agent's own status file.
+
+The emitted line uses firstmate's **exact** grammar — `<verb> [key=<slug>]: <note>`,
+the key token between the verb and the colon — so `fm-classify-lib.sh`'s
+`status_line_verb` / `_fm_decision_key` / `status_open_decisions` parse it with
+zero changes. Verbs: `working needs-decision blocked paused done failed resolved`.
+The **sink is env-configurable**: `$PARLAY_STATUS_FILE` when set (firstmate injects
+it at spawn and its `fm-watch` loop reads that file), else
+`~/.parlay/agents/<id>/status` keyed by `PARLAY_AGENT_ID`. One verb, two homes —
+identical agent code whoever launched it.
 
 ---
 
