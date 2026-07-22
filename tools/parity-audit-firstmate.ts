@@ -51,6 +51,12 @@ const probe = {
   projectSpawn: /--project\b/.test(spawnSrc),
 }
 
+// C2 (away-mode): does the fold doc give unattended sub-supervision a home (§3.6.2)?
+const afkHomeInFold = /3\.6\.2 Unattended/.test(foldDoc)
+// is the Slice 3 unattended/headless supervise mode landed in code yet? (a `supervise`
+// verb honoring a presence flag / afk sink). Not built until Slice 3 → designed-only.
+const afkUnattendedBuilt = probe.verb("supervise") && /PARLAY_AFK|\.afk\b|unattended/i.test(cliCmds)
+
 // ---- open fix tasks (contraction ledger) ---------------------------------
 function openFixTasks(): string {
   try {
@@ -106,7 +112,10 @@ const M: Row[] = [
   { cap: "Durable wake queue", fm: "fm-wake-drain + .wake-queue", parlay: "(rolls into Slice 3 supervise primitive)", verdict: "DEFERRED" },
   { cap: "Worktree-tangle runtime guard", fm: "fm-guard.sh", parlay: "brief assertion ported; runtime alarm NOT", verdict: "MISSING", fix: "C4", note: "upstream guard ≠ runtime backstop" },
   { cap: "Turn-end guard hooks", fm: "fm-turnend-guard.sh", parlay: "deferred w/ harness primitive (§3.4)", verdict: "DEFERRED" },
-  { cap: "Away-mode unattended sub-supervision", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: "— (unaddressed)", verdict: "MISSING", fix: "C2", note: "no home: not in Slice 3 scope, not clearly fm-retained" },
+  // C2 (task-eg75): away-mode home is DERIVED from the fold doc, so removing §3.6.2
+  // reverts this row to MISSING and re-fails integrity — genuine re-verification.
+  // built=probe for the Slice 3 unattended mode LANDED IN CODE (not yet → designed).
+  { cap: "Away-mode unattended sub-supervision", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : "no home: not in Slice 3 scope, not clearly fm-retained" },
   { cap: "Steer agent (captain→crewmate)", fm: "fm-send.sh", parlay: "parlay send/say --agent + monitor", verdict: "COVERED-same", built: probe.verb("send") && probe.verb("say") },
   { cap: "Peek pane for diagnosis", fm: "fm-peek.sh", parlay: "parlay history + herdr agent get", verdict: "COVERED-alternate", built: probe.verb("history") },
 
