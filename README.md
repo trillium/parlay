@@ -1,0 +1,97 @@
+# Parlay
+
+**A tailnet-wide chat channel between you and your background AI agents.**
+
+Parlay is a chat panel + CLI that gives long-running AI agents a per-agent
+conversation channel with the human ("the captain"), durable memory that survives
+context resets, and tooling for spawning and supervising agent work. It's served by
+[Pulse](https://github.com/trillium) on `:31337` and reachable **across your
+[Tailscale](https://tailscale.com) tailnet** — so agents running on one machine are
+reachable from your phone, laptop, or any other device on the tailnet, not just
+`localhost`. The panel injects into any page Pulse serves.
+
+> Status: **alpha**, single-owner. Interfaces move fast.
+
+---
+
+## Why
+
+Background agents (code assistants, watchers, task runners) need a way to reach a
+human that isn't a terminal you have to be sitting in front of. Parlay gives each
+agent its own chat tab, reachable from your phone, with:
+
+- **Per-agent channels, tailnet-wide** — every enrolled agent gets a tab; messages
+  route only to the agent they're addressed to, reachable from any device on your
+  tailnet.
+- **Durable identity + memory** — `identity`, `scratchpad`, and `handoff` persist
+  across restarts, so an agent that resets its context recovers *who it is* and
+  *what it was doing* via the `identity → handoff → scratchpad` chain.
+- **Spawn + supervise** — launch a fresh background agent that auto-enrols in the
+  panel (`parlay-spawn`), and drive event-based follow-ups.
+- **Voice-first** — a compiled phrase engine turns spoken commands into panel
+  actions; agent replies can be read aloud with per-passage playback.
+
+## Layout
+
+A [Bun](https://bun.sh) workspace monorepo:
+
+| Package | What it is |
+|---|---|
+| `packages/client` | The chat panel injected into Pulse pages — tabs, presence, message rendering, TTS/speech playback, annotations. |
+| `packages/server` | The Bun server (runs inside Pulse): chat history, SSE, long-poll, the per-agent relay, upload/link handling. |
+| `packages/cli` | The `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `robots-watch`/`robots-tail`, `doctor`/`health`, and more. |
+| `packages/eval-engine` | A compiled Go (RE2) engine that matches spoken/typed phrases to a closed set of panel actions. |
+
+Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …) and the
+agent skill documenting enrolment.
+
+## Quickstart
+
+```sh
+bun install                 # also wires the git hooks (core.hooksPath tools/hooks)
+```
+
+Parlay is served as a module of Pulse. With Pulse running, the panel is available
+at `http://localhost:31337/chat-app/` on the host — or at the host's tailnet address
+(`http://<machine>.<tailnet>.ts.net:31337/` or its Tailscale IP) from any other
+device on the tailnet. Point the CLI at the server with `PARLAY_SERVER` (defaults to
+the Pulse address in this fleet; set it to the host's tailnet address from a
+different machine).
+
+A few CLI verbs (`parlay help` lists them all):
+
+```sh
+parlay                       # live snapshot: subscribers, agents, last messages
+parlay send --<agent> "hi"   # message an agent's channel
+parlay monitor --agent <id>  # enrol + stream CHAT_MSG lines (agents arm this)
+parlay reply "on it"         # an enrolled agent replies to its own channel
+parlay alert "heads up"      # broadcast (auto-staggers on a large fleet)
+parlay doctor                # this agent's self-diagnosis
+```
+
+Launch a background agent that shows up as a live tab:
+
+```sh
+parlay-spawn code-reviewer "Code Reviewer" "#c084fc" \
+  "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
+```
+
+## Development
+
+```sh
+bun test                     # run the suite
+cd packages/client && bun build.ts   # build + deploy the panel bundle
+```
+
+Repo conventions worth knowing:
+
+- **250-line file limit** (pre-commit) — split a module into a subfolder + barrel
+  index past the limit.
+- **Two version axes** — the repo release `vX.Y.Z` git tag and the panel build
+  `PA_VERSION` (`packages/client/src/version.ts`, auto-bumped per client change).
+- Docs of note: `docs/COMMAND_DESIGN_CONTRACT.md` (the voice engine) and
+  `docs/CLI_VERBS_AND_EVENTS.md` (CLI verb authoring + the event fabric).
+
+## License
+
+See repository. Alpha, single-owner project.
