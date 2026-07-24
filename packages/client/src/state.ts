@@ -73,6 +73,7 @@ export interface Annotation {
   note:        string
   el?:         HTMLElement
   locator?:    string
+  bead?:       string
   attachments?: string[]
 }
 export const annotations: Annotation[] = []
