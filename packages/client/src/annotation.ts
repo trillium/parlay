@@ -139,8 +139,12 @@ export function wireAnnotation(
     if (!annotateTarget) { hidePopup(); return }
     const el = annotateTarget
     const elementText = (el.textContent || el.getAttribute('title') || el.tagName || 'element').trim().slice(0, 80)
+    // Carry source bead id (nearest data-bead ancestor) so agents resolve by lookup, not text-match (task-mkns).
+    const beadEl = el.closest('[data-bead]') as HTMLElement | null
+    const bead = beadEl?.dataset.bead || undefined
     annotations.push({
       elementText, note, el,
+      ...(bead && { bead }),
       ..._popupAttachments.length && { attachments: [..._popupAttachments] }
     })
     addMarker(el, annotations.length)
@@ -219,7 +223,8 @@ export async function sendAnnotations(): Promise<void> {
   if (!annotations.length || !_sendMsg) return
   const page = document.title || location.pathname
   const lines = annotations.map((a, i) => {
-    const text = `${i + 1}. [${a.elementText}]: ${a.note}`
+    const head = a.bead ? `${a.bead} | ${a.elementText}` : a.elementText
+    const text = `${i + 1}. [${head}]: ${a.note}`
     return a.attachments?.length ? `${text}\n   Attachments: ${a.attachments.join(' ')}` : text
   }).join('\n')
   annotations.forEach(a => {
