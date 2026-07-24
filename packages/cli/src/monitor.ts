@@ -21,8 +21,12 @@ export interface MonitorDeps {
 export async function runMonitor(args: string[], deps: MonitorDeps): Promise<void> {
   const { server, exitUsage, die, helpWanted, parseArgs } = deps
   if (helpWanted("monitor", args)) return
-  const { opts } = parseArgs("monitor", args, ["--legacy-poll"], ["--agent"])
+  const { opts } = parseArgs("monitor", args, ["--legacy-poll", "--notify-safe"], ["--agent"])
   const agent = opts["--agent"] as string | undefined
+  // --notify-safe: cap long CHAT_MSG lines so a harness Monitor tool cannot cut
+  // them mid-word silently. See tools/monitor/parlay-monitor.sh for the why.
+  const notifySafe = opts["--notify-safe"] === true
+  const notifyBudget = Number(process.env.PARLAY_NOTIFY_BUDGET) || 400
 
   // Default: relay-backed. `parlay monitor --agent <id>` enrolls with the central
   // relay and execs `tail -F` on the agent's spool — one process per agent at the
@@ -35,7 +39,8 @@ export async function runMonitor(args: string[], deps: MonitorDeps): Promise<voi
     const script = new URL("../../../tools/monitor/parlay-monitor.sh", import.meta.url).pathname
     // Bun.spawn with inherited stdio → the harness Monitor sees CHAT_MSG lines on
     // stdout exactly as before. The wrapper handles enroll + tail -F.
-    const proc = Bun.spawn(["bash", script, "--agent", agent], {
+    const scriptArgs = ["--agent", agent, ...(notifySafe ? ["--notify-safe"] : [])]
+    const proc = Bun.spawn(["bash", script, ...scriptArgs], {
       stdio: ["inherit", "inherit", "inherit"],
       env: { ...process.env, PARLAY_SERVER: server },
     })
@@ -57,7 +62,11 @@ export async function runMonitor(args: string[], deps: MonitorDeps): Promise<voi
       if (msg.id && msg.role && msg.text != null) {
         lastId = msg.id
         const fromSuffix = msg.from ? `|from:${msg.from}` : ""
-        process.stdout.write(`CHAT_MSG|${msg.id}|${msg.role}|${msg.text}${fromSuffix}\n`)
+        let line = `CHAT_MSG|${msg.id}|${msg.role}|${msg.text}${fromSuffix}`
+        if (notifySafe && line.length > notifyBudget) {
+          line = `${line.slice(0, notifyBudget)} ⟪+${line.length - notifyBudget} chars truncated for notification — run: parlay history 30 --full⟫`
+        }
+        process.stdout.write(`${line}\n`)
       }
     } catch {
       await Bun.sleep(3000)
