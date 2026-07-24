@@ -9,34 +9,54 @@
 # A harness Monitor tool runs this and wakes the agent on every CHAT_MSG line.
 #
 # Usage:
-#   parlay-monitor.sh --agent <id>
+#   parlay-monitor.sh --agent <id> [--notify-safe]
+#
+# --notify-safe: cap each emitted CHAT_MSG line to a notification-safe budget
+#   (PARLAY_NOTIFY_BUDGET chars, default 400). WHY: when this stream runs under a
+#   harness Monitor tool, the harness truncates long single-event lines mid-word
+#   for display — so an agent reading a long voice-dictated message only ever sees
+#   the head, cut mid-word, with no signal that content was lost (robots-n6vl).
+#   The RAW spool line is complete; only the harness *display* truncates. In
+#   --notify-safe mode we truncate deterministically at a budget BELOW the harness
+#   cap and append an explicit pointer that preserves the message id and tells the
+#   agent how to fetch the full text — so a truncation is self-describing and
+#   recoverable instead of a silent mid-word cut. Default OFF so raw programmatic
+#   consumers of the stream keep getting complete, unmodified lines.
 #
 # Env:
 #   PARLAY_RELAY_RUNTIME   runtime dir holding relay.sock + <agent>.chan spools
 #                          (default: $TMPDIR/parlay, falling back to /tmp/parlay)
 #   PARLAY_RELAY_SOCK      explicit control-socket path (default: <runtime>/relay.sock)
+#   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
 #
 # Exit codes: 0 (never, tail runs until killed), 2 usage error, 1 relay/enroll error.
 set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: parlay-monitor.sh --agent <id>
+Usage: parlay-monitor.sh --agent <id> [--notify-safe]
 
 Registers <id> with the parlay relay, then streams its channel's CHAT_MSG lines
 to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
 
+  --notify-safe   cap each emitted line to a notification-safe budget and append
+                  a "fetch full text" pointer (harness Monitor tools truncate long
+                  lines mid-word; this makes that recoverable). Default off.
+
 Env:
   PARLAY_RELAY_RUNTIME   runtime dir (default \$TMPDIR/parlay or /tmp/parlay)
   PARLAY_RELAY_SOCK      control socket path (default <runtime>/relay.sock)
+  PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
 EOF
   exit 2
 }
 
 AGENT=""
+NOTIFY_SAFE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent) AGENT="${2:-}"; shift 2 ;;
+    --notify-safe) NOTIFY_SAFE=1; shift ;;
     -h|--help) usage ;;
     *) echo "parlay-monitor: unknown arg: $1" >&2; usage ;;
   esac
@@ -115,11 +135,34 @@ done
 
 echo "parlay-monitor: streaming '$AGENT' from $SPOOL" >&2
 
-# 2. Stream. `exec` replaces this shell with tail so the monitor's footprint is
-#    tail's alone. Flags:
+# 2. Stream. Flags:
 #      -n0  start at end-of-file — no replay of already-consumed spool lines
 #      -F   follow by name; re-open on truncate/rotate/recreate. This is the
 #           "channel re-open after relay restart" correctness requirement: if the
 #           relay is restarted and the spool is recreated, tail -F reattaches
 #           without the monitor needing to restart.
-exec tail -n0 -F "$SPOOL"
+#
+# Default (no --notify-safe): `exec` replaces this shell with tail so the monitor's
+# footprint is tail's alone (~1.2MB) and the raw spool line reaches stdout byte-
+# for-byte. Programmatic consumers depend on that completeness.
+#
+# --notify-safe: pipe tail through awk that caps each over-budget line and appends
+# a self-describing pointer (id survives — it sits in the first ~55 chars). fflush
+# after every line keeps the Monitor tool's per-line event contract intact. This
+# costs one extra awk process; only harness agents that opt in pay it.
+if [ "$NOTIFY_SAFE" = 1 ]; then
+  BUDGET="${PARLAY_NOTIFY_BUDGET:-400}"
+  # No `exec` here: it cannot replace the shell with a pipeline. tail+awk run under
+  # this shell; killing the monitor's process group (as the harness does) reaps both.
+  tail -n0 -F "$SPOOL" | awk -v BUD="$BUDGET" '
+    {
+      if (length($0) > BUD) {
+        printf "%s ⟪+%d chars truncated for notification — run: parlay history 30 --full⟫\n", substr($0, 1, BUD), length($0) - BUD
+      } else {
+        print $0
+      }
+      fflush()
+    }'
+else
+  exec tail -n0 -F "$SPOOL"
+fi
