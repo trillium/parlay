@@ -25,6 +25,7 @@ import {
   cmdStatus,
   cmdSubscribers,
 } from "./commands"
+import { cmdListen } from "./listen"
 import { cmdStatusVerb } from "./commands-status"
 import { cmdNickname } from "./commands-nickname"
 import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
@@ -51,6 +52,8 @@ async function main() {
     case "alert":         return cmdAlert(args)
     case "history":       return cmdHistory(args)
     case "monitor":       return cmdMonitor(args)
+    case "listen":
+    case "agent-up":      return cmdListen(args)
     case "stats":         return cmdStats(args)
     case "doctor":        return cmdDoctor(args)
     case "context-check": return cmdContextCheck(args)
