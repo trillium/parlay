@@ -18,6 +18,32 @@ every branch resolves to the same external PULSE code).
 `packages/server` as code, so CLI functionality is independent of this
 symlink structure.
 
+## `bun test` only works from inside a package directory
+
+There is no root `bunfig.toml`, so running `bun test` from the repo root
+does not preload `@happy-dom/global-registrator` for packages whose tests
+touch `document`/`window` (e.g. `packages/client`, `packages/input`) — those
+tests fail with `ReferenceError: document is not defined` at the root even
+though they pass cleanly run from their own directory (`cd packages/X && bun
+test`). This predates any one package; always run a package's tests from
+inside that package when validating.
+
+## Publishable `@parlay/*` packages (npm scope not yet claimed)
+
+Every package under `packages/` is `private: true` except `packages/input`
+(`@parlay/input`) and `packages/parlay-input` (unscoped `parlay-input`,
+holds the bare name and re-exports `@parlay/input`) — these are scaffolded
+for eventual publishing but have never actually been published, and the
+`@parlay` npm scope itself has not been claimed. Neither `bun build` nor
+`tsc` alone produces a complete publishable output for a TS package here:
+`bun build.ts` emits the JS bundle to `dist/`, and a package-local
+`tsc --emitDeclarationOnly` (via a package-local `tsconfig.json`) emits the
+`.d.ts` — `bun run build` runs both. `packages/server` was evaluated and is
+not reasonably publishable: it's a `bun serve()` application with side
+effects on import (opens a port, touches disk), not an importable library,
+and its source is symlinked into the user's live personal Pulse install
+(see the section above) — it remains `private: true`.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
