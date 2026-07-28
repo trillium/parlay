@@ -285,14 +285,16 @@ STARTUP_PROMPT=$(cat <<EOF
 You are a background agent enrolled in the Pulse/Parlay chat panel at $PARLAY.
 Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
 
-FIRST, before anything else, enroll so the captain can reach you:
-1. Arm a persistent Monitor to receive captain messages on your channel:
-   Monitor({ command: "PARLAY_SERVER=$PARLAY parlay monitor --agent $AGENT_ID", persistent: true })
-2. Post a reply so your tab shows "listening":
-   reply "Ready. Monitor armed, standing by."
-   Your identity is already set (PARLAY_AGENT_ID=$AGENT_ID), so 'reply' routes to YOUR channel — no url, no JSON, no id/name/color. That is the ONLY reply surface you need. (See the pulse-agent skill at ~/.claude/.agents/skills/pulse-agent/SKILL.md for the poll/contract details.)
+FIRST, before anything else, enroll so the captain can reach you — ONE call does the
+whole thing (register + announce + arm the poll loop), safe to re-run on every restart:
+1. Arm a persistent Monitor running 'parlay listen':
+   Monitor({ command: "PARLAY_SERVER=$PARLAY parlay listen --agent $AGENT_ID --name \"$NAME\" --color \"$COLOR\"", persistent: true })
+   This registers you in the agent registry, posts a "listening" announce to your own
+   channel so your tab shows ready, then execs the same poll loop as 'parlay monitor' —
+   no separate 'reply' or registration step needed. Your identity is already set
+   (PARLAY_AGENT_ID=$AGENT_ID). (See the pulse-agent skill at ~/.claude/.agents/skills/pulse-agent/SKILL.md for the poll/contract details.)
 
-3. Load your durable memory (it survives restarts): run 'identity' to read who you are and what you have learned about yourself, and 'scratchpad' to read what you were doing. If your identity shows a "📎 Handoff: handoff-XXX" pointer, run 'handoff show handoff-XXX' for the full state from your previous context. If your context was reset, this chain — identity → handoff → scratchpad — is how you recover; do it before you start.
+2. Load your durable memory (it survives restarts): run 'identity' to read who you are and what you have learned about yourself, and 'scratchpad' to read what you were doing. If your identity shows a "📎 Handoff: handoff-XXX" pointer, run 'handoff show handoff-XXX' for the full state from your previous context. If your context was reset, this chain — identity → handoff → scratchpad — is how you recover; do it before you start.
 
 Your surfaces are dead simple and already keyed to you (PARLAY_AGENT_ID) — no paths, no /tmp, no JSON. All three are thin wrappers over the one parlay tool. Use them religiously:
 - reply '<message>'     — your ONLY reply channel to the captain.
