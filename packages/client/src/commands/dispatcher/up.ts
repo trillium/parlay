@@ -18,6 +18,13 @@ export const postSentAt = new Map<number, number>()
 
 let _settleTimer: ReturnType<typeof setTimeout> | null = null
 
+// Base URL prefixed onto the eval POST. Empty by default — the in-page panel
+// (init.ts) is served BY the parlay server, so a relative '/api/chat/eval' is
+// correct there. External hosts (e.g. herdr-web importing this as a library)
+// run on a different origin and must point this at the running parlay server.
+let _baseUrl = ''
+export function setEvalServerBaseUrl(url: string): void { _baseUrl = url.replace(/\/+$/, '') }
+
 // scheduleEval schedules an eval POST after the voice-settle quiet period. Call
 // on every input event; rapid dictation bursts collapse into ONE evaluation of
 // the STABILIZED text — the server never sees mid-correction text.
@@ -43,7 +50,7 @@ async function postEval(text: string, ctx: EvalCtx, reason: string): Promise<voi
     postSentAt.delete(oldest)
   }
   try {
-    const r = await fetch('/api/chat/eval', {
+    const r = await fetch(`${_baseUrl}/api/chat/eval`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
