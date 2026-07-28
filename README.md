@@ -64,6 +64,7 @@ A few CLI verbs (`parlay help` lists them all):
 parlay                       # live snapshot: subscribers, agents, last messages
 parlay send --<agent> "hi"   # message an agent's channel
 parlay monitor --agent <id>  # enrol + stream CHAT_MSG lines (agents arm this)
+parlay listen --agent <id> --name <name>   # one-call self-enroll: register + announce + monitor
 parlay reply "on it"         # an enrolled agent replies to its own channel
 parlay alert "heads up"      # broadcast (auto-staggers on a large fleet)
 parlay doctor                # this agent's self-diagnosis
