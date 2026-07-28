@@ -40,7 +40,19 @@ await buildOrThrow({
   target: "browser",
 }, "plugins")
 
-console.log("dist/parlay-agent.js + pulse-agent.js + plugins built")
+// index.js — ESM library entry for external host apps (e.g. herdr-web) that
+// import @parlay/client's server-eval input dispatcher instead of embedding
+// the full in-page panel. See src/lib.ts for the exported surface.
+await buildOrThrow({
+  entrypoints: ["./src/lib.ts"],
+  outdir: "./dist",
+  naming: "index.js",
+  format: "esm",
+  minify: false,
+  target: "browser",
+}, "index.js (library)")
+
+console.log("dist/parlay-agent.js + pulse-agent.js + index.js + plugins built")
 
 // Deploy = live upgrade: tell connected panels to reload; each page's SSE
 // reconnect also runs the version handshake, so even missed broadcasts heal.

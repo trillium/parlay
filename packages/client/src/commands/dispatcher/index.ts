@@ -15,5 +15,5 @@
 
 export type { Action, ActionEnvelope, ApplyResult, EvalCtx } from './types'
 export { telemetry, renderOverlay } from './telemetry'
-export { bumpInputVersion, currentInputVersion, scheduleEval } from './up'
+export { bumpInputVersion, currentInputVersion, scheduleEval, setEvalServerBaseUrl } from './up'
 export { setDispatcherContext, applyEnvelope } from './apply'
