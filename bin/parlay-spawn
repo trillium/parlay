@@ -288,7 +288,7 @@ Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
 FIRST, before anything else, enroll so the captain can reach you — ONE call does the
 whole thing (register + announce + arm the poll loop), safe to re-run on every restart:
 1. Arm a persistent Monitor running 'parlay listen':
-   Monitor({ command: "PARLAY_SERVER=$PARLAY parlay listen --agent $AGENT_ID --name $NAME", persistent: true })
+   Monitor({ command: "PARLAY_SERVER=$PARLAY parlay listen --agent $AGENT_ID --name \"$NAME\" --color \"$COLOR\"", persistent: true })
    This registers you in the agent registry, posts a "listening" announce to your own
    channel so your tab shows ready, then execs the same poll loop as 'parlay monitor' —
    no separate 'reply' or registration step needed. Your identity is already set

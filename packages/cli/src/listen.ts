@@ -43,14 +43,16 @@ export async function runListen(args: string[], deps: ListenDeps): Promise<void>
 
   // 1. add-self-to-agent-registry — identity + capabilities.
   process.stderr.write(`parlay listen: registering '${agent}' …\n`)
-  await postJSON<{ ok?: boolean; error?: string }>("/api/chat/register-agent", {
+  const registerResult = await postJSON<{ ok?: boolean; error?: string }>("/api/chat/register-agent", {
     id: agent, name, color, ...(caps !== undefined ? { caps } : {}),
   })
+  if (registerResult.error) return die(`parlay listen: register-agent failed: ${registerResult.error}`)
 
   // 2. Announce presence on the agent's own channel.
-  await postJSON<{ ok?: boolean; error?: string }>("/api/chat/reply", {
+  const replyResult = await postJSON<{ ok?: boolean; error?: string }>("/api/chat/reply", {
     text: `listening — monitor armed, ready for messages.`, agent,
   })
+  if (replyResult.error) return die(`parlay listen: reply failed: ${replyResult.error}`)
   process.stderr.write(`parlay listen: announced — arming monitor …\n`)
 
   // 3. exec into the poll loop. Reuses runMonitor verbatim — same mechanism as
