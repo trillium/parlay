@@ -26,7 +26,7 @@ const STYLE_ID = 'pa-annotate-menu-style'
 // Injected by annotation.ts: exit annotate mode when user chooses Close.
 let _exit: (() => void) | null = null
 export function wireAnnotateMenu(exit?: () => void): void {
-  _exit = exit
+  _exit = exit ?? null
 }
 
 let _styleInjected = false

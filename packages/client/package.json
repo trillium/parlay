@@ -2,6 +2,16 @@
   "name": "@parlay/client",
   "version": "0.1.1",
   "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./src/lib.ts",
+  "exports": {
+    ".": {
+      "types": "./src/lib.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "bun build.ts",
     "test": "bun test",
