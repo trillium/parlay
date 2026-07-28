@@ -30,6 +30,7 @@ import { cmdStatusVerb } from "./commands-status"
 import { cmdNickname } from "./commands-nickname"
 import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
 import { cmdVariant } from "./commands-variant"
+import { cmdAgentDown } from "./commands-agent-down"
 import { cmdGuard } from "./commands-guard"
 import { cmdDoctor, cmdHealth } from "./commands-doctor"
 import { cmdContextCheck } from "./commands-context-check"
@@ -43,6 +44,7 @@ async function main() {
     case "status":        return cmdStatusVerb(args)  // fold §3.6 keyed status verb (was a redundant alias of bare `parlay`; retired → task-ve2v)
     case "subscribers":   return cmdSubscribers(args)
     case "agents":        return cmdAgents(args)
+    case "agent-down":    return cmdAgentDown(args)
     case "nickname":      return cmdNickname(args)
     case "send":          return cmdSend(args)
     case "say":
