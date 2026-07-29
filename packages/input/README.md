@@ -87,7 +87,11 @@ than applying it when:
   since this action was computed → **stale**, dropped, triggers a resync.
 - `seq` skips ahead of the expected next value — an SSE event was dropped in
   transit → triggers a resync.
-- an action's age exceeds `ACTION_TTL_MS` (1500ms) at receipt → **expired**.
+
+`types.ts` also declares an `ACTION_TTL_MS` (1500ms) constant and a
+`rejected-expired` `ApplyResult` variant for action-age expiry, but
+`applyEnvelope()` does not currently check action age anywhere — TTL
+rejection is declared in the type, not enforced by the dispatcher.
 
 A "resync" re-POSTs the current buffer to re-anchor the server's view of state.
 This staleness handling is the part most likely to be skipped by a naive
@@ -118,7 +122,7 @@ To wire a new input element into the real system, an implementation needs to:
    `/api/chat/eval` with the current buffer + cursor + device/stream context.
 4. **On every inbound `input_action` SSE event**: call `applyEnvelope(env, resync)`
    and apply whichever verbs it returns to the DOM element — do not skip the
-   staleness/seq/TTL checks described above.
+   staleness/seq checks described above.
 5. **Wire draft sync** (optional but expected by the reference UI) — `PUT
    /api/chat/draft` debounced on edit, `GET /api/chat/draft` on load, and
    handle the `draft` SSE event for cross-device sync.
@@ -127,7 +131,7 @@ To wire a new input element into the real system, an implementation needs to:
    sends a message on its own.
 
 This is meaningfully richer than a generic "send value, get action back"
-wrapper: the version/seq/TTL staleness protocol and the single-shared-stream
+wrapper: the version/seq staleness protocol and the single-shared-stream
 multiplexing are load-bearing, not optional polish. A future
 `@parlay/input` v2 needs to implement a real subset of this contract — likely
 exposing the debounce/version/resync machinery as configurable hooks — rather
