@@ -41,6 +41,8 @@ A [Bun](https://bun.sh) workspace monorepo:
 | `packages/server` | The Bun server (runs inside Pulse): chat history, SSE, long-poll, the per-agent relay, upload/link handling. |
 | `packages/cli` | The `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `robots-watch`/`robots-tail`, `doctor`/`health`, and more. |
 | `packages/eval-engine` | A compiled Go (RE2) engine that matches spoken/typed phrases to a closed set of panel actions. |
+| `packages/input` | `@parlay/input` — a framework-agnostic DOM input wrapper for wiring a UI input to a parlay server. Publishable, scaffolded but not yet published. |
+| `packages/parlay-input` | Unscoped `parlay-input` name, held as a re-export pointer to `@parlay/input`. Publishable, scaffolded but not yet published. |
 
 Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …) and the
 agent skill documenting enrolment.

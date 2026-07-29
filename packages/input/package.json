@@ -1,0 +1,35 @@
+{
+  "name": "@parlay/input",
+  "version": "0.1.0",
+  "description": "Framework-agnostic DOM input wrapper for wiring a UI input to a parlay server",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun build.ts && tsc --emitDeclarationOnly",
+    "test": "bun test",
+    "dev": "bun --watch build.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trillium/parlay.git",
+    "directory": "packages/input"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20.10.6",
+    "typescript": "^5.7.0"
+  }
+}
