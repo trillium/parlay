@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# parlay-gate-tag — auto-create the semver git tag for a feature-scope merge
+# (task-prk). Thin wrapper over tools/gate-tag/gate-tag.ts so the merge gate can
+# run one command. Dry-run by default; the gate runs it with --apply --push as its
+# final merge step. See docs/VERSIONING.md.
+#
+#   parlay-gate-tag                 dry-run: print the bump + the tag it would create
+#   parlay-gate-tag --apply         create the annotated tag locally
+#   parlay-gate-tag --apply --push  create + push origin <tag>  (the gate's step)
+exec bun "$(git rev-parse --show-toplevel)/tools/gate-tag/gate-tag.ts" "$@"
