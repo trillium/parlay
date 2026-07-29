@@ -3,6 +3,12 @@
  * parlay protocol. Wires any DOM element (input, textarea, contenteditable,
  * ...) to a parlay server: outbound value changes are sent to the server,
  * and the server can push `action` callbacks back to the caller.
+ *
+ * NOTE: the transport below (WebSocket/POST to `/api/input`) does not match
+ * parlay's real server protocol — that endpoint doesn't exist. The real
+ * system is REST (`POST /api/chat/eval`) + a single shared SSE stream
+ * (`GET /api/chat/events`) with a versioned staleness/resync contract. See
+ * README.md for the full protocol and what a real implementation needs.
  */
 
 /** An action pushed from the parlay server back to the caller. */
