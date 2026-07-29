@@ -1,3 +1,4 @@
+import '../happydom' // registers DOM before the imports below; CWD-independent
 import { test, expect, beforeEach } from 'bun:test'
 import { openAnnotateMenu, closeAnnotateMenu, wireAnnotateMenu } from './annotate-menu'
 import { currentSendTarget, setSendTarget, _resetChannelPinForTests } from './channel-pin'
