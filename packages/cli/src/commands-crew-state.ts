@@ -3,12 +3,12 @@
 // Reconciles an agent's last keyed status line against parlay's oracle:
 // worktree/session gone, run attribution, herdr tab liveness, subscriber presence.
 // Outputs: <state> · source: <src> · <detail>
-// States: working | done | blocked | needs-decision | paused | failed | unknown
+// States: working | done | blocked | needs-decision | paused | failed | resolved | captain-held | unknown
 
 import { existsSync, readFileSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
-import { SERVER, EXIT_USAGE } from "./config"
+import { serverUrl, EXIT_USAGE } from "./config"
 import { die } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
@@ -18,7 +18,7 @@ import { statusSink } from "./commands-status"
 // Fetch that reports failure instead of exiting (non-fatal).
 async function tryJSON<T>(path: string): Promise<{ ok: true; data: T } | { ok: false; err: string }> {
   try {
-    const res = await fetch(`${SERVER}${path}`, { signal: AbortSignal.timeout(3_000) })
+    const res = await fetch(`${serverUrl()}${path}`, { signal: AbortSignal.timeout(3_000) })
     if (!res.ok) return { ok: false, err: `${res.status} ${res.statusText}` }
     return { ok: true, data: (await res.json()) as T }
   } catch (err) {
@@ -64,7 +64,7 @@ function readLastStatus(
 // Check if agent is subscribed/enrolled with the relay.
 async function isAgentSubscribed(agentId: string): Promise<boolean> {
   try {
-    const subs = await tryJSON<SubscribersInfo>(SERVER, "/api/chat/subscribers")
+    const subs = await tryJSON<SubscribersInfo>(`/api/chat/subscribers`)
     if (!subs.ok) return false
     const agents = subs.data.registered?.agents ?? []
     return agents.some((a) => a.id === agentId)

@@ -3,22 +3,22 @@
 // A wake-on-actionable-status loop that ports fm-watch.sh's
 // absorb-when-provably-working logic. Terminal verbs (done, needs-decision,
 // blocked, failed) wake immediately and escalate to the captain. Routine verbs
-// (working, paused, resolved) are absorbed and only escalate if the agent is
+// (working, paused, resolved, captain-held) are absorbed and only escalate if the agent is
 // provably not working (stale pane + wedge logic).
 //
 // Unattended (headless) mode per §3.6.2: presence gate (env flag),
-// enqueue-before-suppress durable queue, batch window, max-defer bound,
-// in-band captain-return sentinel.
+// enqueue-before-suppress durable queue (mechanism skeleton; batch window + max-defer
+// daemon deferred to separate pass), in-band captain-return sentinel.
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "fs" // readFileSync used by other funcs
 import { homedir } from "os"
 import { join } from "path"
-import { SERVER, EXIT_USAGE } from "./config"
+import { serverUrl, EXIT_USAGE } from "./config"
 import { die } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
 import { statusSink } from "./commands-status"
-import { readUnattendedQueue, enqueueUnattended, drainUnattendedQueue } from "./unattended-queue"
+import { readUnattendedQueue, enqueueUnattended, drainUnattendedQueue, clearUnattendedQueue } from "./unattended-queue"
 
 // Verb classification: terminal (captain-relevant) vs routine (absorbed).
 const TERMINAL_VERBS = new Set(["done", "needs-decision", "blocked", "failed"])
@@ -54,15 +54,15 @@ const MAX_DEFER_SECS = 300
 // Read the suppression marker file to detect which status lines have been seen.
 function readSeenMarker(agentId: string): { lastLine: number; lastHash: string } {
   const markerFile = join(homedir(), ".parlay", "agents", agentId, ".supervise-marker")
-  if (!existsSync(markerFile)) return { lastLine: 0, lastHash: "" }
+  if (!existsSync(markerFile)) return { lastLine: -1, lastHash: "" }
   try {
     const content = readFileSync(markerFile, "utf-8").trim()
     const lines = content.split("\n")
     const lastEntry = lines[lines.length - 1] || ""
     const [lineStr, hash] = lastEntry.split("|")
-    return { lastLine: parseInt(lineStr, 10) || 0, lastHash: hash || "" }
+    return { lastLine: parseInt(lineStr, 10) || -1, lastHash: hash || "" }
   } catch {
-    return { lastLine: 0, lastHash: "" }
+    return { lastLine: -1, lastHash: "" }
   }
 }
 
@@ -92,22 +92,22 @@ function readAllStatusLines(statusFile: string): string[] {
 }
 
 // Determine if a new actionable status line was recorded since last supervision run.
-// Returns the actionable line (if any) that should wake the supervisor.
-function findNewActionable(agentId: string, statusFile: string): { line: string; parsed: { verb: string; key?: string; note: string } } | null {
+// Returns the actionable line (if any) that should wake the supervisor, along with its index.
+function findNewActionable(agentId: string, statusFile: string): { line: string; lineIndex: number; parsed: { verb: string; key?: string; note: string } } | null {
   const allLines = readAllStatusLines(statusFile)
   if (allLines.length === 0) return null
 
   const seen = readSeenMarker(agentId)
 
   // Find the first line after the seen marker that is terminal (actionable).
-  for (let i = seen.lastLine; i < allLines.length; i++) {
+  for (let i = seen.lastLine + 1; i < allLines.length; i++) {
     const line = allLines[i]
     const parsed = parseStatusLine(line)
     if (!parsed) continue
 
     if (isTerminal(parsed.verb)) {
       // Terminal verb: always actionable.
-      return { line, parsed }
+      return { line, lineIndex: i, parsed }
     }
 
     // Routine verb: check if we've seen this exact hash before (within a window).
@@ -128,9 +128,9 @@ function findNewActionable(agentId: string, statusFile: string): { line: string;
 }
 
 // Post a message to the relay on behalf of the agent (if supervising).
-async function postToRelay(agentId: string, text: string): Promise<void> {
+async function postToRelay(agentId: string, text: string): Promise<boolean> {
   try {
-    const res = await fetch(`${SERVER}/api/chat/message`, {
+    const res = await fetch(`${serverUrl()}/api/chat/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -141,9 +141,12 @@ async function postToRelay(agentId: string, text: string): Promise<void> {
     })
     if (!res.ok) {
       process.stderr.write(`warn: failed to post to relay — ${res.status} ${res.statusText}\n`)
+      return false
     }
+    return true
   } catch (err) {
     process.stderr.write(`warn: failed to post to relay — ${err}\n`)
+    return false
   }
 }
 
@@ -176,7 +179,12 @@ export async function cmdSupervise(args: string[]) {
       .map((e) => `${e.verb}${e.detail ? ": " + e.detail : ""}`)
       .join("; ")
     const message = `${DAEMON_MARKER}crew: ${agentId} away-mode digest — ${digest}`
-    await postToRelay(agentId, message)
+    const posted = await postToRelay(agentId, message)
+    if (!posted) {
+      process.stderr.write(`error: failed to deliver buffered events; queue retained\n`)
+      return
+    }
+    clearUnattendedQueue(agentId)
     console.log(`drained ${buffered.length} buffered event(s) for ${agentId}`)
     return
   }
@@ -202,6 +210,9 @@ export async function cmdSupervise(args: string[]) {
     process.stderr.write(
       `supervise ${agentId}: unattended mode, queued ${parsed.verb}${detail}\n`
     )
+    // Mark this line as seen to prevent duplicate enqueueing on next run.
+    const lineHash = hashLine(actionable.line)
+    writeSeenMarker(agentId, actionable.lineIndex, lineHash)
     // TODO: implement batch window + max-defer daemon in a separate pass
     // (this is the scalar/policy side; the mechanism skeleton is here)
     return
@@ -209,10 +220,12 @@ export async function cmdSupervise(args: string[]) {
 
   // Attended mode: wake immediately with the actionable state.
   const message = `${DAEMON_MARKER}crew: ${agentId} is ${parsed.verb}${detail}`
-  await postToRelay(agentId, message)
+  const posted = await postToRelay(agentId, message)
   console.log(`supervisor woken: ${agentId} ${parsed.verb}${detail}`)
 
-  // Mark this line as seen (only after successfully posting).
-  const lineHash = hashLine(actionable.line)
-  writeSeenMarker(agentId, readAllStatusLines(statusFile).length - 1, lineHash)
+  // Mark this line as seen only after successfully posting (prevent event loss on relay failure).
+  if (posted) {
+    const lineHash = hashLine(actionable.line)
+    writeSeenMarker(agentId, actionable.lineIndex, lineHash)
+  }
 }
