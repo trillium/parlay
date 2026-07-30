@@ -92,8 +92,8 @@ function readAllStatusLines(statusFile: string): string[] {
 }
 
 // Determine if a new actionable status line was recorded since last supervision run.
-// Returns the actionable line (if any) that should wake the supervisor.
-function findNewActionable(agentId: string, statusFile: string): { line: string; parsed: { verb: string; key?: string; note: string } } | null {
+// Returns the actionable line (if any) that should wake the supervisor, along with its index.
+function findNewActionable(agentId: string, statusFile: string): { line: string; lineIndex: number; parsed: { verb: string; key?: string; note: string } } | null {
   const allLines = readAllStatusLines(statusFile)
   if (allLines.length === 0) return null
 
@@ -107,7 +107,7 @@ function findNewActionable(agentId: string, statusFile: string): { line: string;
 
     if (isTerminal(parsed.verb)) {
       // Terminal verb: always actionable.
-      return { line, parsed }
+      return { line, lineIndex: i, parsed }
     }
 
     // Routine verb: check if we've seen this exact hash before (within a window).
@@ -204,7 +204,7 @@ export async function cmdSupervise(args: string[]) {
     )
     // Mark this line as seen to prevent duplicate enqueueing on next run.
     const lineHash = hashLine(actionable.line)
-    writeSeenMarker(agentId, readAllStatusLines(statusFile).length - 1, lineHash)
+    writeSeenMarker(agentId, actionable.lineIndex, lineHash)
     // TODO: implement batch window + max-defer daemon in a separate pass
     // (this is the scalar/policy side; the mechanism skeleton is here)
     return
@@ -217,5 +217,5 @@ export async function cmdSupervise(args: string[]) {
 
   // Mark this line as seen (only after successfully posting).
   const lineHash = hashLine(actionable.line)
-  writeSeenMarker(agentId, readAllStatusLines(statusFile).length - 1, lineHash)
+  writeSeenMarker(agentId, actionable.lineIndex, lineHash)
 }
