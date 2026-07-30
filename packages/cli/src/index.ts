@@ -38,6 +38,7 @@ import { cmdRobotsWatch } from "./commands-robots-watch"
 import { cmdRobotsTail } from "./commands-robots-watch/tail"
 import { cmdCrewState } from "./commands-crew-state"
 import { cmdSupervise } from "./commands-supervise"
+import { cmdTeardown } from "./commands-teardown"
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
@@ -69,6 +70,7 @@ async function main() {
     case "guard":         return cmdGuard(args)
     case "crew-state":    return cmdCrewState(args)
     case "supervise":     return cmdSupervise(args)
+    case "teardown":      return cmdTeardown(args)
     case "lavish-import": return cmdLavishImport(args)
     case "help":
     case "--help":
