@@ -3,7 +3,7 @@
 // Reconciles an agent's last keyed status line against parlay's oracle:
 // worktree/session gone, run attribution, herdr tab liveness, subscriber presence.
 // Outputs: <state> · source: <src> · <detail>
-// States: working | done | blocked | needs-decision | paused | failed | unknown
+// States: working | done | blocked | needs-decision | paused | failed | resolved | captain-held | unknown
 
 import { existsSync, readFileSync } from "fs"
 import { homedir } from "os"

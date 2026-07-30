@@ -3,12 +3,12 @@
 // A wake-on-actionable-status loop that ports fm-watch.sh's
 // absorb-when-provably-working logic. Terminal verbs (done, needs-decision,
 // blocked, failed) wake immediately and escalate to the captain. Routine verbs
-// (working, paused, resolved) are absorbed and only escalate if the agent is
+// (working, paused, resolved, captain-held) are absorbed and only escalate if the agent is
 // provably not working (stale pane + wedge logic).
 //
 // Unattended (headless) mode per §3.6.2: presence gate (env flag),
-// enqueue-before-suppress durable queue, batch window, max-defer bound,
-// in-band captain-return sentinel.
+// enqueue-before-suppress durable queue (mechanism skeleton; batch window + max-defer
+// daemon deferred to separate pass), in-band captain-return sentinel.
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "fs" // readFileSync used by other funcs
 import { homedir } from "os"
