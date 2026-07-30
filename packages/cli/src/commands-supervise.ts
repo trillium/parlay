@@ -179,7 +179,11 @@ export async function cmdSupervise(args: string[]) {
       .map((e) => `${e.verb}${e.detail ? ": " + e.detail : ""}`)
       .join("; ")
     const message = `${DAEMON_MARKER}crew: ${agentId} away-mode digest — ${digest}`
-    await postToRelay(agentId, message)
+    const posted = await postToRelay(agentId, message)
+    if (!posted) {
+      process.stderr.write(`error: failed to deliver buffered events; queue retained\n`)
+      return
+    }
     console.log(`drained ${buffered.length} buffered event(s) for ${agentId}`)
     return
   }
