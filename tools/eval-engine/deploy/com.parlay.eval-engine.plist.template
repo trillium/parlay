@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for the Parlay eval-engine (com.parlay.eval-engine).
+
+  This is a TEMPLATE. install.sh substitutes the __TOKENS__ with resolved
+  absolute paths and writes the result to
+    ~/Library/LaunchAgents/com.parlay.eval-engine.plist
+  because launchd plists cannot reference $HOME or expand env vars in paths.
+
+  WHY THIS EXISTS: the eval-engine is the compiled Go server (packages/eval-engine)
+  that computes ALL voice-command actions for the Parlay chat panel. In the pure
+  server-side-eval model the client does NO local matching — so if the engine is
+  down, EVERY phone voice command silently fails (submit "bravely"/"lap", tab
+  switches, clear, stop-speech, …). The relay already runs supervised under
+  com.parlay.relay; the engine did NOT, so an unsupervised `nohup` process died on
+  a reboot/logout and took phone voice commands down for days before anyone
+  noticed (robots-t9f). KeepAlive fixes that.
+
+  RunAtLoad  -> starts at login.
+  KeepAlive  -> launchd restarts it on any exit (crash or kill), so the engine is
+                always available for the relay's /api/chat/eval up-channel.
+
+  It execs the checkout binary in place (ProgramArguments points at the absolute
+  binary path). Unlike the relay — which copies its binary to a stable support
+  dir — the engine is left in the checkout because (a) this machine already
+  couples to the checkout via com.parlay.bundle-rebuild, and (b) the engine reads
+  an optional `commands.json` sitting NEXT TO the binary (os.Executable dir) for
+  hot-reloadable command customization; keeping the binary in the checkout keeps
+  that beside-binary manifest feature working exactly as it does interactively.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__ENGINE_BIN__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__ENGINE_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PARLAY_EVAL_ADDR</key>
+    <string>__EVAL_ADDR__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- If the engine ever crash-loops on startup, back off instead of spinning. -->
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__OUT_LOG__</string>
+
+  <key>StandardErrorPath</key>
+  <string>__ERR_LOG__</string>
+</dict>
+</plist>

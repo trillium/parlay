@@ -23,7 +23,17 @@ export const DEFAULT_HANDOFF_STORE = "handoff"
 const OPEN_STATUSES = "open,in_progress,blocked"
 
 // One handoff row as returned by the store's --json output. Only the fields we read.
-type HandoffRow = { id?: unknown; status?: unknown; assignee?: unknown; created?: unknown }
+// The bd/handoff store emits `created_at` (ISO8601); `created` is kept as a legacy
+// alias so older stores and hand-built test rows still resolve. Reading only `created`
+// was robots-qkr: the real field is `created_at`, so age was ALWAYS unknown and every
+// inherited handoff misfired the aggressive create→submit nag.
+type HandoffRow = {
+  id?: unknown
+  status?: unknown
+  assignee?: unknown
+  created_at?: unknown
+  created?: unknown
+}
 
 function runStore(store: string, args: string[]): HandoffRow[] | undefined {
   // Pass env explicitly so command resolution honors the live process.env.PATH
@@ -102,14 +112,21 @@ function parseCreatedMs(created: unknown): number | undefined {
 // Primary signal: `sessionStartedAt` (epoch ms, from ~/.parlay/agents/<id>/session-start
 // written by parlay-spawn on every new spawn). Fallback: row.created older than 24h.
 function isInherited(row: HandoffRow, sessionStartedAt?: number): boolean {
-  const createdMs = parseCreatedMs(row.created)
+  // Prefer the store's real `created_at`; fall back to the legacy `created` alias.
+  const createdMs = parseCreatedMs(row.created_at ?? row.created)
   if (sessionStartedAt !== undefined && createdMs !== undefined) {
     return createdMs < sessionStartedAt
   }
   if (createdMs !== undefined) {
     return Date.now() - createdMs > INHERITED_AGE_MS
   }
-  return false  // unknown age → assume current-session (conservative)
+  // Unknown age → treat as inherited (robots-qkr). The two warnings are asymmetric:
+  // the "current-session" branch urges `identity --submit`, which RESETS context and
+  // (on a handoff this agent did not create) corrupts its identity pointer; the
+  // "inherited" branch only points to the non-destructive `--dismiss-handoff`. When we
+  // cannot prove the handoff belongs to THIS session, the safe default is the gentle,
+  // reversible one — never push a destructive reset on an unprovable handoff.
+  return true
 }
 
 // Detect a handoff that was created but NOT yet submitted — the exact hazard state the

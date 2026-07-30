@@ -24,7 +24,9 @@
 #     "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
 #
 # Env:
-#   PARLAY_SERVER   Parlay/Pulse base URL (default http://localhost:31337)
+#   PARLAY_SERVER                     Parlay/Pulse base URL (default http://localhost:31337)
+#   PARLAY_SPAWN_NO_WATCHDOG          1 disables the post-launch liveness watchdog (see step 6 below)
+#   PARLAY_SPAWN_LIVENESS_TIMEOUT_MS  watchdog's "did the first turn fire" window (default 60000)
 
 set -euo pipefail
 
@@ -371,6 +373,42 @@ fi
 # re-registering here without --ephemeral would strip that marker, so skip it.
 if [ "$EPHEMERAL" -eq 0 ]; then
   identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" ${MODEL:+--model "$MODEL"} >/dev/null 2>&1 || true
+fi
+
+# 6. Post-launch liveness watchdog (robots-3c0). The charter is passed as
+#    claude's initial prompt arg (exec claude ... "$PARLAY_SPAWN_PROMPT"), which
+#    should auto-run the first turn — but intermittently that turn never fires
+#    (a boot race, or a rendered trust dialog swallowing the first keystrokes)
+#    and the agent sits idle at an empty composer, silently doing nothing until a
+#    supervisor happens to peek. Confirm it goes 'working' within a generous
+#    window; if it never does, re-send the charter and verify the send lands.
+#    Backgrounded + disowned so batch spawns keep their fast return. The 60s
+#    default is generous on purpose: a real first turn (enroll + arm monitor +
+#    reply + begin the task) runs well past it, so a working agent is observed
+#    long before the timeout and this never nudges it. Disable with
+#    PARLAY_SPAWN_NO_WATCHDOG=1; tune with PARLAY_SPAWN_LIVENESS_TIMEOUT_MS.
+LIVENESS_TIMEOUT_MS="${PARLAY_SPAWN_LIVENESS_TIMEOUT_MS:-60000}"
+if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && command -v herdr >/dev/null 2>&1; then
+  WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-watchdog.log"
+  (
+    # `agent wait` returns 0 as soon as the agent is observed 'working' — the
+    # normal auto-start path exits here having done nothing.
+    if herdr agent wait "$AGENT_ID" --status working --timeout "$LIVENESS_TIMEOUT_MS" >/dev/null 2>&1; then
+      exit 0
+    fi
+    echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: initial turn never fired within ${LIVENESS_TIMEOUT_MS}ms — re-sending charter." >&2
+    # A never-started agent has done no work, so re-sending the charter kicks it
+    # off without duplicating anything. `agent send` writes literal text with NO
+    # Enter, so verify-send confirms the submission actually landed (retrying the
+    # Enter once) rather than leaving the charter staged in the composer.
+    herdr agent send "$AGENT_ID" "$STARTUP_PROMPT" >/dev/null 2>&1 || true
+    if command -v verify-send >/dev/null 2>&1; then
+      verify-send "$AGENT_ID" --timeout 30 --quiet \
+        || echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: nudge did not confirm landing — inspect the tab." >&2
+    fi
+  ) </dev/null >>"$WATCHDOG_LOG" 2>&1 &
+  disown 2>/dev/null || true
+  echo "parlay-spawn: liveness watchdog armed (${LIVENESS_TIMEOUT_MS}ms → nudge if idle); log: $WATCHDOG_LOG" >&2
 fi
 
 echo "parlay-spawn: done. Agent '$AGENT_ID' registered; terminal launched." >&2
