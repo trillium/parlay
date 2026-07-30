@@ -15,13 +15,13 @@ is the few lines of enroll + spool-path resolution that correctness demands.
 ## Run
 
 ```sh
-./parlay-monitor.sh --agent main-agent
+./parlay-monitor.sh --agent main-agent [--notify-safe]
 ```
 
 Or through the CLI (the default `parlay monitor` path now routes here):
 
 ```sh
-parlay monitor --agent main-agent
+parlay monitor --agent main-agent [--notify-safe]
 ```
 
 The harness enrolls it exactly as before:
@@ -41,6 +41,13 @@ Monitor({ command: "parlay monitor --agent <id>", persistent: true })
    - `-F` follows by name and **re-opens on truncate/rotate/recreate**. This is
      the "channel re-open after relay restart" guarantee: restart the relay, the
      spool is recreated, `tail -F` reattaches without restarting the monitor.
+   - With `--notify-safe`, `tail -F` is piped through an `awk` that caps each
+     over-budget line (`PARLAY_NOTIFY_BUDGET`, default 400 chars) and appends a
+     "fetch full text" pointer, so `exec` can't be used (a pipeline can't
+     replace the shell) — killing the monitor's process group still reaps both.
+     Harness Monitor tools truncate long single-event lines mid-word for
+     display; this makes that recoverable instead of silent. Off by default so
+     raw programmatic consumers keep getting complete, unmodified lines.
 
 ## Env
 
@@ -48,6 +55,7 @@ Monitor({ command: "parlay monitor --agent <id>", persistent: true })
 |-----|---------|---------|
 | `PARLAY_RELAY_RUNTIME` | `$TMPDIR/parlay` (or `/tmp/parlay`) | runtime dir with `relay.sock` + `<agent>.chan` |
 | `PARLAY_RELAY_SOCK`    | `<runtime>/relay.sock` | explicit control-socket path |
+| `PARLAY_NOTIFY_BUDGET` | `400` | `--notify-safe` per-line char budget before truncating |
 
 ## Failure modes
 
