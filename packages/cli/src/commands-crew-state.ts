@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
-import { SERVER, EXIT_USAGE } from "./config"
+import { serverUrl, EXIT_USAGE } from "./config"
 import { die } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
@@ -18,7 +18,7 @@ import { statusSink } from "./commands-status"
 // Fetch that reports failure instead of exiting (non-fatal).
 async function tryJSON<T>(path: string): Promise<{ ok: true; data: T } | { ok: false; err: string }> {
   try {
-    const res = await fetch(`${SERVER}${path}`, { signal: AbortSignal.timeout(3_000) })
+    const res = await fetch(`${serverUrl()}${path}`, { signal: AbortSignal.timeout(3_000) })
     if (!res.ok) return { ok: false, err: `${res.status} ${res.statusText}` }
     return { ok: true, data: (await res.json()) as T }
   } catch (err) {

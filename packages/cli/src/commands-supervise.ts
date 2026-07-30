@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "fs" // readFileSync used by other funcs
 import { homedir } from "os"
 import { join } from "path"
-import { SERVER, EXIT_USAGE } from "./config"
+import { serverUrl, EXIT_USAGE } from "./config"
 import { die } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
@@ -130,7 +130,7 @@ function findNewActionable(agentId: string, statusFile: string): { line: string;
 // Post a message to the relay on behalf of the agent (if supervising).
 async function postToRelay(agentId: string, text: string): Promise<boolean> {
   try {
-    const res = await fetch(`${SERVER}/api/chat/message`, {
+    const res = await fetch(`${serverUrl()}/api/chat/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
