@@ -64,7 +64,7 @@ function readLastStatus(
 // Check if agent is subscribed/enrolled with the relay.
 async function isAgentSubscribed(agentId: string): Promise<boolean> {
   try {
-    const subs = await tryJSON<SubscribersInfo>(SERVER, "/api/chat/subscribers")
+    const subs = await tryJSON<SubscribersInfo>(`${SERVER}/api/chat/subscribers`)
     if (!subs.ok) return false
     const agents = subs.data.registered?.agents ?? []
     return agents.some((a) => a.id === agentId)

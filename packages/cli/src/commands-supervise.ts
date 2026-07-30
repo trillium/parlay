@@ -202,6 +202,9 @@ export async function cmdSupervise(args: string[]) {
     process.stderr.write(
       `supervise ${agentId}: unattended mode, queued ${parsed.verb}${detail}\n`
     )
+    // Mark this line as seen to prevent duplicate enqueueing on next run.
+    const lineHash = hashLine(actionable.line)
+    writeSeenMarker(agentId, readAllStatusLines(statusFile).length - 1, lineHash)
     // TODO: implement batch window + max-defer daemon in a separate pass
     // (this is the scalar/policy side; the mechanism skeleton is here)
     return

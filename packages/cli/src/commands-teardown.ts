@@ -105,15 +105,11 @@ export async function cmdTeardown(args: string[]) {
 
   // If the agent has no worktree, it's not stranding work. Just deregister and cleanup.
   if (!worktree) {
-    try {
-      await fetch(`http://localhost:4242/api/chat/unregister`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: agentId }),
-      }).catch(() => {})
-    } catch {
-      // Best-effort.
-    }
+    await fetch(`http://localhost:4242/api/chat/unregister`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: agentId }),
+    }).catch(() => {})
     rmSync(idHome, { recursive: true, force: true })
     console.log(`agent ${agentId} torn down (no worktree)`)
     return
@@ -122,15 +118,11 @@ export async function cmdTeardown(args: string[]) {
   // Agent has a worktree — check for unlanded work.
   if (!existsSync(worktree)) {
     // Worktree already gone (stale reference).
-    try {
-      await fetch(`http://localhost:4242/api/chat/unregister`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: agentId }),
-      }).catch(() => {})
-    } catch {
-      // Best-effort.
-    }
+    await fetch(`http://localhost:4242/api/chat/unregister`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: agentId }),
+    }).catch(() => {})
     rmSync(idHome, { recursive: true, force: true })
     console.log(`agent ${agentId} torn down (worktree already gone)`)
     return
@@ -172,15 +164,11 @@ export async function cmdTeardown(args: string[]) {
   }
 
   // Deregister from relay.
-  try {
-    await fetch(`http://localhost:4242/api/chat/unregister`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: agentId }),
-    }).catch(() => {})
-  } catch {
-    // Best-effort.
-  }
+  await fetch(`http://localhost:4242/api/chat/unregister`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: agentId }),
+  }).catch(() => {})
 
   // Delete agent store (respecting ephemeral marker).
   // For now, always delete. (Firstmate keeps permanent agents' stores; parlay agents are ephemeral by default.)
