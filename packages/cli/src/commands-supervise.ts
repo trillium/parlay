@@ -54,15 +54,15 @@ const MAX_DEFER_SECS = 300
 // Read the suppression marker file to detect which status lines have been seen.
 function readSeenMarker(agentId: string): { lastLine: number; lastHash: string } {
   const markerFile = join(homedir(), ".parlay", "agents", agentId, ".supervise-marker")
-  if (!existsSync(markerFile)) return { lastLine: 0, lastHash: "" }
+  if (!existsSync(markerFile)) return { lastLine: -1, lastHash: "" }
   try {
     const content = readFileSync(markerFile, "utf-8").trim()
     const lines = content.split("\n")
     const lastEntry = lines[lines.length - 1] || ""
     const [lineStr, hash] = lastEntry.split("|")
-    return { lastLine: parseInt(lineStr, 10) || 0, lastHash: hash || "" }
+    return { lastLine: parseInt(lineStr, 10) || -1, lastHash: hash || "" }
   } catch {
-    return { lastLine: 0, lastHash: "" }
+    return { lastLine: -1, lastHash: "" }
   }
 }
 
@@ -100,7 +100,7 @@ function findNewActionable(agentId: string, statusFile: string): { line: string;
   const seen = readSeenMarker(agentId)
 
   // Find the first line after the seen marker that is terminal (actionable).
-  for (let i = seen.lastLine; i < allLines.length; i++) {
+  for (let i = seen.lastLine + 1; i < allLines.length; i++) {
     const line = allLines[i]
     const parsed = parseStatusLine(line)
     if (!parsed) continue
