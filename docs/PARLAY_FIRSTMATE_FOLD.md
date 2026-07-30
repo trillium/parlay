@@ -63,8 +63,8 @@ firstmate merely *wraps with policy*.
 **The migration ledger** (from decision-3ae — this is the fold's scope map):
 | Bucket | Items | Where it ends up |
 |---|---|---|
-| **MECHANISM → migrate to parlay** | event-driven supervision (wake-on-status-change + authoritative run-state read), structured brief contract, per-task worktree isolation, SAFE teardown (never discard unlanded work), keyed open/resolved status protocol, harness adapters + turn-end hooks | **parlay-native primitives** |
-| **POLICY → stays firstmate** | delivery modes + merge discipline + captain-merge rule, escalation/what-to-spawn judgment | firstmate (thin wrappers over parlay) |
+| **MECHANISM → migrate to parlay** | event-driven supervision (wake-on-status-change + authoritative run-state read), **unattended/headless supervision** (a daemon owns the loop with no supervisor session present: self-handle routine wakes, batch escalations, honor a max-defer bound, mark injected messages with an in-band captain-return sentinel — §3.6.2), structured brief contract, per-task worktree isolation, SAFE teardown (never discard unlanded work), keyed open/resolved status protocol, harness adapters + turn-end hooks | **parlay-native primitives** |
+| **POLICY → stays firstmate** | delivery modes + merge discipline + captain-merge rule, escalation/what-to-spawn judgment, **away-mode policy** (the `/afk` enter/exit gesture, the max-defer bound value, what counts as a captain-relevant escalation, and **approval-authority preservation** — an unattended daemon never approves a merge/irreversible action for the absent captain; it batches and waits — §3.6.2) | firstmate (thin wrappers over parlay) |
 | **MIXED → split case-by-case** | backlog / fleet-state / recovery / secondmates | mechanism half → parlay; judgment half → firstmate |
 
 The section numbering below (§3 KEEP/ADAPT/DROP, §6 slices) predates this decision
@@ -180,6 +180,17 @@ set:
   (`git checkout -b parlay/<id>`).
 - record `worktree=`/`project=` in the frontmatter (3.2), which arms safe teardown
   (3.7).
+
+The brief's isolation assertion is the *brief-time* guard; the *runtime* backstop
+for the same failure mode (an agent that branched/committed in the PRIMARY checkout
+instead of its worktree, stranding the primary on a feature branch) shipped as the
+**`parlay guard`** verb (contraction **C4**, ported from firstmate's `fm-guard.sh`
+per `AGENTS.md §8`). It is advisory-only — WARNS with a bordered banner + a
+non-destructive `git checkout <default>` restore, never blocks — and is wired into
+the variant lifecycle: `parlay variant launch`/`teardown` call `guardRepo(<primary>)`
+so a stranded primary surfaces on the next fleet action. It also carries a
+`--beat`/liveness beacon so a missing watcher heartbeat is alarmed while variants
+are in flight. See `parlay guard --help` and `commands-guard.ts`.
 
 ### 3.4 Harness / model / effort — **DEFERRED parlay-native primitive** (re-scoped by decision-3ae)
 decision-3ae lists **harness adapters + turn-end hooks** as MECHANISM to migrate to
@@ -307,6 +318,69 @@ wrapper — **not** a deferred slice-3 watcher.
   the completion-blindness this session hit. The bridge above is what ships first; the
   primitive is Slice 3. Once it exists, firstmate's `fm-watch` wraps it with escalation
   policy instead of owning the loop.
+
+#### 3.6.2 Unattended / away-mode supervision — **ADAPT (mechanism → Slice 3 primitive; policy → firstmate)**
+§3.6.1 covers supervision **while a supervisor session is live** — a wake wakes
+*someone who is watching*. Firstmate additionally owns the opposite case: the
+captain is **away** and *no supervisor session exists*. Its `/afk` skill
+(`AGENTS.md` §8) plus `bin/fm-afk-launch.sh` / `fm-afk-start.sh` /
+`fm-supervise-daemon.sh` provide **unattended sub-supervision** — while the
+durable flag `state/.afk` exists, a presence-gated daemon *owns the watcher*,
+self-handles the routine majority in bash (zero LLM turns), and buffers only
+captain-relevant events (`done`/`needs-decision`/`blocked`/`failed`/persistent-
+wedge/check-output) as **batched, distilled digests**. This capability had **no
+home** in the fold before this section: it is not §3.6.1 (which assumes a live
+supervisor), and it is not the Slice 3 wake loop as first written (wake-*whom*?
+nobody is present). Resolved per decision-3ae's mechanism/policy split:
+
+**MECHANISM → the Slice 3 supervise primitive gains an UNATTENDED (headless)
+mode.** The same `parlay supervise` primitive can run as a daemon with **no
+supervisor session attached**, and because it is a parlay-native primitive
+*every* launcher inherits unattended supervision — this is exactly the
+"supervise a panel agent without firstmate present" case flagged in Q1. Ported
+mechanics (from `fm-supervise-daemon.sh`, verbatim in behavior):
+- **Presence gate.** A durable flag (firstmate's `state/.afk`; parlay's sink is
+  env-configurable exactly as `$PARLAY_STATUS_FILE` is, §3.6) turns the daemon
+  on/off. While set, the watcher reverts to daemon-owned one-shot behavior and
+  **enqueues every wake to a durable queue BEFORE advancing suppression
+  markers**, so a crash/restart/missed injection is recovered on the next drain
+  — nothing is lost in away mode.
+- **Self-handle + batch.** Routine wakes are absorbed in code; only captain-
+  relevant events escalate, coalesced into one pre-read digest per batch window
+  (`ESCALATE_BATCH_SECS`). **Fail-safe-to-escalate:** any wake the classifier
+  cannot confidently mark routine is escalated.
+- **Max-defer bound.** A buffered digest may sit at most `MAX_DEFER_SECS` before
+  the daemon forces active delivery (firstmate's `.subsuper-inject-wedged`
+  alarm) — bounded escalation latency, not indefinite silence.
+- **In-band captain-return sentinel.** Every daemon injection is prefixed with a
+  marker byte (firstmate's `FM_INJECT_MARK`, ASCII unit-separator `0x1f`, which a
+  human never types). A message **with** the marker is an internal escalation
+  (stay unattended); a message **without** it means the human is back → exit
+  unattended, flush the "while you were out" catch-up, resume per-wake
+  responsiveness. This is how one shared input channel serves both the daemon and
+  the returning human.
+
+**POLICY → firstmate retains away-mode judgment.** `fm-afk-*` shrink to thin
+wrappers that put the parlay primitive into unattended mode with policy params:
+- the **`/afk` enter/exit gesture** (a human decision, not a mechanic);
+- the **`MAX_DEFER_SECS` value** and **what counts as captain-relevant** (the
+  escalation classifier's policy inputs — the *classifying loop* is mechanism,
+  the *thresholds/relevance* are policy);
+- **approval-authority preservation (the load-bearing invariant):** an
+  unattended daemon is a **triage/notification engine, never an approver**. It
+  batches and waits; it **must not** approve a merge or any destructive/
+  irreversible action on the absent captain's behalf. This mirrors the fold's
+  standing rule that "yolo never authorizes destructive/irreversible without
+  asking" (Q5) — away-mode makes it non-negotiable, because the human who would
+  approve is definitionally not present.
+
+Sequencing: this rides **Slice 3** (it is a mode of the same supervise
+primitive, not a separate build). The near-term §3.6.1 bridge already gives
+firstmate-launched agents unattended coverage for free (firstmate's existing
+`/afk` daemon watches the injected `state/<id>.status`); the parlay-native
+unattended mode is what lets a **non-firstmate** launcher get the same behavior
+once Slice 3 lands. Until then it is DESIGNED, not built — same status as the
+rest of the Slice 3 primitive.
 
 ### 3.7 Safe teardown — **ADAPT** (slice 2, paired with worktree)
 Parlay has no teardown — agents self-restart (`context-reset`) or are reaped
@@ -501,6 +575,11 @@ subscribers`) and a `parlay supervise` wake-on-actionable-status loop, porting
 supervision becomes a **substrate capability every launcher inherits** — the general
 fix for completion-blindness. The §3.6.1 firstmate-reuse bridge is retired here:
 `fm-watch` shrinks to a policy wrapper (escalation judgment) over this primitive.
+The primitive also grows its **unattended (headless) mode (§3.6.2)** — the same
+`parlay supervise` loop run daemon-style with no supervisor session present
+(presence flag + batched escalation + max-defer + in-band captain-return marker),
+so a non-firstmate launcher inherits away-mode too; firstmate's `fm-afk-*` shrink
+to policy wrappers (afk gesture, max-defer value, approval-authority preservation).
 
 **Slice 4 (end-state consolidation) — firstmate becomes thin wrappers:** once the
 mechanics live in parlay (spawn/status/supervise/teardown/worktree), rewrite
@@ -542,6 +621,14 @@ Commit after each numbered item — never one batch commit.
    `fm-watch.sh`/`fm-classify-lib.sh` loop, injecting `PARLAY_STATUS_FILE` at spawn.
    A parlay-native watcher is optional/future, only for supervising a panel agent
    without firstmate present. Do not invent a new signal. (Original text below.)
+   *Follow-on (§3.6.2):* the "without firstmate present" case is **away-mode /
+   unattended supervision** — the captain is gone and no supervisor session
+   exists. That is now scoped as the Slice 3 primitive's **unattended (headless)
+   mode** (mechanism: presence flag + batched escalation + max-defer + in-band
+   captain-return marker) with firstmate retaining the `/afk` policy and the
+   approval-authority-preservation invariant. So the parlay-native watcher is
+   "optional/future" for the *attended* case but the *named home* for the
+   unattended one.
    *Recommendation:* slice 1 emits status and lets firstmate's existing watcher
    read it (same grammar, zero new watcher code); build a parlay-native watcher
    only in slice 3 if parlay needs to supervise without firstmate present. This

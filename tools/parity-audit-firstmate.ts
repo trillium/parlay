@@ -26,7 +26,10 @@ import { existsSync, readFileSync } from "node:fs"
 import { execSync } from "node:child_process"
 
 const FM = process.env.FM_REPO ?? `${process.env.HOME}/code/firstmate`
-const PL = process.env.PL_REPO ?? `${process.env.HOME}/code/parlay`
+// Default to the checkout this tool lives in (repo root = tools/..), so the audit
+// probes its own source of truth — correct for the canonical ~/code/parlay run and
+// for isolated worktree/CI checkouts alike. Override with PL_REPO to point elsewhere.
+const PL = process.env.PL_REPO ?? `${import.meta.dir}/..`
 
 const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : "")
 const has = (p: string) => existsSync(p)
@@ -49,10 +52,25 @@ const probe = {
   effortSpawn: /--effort\b/.test(spawnSrc),
   modeSpawn: /--mode\b/.test(spawnSrc),
   projectSpawn: /--project\b/.test(spawnSrc),
+  // C3: batch id=repo dispatch is landed when the thin-loop block and its
+  // per-pair failure report are both present in parlay-spawn.
+  batchSpawn: /Batch dispatch \(thin loop\)/.test(spawnSrc) && /batch: FAILED to spawn/.test(spawnSrc),
+  // C4: the runtime worktree-tangle guard ported from fm-guard. Landed = the
+  // `parlay guard` verb dispatches AND the variant lifecycle calls guardRepo().
+  tangleGuardBuilt:
+    /case "guard"/.test(cliIndex) &&
+    /export function guardRepo/.test(read(`${PL}/packages/cli/src/commands-guard.ts`)) &&
+    /guardRepo\(/.test(read(`${PL}/packages/cli/src/commands-variant.ts`)),
   // C5: crew-dispatch is only legitimately STAYS-FIRSTMATE if the fold doc
   // actually states the retention + re-activation sequencing (task-8io0).
   crewDispatchRetentionStated: /crew-dispatch/i.test(foldDoc) && /STAYS[- ]FIRSTMATE/i.test(foldDoc) && /re-activ/i.test(foldDoc),
 }
+
+// C2 (away-mode): does the fold doc give unattended sub-supervision a home (§3.6.2)?
+const afkHomeInFold = /3\.6\.2 Unattended/.test(foldDoc)
+// is the Slice 3 unattended/headless supervise mode landed in code yet? (a `supervise`
+// verb honoring a presence flag / afk sink). Not built until Slice 3 → designed-only.
+const afkUnattendedBuilt = probe.verb("supervise") && /PARLAY_AFK|\.afk\b|unattended/i.test(cliCmds)
 
 // ---- open fix tasks (contraction ledger) ---------------------------------
 function openFixTasks(): string {
@@ -91,7 +109,7 @@ const M: Row[] = [
   { cap: "Model pin", fm: "--model", parlay: "parlay-spawn --model", verdict: "COVERED-same", built: probe.spawnFlag("model") },
   { cap: "Effort level", fm: "--effort", parlay: "parlay-spawn --effort (§3.4)", verdict: "COVERED-alternate", built: probe.effortSpawn },
   { cap: "Per-task worktree isolation (mandatory)", fm: "treehouse worktree", parlay: "parlay-spawn --worktree opt-in (§3.3)", verdict: "COVERED-alternate", built: probe.worktreeSpawn, note: "mandatory→opt-in; parlay agents often not in a repo" },
-  { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "— (dropped v1)", verdict: "MISSING", fix: "C3", note: "'thin loop later' = deferral not coverage" },
+  { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "parlay-spawn id=repo … --prompt (thin loop, §3.8)", verdict: "COVERED-alternate", built: probe.batchSpawn, note: "C3 RESOLVED (task-ovkq): thin loop re-execs single mode per pair; shared --prompt/--model/--color, name+color derived per id; one failed pair does not stop the rest, batch exits non-zero" },
   { cap: "Multi-harness (codex/opencode/pi/grok)", fm: "fm-harness.sh + adapters", parlay: "deferred primitive, seam scaffolded (§3.4)", verdict: "DEFERRED", note: "built LAST; claude-only until then" },
   { cap: "Runtime backend (tmux/zellij/orca/cmux)", fm: "fm-backend.sh", parlay: "firstmate-retained (herdr-only by design)", verdict: "DROP-justified", note: "decision-3ae does not ask parlay to own backends" },
   { cap: "Crew-dispatch profiles + quota-balanced", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: "firstmate POLICY, retention stated (§3.4a)", verdict: "STAYS-FIRSTMATE", note: "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" },
@@ -107,9 +125,12 @@ const M: Row[] = [
   { cap: "Event-driven watcher (absorb-when-working)", fm: "fm-watch.sh", parlay: "bridge reuses fm-watch → Slice 3 primitive", verdict: "DEFERRED" },
   { cap: "Authoritative current-state read", fm: "fm-crew-state.sh", parlay: "Slice 3 crew-state (richer oracle)", verdict: "DEFERRED", note: "parlay adds tab-liveness + subscriber presence" },
   { cap: "Durable wake queue", fm: "fm-wake-drain + .wake-queue", parlay: "(rolls into Slice 3 supervise primitive)", verdict: "DEFERRED" },
-  { cap: "Worktree-tangle runtime guard", fm: "fm-guard.sh", parlay: "brief assertion ported; runtime alarm NOT", verdict: "MISSING", fix: "C4", note: "upstream guard ≠ runtime backstop" },
+  { cap: "Worktree-tangle runtime guard", fm: "fm-guard.sh", parlay: "parlay guard — tangle+liveness backstop, wired into variant lifecycle (C4)", verdict: "COVERED-alternate", built: probe.tangleGuardBuilt, note: "runtime banner + non-destructive restore + --beat liveness beacon; anchored on the variant worktree primitive" },
   { cap: "Turn-end guard hooks", fm: "fm-turnend-guard.sh", parlay: "deferred w/ harness primitive (§3.4)", verdict: "DEFERRED" },
-  { cap: "Away-mode unattended sub-supervision", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: "— (unaddressed)", verdict: "MISSING", fix: "C2", note: "no home: not in Slice 3 scope, not clearly fm-retained" },
+  // C2 (task-eg75): away-mode home is DERIVED from the fold doc, so removing §3.6.2
+  // reverts this row to MISSING and re-fails integrity — genuine re-verification.
+  // built=probe for the Slice 3 unattended mode LANDED IN CODE (not yet → designed).
+  { cap: "Away-mode unattended sub-supervision", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : "no home: not in Slice 3 scope, not clearly fm-retained" },
   { cap: "Steer agent (captain→crewmate)", fm: "fm-send.sh", parlay: "parlay send/say --agent + monitor", verdict: "COVERED-same", built: probe.verb("send") && probe.verb("say") },
   { cap: "Peek pane for diagnosis", fm: "fm-peek.sh", parlay: "parlay history + herdr agent get", verdict: "COVERED-alternate", built: probe.verb("history") },
 

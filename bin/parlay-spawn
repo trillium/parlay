@@ -190,6 +190,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             _brepo="${pair#*=}"
             # Expand a leading ~ so `id=~/code/foo` resolves (mid-word tildes are
             # not expanded by the shell).
+            # shellcheck disable=SC2088  # literal ~ case patterns, expansion handled below
             case "$_brepo" in
               "~")   _brepo="$HOME" ;;
               "~/"*) _brepo="$HOME/${_brepo#\~/}" ;;
