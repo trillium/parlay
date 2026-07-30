@@ -128,7 +128,7 @@ function findNewActionable(agentId: string, statusFile: string): { line: string;
 }
 
 // Post a message to the relay on behalf of the agent (if supervising).
-async function postToRelay(agentId: string, text: string): Promise<void> {
+async function postToRelay(agentId: string, text: string): Promise<boolean> {
   try {
     const res = await fetch(`${SERVER}/api/chat/message`, {
       method: "POST",
@@ -141,9 +141,12 @@ async function postToRelay(agentId: string, text: string): Promise<void> {
     })
     if (!res.ok) {
       process.stderr.write(`warn: failed to post to relay — ${res.status} ${res.statusText}\n`)
+      return false
     }
+    return true
   } catch (err) {
     process.stderr.write(`warn: failed to post to relay — ${err}\n`)
+    return false
   }
 }
 
@@ -212,10 +215,12 @@ export async function cmdSupervise(args: string[]) {
 
   // Attended mode: wake immediately with the actionable state.
   const message = `${DAEMON_MARKER}crew: ${agentId} is ${parsed.verb}${detail}`
-  await postToRelay(agentId, message)
+  const posted = await postToRelay(agentId, message)
   console.log(`supervisor woken: ${agentId} ${parsed.verb}${detail}`)
 
-  // Mark this line as seen (only after successfully posting).
-  const lineHash = hashLine(actionable.line)
-  writeSeenMarker(agentId, actionable.lineIndex, lineHash)
+  // Mark this line as seen only after successfully posting (prevent event loss on relay failure).
+  if (posted) {
+    const lineHash = hashLine(actionable.line)
+    writeSeenMarker(agentId, actionable.lineIndex, lineHash)
+  }
 }
