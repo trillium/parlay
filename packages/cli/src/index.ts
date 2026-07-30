@@ -36,6 +36,8 @@ import { cmdDoctor, cmdHealth } from "./commands-doctor"
 import { cmdContextCheck } from "./commands-context-check"
 import { cmdRobotsWatch } from "./commands-robots-watch"
 import { cmdRobotsTail } from "./commands-robots-watch/tail"
+import { cmdCrewState } from "./commands-crew-state"
+import { cmdSupervise } from "./commands-supervise"
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
@@ -65,6 +67,8 @@ async function main() {
     case "launch":        return cmdLaunch(args)
     case "variant":       return cmdVariant(args)
     case "guard":         return cmdGuard(args)
+    case "crew-state":    return cmdCrewState(args)
+    case "supervise":     return cmdSupervise(args)
     case "lavish-import": return cmdLavishImport(args)
     case "help":
     case "--help":
