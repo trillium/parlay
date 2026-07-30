@@ -44,6 +44,11 @@ effects on import (opens a port, touches disk), not an importable library,
 and its source is symlinked into the user's live personal Pulse install
 (see the section above) — it remains `private: true`.
 
+`packages/client` also gained `main`/`module`/`exports`/`types` fields and a
+`dist/index.js` build target (`src/lib.ts`), but stays `private: true` — this
+is a same-monorepo/workspace library entry point for external host apps (e.g.
+herdr-web) importing the server-eval dispatcher, not npm publishing prep.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

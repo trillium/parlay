@@ -62,6 +62,12 @@ CHAT_MSG|<id>|<role>|<text>\n
 
 `<text>` newlines are flattened to spaces — each message is exactly one line.
 
+`parlay monitor --agent <id> --notify-safe` caps each emitted line to a
+notification-safe budget (`PARLAY_NOTIFY_BUDGET`, default 400 chars) and
+appends a "fetch full text" pointer, so a harness Monitor tool's own display
+truncation can't silently cut a long line mid-word. Off by default. See
+`tools/monitor/NOTES.md`.
+
 ## Run it
 
 ```sh
