@@ -18,7 +18,7 @@ import { die } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
 import { statusSink } from "./commands-status"
-import { readUnattendedQueue, enqueueUnattended, drainUnattendedQueue } from "./unattended-queue"
+import { readUnattendedQueue, enqueueUnattended, drainUnattendedQueue, clearUnattendedQueue } from "./unattended-queue"
 
 // Verb classification: terminal (captain-relevant) vs routine (absorbed).
 const TERMINAL_VERBS = new Set(["done", "needs-decision", "blocked", "failed"])
@@ -184,6 +184,7 @@ export async function cmdSupervise(args: string[]) {
       process.stderr.write(`error: failed to deliver buffered events; queue retained\n`)
       return
     }
+    clearUnattendedQueue(agentId)
     console.log(`drained ${buffered.length} buffered event(s) for ${agentId}`)
     return
   }
