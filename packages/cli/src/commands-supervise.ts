@@ -10,7 +10,7 @@
 // enqueue-before-suppress durable queue, batch window, max-defer bound,
 // in-band captain-return sentinel.
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "fs"
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "fs" // readFileSync used by other funcs
 import { homedir } from "os"
 import { join } from "path"
 import { SERVER, EXIT_USAGE } from "./config"
@@ -18,6 +18,7 @@ import { die } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
 import { statusSink } from "./commands-status"
+import { readUnattendedQueue, enqueueUnattended, drainUnattendedQueue } from "./unattended-queue"
 
 // Verb classification: terminal (captain-relevant) vs routine (absorbed).
 const TERMINAL_VERBS = new Set(["done", "needs-decision", "blocked", "failed"])
@@ -45,6 +46,10 @@ function isRoutine(verb: string): boolean {
 // Marker byte for daemon-authored messages (fold §3.6.2, in-band captain-return sentinel).
 // Using ASCII unit separator (0x1f) which a human never types.
 const DAEMON_MARKER = "\x1f"
+
+// Unattended mode configuration (fold §3.6.2).
+const ESCALATE_BATCH_SECS = 90
+const MAX_DEFER_SECS = 300
 
 // Read the suppression marker file to detect which status lines have been seen.
 function readSeenMarker(agentId: string): { lastLine: number; lastHash: string } {
@@ -153,12 +158,28 @@ function isUnattended(): boolean {
 export async function cmdSupervise(args: string[]) {
   if (helpWanted("supervise", args)) return
 
-  const { positionals } = parseArgs("supervise", args)
+  const { positionals, opts } = parseArgs("supervise", args, ["--drain"])
   const agentId = positionals[0]?.trim()
   if (!agentId) return die("parlay supervise: agent id required", EXIT_USAGE)
 
   // Resolve status file.
   const { file: statusFile } = statusSink()
+
+  // Unattended mode: drain + deliver buffered events.
+  if (opts["--drain"]) {
+    const buffered = drainUnattendedQueue(agentId)
+    if (buffered.length === 0) {
+      console.log(`supervise ${agentId} --drain: no buffered events`)
+      return
+    }
+    const digest = buffered
+      .map((e) => `${e.verb}${e.detail ? ": " + e.detail : ""}`)
+      .join("; ")
+    const message = `${DAEMON_MARKER}crew: ${agentId} away-mode digest — ${digest}`
+    await postToRelay(agentId, message)
+    console.log(`drained ${buffered.length} buffered event(s) for ${agentId}`)
+    return
+  }
 
   // Check for new actionable status.
   const actionable = findNewActionable(agentId, statusFile)
@@ -174,13 +195,15 @@ export async function cmdSupervise(args: string[]) {
 
   // Check unattended mode.
   if (isUnattended()) {
-    // In unattended (away) mode: batch for later delivery.
+    // In unattended (away) mode: enqueue BEFORE advancing any markers.
+    // This ensures crash safety — if we crash after enqueue but before marker update,
+    // the next run will re-enqueue and re-deliver.
+    enqueueUnattended(agentId, parsed.verb, parsed.note || "")
     process.stderr.write(
-      `supervise ${agentId}: unattended mode, buffering ${parsed.verb}${detail}\n`
+      `supervise ${agentId}: unattended mode, queued ${parsed.verb}${detail}\n`
     )
-    // For now, minimal unattended support: just log it.
-    // Full implementation: enqueue to durable queue, batch window, max-defer, etc.
-    // (This is the mechanism seam; policy thresholds stay firstmate's.)
+    // TODO: implement batch window + max-defer daemon in a separate pass
+    // (this is the scalar/policy side; the mechanism skeleton is here)
     return
   }
 
