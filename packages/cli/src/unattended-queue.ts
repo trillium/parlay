@@ -45,12 +45,16 @@ export function enqueueUnattended(agentId: string, verb: string, detail: string)
   appendFileSync(queueFile, `${JSON.stringify(entry)}\n`)
 }
 
-// Drain and clear the unattended queue. Returns all buffered events.
+// Drain the unattended queue. Returns all buffered events without deleting the file.
+// Caller must call clearUnattendedQueue() separately after confirming delivery.
 export function drainUnattendedQueue(agentId: string): QueueEntry[] {
-  const events = readUnattendedQueue(agentId)
+  return readUnattendedQueue(agentId)
+}
+
+// Clear the unattended queue file. Call only after confirming successful delivery.
+export function clearUnattendedQueue(agentId: string): void {
   const queueFile = join(homedir(), ".parlay", "agents", agentId, ".unattended-queue")
   if (existsSync(queueFile)) {
     rmSync(queueFile, { force: true })
   }
-  return events
 }
