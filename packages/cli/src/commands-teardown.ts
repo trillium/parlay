@@ -15,7 +15,7 @@
 import { existsSync, readFileSync, rmSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
-import { EXIT_USAGE } from "./config"
+import { EXIT_USAGE, serverUrl } from "./config"
 import { die } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
@@ -105,7 +105,7 @@ export async function cmdTeardown(args: string[]) {
 
   // If the agent has no worktree, it's not stranding work. Just deregister and cleanup.
   if (!worktree) {
-    await fetch(`http://localhost:4242/api/chat/unregister`, {
+    await fetch(`${serverUrl()}/api/chat/unregister`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: agentId }),
@@ -118,7 +118,7 @@ export async function cmdTeardown(args: string[]) {
   // Agent has a worktree — check for unlanded work.
   if (!existsSync(worktree)) {
     // Worktree already gone (stale reference).
-    await fetch(`http://localhost:4242/api/chat/unregister`, {
+    await fetch(`${serverUrl()}/api/chat/unregister`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: agentId }),
@@ -164,7 +164,7 @@ export async function cmdTeardown(args: string[]) {
   }
 
   // Deregister from relay.
-  await fetch(`http://localhost:4242/api/chat/unregister`, {
+  await fetch(`${serverUrl()}/api/chat/unregister`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: agentId }),
