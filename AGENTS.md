@@ -13,10 +13,13 @@ file. See `packages/server/README.md` for the rationale and the known
 `tools/split-test` tradeoff (per-branch server testing no longer works since
 every branch resolves to the same external PULSE code).
 
-`packages/cli` talks to whatever server is running over HTTP
-(`PARLAY_SERVER`, default `http://localhost:4242`) — it does not import
-`packages/server` as code, so CLI functionality is independent of this
-symlink structure.
+`packages/cli` talks to whatever server is running over HTTP. Target resolution
+(`serverUrl()` in `packages/cli/src/config.ts`): `PARLAY_SERVER` env var >
+persisted `$PARLAY_STATE_HOME/config.json` (default `~/.parlay/config.json`,
+`"server"` key, managed via `parlay remote set/clear`) > coded default
+`http://localhost:4242`. `parlay doctor` reports which source is active. The
+CLI does not import `packages/server` as code, so its functionality is
+independent of the symlink structure below.
 
 ## `bun test` only works from inside a package directory
 

@@ -58,7 +58,9 @@ at `http://localhost:31337/chat-app/` on the host — or at the host's tailnet a
 (`http://<machine>.<tailnet>.ts.net:31337/` or its Tailscale IP) from any other
 device on the tailnet. Point the CLI at the server with `PARLAY_SERVER` (defaults to
 the Pulse address in this fleet; set it to the host's tailnet address from a
-different machine).
+different machine), or persist a default so you don't have to re-export it every
+shell session: `parlay remote set http://<machine>.<tailnet>.ts.net:31337`. See
+`parlay remote --help` for the resolution precedence (env var still wins).
 
 A few CLI verbs (`parlay help` lists them all):
 
