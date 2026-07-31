@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
-import { SERVER } from "./config"
+import { SERVER, serverSource } from "./config"
 import { helpWanted } from "./help"
 import type { AgentInfo, SubscribersInfo } from "./types"
 
@@ -85,12 +85,17 @@ export async function cmdDoctor(args: string[]) {
     : report("FAIL", "PARLAY_AGENT_ID is not set",
         "run inside a parlay-spawn'd agent, or: export PARLAY_AGENT_ID=<id>"))
 
-  // 2. Server reachable.
+  // 2. Server reachable + which source resolved it (env/config/default) — the
+  // first thing to check when a cross-machine connection points the wrong place.
+  const { source } = serverSource()
+  console.log(`--    server URL source: ${source} (${SERVER})`)
   const subs = await tryJSON<SubscribersInfo & { presence?: Array<{ channel: string; status: string; lastSeen: string | null }> }>(SERVER, "/api/chat/subscribers")
   verdicts.push(subs.ok
     ? report("PASS", `server reachable at ${SERVER}`)
     : report("FAIL", `server unreachable at ${SERVER} — ${subs.ok ? "" : subs.err}`,
-        `check Pulse/relay is up; env PARLAY_SERVER controls the target`))
+        source === "default"
+          ? `check Pulse/relay is up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)`
+          : `check Pulse/relay is up; target came from ${source} — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default`))
 
   // 3. Registration + 4. listening presence (need agent + server).
   if (agent && subs.ok) {
