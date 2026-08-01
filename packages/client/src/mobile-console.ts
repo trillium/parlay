@@ -7,7 +7,9 @@
 // Enable via ?paConsole=1 in the URL (sticky — persisted to localStorage), or
 // a ~600ms long-press on the drawer trigger button.
 
-const ERUDA_CDN = 'https://cdn.jsdelivr.net/npm/eruda'
+const ERUDA_VERSION = '3.4.3'
+const ERUDA_CDN = `https://cdn.jsdelivr.net/npm/eruda@${ERUDA_VERSION}/eruda.min.js`
+const ERUDA_SRI = 'sha384-F7xQBvh3l6dG/mMD6QPIeVmXtzWT4Ce3ZDu8ysPuzMWMx9bFOIMGnRPUhLuQipss'
 const STORAGE_KEY = 'pa-console-enabled'
 const LONG_PRESS_MS = 600
 
@@ -18,6 +20,8 @@ function loadEruda(): Promise<void> {
   loadPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script')
     script.src = ERUDA_CDN
+    script.integrity = ERUDA_SRI
+    script.crossOrigin = 'anonymous'
     script.onload = () => { (window as any).eruda?.init(); resolve() }
     script.onerror = () => { loadPromise = null; reject(new Error('failed to load eruda')) }
     document.head.appendChild(script)
