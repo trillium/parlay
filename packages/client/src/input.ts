@@ -147,7 +147,7 @@ export async function sendMsg(text: string, images?: string[]) {
     // it became the ONLY submit route.
     sendBtn.disabled = false
     inputEl.disabled = false
-    inputEl.focus()
+    if (!getSettings().noKeyboardMode) inputEl.focus()
   }
 }
 

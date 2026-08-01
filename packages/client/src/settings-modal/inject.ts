@@ -108,6 +108,11 @@ export function injectSettingsModal() {
                 <label for="pa-settings-hybrid-voice">Hybrid first-voice (experimental)</label>
               </div>
               <div class="pa-settings-hint">Local voice starts speaking instantly; hands off to Kokoro at the next sentence. Ignored when Local only is on.</div>
+              <div class="pa-settings-all-wrap" style="margin-top:10px">
+                <input type="checkbox" id="pa-settings-hands-free">
+                <label for="pa-settings-hands-free">Hands-free (no keyboard pop-up)</label>
+              </div>
+              <div class="pa-settings-hint">Suppress auto-focus on panel/channel navigation and after sending, so the on-screen keyboard never auto-pops. Tap the message box directly to type.</div>
             </div>
           </div>
         </div>
@@ -169,6 +174,8 @@ export function injectSettingsModal() {
   localOnlyChk.addEventListener('change', commitSettings)
   const hybridChk = document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement
   hybridChk.addEventListener('change', commitSettings)
+  const handsFreeChk = document.getElementById('pa-settings-hands-free') as HTMLInputElement
+  handsFreeChk.addEventListener('change', commitSettings)
 
   const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement
   const scaleVal = document.getElementById('pa-settings-textscale-val')!
