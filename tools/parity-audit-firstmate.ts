@@ -40,14 +40,22 @@ const grepFile = (p: string, re: RegExp) => re.test(read(p))
 const spawnSrc = read(`${PL}/bin/parlay-spawn`)
 const cliIndex = read(`${PL}/packages/cli/src/index.ts`)
 const cliCmds = read(`${PL}/packages/cli/src/commands.ts`)
+const cliStatusSrc = read(`${PL}/packages/cli/src/commands-status.ts`)
+const cliSuperviseSrc = read(`${PL}/packages/cli/src/commands-supervise.ts`)
 const foldDoc = read(`${PL}/docs/PARLAY_FIRSTMATE_FOLD.md`)
 
 const probe = {
   spawnFlag: (f: string) => new RegExp(`--${f}\\b`).test(spawnSrc),
   verb: (v: string) => new RegExp(`case "${v}"`).test(cliIndex),
-  // the fold's keyed status is a NEW sink; the existing 'status' verb is a reader.
-  keyedStatusBuilt: /PARLAY_STATUS_FILE/.test(cliCmds) || /PARLAY_STATUS_FILE/.test(spawnSrc),
-  teardownBin: has(`${PL}/bin/parlay-teardown`),
+  // Keyed status sink: check commands-status.ts (not commands.ts — that's the old
+  // panel-status reader). Landed = the $PARLAY_STATUS_FILE env-configurable sink
+  // is in the dedicated commands-status module, AND the verb is wired in index.ts.
+  keyedStatusBuilt:
+    /PARLAY_STATUS_FILE/.test(cliStatusSrc) && /case "status"/.test(cliIndex),
+  // Teardown: landed as a CLI verb, not a standalone bin (fold §3.7 chose CLI).
+  teardownBuilt:
+    /case "teardown"/.test(cliIndex) &&
+    has(`${PL}/packages/cli/src/commands-teardown.ts`),
   worktreeSpawn: /--worktree\b/.test(spawnSrc),
   effortSpawn: /--effort\b/.test(spawnSrc),
   modeSpawn: /--mode\b/.test(spawnSrc),
@@ -68,9 +76,11 @@ const probe = {
 
 // C2 (away-mode): does the fold doc give unattended sub-supervision a home (§3.6.2)?
 const afkHomeInFold = /3\.6\.2 Unattended/.test(foldDoc)
-// is the Slice 3 unattended/headless supervise mode landed in code yet? (a `supervise`
-// verb honoring a presence flag / afk sink). Not built until Slice 3 → designed-only.
-const afkUnattendedBuilt = probe.verb("supervise") && /PARLAY_AFK|\.afk\b|unattended/i.test(cliCmds)
+// Slice 3 unattended/headless supervise mode: check commands-supervise.ts (not
+// commands.ts, which doesn't import it). Landed = `supervise` verb wired + the
+// PARLAY_UNATTENDED_FLAG presence gate exists in the supervise module.
+const afkUnattendedBuilt =
+  probe.verb("supervise") && /PARLAY_UNATTENDED_FLAG|isUnattended/.test(cliSuperviseSrc)
 
 // ---- open fix tasks (contraction ledger) ---------------------------------
 function openFixTasks(): string {
@@ -116,12 +126,15 @@ const M: Row[] = [
 
   // --- brief / meta / identity ---
   { cap: "Structured brief contract", fm: "fm-brief.sh", parlay: "enrollment + appended task contract (§3.1)", verdict: "COVERED-alternate", built: /## Definition of done/.test(spawnSrc) },
-  { cap: "Recorded meta (runtime facts)", fm: "state/<id>.meta", parlay: "identity.md frontmatter superset (§3.2)", verdict: "COVERED-alternate", built: /project_bead=|kind=|\bmode=/.test(spawnSrc) },
+  // Recorded meta: parlay-spawn passes --mode/--yolo to identity --register (YAML frontmatter,
+  // not firstmate's key=value .meta format). Probe: --mode and --yolo flags present in spawn
+  // AND the register call includes --mode; --project_bead and --worktree are designed-not-built.
+  { cap: "Recorded meta (runtime facts)", fm: "state/<id>.meta", parlay: "identity.md frontmatter superset (§3.2)", verdict: "COVERED-alternate", built: /--mode\b/.test(spawnSrc) && /--yolo\b/.test(spawnSrc) },
   { cap: "Identity / recovery / self-restart", fm: "(none — disposable)", parlay: "durable identity+handoff+context-reset", verdict: "EXPANDED" },
   { cap: "Panel enrollment / phone reachability", fm: "(none)", parlay: "parlay monitor + Pulse panel", verdict: "EXPANDED" },
 
   // --- status / supervision ---
-  { cap: "Keyed status stream (agent→supervisor)", fm: "state/<id>.status + fm-classify-lib", parlay: "NEW parlay status verb (§3.6)", verdict: "COVERED-alternate", built: probe.keyedStatusBuilt, note: "NAME COLLISION w/ existing panel-status reader → C1" },
+  { cap: "Keyed status stream (agent→supervisor)", fm: "state/<id>.status + fm-classify-lib", parlay: "parlay status verb (§3.6) — C1 collision resolved (task-ve2v)", verdict: "COVERED-alternate", built: probe.keyedStatusBuilt, note: "C1 RESOLVED: 'parlay status' now the fold §3.6 verb; old alias retired" },
   { cap: "Event-driven watcher (absorb-when-working)", fm: "fm-watch.sh", parlay: "bridge reuses fm-watch → Slice 3 primitive", verdict: "DEFERRED" },
   { cap: "Authoritative current-state read", fm: "fm-crew-state.sh", parlay: "Slice 3 crew-state (richer oracle)", verdict: "DEFERRED", note: "parlay adds tab-liveness + subscriber presence" },
   { cap: "Durable wake queue", fm: "fm-wake-drain + .wake-queue", parlay: "(rolls into Slice 3 supervise primitive)", verdict: "DEFERRED" },
@@ -135,7 +148,7 @@ const M: Row[] = [
   { cap: "Peek pane for diagnosis", fm: "fm-peek.sh", parlay: "parlay history + herdr agent get", verdict: "COVERED-alternate", built: probe.verb("history") },
 
   // --- teardown ---
-  { cap: "Safe teardown (never discard unlanded)", fm: "fm-teardown.sh", parlay: "parlay-teardown (§3.7)", verdict: "COVERED-alternate", built: probe.teardownBin },
+  { cap: "Safe teardown (never discard unlanded)", fm: "fm-teardown.sh", parlay: "parlay teardown CLI verb (§3.7) — unlanded-work gate, worktree+store cleanup", verdict: "COVERED-alternate", built: probe.teardownBuilt },
 
   // --- delivery / merge (POLICY) ---
   { cap: "Delivery mode report/branch/pr", fm: "no-mistakes/direct-PR/local-only/scout", parlay: "--mode report|branch|pr (§3.5)", verdict: "COVERED-alternate", built: probe.modeSpawn, note: "no-mistakes NOT ported (fm policy)" },

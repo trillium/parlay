@@ -77,6 +77,13 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
   --focus         focus the new terminal (default: launched --no-focus)
   --model MODEL   pin the claude model (e.g. sonnet, opus, haiku, or a full
                   model id); default: session default with sonnet fallback
+  --mode MODE     delivery mode: report|branch|pr (default: report). Shapes the
+                  Definition of Done in the brief and is recorded in meta.
+                    report  — do the task, reply when done (default)
+                    branch  — commit on parlay/<id>, status done: ready in branch
+                    pr      — push + open PR via gh, status done: PR <url>
+  --effort LEVEL  effort level forwarded to claude (low|medium|high|xhigh|max);
+                  recorded in meta. default: not specified (claude's session default)
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -110,11 +117,15 @@ if [ "${1:-}" = "--ephemeral" ]; then
   CWD="$HOME"
   FOCUS_FLAG="--no-focus"
   MODEL=""
+  MODE="report"
+  EFFORT=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --cwd)       CWD="$2"; shift 2 ;;
       --focus)     FOCUS_FLAG="--focus"; shift ;;
       --model)     MODEL="$2"; shift 2 ;;
+      --mode)      MODE="$2"; shift 2 ;;
+      --effort)    EFFORT="$2"; shift 2 ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
     esac
@@ -164,12 +175,16 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_MODEL=""
           BATCH_COLOR=""
           BATCH_FOCUS="--no-focus"
+          BATCH_MODE="report"
+          BATCH_EFFORT=""
           while [ $# -gt 0 ]; do
             case "$1" in
               --prompt) BATCH_PROMPT="$2"; shift 2 ;;
               --model)  BATCH_MODEL="$2"; shift 2 ;;
               --color)  BATCH_COLOR="$2"; shift 2 ;;
               --focus)  BATCH_FOCUS="--focus"; shift ;;
+              --mode)   BATCH_MODE="$2"; shift 2 ;;
+              --effort) BATCH_EFFORT="$2"; shift 2 ;;
               --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
               --ephemeral) echo "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs" >&2; exit 2 ;;
               -*)       echo "parlay-spawn: unknown batch flag: $1" >&2; exit 2 ;;
@@ -201,6 +216,8 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             _shared=(--cwd "$_brepo")
             [ -n "$BATCH_MODEL" ] && _shared+=(--model "$BATCH_MODEL")
             [ "$BATCH_FOCUS" = "--focus" ] && _shared+=(--focus)
+            _shared+=(--mode "$BATCH_MODE")
+            [ -n "$BATCH_EFFORT" ] && _shared+=(--effort "$BATCH_EFFORT")
             if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
               :
             else
@@ -223,11 +240,15 @@ AGENT_ID="$1"; NAME="$2"; COLOR="$3"; PROMPT="$4"; shift 4
 CWD="$HOME"
 FOCUS_FLAG="--no-focus"
 MODEL=""
+MODE="report"
+EFFORT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --cwd)   CWD="$2"; shift 2 ;;
     --focus) FOCUS_FLAG="--focus"; shift ;;
     --model) MODEL="$2"; shift 2 ;;
+    --mode)  MODE="$2"; shift 2 ;;
+    --effort) EFFORT="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
@@ -280,9 +301,17 @@ jq -n --arg id "$AGENT_ID" --arg name "$NAME" --arg color "$COLOR" \
 # agent created itself. Overwrite on every spawn so the timestamp is always fresh.
 date +%s > "$AGENT_DIR/session-start" || true
 
-# 3. Compose the startup prompt: enrollment instructions + the task.
+# 3. Compose the Definition of Done per delivery mode (fold §3.5).
+case "$MODE" in
+  branch) DOD="Commit your work on branch 'parlay/$AGENT_ID'. When done, run: parlay status done \"ready in branch parlay/$AGENT_ID\"" ;;
+  pr)     DOD="Push your branch 'parlay/$AGENT_ID' and open a PR via 'gh pr create'. When done, run: parlay status done \"PR <url>\"" ;;
+  *)      DOD="Do the task, then reply your result with 'reply \"<summary>\"' and run: parlay status done \"<one-line summary>\"" ;;
+esac
+
+# 3. Compose the startup prompt: enrollment instructions + task contract.
 #    The fresh claude processes this as its first turn, so it arms the Monitor
 #    (making the tab "listening") and posts a ready reply before/while working.
+#    Structure (fold §3.1/§3.6): enrollment block (unchanged) + task contract below.
 STARTUP_PROMPT=$(cat <<EOF
 You are a background agent enrolled in the Pulse/Parlay chat panel at $PARLAY.
 Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
@@ -307,9 +336,28 @@ Watch your context budget: when you approach ~80% used, checkpoint to the captai
 
 CLEAN SHUTDOWN / RESTART (work done, or context bloated/near the limit): write your handoff by running the 'handoff' skill (it creates a handoff bead), then IMMEDIATELY run 'identity --submit' — with NOTHING in between (no courtesy 'say', no other command). --submit needs no id: it resolves the handoff you just created from the store, so the create and the submit are effectively one atomic act. Interposing anything between the create and the submit is the one way to strand your shutdown — a dying context can be killed in that gap, leaving a live handoff bead but no restart. That IS the whole shutdown: --submit pins the handoff to your identity AND resets your context — it restarts you with a fresh context that recovers itself via identity → handoff → scratchpad. You do NOT run sudoku, context-reset, or any skill yourself; submitting the handoff is the shutdown. If you ever find yourself already past a 'handoff' create with the submit not yet run, run a bare 'identity --submit' now — it recovers that stranded handoff. NEVER --submit before any handoff bead exists — without one the reset you wakes with amnesia.
 
-THEN work on this task and reply with 'reply "<your message>"' — once to acknowledge, again when done:
+---
+
+## Task
 
 $PROMPT
+
+## Definition of done
+
+$DOD
+
+## Status protocol (fold §3.6)
+
+Append a keyed status line at each supervisor-actionable transition:
+  parlay status working|needs-decision|blocked|paused|done|failed "<one line>"
+
+Report SPARSELY — each status wakes your supervisor. Use 'reply' for human prose;
+use 'parlay status' for the machine-readable signal. A 'done' or 'failed' is terminal.
+Examples:
+  parlay status working "analyzing the codebase"
+  parlay status needs-decision "ambiguous requirement — see reply"
+  parlay status done "all tests pass, PR opened at https://..."
+  parlay status failed "build error — see reply for details"
 EOF
 )
 
@@ -371,8 +419,16 @@ fi
 # on context reset — the identity fully describes how to relaunch it. Best-effort.
 # Ephemeral agents were already seeded by the mint step (with `ephemeral: true`);
 # re-registering here without --ephemeral would strip that marker, so skip it.
+# Fold §3.2: also record mode/effort/yolo/kind so a relaunch restores full lifecycle
+# context, not just id/name/color. yolo=on because parlay-spawn always launches
+# with --dangerously-skip-permissions.
 if [ "$EPHEMERAL" -eq 0 ]; then
-  identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" ${MODEL:+--model "$MODEL"} >/dev/null 2>&1 || true
+  identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" \
+    ${MODEL:+--model "$MODEL"} \
+    --mode "$MODE" \
+    --yolo on \
+    ${EFFORT:+--effort "$EFFORT"} \
+    >/dev/null 2>&1 || true
 fi
 
 # 6. Post-launch liveness watchdog (robots-3c0). The charter is passed as
