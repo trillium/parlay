@@ -1,6 +1,8 @@
-// Agent-triggerable device commands via SSE: reload, reset-tts, ping.
-// Agents POST /api/chat/device-cmd to drive the client without needing the
-// captain to press anything — useful for live debugging on mobile.
+// Agent-triggerable device commands via SSE: reload, reset-tts, ping,
+// switch-channel, list-channels, set-hands-free. Agents POST
+// /api/chat/device-cmd to drive the client without needing the captain to
+// press anything — useful for live debugging on mobile and for a voice-only
+// captain to flip settings with no tap required.
 
 import { onSse } from './sse'
 import { agentInfo } from './state'

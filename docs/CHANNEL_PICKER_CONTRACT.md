@@ -38,7 +38,8 @@
    **`switchTab`** + **`closeChannelPicker`**. On a miss it emits **`pickerHint`**
    (frontend keeps the modal open and shows the hint).
 6. Frontend applies `switchTab` (existing) then `closeChannelPicker` (close modal,
-   return focus to `#pa-input`).
+   return focus to `#pa-input` — skipped when the hands-free `noKeyboardMode`
+   setting is on, so voice-only navigation never pops the on-screen keyboard).
 
 An explicit **"close"** / **"cancel"** / **"never mind"** spoken into the picker
 input resolves to `closeChannelPicker` with no switch.
