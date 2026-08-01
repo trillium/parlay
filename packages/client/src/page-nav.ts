@@ -1,6 +1,7 @@
 import { esc } from './config'
 import { navigateWorkspace } from './commands/ctx'
 import { onSse } from './sse'
+import { getSettings } from './settings-modal'
 
 // ── Fuzzy page-nav picker ─────────────────────────────────────────────────────
 // A command-palette-style modal (mirrors the settings modal's overlay) that
@@ -42,7 +43,7 @@ export async function openPageNav() {
   search.value = ''
   if (Date.now() - loadedAt > PAGES_TTL) await loadPages()
   applyFilter('')
-  setTimeout(() => search.focus(), 30)
+  if (!getSettings().noKeyboardMode) setTimeout(() => search.focus(), 30)
 }
 
 export function closePageNav() {

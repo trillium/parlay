@@ -36,6 +36,7 @@ export function openSettingsModal() {
   stopPhraseIn.disabled = !s.voiceEnabled
   ;(document.getElementById('pa-settings-local-only-voice') as HTMLInputElement).checked = !!s.localOnlyVoice
   ;(document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement).checked = !!s.hybridVoice
+  ;(document.getElementById('pa-settings-hands-free') as HTMLInputElement).checked = !!s.noKeyboardMode
 
   const scaleIn = document.getElementById('pa-settings-textscale') as HTMLInputElement
   const scaleVal = document.getElementById('pa-settings-textscale-val')!
@@ -117,6 +118,7 @@ export async function commitSettings() {
     hybridVoice:        (document.getElementById('pa-settings-hybrid-voice') as HTMLInputElement | null)?.checked ?? false,
     textScale,
     voiceSettleMs,
+    noKeyboardMode:     (document.getElementById('pa-settings-hands-free') as HTMLInputElement | null)?.checked ?? false,
   }
   applySettings(next)
   await saveSettings(next)

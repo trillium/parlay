@@ -89,7 +89,7 @@ function openDrawer(skipFocus?: boolean) {
   setUnread(0)
   badge.classList.remove('visible')
   setBodyMargin(isDesktop(), getSettings().panelSide)
-  if (!skipFocus) setTimeout(() => inputEl.focus(), 240)
+  if (!skipFocus && !getSettings().noKeyboardMode) setTimeout(() => inputEl.focus(), 240)
 }
 
 function closeDrawer() {

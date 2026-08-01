@@ -3,6 +3,7 @@ import { evalDevice, evalVoice } from './input'
 import { bumpInputVersion, currentInputVersion } from './commands'
 import type { PickerSender } from './commands/dispatcher/types'
 import { PA_VERSION } from './version'
+import { getSettings } from './settings-modal'
 
 // ── Voice-driven sender picker (full-screen modal) ──────────────────────────
 //
@@ -130,7 +131,7 @@ export function closeSenderPicker(): void {
   if (overlay) overlay.remove()
   // Return focus to the main composer
   const main = document.getElementById('pa-input') as HTMLTextAreaElement | null
-  if (main) setTimeout(() => main.focus(), 20)
+  if (main && !getSettings().noKeyboardMode) setTimeout(() => main.focus(), 20)
 }
 
 export function senderPickerIsOpen(): boolean {
