@@ -58,6 +58,7 @@ export function initMobileConsole(longPressTarget: HTMLElement | null): void {
       suppressNextClick = true
       toggleMobileConsole()
       try { localStorage.setItem(STORAGE_KEY, '1') } catch {}
+      setTimeout(() => { suppressNextClick = false }, 400)
     }, LONG_PRESS_MS)
   }
   const cancel = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null } }
