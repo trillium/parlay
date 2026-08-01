@@ -34,7 +34,7 @@ export function broadcastAlert(text: string, targetAgentIds?: string[]): { chann
 
   for (const channel of channels) {
     const msg: ChatMessage = {
-      id:   crypto.randomUUID(),
+      id:   randomUUID(),
       role: "user",
       type: "alert",
       ts:   now,
