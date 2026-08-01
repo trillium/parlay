@@ -13,6 +13,32 @@ file. See `packages/server/README.md` for the rationale and the known
 `tools/split-test` tradeoff (per-branch server testing no longer works since
 every branch resolves to the same external PULSE code).
 
+**As of 2026-08-01, every file in that chain is a broken self-referential
+symlink loop** (verify with `python3 -c "import os; print(os.path.realpath(p))"`
+— it resolves to a path `os.path.exists()` reports `False` for). Confirmed on
+both a disposable treehouse worktree and the primary checkout at
+`~/code/parlay`, so it is not worktree-specific. No file under
+`packages/server/src/` can currently be read or edited through normal tooling
+until someone fixes the symlinks directly under `~/.claude/PAI/PULSE` (outside
+any git worktree — not something an isolated agent should attempt). New
+files with names that don't already exist in that farm are unaffected (Write
+creates a plain file), but they can't be wired into `router.ts`/`index.ts`
+until the loop is fixed. `packages/server/src/debug-log.ts` was added this
+way — a standalone, not-yet-wired handler with wiring instructions in its
+header comment.
+
+**`packages/client`'s `build.ts` has a live side effect**: every successful
+build POSTs to `http://127.0.0.1:31337/api/chat/reload`, and that port is the
+captain's real, live local Pulse server — not sandboxed per worktree. Running
+`bun run build` / `bun build.ts` in `packages/client` from *any* environment
+that shares the host's network namespace (including disposable pool
+worktrees) force-reloads the captain's actual connected clients. The built
+bundle itself lands harmlessly in the invoking worktree's own `dist/` (and
+gitignored `pulse-agent.js`/`plugins/`), so this doesn't ship broken code —
+but it does interrupt whatever the captain is doing. Prefer `bun test` or a
+scoped `bun build src/<file>.ts --outdir=<tmp>` (no `build.ts`) to validate
+client changes without triggering the reload beacon.
+
 `packages/cli` talks to whatever server is running over HTTP. Target resolution
 (`serverUrl()` in `packages/cli/src/config.ts`): `PARLAY_SERVER` env var >
 persisted `$PARLAY_STATE_HOME/config.json` (default `~/.parlay/config.json`,
@@ -20,6 +46,23 @@ persisted `$PARLAY_STATE_HOME/config.json` (default `~/.parlay/config.json`,
 `http://localhost:4242`. `parlay doctor` reports which source is active. The
 CLI does not import `packages/server` as code, so its functionality is
 independent of the symlink structure below.
+
+## Remote debug log + on-screen mobile console (phone-only bug triage)
+
+`packages/client/src/debug-log.ts` captures `window.onerror`,
+`unhandledrejection`, `console.error`/`warn`, and explicit `logTrace()` calls
+(used in `thread-scroll.ts` and the `#pa-jump` handler in `jump-button.ts`), batches
+them, and POSTs to `${CHAT_BASE}/debug-log` (i.e. `/api/chat/debug-log`).
+Disable with `?paDebug=0` or `localStorage['pa-debug-log']='0'`. The server
+handler (`packages/server/src/debug-log.ts`, not yet wired — see the section
+above) appends formatted lines to `$PARLAY_STATE_HOME/debug.log` (default
+`~/.parlay/debug.log`); once wired, read it with `tail -f ~/.parlay/debug.log`.
+Disable server-side with `PARLAY_DEBUG_LOG=0`.
+
+`packages/client/src/mobile-console.ts` lazy-loads `eruda` from a CDN for an
+on-screen console on the phone itself. Toggle via `?paConsole=1` in the URL
+(sticky, persists to localStorage) or a ~600ms long-press on the drawer
+trigger button. Default off, zero bundle cost when unused.
 
 ## `bun test` only works from inside a package directory
 

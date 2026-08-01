@@ -9,7 +9,10 @@
 
 import { IS_STANDALONE, DESKTOP_BP } from './config'
 import { toggleDebugPanel } from './debug-panel'
-import { open, setOpen, setUnread, setAtBottom, activeChannel, unreadByChannel, agentInfo } from './state'
+import { initDebugLog } from './debug-log'
+import { initMobileConsole } from './mobile-console'
+import { wireJumpButton, restoreScroll } from './jump-button'
+import { open, setOpen, setUnread, agentInfo } from './state'
 import { initCommands } from './commands'
 import { initPlugins } from './plugins'
 import { initLightbox } from './lightbox'
@@ -18,7 +21,6 @@ import * as domRefs from './dom'
 import { setRenderThreadFn, msgInView } from './tabs'
 import { initAgentSwitcher } from './switcher'
 import { renderThread } from './thread'
-import { scrollBottom } from './thread-scroll'
 import { wireToolLogEvents } from './toollog'
 import { connect, setOpenDrawerFn, onSse } from './sse'
 import { wireInputEvents, loadDraft, sendMsg, wireServerEval, evalVoice } from './input'
@@ -37,6 +39,10 @@ import {
 } from './settings-modal'
 import { loadStored } from './idb'
 import { initA11yPanel, openA11yPanel } from './a11y-panel'
+
+// Wired before anything else so it captures errors thrown during the rest of
+// client init, not just post-load — see debug-log.ts.
+initDebugLog()
 
 // Idempotency guard — only one instance per page
 ;(async () => {
@@ -99,6 +105,9 @@ function closeDrawer() {
 setOpenDrawerFn(openDrawer)
 ;(window as any).__paOpenDrawer = openDrawer
 
+// On-screen mobile console fallback (?paConsole=1, or long-press the trigger)
+initMobileConsole(trigger)
+
 // Window-title focus marker: while the composer input is focused, the host
 // page title carries `[focus:parlay-input]` for external watchers (Talon).
 trackFocusTitle(inputEl, 'parlay-input')
@@ -115,35 +124,8 @@ window.addEventListener('resize', syncLayout, { passive: true })
 trigger.addEventListener('click', () => open ? closeDrawer() : openDrawer())
 backdrop.addEventListener('click', closeDrawer)
 document.getElementById('pa-close')!.addEventListener('click', closeDrawer)
-const SCROLL_KEY = 'pa-scroll-pct'
-let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null
 
-const jumpBtn = document.getElementById('pa-jump')!
-jumpBtn.addEventListener('click', () => {
-  scrollBottom(true, true)   // instant — no smooth animation on a long catch-up
-  setUnread(0)
-  badge.classList.remove('visible')
-  const ch = activeChannel
-  if (ch) {
-    unreadByChannel[ch] = 0
-    const tabBadge = document.getElementById(`pa-tab-unread-${ch}`)
-    if (tabBadge) { tabBadge.textContent = ''; tabBadge.classList.remove('visible') }
-  }
-})
-
-thread.addEventListener('scroll', () => {
-  const atBottomNow = thread.scrollTop + thread.clientHeight >= thread.scrollHeight - 50
-  setAtBottom(atBottomNow)
-  jumpBtn.classList.toggle('visible', !atBottomNow)
-  // Debounced save of scroll position as a ratio
-  clearTimeout(scrollSaveTimer!)
-  scrollSaveTimer = setTimeout(() => {
-    const max = thread.scrollHeight - thread.clientHeight
-    if (max > 0) {
-      localStorage.setItem(SCROLL_KEY, String(thread.scrollTop / max))
-    }
-  }, 300)
-})
+wireJumpButton(thread, badge)
 
 // ── TTS is the `speak` plugin now (#19) — loaded via initPlugins() below ────
 
@@ -197,18 +179,7 @@ wireAnnotation(
 initAnnotationPersistence()   // rehydrate saved annotations for this page (no-op until the persistence fix lands)
 
 // ── Scroll position restore ──────────────────────────────────────────────────
-;(window as any).__paRestoreScroll = () => {
-  const raw = localStorage.getItem(SCROLL_KEY)
-  const pct = raw === null ? 1 : parseFloat(raw)
-  const max = thread.scrollHeight - thread.clientHeight
-  if (max <= 0) return
-  if (!isFinite(pct) || pct >= 0.97) {
-    // was at (near) bottom — settle exactly at the bottom after layout, instantly
-    thread.scrollTo({ top: max, behavior: 'instant' as ScrollBehavior })
-  } else {
-    thread.scrollTo({ top: pct * max, behavior: 'instant' as ScrollBehavior })
-  }
-}
+;(window as any).__paRestoreScroll = () => restoreScroll(thread)
 
 // ── Wire remaining events + connect ──────────────────────────────────────────
 initCommands()   // voice/text command subsystem (src/commands/, COMMANDS.md)
