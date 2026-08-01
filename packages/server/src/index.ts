@@ -7,6 +7,7 @@ import { broadcastToClients } from "./sse"
 import { startHookFiringTailer } from "./hook-tailer"
 import { startToolEventTailer } from "./tool-tailer"
 import { startPruneSweeps } from "./prune"
+import { backfillFromToolActivity } from "./session-channel"
 import { mkdirSync } from "fs"
 
 const PORT     = Number(process.env.PARLAY_PORT ?? 4242)
@@ -20,6 +21,7 @@ loadHistory()
 loadDraftFromDisk()
 watchPages(broadcastToClients)
 startHookFiringTailer()
+backfillFromToolActivity()
 startToolEventTailer()
 startPruneSweeps()
 
