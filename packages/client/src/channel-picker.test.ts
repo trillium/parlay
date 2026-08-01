@@ -4,6 +4,7 @@ import {
   openChannelPicker, closeChannelPicker, pickerHint, pickerIsOpen,
 } from './channel-picker'
 import type { PickerChannel } from './commands/dispatcher/types'
+import { getSettings, saveSettings } from './settings-modal'
 
 // ── Frontend contract of docs/CHANNEL_PICKER_CONTRACT.md ──────────────────────
 // The picker RENDERS the backend's perception (openChannelPicker) and FIRES
@@ -130,5 +131,37 @@ describe('pickerHint + close', () => {
     const overlay = $('#pa-picker-overlay') as HTMLElement
     overlay.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(pickerIsOpen()).toBe(false)
+  })
+})
+
+// ── Hands-free mode (noKeyboardMode) ─────────────────────────────────────────
+describe('closeChannelPicker — hands-free mode', () => {
+  let origFetch: typeof fetch
+  beforeEach(() => {
+    origFetch = globalThis.fetch
+    globalThis.fetch = mock(async () => new Response('{}', { status: 200 })) as any
+    const main = document.createElement('textarea')
+    main.id = 'pa-input'
+    document.body.appendChild(main)
+  })
+  afterEach(async () => {
+    globalThis.fetch = origFetch
+    await saveSettings({ ...getSettings(), noKeyboardMode: false })
+  })
+
+  test('does not refocus the composer when noKeyboardMode is on', async () => {
+    await saveSettings({ ...getSettings(), noKeyboardMode: true })
+    openChannelPicker('pick', CHANNELS)
+    closeChannelPicker()
+    await new Promise(r => setTimeout(r, 30))
+    expect(document.activeElement?.id).not.toBe('pa-input')
+  })
+
+  test('still refocuses the composer when noKeyboardMode is off (unchanged default)', async () => {
+    await saveSettings({ ...getSettings(), noKeyboardMode: false })
+    openChannelPicker('pick', CHANNELS)
+    closeChannelPicker()
+    await new Promise(r => setTimeout(r, 30))
+    expect(document.activeElement?.id).toBe('pa-input')
   })
 })

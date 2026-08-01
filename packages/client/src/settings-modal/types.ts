@@ -11,6 +11,7 @@ export interface ParlaySettings {
   localOnlyVoice:     boolean  // always use browser speechSynthesis; never contact Kokoro
   textScale:          number   // percent; 100 = default
   voiceSettleMs:      number   // eval up-channel debounce, tuned to the dictation-model settle time so the server only ever sees STABILIZED text (never mid-correction)
+  noKeyboardMode:     boolean  // hands-free: suppress auto-focus on nav/switch/submit so the iOS on-screen keyboard never auto-pops; explicit taps still focus normally
 }
 
 export const DEFAULTS: ParlaySettings = {
@@ -26,4 +27,5 @@ export const DEFAULTS: ParlaySettings = {
   localOnlyVoice:     false,
   textScale:          100,
   voiceSettleMs:      450,     // ~450ms: long enough for iOS live dictation correction to settle, short enough to feel responsive
+  noKeyboardMode:     false,
 }
