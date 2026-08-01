@@ -4,6 +4,9 @@ import { handleDebugRequest } from "./router-debug"
 import { loadHistory, loadDraftFromDisk, HISTORY_DIR } from "./storage"
 import { watchPages } from "./pages"
 import { broadcastToClients } from "./sse"
+import { startHookFiringTailer } from "./hook-tailer"
+import { startToolEventTailer } from "./tool-tailer"
+import { startPruneSweeps } from "./prune"
 import { mkdirSync } from "fs"
 
 const PORT     = Number(process.env.PARLAY_PORT ?? 4242)
@@ -16,6 +19,9 @@ console.log(`Data dir       ${DATA_DIR}`)
 loadHistory()
 loadDraftFromDisk()
 watchPages(broadcastToClients)
+startHookFiringTailer()
+startToolEventTailer()
+startPruneSweeps()
 
 serve({
   port: PORT,

@@ -25,6 +25,7 @@ pages watcher, and serves every request through `handleChatRequest`
 | `PARLAY_DATA_DIR` | `~/exchange`     | Directory for chat history + draft (`storage.ts`).             |
 | `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events.            |
 | `PARLAY_AGENT_ID` | *(unset)*        | Identifies the calling agent for per-agent context lookups.    |
+| `PARLAY_EVAL_ENGINE_URL` | `http://127.0.0.1:4343` | External eval engine for `/api/chat/eval`; returns 502 until running (Go engine deliberately deferred). |
 
 ## Data files
 
