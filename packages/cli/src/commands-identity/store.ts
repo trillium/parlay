@@ -40,8 +40,15 @@ export function writeContextJson(dir: string, ctx: { id: string; name?: string; 
 // (which is on PATH and execs context-reset). Once a `~/.local/bin/context-reset`
 // symlink is deployed, the new name wins with no code change.
 export function contextResetCmd(): string {
-  const probe = _spawnSync("command", ["-v", "context-reset"], { shell: true, stdio: "ignore" })
-  return probe.status === 0 ? "context-reset" : "reincarnate"
+  // Pass env: process.env explicitly — bun does not propagate process.env mutations
+  // to child processes when `env` is omitted (verified bun 1.3.13). Return the
+  // ABSOLUTE PATH from `command -v` so callers don't need PATH lookup either.
+  const probe = _spawnSync("command", ["-v", "context-reset"], { shell: true, stdio: "pipe", env: process.env })
+  if (probe.status === 0) {
+    const abs = (probe.stdout as Buffer | null)?.toString().trim()
+    if (abs) return abs
+  }
+  return "reincarnate"
 }
 
 // Per-agent memory file under <root>/<id>/<kind>.md, keyed by PARLAY_AGENT_ID
