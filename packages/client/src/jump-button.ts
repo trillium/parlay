@@ -6,7 +6,7 @@
 
 import { setAtBottom, activeChannel, setUnread, unreadByChannel } from './state'
 import { scrollBottom } from './thread-scroll'
-import { logTrace } from './debug-log'
+import { logTrace, logError } from './debug-log'
 
 const SCROLL_KEY = 'pa-scroll-pct'
 
@@ -56,10 +56,11 @@ export function restoreScroll(thread: HTMLElement): void {
   const max = thread.scrollHeight - thread.clientHeight
   logTrace('restoreScroll', 'invoked', { raw, pct, max })
   if (max <= 0) return
-  if (!isFinite(pct) || pct >= 0.97) {
-    // was at (near) bottom — settle exactly at the bottom after layout, instantly
-    thread.scrollTo({ top: max, behavior: 'instant' as ScrollBehavior })
-  } else {
-    thread.scrollTo({ top: pct * max, behavior: 'instant' as ScrollBehavior })
+  const top = !isFinite(pct) || pct >= 0.97 ? max : pct * max
+  try {
+    thread.scrollTo({ top, behavior: 'instant' as ScrollBehavior })
+  } catch (err) {
+    logError('restoreScroll', 'scrollTo instant threw, falling back to scrollTop assign', { err: String(err) })
+    thread.scrollTop = top
   }
 }
