@@ -51,9 +51,11 @@ export function initMobileConsole(longPressTarget: HTMLElement | null): void {
 
   if (!longPressTarget) return
   let pressTimer: ReturnType<typeof setTimeout> | null = null
+  let suppressNextClick = false
   const start = () => {
     pressTimer = setTimeout(() => {
       pressTimer = null
+      suppressNextClick = true
       toggleMobileConsole()
       try { localStorage.setItem(STORAGE_KEY, '1') } catch {}
     }, LONG_PRESS_MS)
@@ -66,4 +68,10 @@ export function initMobileConsole(longPressTarget: HTMLElement | null): void {
   longPressTarget.addEventListener('mousedown', start)
   longPressTarget.addEventListener('mouseup', cancel)
   longPressTarget.addEventListener('mouseleave', cancel)
+  longPressTarget.addEventListener('click', (event) => {
+    if (!suppressNextClick) return
+    suppressNextClick = false
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  })
 }

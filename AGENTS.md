@@ -51,7 +51,7 @@ independent of the symlink structure below.
 
 `packages/client/src/debug-log.ts` captures `window.onerror`,
 `unhandledrejection`, `console.error`/`warn`, and explicit `logTrace()` calls
-(used in `thread-scroll.ts` and the `#pa-jump` handler in `init.ts`), batches
+(used in `thread-scroll.ts` and the `#pa-jump` handler in `jump-button.ts`), batches
 them, and POSTs to `${CHAT_BASE}/debug-log` (i.e. `/api/chat/debug-log`).
 Disable with `?paDebug=0` or `localStorage['pa-debug-log']='0'`. The server
 handler (`packages/server/src/debug-log.ts`, not yet wired — see the section
