@@ -50,6 +50,12 @@ async function cmdMem(kind: MemKind, args: string[]) {
     // --ephemeral marks a hash-identity agent. The field lands after cwd so the
     // frontmatter reads id/name/color/model/cwd/ephemeral.
     if (opts["--ephemeral"]) fm.ephemeral = "true"
+    // Fold §3.2 lifecycle meta fields — written by parlay-spawn at launch time,
+    // read back by identity --launch and parlay teardown. Only set when provided.
+    for (const k of ["mode", "effort", "kind", "yolo"] as const) {
+      const v = (opts[`--${k}`] as string | undefined)?.trim()
+      if (v) fm[k] = v
+    }
     writeFrontmatter(file, fm)
     // context.json is the panel's reply-attribution record — write it for EVERY
     // registered id so attribution never depends on a prior server round-trip.
