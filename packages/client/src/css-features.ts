@@ -146,6 +146,12 @@ export const CSS_FEATURES = `
     font-family: var(--pa-mono); font-size: 10px; line-height: 1.5; color: var(--pa-body); opacity: .95;
   }
   .pa-code code { font-family: inherit; }
+  /* Syntax token colors (syntax.ts) — theme-aware via CSS vars */
+  .pa-t-kw  { color: var(--pa-blue); }
+  .pa-t-str { color: var(--pa-green); }
+  .pa-t-cmt { color: var(--pa-muted); font-style: italic; }
+  .pa-t-num { color: var(--pa-amber); }
+  .pa-t-fn  { color: color-mix(in srgb, var(--pa-blue) 60%, var(--pa-body)); }
   .pa-code-inline {
     font-family: var(--pa-mono); font-size: .92em;
     background: color-mix(in srgb, var(--pa-body) 9%, transparent);
