@@ -8,7 +8,9 @@ import { notifyChannels, type RouteEvent, type EventKind, type Bead } from "./de
 // Adding a consumer is a new row here, not new machinery — the closed handler
 // registry of decision-4zr.
 export const WATCHES: { store: string; kinds: EventKind[] }[] = [
-  { store: "robots", kinds: ["created"] },     // → mechanic-dispatch (handler a)
+  // robots: created → mechanic-dispatch (handler a); closed → notify the
+  // originating agent stamped on the bead as notify:<channel> (robots-3q7n).
+  { store: "robots", kinds: ["created", "closed"] },
   { store: "questions", kinds: ["closed"] },   // → notify-requester (handler b)
   { store: "task", kinds: ["closed"] },        // → notify-requester (handler b)
 ]
@@ -37,6 +39,7 @@ export function routeEvent(ev: RouteEvent, bead: Bead | undefined, verbose: bool
   switch (key) {
     case "robots:created":
       return handleRobotsCreated(ev, verbose) // handler (a)
+    case "robots:closed":
     case "questions:closed":
     case "task:closed":
       return handleRequestClosed(ev, bead, verbose) // handler (b)
