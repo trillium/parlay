@@ -498,6 +498,39 @@ if [ -f "$CLAUDE_JSON" ] && command -v jq >/dev/null; then
   fi
 fi
 
+# 4a. Collect project-level env vars from .env / .envrc in the resolved CWD.
+#     .env: parsed statically (no shell execution) — forward KEY=VALUE lines.
+#     .envrc: run via direnv (if on PATH) with a clean baseline env so only
+#     vars the project adds are forwarded. Never blanket-forward the captain's env.
+PROJECT_ENV_FLAGS=()
+
+if [ -f "$CWD/.env" ]; then
+  _env_count=0
+  while IFS= read -r _eline || [ -n "$_eline" ]; do
+    case "$_eline" in ''|'#'*) continue ;; esac
+    _eline="${_eline#export }"          # strip leading 'export ' if present
+    _ekey="${_eline%%=*}"
+    if printf '%s' "$_ekey" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$'; then
+      PROJECT_ENV_FLAGS+=(--env "$_eline")
+      _env_count=$((_env_count + 1))
+    fi
+  done < "$CWD/.env"
+  [ "$_env_count" -gt 0 ] && echo "parlay-spawn: forwarding $_env_count var(s) from $CWD/.env" >&2
+fi
+
+if [ -f "$CWD/.envrc" ] && command -v direnv >/dev/null 2>&1; then
+  # Run direnv with a minimal baseline so the diff gives only project additions.
+  _direnv_count=0
+  while IFS= read -r _dline; do
+    _dkey="${_dline%%=*}"
+    case "$_dkey" in DIRENV_*|HOME|PATH|PWD|SHLVL|_|'') continue ;; esac
+    PROJECT_ENV_FLAGS+=(--env "$_dline")
+    _direnv_count=$((_direnv_count + 1))
+  done < <(env -i HOME="$HOME" PATH="$PATH" direnv exec "$CWD" env 2>/dev/null \
+             | grep -v '^DIRENV_\|^HOME=\|^PATH=\|^SHLVL=\|^_=\|^PWD=')
+  [ "$_direnv_count" -gt 0 ] && echo "parlay-spawn: forwarding $_direnv_count var(s) from $CWD/.envrc via direnv" >&2
+fi
+
 # 5. Launch a fresh, TOP-LEVEL claude in a detached herdr terminal.
 #    The bash wrapper UNSETS the nesting-marker env vars so Claude Code does not
 #    treat this as a nested subprocess (empty-string via --env is NOT enough —
@@ -539,6 +572,7 @@ if ! herdr agent start "$AGENT_ID" --cwd "$CWD" $FOCUS_FLAG $TAB_FLAG \
   --env "PARLAY_SERVER=$PARLAY" \
   --env "PARLAY_AGENT_ID=$AGENT_ID" \
   ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
+  ${PROJECT_ENV_FLAGS[@]+"${PROJECT_ENV_FLAGS[@]}"} \
   -- bash -lc "$LAUNCH_SCRIPT"; then
   echo "parlay-spawn: herdr agent start failed — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
   [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
