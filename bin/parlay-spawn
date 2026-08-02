@@ -84,6 +84,10 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                     pr      — push + open PR via gh, status done: PR <url>
   --effort LEVEL  effort level forwarded to claude (low|medium|high|xhigh|max);
                   recorded in meta. default: not specified (claude's session default)
+  --worktree      create an isolated git worktree at <repo>/.worktrees/parlay-<id>
+                  and run the agent there instead of --cwd directly. Requires --cwd
+                  to be inside a git repo. Auto-enabled by --mode branch|pr. Uses
+                  treehouse if on PATH, else plain git worktree. Recorded in meta.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -119,6 +123,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
   MODEL=""
   MODE="report"
   EFFORT=""
+  WANT_WORKTREE=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --cwd)       CWD="$2"; shift 2 ;;
@@ -126,6 +131,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --model)     MODEL="$2"; shift 2 ;;
       --mode)      MODE="$2"; shift 2 ;;
       --effort)    EFFORT="$2"; shift 2 ;;
+      --worktree)  WANT_WORKTREE=1; shift ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
     esac
@@ -177,14 +183,16 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_FOCUS="--no-focus"
           BATCH_MODE="report"
           BATCH_EFFORT=""
+          BATCH_WORKTREE=0
           while [ $# -gt 0 ]; do
             case "$1" in
-              --prompt) BATCH_PROMPT="$2"; shift 2 ;;
-              --model)  BATCH_MODEL="$2"; shift 2 ;;
-              --color)  BATCH_COLOR="$2"; shift 2 ;;
-              --focus)  BATCH_FOCUS="--focus"; shift ;;
-              --mode)   BATCH_MODE="$2"; shift 2 ;;
-              --effort) BATCH_EFFORT="$2"; shift 2 ;;
+              --prompt)    BATCH_PROMPT="$2"; shift 2 ;;
+              --model)     BATCH_MODEL="$2"; shift 2 ;;
+              --color)     BATCH_COLOR="$2"; shift 2 ;;
+              --focus)     BATCH_FOCUS="--focus"; shift ;;
+              --mode)      BATCH_MODE="$2"; shift 2 ;;
+              --effort)    BATCH_EFFORT="$2"; shift 2 ;;
+              --worktree)  BATCH_WORKTREE=1; shift ;;
               --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
               --ephemeral) echo "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs" >&2; exit 2 ;;
               -*)       echo "parlay-spawn: unknown batch flag: $1" >&2; exit 2 ;;
@@ -218,6 +226,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             [ "$BATCH_FOCUS" = "--focus" ] && _shared+=(--focus)
             _shared+=(--mode "$BATCH_MODE")
             [ -n "$BATCH_EFFORT" ] && _shared+=(--effort "$BATCH_EFFORT")
+            [ "$BATCH_WORKTREE" -eq 1 ] && _shared+=(--worktree)
             if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
               :
             else
@@ -242,13 +251,15 @@ FOCUS_FLAG="--no-focus"
 MODEL=""
 MODE="report"
 EFFORT=""
+WANT_WORKTREE=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --cwd)   CWD="$2"; shift 2 ;;
-    --focus) FOCUS_FLAG="--focus"; shift ;;
-    --model) MODEL="$2"; shift 2 ;;
-    --mode)  MODE="$2"; shift 2 ;;
-    --effort) EFFORT="$2"; shift 2 ;;
+    --cwd)      CWD="$2"; shift 2 ;;
+    --focus)    FOCUS_FLAG="--focus"; shift ;;
+    --model)    MODEL="$2"; shift 2 ;;
+    --mode)     MODE="$2"; shift 2 ;;
+    --effort)   EFFORT="$2"; shift 2 ;;
+    --worktree) WANT_WORKTREE=1; shift ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
@@ -259,6 +270,23 @@ fi
 if ! printf '%s' "$AGENT_ID" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
   echo "parlay-spawn: agent-id must be a kebab-slug (got: '$AGENT_ID')" >&2
   exit 2
+fi
+
+# branch/pr delivery modes require worktree isolation — auto-enable.
+if [ "$MODE" = "branch" ] || [ "$MODE" = "pr" ]; then
+  WANT_WORKTREE=1
+fi
+
+# Early git validation: if --worktree, confirm CWD is inside a git repo before
+# registering the agent (avoids an orphaned tab on failure).
+WORKTREE_PATH=""
+PROJECT_PATH=""
+if [ "$WANT_WORKTREE" -eq 1 ]; then
+  PROJECT_PATH=$(cd "$CWD" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "parlay-spawn: --worktree requires --cwd to be inside a git repo (got: '$CWD')" >&2
+    exit 1
+  }
+  WORKTREE_PATH="$PROJECT_PATH/.worktrees/parlay-$AGENT_ID"
 fi
 
 json_escape() { printf '%s' "$1" | jq -Rs .; }
@@ -301,12 +329,82 @@ jq -n --arg id "$AGENT_ID" --arg name "$NAME" --arg color "$COLOR" \
 # agent created itself. Overwrite on every spawn so the timestamp is always fresh.
 date +%s > "$AGENT_DIR/session-start" || true
 
+# 2c. Worktree setup (fold §3.3). When --worktree (or mode=branch/pr), create an
+#   isolated git worktree at <repo>/.worktrees/parlay-<id> and override CWD to it.
+#   Treehouse is optional: probe PATH, use `treehouse get --lease` if present,
+#   fall back to plain git worktree. ISOLATION is the hard rule: agent runs ONLY in
+#   the worktree, never the primary checkout.
+if [ "$WANT_WORKTREE" -eq 1 ]; then
+  mkdir -p "$PROJECT_PATH/.worktrees"
+
+  # Try treehouse first (firstmate-only tool, gracefully absent on minis).
+  _wt_created=0
+  if command -v treehouse >/dev/null 2>&1; then
+    _th_out=$(treehouse get --lease "parlay-$AGENT_ID" 2>/dev/null) && {
+      _th_path=$(printf '%s' "$_th_out" | tr -d '[:space:]')
+      if [ -d "$_th_path" ]; then
+        WORKTREE_PATH="$_th_path"
+        _wt_created=1
+        echo "parlay-spawn: worktree via treehouse at $WORKTREE_PATH" >&2
+      fi
+    } || true
+  fi
+
+  # Plain git worktree fallback (or if treehouse did not produce a valid path).
+  if [ "$_wt_created" -eq 0 ]; then
+    if git -C "$PROJECT_PATH" worktree list --porcelain 2>/dev/null \
+        | grep -qF "worktree $WORKTREE_PATH"; then
+      echo "parlay-spawn: reusing existing worktree at $WORKTREE_PATH" >&2
+    else
+      # branch/pr: create named branch parlay/<id>; report: detach (no branch needed).
+      if [ "$MODE" = "branch" ] || [ "$MODE" = "pr" ]; then
+        git -C "$PROJECT_PATH" worktree add "$WORKTREE_PATH" -b "parlay/$AGENT_ID" 2>/dev/null \
+          || git -C "$PROJECT_PATH" worktree add "$WORKTREE_PATH" "parlay/$AGENT_ID" \
+          || { echo "parlay-spawn: git worktree add failed for $WORKTREE_PATH" >&2; exit 1; }
+      else
+        git -C "$PROJECT_PATH" worktree add --detach "$WORKTREE_PATH" \
+          || { echo "parlay-spawn: git worktree add failed for $WORKTREE_PATH" >&2; exit 1; }
+      fi
+      echo "parlay-spawn: worktree created at $WORKTREE_PATH (project: $PROJECT_PATH)" >&2
+    fi
+  fi
+
+  # ISOLATION: sanity — worktree path must not be the primary checkout.
+  _wt_real=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd -P)
+  _proj_real=$(cd "$PROJECT_PATH" 2>/dev/null && pwd -P)
+  if [ "$_wt_real" = "$_proj_real" ]; then
+    echo "parlay-spawn: ISOLATION FAILURE — worktree resolved to primary checkout ($PROJECT_PATH); aborting." >&2
+    exit 1
+  fi
+
+  # Override CWD to the worktree for all downstream steps.
+  CWD="$WORKTREE_PATH"
+fi
+
 # 3. Compose the Definition of Done per delivery mode (fold §3.5).
 case "$MODE" in
   branch) DOD="Commit your work on branch 'parlay/$AGENT_ID'. When done, run: parlay status done \"ready in branch parlay/$AGENT_ID\"" ;;
   pr)     DOD="Push your branch 'parlay/$AGENT_ID' and open a PR via 'gh pr create'. When done, run: parlay status done \"PR <url>\"" ;;
   *)      DOD="Do the task, then reply your result with 'reply \"<summary>\"' and run: parlay status done \"<one-line summary>\"" ;;
 esac
+
+# 3a. Worktree setup block for the brief (only when --worktree active).
+SETUP_BLOCK=""
+if [ "$WANT_WORKTREE" -eq 1 ]; then
+  SETUP_BLOCK=$(printf '%s' "
+## Setup
+
+You are running in an isolated git worktree — NOT the primary checkout.
+Assert isolation BEFORE any git operation:
+
+  pwd -P                         # must resolve to: $WORKTREE_PATH
+  git rev-parse --show-toplevel  # must resolve to: $WORKTREE_PATH
+
+If EITHER resolves to $PROJECT_PATH (the primary checkout), STOP immediately:
+  parlay status blocked \"isolation failure — running in primary checkout, not worktree\"
+Never commit, branch, or push from the primary checkout.
+")
+fi
 
 # 3. Compose the startup prompt: enrollment instructions + task contract.
 #    The fresh claude processes this as its first turn, so it arms the Monitor
@@ -337,7 +435,7 @@ Watch your context budget: when you approach ~80% used, checkpoint to the captai
 CLEAN SHUTDOWN / RESTART (work done, or context bloated/near the limit): write your handoff by running the 'handoff' skill (it creates a handoff bead), then IMMEDIATELY run 'identity --submit' — with NOTHING in between (no courtesy 'say', no other command). --submit needs no id: it resolves the handoff you just created from the store, so the create and the submit are effectively one atomic act. Interposing anything between the create and the submit is the one way to strand your shutdown — a dying context can be killed in that gap, leaving a live handoff bead but no restart. That IS the whole shutdown: --submit pins the handoff to your identity AND resets your context — it restarts you with a fresh context that recovers itself via identity → handoff → scratchpad. You do NOT run sudoku, context-reset, or any skill yourself; submitting the handoff is the shutdown. If you ever find yourself already past a 'handoff' create with the submit not yet run, run a bare 'identity --submit' now — it recovers that stranded handoff. NEVER --submit before any handoff bead exists — without one the reset you wakes with amnesia.
 
 ---
-
+$SETUP_BLOCK
 ## Task
 
 $PROMPT
@@ -428,6 +526,8 @@ if [ "$EPHEMERAL" -eq 0 ]; then
     --mode "$MODE" \
     --yolo on \
     ${EFFORT:+--effort "$EFFORT"} \
+    ${WORKTREE_PATH:+--worktree "$WORKTREE_PATH"} \
+    ${PROJECT_PATH:+--project "$PROJECT_PATH"} \
     >/dev/null 2>&1 || true
 fi
 

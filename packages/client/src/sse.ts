@@ -24,10 +24,10 @@ export function armCompactTimer() {
   compactTimer = setTimeout(() => {
     dot.className = 'pa-dot thinking'
     const sub = document.getElementById('pa-sub')!
-    sub.textContent = ' · compacting…'
+    sub.textContent = ' · quiet…'
     drawer.classList.add('compacting')
     connBanner.className = 'pa-conn-banner reconnecting show'
-    connBanner.textContent = 'agent compacting — will resume shortly'
+    connBanner.textContent = 'agent quiet — no reply in 45s (thinking, compacting, or paused)'
     if (!open) openDrawerFn()
   }, 45_000)
 }
