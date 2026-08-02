@@ -59,6 +59,22 @@ color_from_id() {
   printf '#%02x%02x%02x' "$r" "$g" "$b"
 }
 
+# Resolve a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler account name.
+# Tries: macOS keychain (ccjuggler-<name>) → ~/.ccjuggler/<name>/.oauth-token
+# Prints the token or exits non-zero with an error message.
+resolve_account_token() {
+  local account="$1"
+  local token
+  # macOS keychain — primary store on MacBook
+  token=$(security find-generic-password -a "ccjuggler-${account}" -s "ccjuggler" -w 2>/dev/null)
+  if [ -n "$token" ]; then printf '%s' "$token"; return 0; fi
+  # Flat-file fallback
+  local f="$HOME/.ccjuggler/${account}/.oauth-token"
+  if [ -f "$f" ]; then cat "$f"; return 0; fi
+  echo "parlay-spawn: --account '${account}': no token found — tried keychain 'ccjuggler-${account}' and $f" >&2
+  return 1
+}
+
 usage() {
   cat >&2 <<EOF
 Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus]
@@ -88,6 +104,10 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   and run the agent there instead of --cwd directly. Requires --cwd
                   to be inside a git repo. Auto-enabled by --mode branch|pr. Uses
                   treehouse if on PATH, else plain git worktree. Recorded in meta.
+  --account NAME  spawn the agent under a ccjuggler account (e.g. acc2) to spread
+                  Claude usage across accounts. Resolves CLAUDE_CODE_OAUTH_TOKEN from
+                  keychain (security find-generic-password -a ccjuggler-NAME -s ccjuggler)
+                  or ~/.ccjuggler/NAME/.oauth-token. Injected via herdr --env.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -124,6 +144,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
   MODE="report"
   EFFORT=""
   WANT_WORKTREE=0
+  ACCOUNT=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --cwd)       CWD="$2"; shift 2 ;;
@@ -132,6 +153,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --mode)      MODE="$2"; shift 2 ;;
       --effort)    EFFORT="$2"; shift 2 ;;
       --worktree)  WANT_WORKTREE=1; shift ;;
+      --account)   ACCOUNT="$2"; shift 2 ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
     esac
@@ -184,6 +206,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_MODE="report"
           BATCH_EFFORT=""
           BATCH_WORKTREE=0
+          BATCH_ACCOUNT=""
           while [ $# -gt 0 ]; do
             case "$1" in
               --prompt)    BATCH_PROMPT="$2"; shift 2 ;;
@@ -193,6 +216,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
               --mode)      BATCH_MODE="$2"; shift 2 ;;
               --effort)    BATCH_EFFORT="$2"; shift 2 ;;
               --worktree)  BATCH_WORKTREE=1; shift ;;
+              --account)   BATCH_ACCOUNT="$2"; shift 2 ;;
               --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
               --ephemeral) echo "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs" >&2; exit 2 ;;
               -*)       echo "parlay-spawn: unknown batch flag: $1" >&2; exit 2 ;;
@@ -227,6 +251,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             _shared+=(--mode "$BATCH_MODE")
             [ -n "$BATCH_EFFORT" ] && _shared+=(--effort "$BATCH_EFFORT")
             [ "$BATCH_WORKTREE" -eq 1 ] && _shared+=(--worktree)
+            [ -n "$BATCH_ACCOUNT" ] && _shared+=(--account "$BATCH_ACCOUNT")
             if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
               :
             else
@@ -252,6 +277,7 @@ MODEL=""
 MODE="report"
 EFFORT=""
 WANT_WORKTREE=0
+ACCOUNT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --cwd)      CWD="$2"; shift 2 ;;
@@ -260,6 +286,7 @@ while [ $# -gt 0 ]; do
     --mode)     MODE="$2"; shift 2 ;;
     --effort)   EFFORT="$2"; shift 2 ;;
     --worktree) WANT_WORKTREE=1; shift ;;
+    --account)  ACCOUNT="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
@@ -497,11 +524,21 @@ ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty'
 # Roll back on failure: if agent start fails (e.g. name taken), close the tab we
 # just created so it does not linger as a ghost "$AGENT_ID" tab. Without this,
 # set -e aborts here and orphans the labeled tab — the exact two-same-name-tabs bug.
+# Resolve account token if --account was given. Fail before tab creation so
+# there is no ghost tab to clean up on a bad keychain lookup.
+OAUTH_ENV_FLAG=()
+if [ -n "$ACCOUNT" ]; then
+  _token=$(resolve_account_token "$ACCOUNT") || exit 1
+  OAUTH_ENV_FLAG=(--env "CLAUDE_CODE_OAUTH_TOKEN=$_token")
+  echo "parlay-spawn: using account '$ACCOUNT' (token resolved)" >&2
+fi
+
 if ! herdr agent start "$AGENT_ID" --cwd "$CWD" $FOCUS_FLAG $TAB_FLAG \
   --env "PARLAY_SPAWN_PROMPT=$STARTUP_PROMPT" \
   --env "PARLAY_SPAWN_MODEL=$MODEL" \
   --env "PARLAY_SERVER=$PARLAY" \
   --env "PARLAY_AGENT_ID=$AGENT_ID" \
+  ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
   -- bash -lc "$LAUNCH_SCRIPT"; then
   echo "parlay-spawn: herdr agent start failed — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
   [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
