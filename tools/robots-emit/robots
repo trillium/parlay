@@ -23,10 +23,23 @@ if [ "$1" = "create" ]; then
   printf '%s\n' "$out"
   if [ "$code" -eq 0 ]; then
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # robots-3q7n: the CREATING agent is the only process that knows its own
+    # PARLAY_AGENT_ID, so it records the completion route HERE — a notify:<agent>
+    # label (the decision-4zr SUBSCRIBE) — so the watch daemon can `parlay send`
+    # the close back to it. Absent an agent id there is no originator → skip the
+    # subscribe (bead is still emitted as before). Guard-store ids never occur on
+    # this robots-pinned wrapper. Best-effort: a label failure never breaks create.
+    agent="${PARLAY_AGENT_ID:-}"
     # Match bd's own "Created issue: robots-XXX" line so ids inside a title/desc
     # never trigger a false emit. Emit one line per created id (batch-safe).
     printf '%s' "$out" | grep -oE 'Created issue: robots-[a-z0-9]+' | sed 's/^Created issue: //' | while IFS= read -r id; do
-      [ -n "$id" ] && printf '{"id":"%s","created_at":"%s","source":"robots-create"}\n' "$id" "$ts" >> "$ROBOTS_EVENTS_FILE" 2>/dev/null || true
+      [ -z "$id" ] && continue
+      if [ -n "$agent" ]; then
+        bd label add "$id" "notify:$agent" >/dev/null 2>&1 || true
+        printf '{"id":"%s","created_at":"%s","source":"robots-create","agent":"%s"}\n' "$id" "$ts" "$agent" >> "$ROBOTS_EVENTS_FILE" 2>/dev/null || true
+      else
+        printf '{"id":"%s","created_at":"%s","source":"robots-create"}\n' "$id" "$ts" >> "$ROBOTS_EVENTS_FILE" 2>/dev/null || true
+      fi
     done
   fi
   exit "$code"
