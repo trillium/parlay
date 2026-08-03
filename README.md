@@ -94,8 +94,9 @@ Repo conventions worth knowing:
   index past the limit.
 - **Two version axes** — the repo release `vX.Y.Z` git tag and the panel build
   `PA_VERSION` (`packages/client/src/version.ts`, auto-bumped per client change).
-- Docs of note: `docs/COMMAND_DESIGN_CONTRACT.md` (the voice engine) and
-  `docs/CLI_VERBS_AND_EVENTS.md` (CLI verb authoring + the event fabric).
+- Docs of note: `docs/COMMAND_DESIGN_CONTRACT.md` (the voice engine),
+  `docs/CLI_VERBS_AND_EVENTS.md` (CLI verb authoring + the event fabric), and
+  `docs/api-contract.md` (the HTTP API contract between client, CLI, and server).
 
 ## License
 

@@ -113,8 +113,9 @@ Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
   becomes that agent's --cwd; the display name is the id and the tab color is
   derived from it (or shared via --color). A shared --prompt is required and given
-  to every agent; --model/--focus/--color are shared too. A failed pair is reported
-  and skipped, the rest still launch, and the batch exits non-zero if any failed.
+  to every agent; --model/--focus/--color/--mode/--effort/--worktree/--account are
+  shared too. A failed pair is reported and skipped, the rest still launch, and the
+  batch exits non-zero if any failed.
     parlay-spawn fix-a=~/code/foo add-b=~/code/bar --prompt "Do the thing" --model sonnet
 
 Env: PARLAY_SERVER (default http://localhost:31337)
