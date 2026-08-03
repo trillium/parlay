@@ -52,7 +52,7 @@ async function cmdMem(kind: MemKind, args: string[]) {
     if (opts["--ephemeral"]) fm.ephemeral = "true"
     // Fold §3.2 lifecycle meta fields — written by parlay-spawn at launch time,
     // read back by identity --launch and parlay teardown. Only set when provided.
-    for (const k of ["mode", "effort", "kind", "yolo"] as const) {
+    for (const k of ["mode", "effort", "kind", "yolo", "worktree", "project"] as const) {
       const v = (opts[`--${k}`] as string | undefined)?.trim()
       if (v) fm[k] = v
     }
