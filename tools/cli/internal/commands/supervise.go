@@ -176,16 +176,14 @@ func isUnattended() bool {
 
 // Supervise ports cmdSupervise.
 //
-// NOTE: like the pre-fix crew-state, this resolves its status file via
-// statusSink() — the CALLING process's own PARLAY_AGENT_ID/PARLAY_STATUS_FILE
-// — rather than from the agentID argument. That is the same defect class
-// this ticket's pre-approved fix corrected in crew-state (see
-// status_verb.go's statusFileForAgent doc), but only crew-state's fix was
-// pre-authorized; this port is left intentionally bug-for-bug faithful to
-// the TS original pending a scoped decision on supervise too. Everything
-// else keyed by agentID (the marker file, the unattended queue) already
-// resolves correctly, so this only matters when supervise is invoked by
-// something other than the target agent itself.
+// Fidelity fix (follow-up to ticket B5 — extends the same fix already
+// applied to crew-state, see status_verb.go's statusFileForAgent doc): the
+// TS original resolved its status file via the CALLING process's own
+// PARLAY_AGENT_ID/PARLAY_STATUS_FILE rather than from the agentID argument,
+// so `parlay supervise <id>` never actually watched <id>'s status file when
+// invoked by something other than the target agent itself. Fixed here:
+// always resolve directly from agentID via statusFileForAgent, matching
+// everything else keyed by agentID (the marker file, the unattended queue).
 func Supervise(argv []string) {
 	if helpWanted("supervise", argv) {
 		return
@@ -201,7 +199,7 @@ func Supervise(argv []string) {
 		return
 	}
 
-	_, statusFile := statusSink()
+	statusFile := statusFileForAgent(agentID)
 
 	if r.Bool("--drain") {
 		buffered := DrainUnattendedQueue(agentID)

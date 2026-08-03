@@ -33,15 +33,14 @@ var knownStatusVerbs = map[string]bool{
 // supervise (both TS originals duplicated this identical regex; one
 // definition per Go package).
 //
-// NOTE: \w does not include '-', so a hyphenated verb like "needs-decision"
-// or "captain-held" as the LAST status line does not match this pattern at
-// all — readLastStatus/findNewActionable then treat the line as
-// unparseable. This is a pre-existing defect in the TS original (both
-// commands-crew-state.ts and commands-supervise.ts), reproduced here
-// faithfully: only the statusFileForAgent fix documented in status_verb.go
-// was pre-approved for this ticket. Flagged for a follow-up decision, not
-// fixed.
-var statusLineRe = regexp.MustCompile(`^(\w+)(?:\s*\[key=([A-Za-z0-9._-]+)\])?\s*:\s*(.*)$`)
+// Fidelity fix (follow-up to ticket B5): the TS original's \w does not
+// include '-', so a hyphenated verb like "needs-decision" or "captain-held"
+// never matched this pattern — despite both being in the code's own
+// declared TERMINAL_VERBS/ROUTINE_VERBS vocabulary (knownStatusVerbs /
+// terminalStatusVerbs below) — and silently read back as unparseable in
+// both crew-state and supervise. Fixed here: the verb class now accepts
+// hyphens.
+var statusLineRe = regexp.MustCompile(`^([\w-]+)(?:\s*\[key=([A-Za-z0-9._-]+)\])?\s*:\s*(.*)$`)
 
 type parsedStatus struct {
 	verb, key, note string
