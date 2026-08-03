@@ -68,14 +68,17 @@ func Open(cfg Config) (*Store, error) {
 	}
 	registry, err := openRegistryStore(filepath.Join(cfg.Dir, "agents.json"))
 	if err != nil {
+		messages.Close()
 		return nil, fmt.Errorf("store: registry: %w", err)
 	}
 	drafts, err := openDraftStore(filepath.Join(cfg.Dir, "draft.json"))
 	if err != nil {
+		messages.Close()
 		return nil, fmt.Errorf("store: drafts: %w", err)
 	}
 	settings, err := openSettingsStore(filepath.Join(cfg.Dir, "settings.json"))
 	if err != nil {
+		messages.Close()
 		return nil, fmt.Errorf("store: settings: %w", err)
 	}
 

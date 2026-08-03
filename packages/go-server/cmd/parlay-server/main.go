@@ -13,10 +13,12 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -109,22 +111,15 @@ func registerHealth(mux *http.ServeMux, st *store.Store) {
 // server, not something a dev/test run of this rewrite may touch (see
 // docs/scope-go-server.md §5 risk #10 and this repo's CLAUDE.md).
 func refuseProductionPort(addr string) error {
-	_, port, err := splitHostPort(addr)
-	if err == nil && port == "31337" {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil
+	}
+	port, err := strconv.Atoi(portStr)
+	if err == nil && port == 31337 {
 		return errors.New("refusing to bind :31337 — that is the captain's live production Pulse server (docs/scope-go-server.md §5 risk #10)")
 	}
 	return nil
-}
-
-// splitHostPort is a tiny wrapper so main.go doesn't need to import net just
-// for this one check.
-func splitHostPort(addr string) (host, port string, err error) {
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[:i], addr[i+1:], nil
-		}
-	}
-	return "", "", errors.New("no port in address")
 }
 
 func envOr(key, fallback string) string {
