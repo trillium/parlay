@@ -92,13 +92,24 @@ func deadRegisterServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// withPARLAYServer points PARLAY_SERVER at a throwaway server AND redirects
+// every on-disk write (this process's own agentcontext.go writes, plus the
+// `parlay identity --register` subprocess registerIdentity() shells out to)
+// into a t.TempDir() via PARLAY_AGENT_HOME. Without this, a successful
+// spawnOne in a test writes a REAL identity into the developer's actual
+// ~/.parlay/agents — the `parlay identity` CLI does its own local-disk
+// writes independent of PARLAY_SERVER, so pointing the server at a mock
+// alone does not make a test hermetic.
 func withPARLAYServer(t *testing.T, url string) {
 	t.Helper()
-	orig := os.Getenv("PARLAY_SERVER")
+	origServer := os.Getenv("PARLAY_SERVER")
+	origHome := os.Getenv("PARLAY_AGENT_HOME")
 	os.Setenv("PARLAY_SERVER", url)
+	os.Setenv("PARLAY_AGENT_HOME", t.TempDir())
 	os.Setenv("PARLAY_SPAWN_NO_WATCHDOG", "1")
 	t.Cleanup(func() {
-		os.Setenv("PARLAY_SERVER", orig)
+		os.Setenv("PARLAY_SERVER", origServer)
+		os.Setenv("PARLAY_AGENT_HOME", origHome)
 		os.Unsetenv("PARLAY_SPAWN_NO_WATCHDOG")
 	})
 }
