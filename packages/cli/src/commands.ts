@@ -222,8 +222,11 @@ export async function cmdLaunch(args: string[]) {
     if (!a) return die(`parlay launch: no known agent '${targetId}' — run 'parlay launch' to list available agents`, EXIT_USAGE)
     const revival = "Your context was reset. Follow the recovery chain above (identity → handoff → scratchpad) to restore your state, then await the captain."
     const spawnArgs = [a.id, a.name, a.color, revival, "--cwd", a.cwd, ...(a.model ? ["--model", a.model] : [])]
-    process.stderr.write(`parlay launch: spawning ${a.id} via parlay-spawn …\n`)
-    Bun.spawnSync(["parlay-spawn", ...spawnArgs], { stdio: ["inherit", "inherit", "inherit"] })
+    process.stderr.write(`parlay launch: spawning ${a.id} via parlay-bin spawn …\n`)
+    // bin/parlay-spawn (bash) was ported to tools/parlay-bin (Go, docs/scope-go-spawn.md,
+    // ticket A1) exposing `spawn`/`reset` subcommands under one binary — hence the
+    // relocated name and the "spawn" subcommand prefix here.
+    Bun.spawnSync(["parlay-bin", "spawn", ...spawnArgs], { stdio: ["inherit", "inherit", "inherit"] })
     return
   }
 
@@ -232,7 +235,7 @@ export async function cmdLaunch(args: string[]) {
   const liveSet = new Set(live.map(a => a.id))
   if (known.length === 0) {
     console.log(`No agent homes found in ${agentsDir}`)
-    console.log("Agents are created with: parlay-spawn <id> <name> <color> <prompt> [--cwd PATH]")
+    console.log("Agents are created with: parlay-bin spawn <id> <name> <color> <prompt> [--cwd PATH]")
     return
   }
   const home = homedir()
