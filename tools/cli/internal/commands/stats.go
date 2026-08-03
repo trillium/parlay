@@ -5,11 +5,20 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"unicode/utf16"
 
 	"github.com/trillium/parlay/tools/cli/internal/format"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
+
+// jsStringLen counts UTF-16 code units, matching JS's
+// JSON.stringify(m).length (JS strings are UTF-16) — a raw UTF-8 byte count
+// overstates size for any non-ASCII text (em dashes, curly quotes, emoji
+// are common in these chat messages).
+func jsStringLen(raw json.RawMessage) int {
+	return len(utf16.Encode([]rune(string(raw))))
+}
 
 type statsMsgFields struct {
 	Role   string `json:"role"`
@@ -58,7 +67,7 @@ func Stats(argv []string) {
 	var total, largest, userN, agentN, imgN, cardN int
 	var oldestTs, newestTs string
 	for i, r := range raw {
-		size := len(r)
+		size := jsStringLen(r)
 		total += size
 		if size > largest {
 			largest = size
