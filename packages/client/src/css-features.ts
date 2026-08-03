@@ -115,16 +115,13 @@ export const CSS_FEATURES = `
     font-size: 10px; line-height: 1; opacity: .55;
   }
   .pa-msg-ann:hover, .pa-msg-ann:active { opacity: 1; color: var(--pa-amber); border-color: color-mix(in srgb, var(--pa-amber) 45%, transparent); }
-  /* Build version — muted bold text running up the left edge, behind content */
+  /* Build version — muted text strip along the bottom edge of the panel box */
   #pa-version {
-    position: absolute; left: 14px; bottom: 124px; z-index: 0; pointer-events: none;
-    writing-mode: vertical-rl; transform: rotate(180deg);
-    font-family: var(--pa-mono); font-weight: 800; font-size: 22px; letter-spacing: .12em;
+    position: absolute; left: 0; right: 0; bottom: 6px; z-index: 0; pointer-events: none;
+    text-align: center;
+    font-family: var(--pa-mono); font-weight: 700; font-size: 10px; letter-spacing: .1em;
     font-variant: small-caps;
-    /* Recessive background brand mark: sits behind the thread (z-index 0) at low
-       opacity so full-width message/sysline text never visually clashes with it
-       (the long "· AgentName" suffix used to overlap turn content). */
-    color: var(--pa-body); opacity: .2; user-select: none;
+    color: var(--pa-body); opacity: .25; user-select: none;
   }
   #pa-thread, #pa-input-area, #pa-tabs, #pa-hdr { position: relative; z-index: 1; }
   /* System pseudo-tab — present but visually recessive */
@@ -149,6 +146,12 @@ export const CSS_FEATURES = `
     font-family: var(--pa-mono); font-size: 10px; line-height: 1.5; color: var(--pa-body); opacity: .95;
   }
   .pa-code code { font-family: inherit; }
+  /* Syntax token colors (syntax.ts) — theme-aware via CSS vars */
+  .pa-t-kw  { color: var(--pa-blue); }
+  .pa-t-str { color: var(--pa-green); }
+  .pa-t-cmt { color: var(--pa-muted); font-style: italic; }
+  .pa-t-num { color: var(--pa-amber); }
+  .pa-t-fn  { color: color-mix(in srgb, var(--pa-blue) 60%, var(--pa-body)); }
   .pa-code-inline {
     font-family: var(--pa-mono); font-size: .92em;
     background: color-mix(in srgb, var(--pa-body) 9%, transparent);
