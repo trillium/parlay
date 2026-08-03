@@ -36,7 +36,6 @@ var (
 	MemValueFlags = []string{
 		"--agent", "--complete", "--launch", "--name", "--color", "--model", "--cwd",
 		"--rename", "--to", "--older-than", "--mode", "--effort", "--kind", "--yolo",
-		"--worktree", "--project",
 	}
 )
 

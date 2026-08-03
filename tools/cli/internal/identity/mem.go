@@ -174,7 +174,7 @@ func cmdMem(kind MemKind, argv []string) {
 		// Fold §3.2 lifecycle meta fields — written by parlay-spawn at
 		// launch time, read back by identity --launch and parlay teardown.
 		// Only set when provided.
-		for _, k := range []string{"mode", "effort", "kind", "yolo", "worktree", "project"} {
+		for _, k := range []string{"mode", "effort", "kind", "yolo"} {
 			if v := strings.TrimSpace(optString(res, "--"+k)); v != "" {
 				fm.Set(k, v)
 			}
