@@ -15,9 +15,10 @@
 //	internal/wire      wire shapes                 internal/help    usage + per-command help
 //
 // Every other subcommand from the TS CLI's dispatch (status, subscribers,
-// identity, monitor, guard, ...) lands here as its own ticket (B1-B9) adds
-// it; `help` is wired now as the first end-to-end command proving this
-// skeleton out.
+// monitor, guard, ...) lands here as its own ticket (B2-B9) adds it; `help`
+// and `identity`/`scratchpad` (ticket B1, internal/identity) are wired now.
+// `say`/`reply` are implemented in internal/identity too (identity.CmdSay)
+// but not yet wired here — see that file's header comment.
 package main
 
 import (
@@ -26,6 +27,7 @@ import (
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/help"
+	"github.com/trillium/parlay/tools/cli/internal/identity"
 )
 
 func main() {
@@ -42,6 +44,10 @@ func main() {
 		fmt.Println(help.Usage(config.ServerURL()))
 	case "help", "--help", "-h":
 		cmdHelp(args)
+	case "identity":
+		identity.CmdIdentity(args)
+	case "scratchpad":
+		identity.CmdScratchpad(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		os.Exit(config.ExitUsage)
