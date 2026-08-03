@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import type { ChatMessage } from "./types"
 import { pushToHistory, persistMessage } from "./storage"
 import { agents, pollWaiters, setAgentPresence, broadcastToClients } from "./sse"
+import { rewriteMessageForServe } from "./link-rewrite"
 
 // ── Message creation ─────────────────────────────────────────────────────────
 
@@ -43,7 +44,10 @@ export function broadcastAlert(text: string, targetAgentIds?: string[]): { chann
     }
     pushToHistory(msg)
     persistMessage(msg)
-    broadcastToClients("message", msg)
+    // Serve-boundary rewrite for the live SSE echo (browser panels). The stored
+    // msg (pushed above) is untouched; resolveWaiters below hits the poll path,
+    // which rewrites at its own serialize boundary.
+    broadcastToClients("message", rewriteMessageForServe(msg))
     delivered += resolveWaiters(msg)
   }
 
@@ -64,7 +68,9 @@ export function addMessage(role: "user" | "agent", text: string, channel?: strin
   if (role === "user") msg.received = false
   pushToHistory(msg)
   persistMessage(msg)
-  broadcastToClients("message", msg)
+  // Serve-boundary rewrite for the live SSE echo; stored msg stays as-is so the
+  // return value and internal callers keep the original text.
+  broadcastToClients("message", rewriteMessageForServe(msg))
   if (role === "user") {
     // Route to channel-specific waiter first, then fall back to global (no channel) waiters
     const idx = pollWaiters.findIndex(w => msg.channel ? w.channel === msg.channel : !w.channel)

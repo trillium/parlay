@@ -1,6 +1,7 @@
 import { history, historyIndex } from "./storage"
 import { agents, pollWaiters, setAgentPresence, CORS, broadcastToClients, lastPollByChannel, broadcastPresenceMap, persistAgents } from "./sse"
 import { markReceived } from "./messages"
+import { rewriteMessageForServe } from "./link-rewrite"
 import type { PollWaiter } from "./types"
 
 export function handlePollRequest(req: Request, pathname: string): Response | null {
@@ -24,8 +25,10 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
     m.role === "user" && (channel ? m.channel === channel : !m.channel)
   )
   if (pending.length > 0) {
+    // markReceived mutates the STORED message's delivery flag (must land on the
+    // stored object), so rewrite only at the serialize boundary afterward.
     markReceived(pending[0])
-    return new Response(JSON.stringify(pending[0]), {
+    return new Response(JSON.stringify(rewriteMessageForServe(pending[0])), {
       headers: { "Content-Type": "application/json", ...CORS },
     })
   }
@@ -46,7 +49,9 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
       }, 30_000)
       waiter = {
         resolve(msg) {
-          try { controller.enqueue(enc.encode(JSON.stringify(msg))); controller.close() } catch { /* client gone */ }
+          // Serve-boundary rewrite; the waiter receives the shared stored msg,
+          // so clone-on-rewrite keeps the stored object unmutated.
+          try { controller.enqueue(enc.encode(JSON.stringify(rewriteMessageForServe(msg)))); controller.close() } catch { /* client gone */ }
         },
         timer,
         channel,
