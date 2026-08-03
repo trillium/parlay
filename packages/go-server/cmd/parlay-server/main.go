@@ -1,10 +1,9 @@
 // Command parlay-server is the Go rewrite of packages/server, Pulse's
-// HTTP/SSE chat server. This binary is the C0 foundation ticket
-// (docs/plan-go-migration-tickets.md): process skeleton, mux wiring, and the
-// storage layer (internal/store) that every later ticket (C1-C6) builds
-// handlers on top of without touching storage internals again. Only
-// GET /health is wired here — every other route in docs/api-contract.md is
-// out of scope for this ticket.
+// HTTP/SSE chat server. C0 (docs/plan-go-migration-tickets.md) laid the
+// process skeleton, mux wiring, and storage layer (internal/store); C1
+// (internal/handlers) adds messaging, the agent registry, and the legacy
+// long-poll endpoint on top of it. SSE, drafts, settings, uploads, and the
+// rest of docs/api-contract.md remain out of scope for later tickets.
 package main
 
 import (
@@ -22,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"parlay/go-server/internal/handlers"
 	"parlay/go-server/internal/store"
 )
 
@@ -55,6 +55,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerHealth(mux, st)
+	handlers.Register(mux, st)
 
 	srv := &http.Server{Addr: *addrFlag, Handler: mux}
 
