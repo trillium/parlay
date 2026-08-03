@@ -132,7 +132,7 @@ func methodNotAllowed(w http.ResponseWriter, allowed string) {
 // woken, so /alert can report `delivered`.
 func appendAndPublish(st *store.Store, b *broker, msg store.ChatMessage) (store.ChatMessage, int, error) {
 	stored, err := st.Messages.Append(msg)
-	if err != nil {
+	if err != nil && stored.ID == "" {
 		return store.ChatMessage{}, 0, err
 	}
 	st.Presence.Touch(stored.Channel, stored.Ts)

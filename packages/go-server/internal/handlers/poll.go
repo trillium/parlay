@@ -97,6 +97,9 @@ func handlePoll(st *store.Store, b *broker, timeout time.Duration) http.HandlerF
 		channel := r.URL.Query().Get("channel")
 		after := r.URL.Query().Get("after")
 
+		ch, cancel := b.subscribe(channel)
+		defer cancel()
+
 		// Only check the retained backlog when the caller actually supplied
 		// `after` — a bare poll with no `after` means "wait for the next
 		// message", not "replay everything I might have missed". This is a
@@ -111,9 +114,6 @@ func handlePoll(st *store.Store, b *broker, timeout time.Duration) http.HandlerF
 				}
 			}
 		}
-
-		ch, cancel := b.subscribe(channel)
-		defer cancel()
 
 		st.Presence.AddPoller(channel)
 		defer st.Presence.RemovePoller(channel)
