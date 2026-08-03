@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,20 +28,28 @@ func subChannels(data wire.SubscribersInfo) []string {
 	return out
 }
 
-// Subscribers ports commands.ts's cmdSubscribers.
+// Subscribers ports commands.ts's cmdSubscribers. Fetches raw JSON (rather
+// than decoding straight into wire.SubscribersInfo) so --full prints the
+// same bytes the server sent, not just the fields wire.SubscribersInfo
+// happens to declare — matches TS's console.log(JSON.stringify(data)),
+// where the fetch response carries fields beyond its declared type.
 func Subscribers(argv []string) {
 	if helpWanted("subscribers", argv) {
 		return
 	}
 	r := args.Parse("subscribers", argv, []string{"--full"}, nil)
-	data := httpc.GetJSON[wire.SubscribersInfo]("/api/chat/subscribers")
+	raw := httpc.GetJSON[json.RawMessage]("/api/chat/subscribers")
 
 	if r.Bool("--full") {
-		b, _ := json.MarshalIndent(data, "", "  ")
-		fmt.Println(string(b))
+		var buf bytes.Buffer
+		json.Indent(&buf, raw, "", "  ")
+		fmt.Println(buf.String())
 		fmt.Fprintln(os.Stderr, "\nNext: parlay agents")
 		return
 	}
+
+	var data wire.SubscribersInfo
+	_ = json.Unmarshal(raw, &data)
 
 	channels := strings.Join(subChannels(data), ", ")
 	clients, pollers, registered := 0, 0, 0
