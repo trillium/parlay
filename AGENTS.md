@@ -129,7 +129,7 @@ regression test:
 
 `tools/cli/internal/commands/{guard,teardown,variant}.go` (ticket B4) port
 `commands-guard.ts`/`commands-teardown.ts`/`commands-variant.ts` verbatim,
-including two TS-source quirks worth knowing before touching this code:
+including three TS-source quirks worth knowing before touching this code:
 (1) all three TS files hardcode `AGENTS_DIR`/`WKTREES_DIR` to
 `homedir()/.parlay/{agents,worktrees}` and never honor `$PARLAY_AGENT_HOME`
 or `$PARLAY_STATE_HOME` — unlike `internal/identity.AgentsRoot()` (honors
@@ -147,6 +147,17 @@ check, network errors swallowed). The Go port matches both real behaviors:
 `variant.go`'s teardown calls `httpc.PostJSON` unwrapped (dies loud, matching
 reality over the misleading comment); `teardown.go` has its own
 `bestEffortUnregister` that truly swallows every error.
+(3) `commands-teardown.ts`/`commands-variant.ts` each define their own local
+`parseFm`, distinct from `commands-identity/store.ts`'s `readFrontmatter`
+(what `internal/identity.ReadFrontmatter` mirrors) — the local `parseFm`'s
+per-line regex requires the whole `key: "value"` shape to match, silently
+dropping a line whose value contains an embedded quote rather than keeping
+it mangled. `guard.go`'s `readLocalFrontmatter`/`localFrontmatter` replicate
+that local parity for `teardown.go`/`variant.go`'s frontmatter reads; see the
+doc comment above `localFrontmatterBlockRe` in `guard.go` for the full
+rationale. `identity.go`'s register/launch/rename/reap-ephemeral verbs are
+unaffected — they keep using `internal/identity.ReadFrontmatter`, matching
+their own TS source.
 
 ## `bun test` only works from inside a package directory
 
