@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/trillium/parlay/tools/cli/internal/commands"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/help"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
@@ -40,8 +41,25 @@ func main() {
 
 	switch cmd {
 	case "":
-		// TODO(B3): bare `parlay` = panel/fleet snapshot (cmdStatus in commands.ts).
-		fmt.Println(help.Usage(config.ServerURL()))
+		commands.Status() // bare `parlay` = panel/fleet snapshot
+	case "subscribers":
+		commands.Subscribers(args)
+	case "agents":
+		commands.Agents(args)
+	case "agent-down":
+		commands.AgentDown(args)
+	case "remote":
+		commands.Remote(args)
+	case "nickname":
+		commands.Nickname(args)
+	case "send":
+		commands.Send(args)
+	case "alert":
+		commands.Alert(args)
+	case "history":
+		commands.History(args)
+	case "stats":
+		commands.Stats(args)
 	case "help", "--help", "-h":
 		cmdHelp(args)
 	case "identity":
