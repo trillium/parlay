@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,20 +12,27 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
-// Agents ports commands.ts's cmdAgents.
+// Agents ports commands.ts's cmdAgents. Fetches raw JSON (rather than
+// decoding straight into []wire.AgentInfo) so --full prints the same bytes
+// the server sent, not just the fields wire.AgentInfo happens to declare —
+// matches TS's console.log(JSON.stringify(agents, null, 2)).
 func Agents(argv []string) {
 	if helpWanted("agents", argv) {
 		return
 	}
 	r := args.Parse("agents", argv, []string{"--full"}, nil)
-	agentsList := httpc.GetJSON[[]wire.AgentInfo]("/api/chat/agents")
+	raw := httpc.GetJSON[json.RawMessage]("/api/chat/agents")
 
 	if r.Bool("--full") {
-		b, _ := json.MarshalIndent(agentsList, "", "  ")
-		fmt.Println(string(b))
+		var buf bytes.Buffer
+		json.Indent(&buf, raw, "", "  ")
+		fmt.Println(buf.String())
 		fmt.Fprintln(os.Stderr, "\nNext: parlay alert --agent <id> <text...>")
 		return
 	}
+
+	var agentsList []wire.AgentInfo
+	_ = json.Unmarshal(raw, &agentsList)
 
 	if len(agentsList) == 0 {
 		fmt.Println("0 agents registered.")
