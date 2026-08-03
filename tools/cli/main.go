@@ -16,10 +16,11 @@
 //
 // B1 wired `identity`/`scratchpad` (internal/identity); B3 wired the simple
 // read/write commands (status, subscribers, agents, agent-down, remote,
-// nickname, send, alert, history, stats). `say`/`reply` are implemented in
-// internal/identity too (identity.CmdSay) but not yet wired here — see that
-// file's header comment. Every other subcommand from the TS CLI's dispatch
-// (monitor, guard, ...) lands here as its own ticket adds it.
+// nickname, send, alert, history, stats); B2 wired `monitor`/`listen`
+// (internal/monitor, `agent-up` is an alias for `listen`). `say`/`reply`
+// are implemented in internal/identity too (identity.CmdSay) but not yet
+// wired here — see that file's header comment. Every other subcommand from
+// the TS CLI's dispatch (guard, ...) lands here as its own ticket adds it.
 package main
 
 import (
@@ -30,6 +31,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/help"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
+	"github.com/trillium/parlay/tools/cli/internal/monitor"
 )
 
 func main() {
@@ -67,6 +69,10 @@ func main() {
 		identity.CmdIdentity(args)
 	case "scratchpad":
 		identity.CmdScratchpad(args)
+	case "monitor":
+		monitor.CmdMonitor(args)
+	case "listen", "agent-up":
+		monitor.CmdListen(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		os.Exit(config.ExitUsage)
