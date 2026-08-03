@@ -72,13 +72,13 @@ func openSettingsStore(path string) (*SettingsStore, error) {
 }
 
 // decodeSettingsWithMigration parses a settings document and folds the
-// legacy singular voiceClearPhrase field into voiceClearPhrases (risk #8 in
-// docs/scope-go-server.md §5). The client already migrates this on load,
-// but only in memory — if a record was ever saved back before that client
-// migration existed, or was written some other way, the file on disk can
-// still be in the old shape. Doing the fold here too means an old-shaped
-// file self-heals the moment this server serves or re-saves it, instead of
-// depending on every future reader remembering to migrate.
+// legacy singular voiceClearPhrase field into voiceClearPhrases (see the
+// settings section of docs/api-contract.md). The client already migrates
+// this on load, but only in memory — if a record was ever saved back
+// before that client migration existed, or was written some other way, the
+// file on disk can still be in the old shape. Doing the fold here too means
+// an old-shaped file self-heals the moment this server serves or re-saves
+// it, instead of depending on every future reader remembering to migrate.
 func decodeSettingsWithMigration(data []byte) (ParlaySettings, error) {
 	var s ParlaySettings
 	if err := json.Unmarshal(data, &s); err != nil {
