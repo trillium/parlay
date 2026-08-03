@@ -39,7 +39,7 @@ func Agents(argv []string) {
 	} else {
 		fmt.Printf("%d agent(s):\n", len(agentsList))
 		for _, a := range agentsList {
-			fmt.Printf("%-20s %-20s %s\n", a.ID, a.Name, a.Color)
+			fmt.Printf("%s %s %s\n", format.PadEnd(a.ID, 20), format.PadEnd(a.Name, 20), a.Color)
 		}
 	}
 	format.NextStep("parlay alert --agent <id> <text...>")

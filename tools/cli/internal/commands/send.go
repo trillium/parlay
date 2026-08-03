@@ -53,7 +53,7 @@ func Send(argv []string) {
 		} else {
 			fmt.Printf("%d agent(s) you can message:\n", len(agentsList))
 			for _, a := range agentsList {
-				fmt.Printf("  send --%-22s # → %s\n", a.ID, a.Name)
+				fmt.Printf("  send --%s # → %s\n", format.PadEnd(a.ID, 22), a.Name)
 			}
 		}
 		return

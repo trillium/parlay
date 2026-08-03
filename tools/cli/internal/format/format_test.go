@@ -29,6 +29,28 @@ func TestTruncateClipsLongText(t *testing.T) {
 	}
 }
 
+func TestTruncateCountsUTF16CodeUnitsNotRunes(t *testing.T) {
+	// "😀" is one Go rune but two UTF-16 code units (a surrogate pair), like
+	// the TS original's JS string .length. 99 "a"s + the emoji is 100 runes
+	// but 101 UTF-16 units, so it must clip against max=100 the same way the
+	// TS original's truncate() would.
+	text := strings.Repeat("a", 99) + "😀"
+	got := Truncate(text, 100)
+	if !strings.HasSuffix(got, "(+1 chars)") {
+		t.Errorf("Truncate() = %q, want a clip with suffix (+1 chars)", got)
+	}
+}
+
+func TestPadEndCountsUTF16CodeUnitsNotRunes(t *testing.T) {
+	// "😀" is one Go rune but two UTF-16 code units, so padEnd(4) in JS pads
+	// with two spaces, not three.
+	got := PadEnd("😀", 4)
+	want := "😀" + "  "
+	if got != want {
+		t.Errorf("PadEnd() = %q, want %q", got, want)
+	}
+}
+
 func TestWhoAgentUsesChannel(t *testing.T) {
 	m := wire.ChatMessage{Role: "agent", Channel: "mayor"}
 	if got := Who(m); got != "mayor" {
