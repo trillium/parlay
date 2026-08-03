@@ -11,8 +11,13 @@ import (
 // spawned claude never stalls on the folder trust dialog. bin/parlay-spawn
 // step 4 (lines 489–499) — best-effort: a missing file or unparseable JSON
 // is a warning, not a fatal error, matching bash's jq-failure fallback.
+// Honors PARLAY_CLAUDE_JSON to redirect the target path in tests, like
+// agentHomeDir does for PARLAY_AGENT_HOME.
 func pretrustWorkdir(cwd string) {
-	claudeJSONPath := filepath.Join(os.Getenv("HOME"), ".claude.json")
+	claudeJSONPath := os.Getenv("PARLAY_CLAUDE_JSON")
+	if claudeJSONPath == "" {
+		claudeJSONPath = filepath.Join(os.Getenv("HOME"), ".claude.json")
+	}
 	raw, err := os.ReadFile(claudeJSONPath)
 	if err != nil {
 		return // parity: bash only acts `if [ -f "$CLAUDE_JSON" ]`

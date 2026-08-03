@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -94,22 +95,27 @@ func deadRegisterServer(t *testing.T) *httptest.Server {
 
 // withPARLAYServer points PARLAY_SERVER at a throwaway server AND redirects
 // every on-disk write (this process's own agentcontext.go writes, plus the
-// `parlay identity --register` subprocess registerIdentity() shells out to)
-// into a t.TempDir() via PARLAY_AGENT_HOME. Without this, a successful
+// `parlay identity --register` subprocess registerIdentity() shells out to,
+// plus pretrustWorkdir's ~/.claude.json rewrite) into a t.TempDir() via
+// PARLAY_AGENT_HOME and PARLAY_CLAUDE_JSON. Without this, a successful
 // spawnOne in a test writes a REAL identity into the developer's actual
-// ~/.parlay/agents — the `parlay identity` CLI does its own local-disk
+// ~/.parlay/agents and a REAL trust-store entry into their actual
+// ~/.claude.json — the `parlay identity` CLI does its own local-disk
 // writes independent of PARLAY_SERVER, so pointing the server at a mock
 // alone does not make a test hermetic.
 func withPARLAYServer(t *testing.T, url string) {
 	t.Helper()
 	origServer := os.Getenv("PARLAY_SERVER")
 	origHome := os.Getenv("PARLAY_AGENT_HOME")
+	origClaudeJSON := os.Getenv("PARLAY_CLAUDE_JSON")
 	os.Setenv("PARLAY_SERVER", url)
 	os.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+	os.Setenv("PARLAY_CLAUDE_JSON", filepath.Join(t.TempDir(), ".claude.json"))
 	os.Setenv("PARLAY_SPAWN_NO_WATCHDOG", "1")
 	t.Cleanup(func() {
 		os.Setenv("PARLAY_SERVER", origServer)
 		os.Setenv("PARLAY_AGENT_HOME", origHome)
+		os.Setenv("PARLAY_CLAUDE_JSON", origClaudeJSON)
 		os.Unsetenv("PARLAY_SPAWN_NO_WATCHDOG")
 	})
 }
