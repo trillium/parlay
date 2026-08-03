@@ -21,7 +21,6 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
-	"github.com/trillium/parlay/tools/cli/internal/identity"
 )
 
 // hasUncommitted reports whether repoPath has uncommitted changes.
@@ -90,7 +89,7 @@ func Teardown(argv []string) {
 		return
 	}
 
-	fm := identity.ReadFrontmatter(filepath.Join(idHome, "identity.md"))
+	fm := readLocalFrontmatter(filepath.Join(idHome, "identity.md"))
 	worktree := fm.Get("worktree")
 	project := fm.Get("project")
 

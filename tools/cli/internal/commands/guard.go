@@ -96,6 +96,63 @@ func parlayWktreesDir() string {
 	return filepath.Join(parlayHomeDir(), ".parlay", "worktrees")
 }
 
+// localFrontmatterBlockRe / localFrontmatterKVRe match commands-teardown.ts's
+// and commands-variant.ts's own local `parseFm` regexes exactly — each of
+// those two TS files defines its own parseFm rather than importing
+// commands-identity/store.ts's readFrontmatter (what internal/identity.
+// ReadFrontmatter mirrors), and the two are NOT equivalent: parseFm's
+// per-line regex requires the whole `key: "value"` shape to match, so a
+// value containing an embedded quote (e.g. from JSON-escaping) causes that
+// line to be silently dropped rather than kept mangled. Only
+// teardown.go/variant.go's frontmatter reads use this; identity.go's
+// register/launch/rename/reap-ephemeral verbs keep using
+// internal/identity.ReadFrontmatter, matching their own TS source
+// (commands-identity/store.ts).
+var (
+	localFrontmatterBlockRe = regexp.MustCompile(`(?s)^---\n(.*?)\n---`)
+	localFrontmatterKVRe    = regexp.MustCompile(`^(\w+):\s*"?([^"]*)"?\s*$`)
+)
+
+// localFrontmatter is an insertion-ordered string map, mirroring the plain
+// object commands-teardown.ts's/commands-variant.ts's local parseFm returns.
+type localFrontmatter struct {
+	keys []string
+	vals map[string]string
+}
+
+func (f *localFrontmatter) Get(key string) string { return f.vals[key] }
+
+func (f *localFrontmatter) set(key, val string) {
+	if _, ok := f.vals[key]; !ok {
+		f.keys = append(f.keys, key)
+	}
+	f.vals[key] = val
+}
+
+// readLocalFrontmatter parses file's --- … --- block the way
+// commands-teardown.ts's/commands-variant.ts's local parseFm does. A missing
+// file or missing block yields an empty localFrontmatter, matching parseFm's
+// existsSync-guarded call site.
+func readLocalFrontmatter(file string) *localFrontmatter {
+	fm := &localFrontmatter{vals: make(map[string]string)}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return fm
+	}
+	m := localFrontmatterBlockRe.FindStringSubmatch(string(data))
+	if m == nil {
+		return fm
+	}
+	for _, line := range strings.Split(m[1], "\n") {
+		kv := localFrontmatterKVRe.FindStringSubmatch(line)
+		if kv == nil {
+			continue
+		}
+		fm.set(kv[1], kv[2])
+	}
+	return fm
+}
+
 // guardStateHome / beaconPath: the liveness-beacon path DOES honor
 // $PARLAY_STATE_HOME (default ~/.parlay), same as internal/config.StateHome.
 func guardStateHome() string {

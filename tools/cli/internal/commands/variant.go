@@ -192,7 +192,7 @@ func variantLaunch(argv []string) {
 		httpc.Die("parlay variant launch: primary agent id required", config.ExitUsage)
 		return
 	}
-	fm := identity.ReadFrontmatter(filepath.Join(parlayAgentsDir(), primaryID, "identity.md"))
+	fm := readLocalFrontmatter(filepath.Join(parlayAgentsDir(), primaryID, "identity.md"))
 	if fm.Get("id") == "" {
 		httpc.Die(fmt.Sprintf("parlay variant launch: no known agent '%s' — run 'parlay launch' to list", primaryID), config.ExitUsage)
 		return
@@ -270,7 +270,14 @@ func variantLaunch(argv []string) {
 
 	idFile := filepath.Join(parlayAgentsDir(), variantID, "identity.md")
 	if _, err := os.Stat(idFile); err == nil {
+		local := readLocalFrontmatter(idFile)
 		efm := identity.ReadFrontmatter(idFile)
+		for _, k := range efm.Keys() {
+			efm.Delete(k)
+		}
+		for _, k := range local.keys {
+			efm.Set(k, local.vals[k])
+		}
 		efm.Set("variant_of", primaryID)
 		_ = identity.WriteFrontmatter(idFile, efm)
 	}
@@ -298,7 +305,7 @@ func variantList(argv []string) {
 			if _, err := os.Stat(f); err != nil {
 				continue
 			}
-			fm := identity.ReadFrontmatter(f)
+			fm := readLocalFrontmatter(f)
 			vo := fm.Get("variant_of")
 			if vo == "" {
 				continue
@@ -335,7 +342,7 @@ func variantMerge(argv []string) {
 		httpc.Die("parlay variant merge: variant id required", config.ExitUsage)
 		return
 	}
-	fm := identity.ReadFrontmatter(filepath.Join(parlayAgentsDir(), variantID, "identity.md"))
+	fm := readLocalFrontmatter(filepath.Join(parlayAgentsDir(), variantID, "identity.md"))
 	pID := fm.Get("variant_of")
 	if pID == "" {
 		httpc.Die(fmt.Sprintf("parlay variant merge: '%s' is not a variant (no variant_of field)", variantID), config.ExitUsage)
@@ -359,7 +366,7 @@ func variantTeardown(argv []string) {
 		httpc.Die("parlay variant teardown: variant id required", config.ExitUsage)
 		return
 	}
-	fm := identity.ReadFrontmatter(filepath.Join(parlayAgentsDir(), variantID, "identity.md"))
+	fm := readLocalFrontmatter(filepath.Join(parlayAgentsDir(), variantID, "identity.md"))
 	pID := fm.Get("variant_of")
 	if pID == "" {
 		httpc.Die(fmt.Sprintf("parlay variant teardown: '%s' is not a variant (no variant_of field)", variantID), config.ExitUsage)
