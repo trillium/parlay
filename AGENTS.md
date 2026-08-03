@@ -76,7 +76,10 @@ inside that package when validating.
 
 ## Publishable `@parlay/*` packages (npm scope not yet claimed)
 
-Every package under `packages/` is `private: true` except `packages/input`
+This section covers npm packages under `packages/` (those with a
+`package.json`); Go modules like `packages/go-server` (no `package.json`)
+are outside this private/publishable dichotomy entirely. Every npm package
+under `packages/` is `private: true` except `packages/input`
 (`@parlay/input`) and `packages/parlay-input` (unscoped `parlay-input`,
 holds the bare name and re-exports `@parlay/input`) — these are scaffolded
 for eventual publishing but have never actually been published, and the
