@@ -127,6 +127,27 @@ regression test:
   `captain-held`) — such lines silently fail to parse and read back as
   "unknown / no status recorded" in both crew-state and supervise.
 
+`tools/cli/internal/commands/{guard,teardown,variant}.go` (ticket B4) port
+`commands-guard.ts`/`commands-teardown.ts`/`commands-variant.ts` verbatim,
+including two TS-source quirks worth knowing before touching this code:
+(1) all three TS files hardcode `AGENTS_DIR`/`WKTREES_DIR` to
+`homedir()/.parlay/{agents,worktrees}` and never honor `$PARLAY_AGENT_HOME`
+or `$PARLAY_STATE_HOME` — unlike `internal/identity.AgentsRoot()` (honors
+`$PARLAY_AGENT_HOME`) or `commands-guard.ts`'s own beacon path (honors
+`$PARLAY_STATE_HOME`); the Go port preserves this split via non-env-aware
+`parlayAgentsDir()`/`parlayWktreesDir()` helpers in `guard.go`, deliberately
+distinct from `internal/identity`/`internal/config`'s env-aware equivalents.
+(2) `cmdVariantTeardown`'s `try { await postJSON(...) } catch {}` around its
+unregister call looks best-effort but isn't: `die()`'s `process.exit()`
+is not a catchable JS exception, so an unreachable server there genuinely
+aborts teardown before the final cleanup+success message — verified
+empirically against the Go port. Contrast `commands-teardown.ts`'s raw
+`fetch(...).catch(() => {})`, which IS genuinely best-effort (no status
+check, network errors swallowed). The Go port matches both real behaviors:
+`variant.go`'s teardown calls `httpc.PostJSON` unwrapped (dies loud, matching
+reality over the misleading comment); `teardown.go` has its own
+`bestEffortUnregister` that truly swallows every error.
+
 ## `bun test` only works from inside a package directory
 
 There is no root `bunfig.toml`, so running `bun test` from the repo root
