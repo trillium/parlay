@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "agent_id": "submit-atomic-shutdown",
+  "declared_at": "2026-07-17T00:00:00Z",
+  "allowed_files": [
+    { "path": "packages/cli/src/commands-identity.ts", "intent": "auto-resolve handoff id from store; close create-submit death window" },
+    { "path": "packages/cli/src/help.ts", "intent": "document optional handoff-id + atomic submit contract" },
+    { "path": "packages/cli/src/resolve-handoff.ts", "intent": "new: resolve current open handoff bead id from store" },
+    { "path": "packages/cli/src/resolve-handoff.test.ts", "intent": "new: prove stranded-create auto-recovery" }
+  ]
+}
