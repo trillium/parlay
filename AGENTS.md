@@ -93,7 +93,8 @@ which of the 17 event names documented in `docs/api-contract.md` have a live
 producer today (message, message_received, agent_register, plus the
 connect-time burst of connected/history/agents/presence_map) versus which are
 wire-ready but unproduced pending a future ticket (drafts, device-cmd,
-tool/session events, etc.); C3+ still open — drafts/uploads/settings,
+tool/session events, etc.); C3: drafts/uploads/settings, also in
+`internal/handlers` — see the dedicated section below; C4+ still open —
 eval-relay/debug-log, parity harness, deploy tooling). Ticket briefs for this
 workstream point at `docs/scope-go-server.md` as the authoritative spec —
 **that file has never existed anywhere in this repo's git history** (checked
@@ -167,6 +168,34 @@ doc comment above `localFrontmatterBlockRe` in `guard.go` for the full
 rationale. `identity.go`'s register/launch/rename/reap-ephemeral verbs are
 unaffected — they keep using `internal/identity.ReadFrontmatter`, matching
 their own TS source.
+
+## Go server ticket C3: drafts/uploads/settings (`internal/handlers`)
+
+C3 built on C0's already-landed `internal/store` (which already had
+`DraftStore`/`SettingsStore` — only `UploadStore`, in
+`internal/store/uploads.go`, was new) and is registered via its own
+`handlers.RegisterData(mux, st)`, called from `main.go` alongside C1's
+`handlers.Register(mux, st)` — deliberately not folded into C1's `Register`,
+so this ticket never had to touch or depend on C1's broker or a later C2's
+SSE hub. Two things `docs/api-contract.md` doesn't pin down, decided here:
+
+- **`GET`/`PUT` share one mux registration per path** (`handleDraft`,
+  `handleSettings`, each switching on `r.Method` internally) rather than two
+  separate `handleFunc` calls on the same pattern — `net/http.ServeMux`
+  panics on registering the exact same pattern twice, and C1's handlers
+  never hit this because each of their routes is single-method.
+- **Uploads need a serving route the contract doesn't document.** `POST
+  /api/chat/upload` returns `{ok, url}`, and `packages/client/src/
+  attachments.ts` renders that `url` directly as an `<img src>` — so
+  something on this server has to answer that URL. `UploadStore` saves each
+  file under `<state-dir>/uploads/<random-hex><ext>` (never the
+  client-supplied filename, which is discarded except for its sanitized
+  extension) and `handleServeUpload` is mounted at the same
+  `/api/chat/uploads/` prefix the upload response's `url` is rooted at, so
+  the returned URL is always directly `GET`-able. Image type is verified
+  server-side via `http.DetectContentType` sniffing on the actual bytes
+  (not the client-supplied `Content-Type` header), capped at 10MB per the
+  contract's documented client-side UI copy, now also enforced server-side.
 
 ## `bun test` only works from inside a package directory
 

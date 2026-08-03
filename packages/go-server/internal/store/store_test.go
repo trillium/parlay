@@ -17,7 +17,7 @@ func TestOpenCreatesStateDirAndAllSubstores(t *testing.T) {
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("state dir not created: %v", err)
 	}
-	if st.Messages == nil || st.Registry == nil || st.Drafts == nil || st.Settings == nil || st.Presence == nil {
+	if st.Messages == nil || st.Registry == nil || st.Drafts == nil || st.Settings == nil || st.Presence == nil || st.Uploads == nil {
 		t.Fatalf("Open returned a Store with a nil substore: %+v", st)
 	}
 }

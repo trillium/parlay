@@ -22,6 +22,7 @@
 //	agents.json      full-snapshot agent registry, atomic rewrite on change
 //	draft.json       full-snapshot single current draft, atomic rewrite
 //	settings.json    full-snapshot ParlaySettings, atomic rewrite
+//	uploads/         one file per uploaded attachment, named by UploadStore.Save
 //
 // Every substore owns its own sync.RWMutex and exposes a narrow method set
 // (Append/History, Upsert/List, Get/Set, Get/Replace) rather than raw file
@@ -43,6 +44,7 @@ type Store struct {
 	Drafts   *DraftStore
 	Settings *SettingsStore
 	Presence *PresenceTracker
+	Uploads  *UploadStore
 }
 
 // Config controls where and how much Open persists.
@@ -82,6 +84,11 @@ func Open(cfg Config) (*Store, error) {
 		messages.Close()
 		return nil, fmt.Errorf("store: settings: %w", err)
 	}
+	uploads, err := openUploadStore(filepath.Join(cfg.Dir, "uploads"))
+	if err != nil {
+		messages.Close()
+		return nil, fmt.Errorf("store: uploads: %w", err)
+	}
 
 	return &Store{
 		Messages: messages,
@@ -89,6 +96,7 @@ func Open(cfg Config) (*Store, error) {
 		Drafts:   drafts,
 		Settings: settings,
 		Presence: newPresenceTracker(),
+		Uploads:  uploads,
 	}, nil
 }
 
