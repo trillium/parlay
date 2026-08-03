@@ -16,17 +16,53 @@ import (
 // timeouts (60s+) while staying long enough to avoid a busy-poll loop.
 const defaultPollTimeout = 25 * time.Second
 
+// wildcardBuffer sizes the channel handed to subscribeAll. Only one reader
+// ever drains it (the SSE hub's single bridging goroutine, ticket C2), so a
+// small buffer is enough to absorb a burst (e.g. /alert fanning out to
+// several channels in one request) without publish() blocking; see
+// subscribeAll's doc comment for what happens if that reader ever falls
+// behind anyway.
+const wildcardBuffer = 16
+
 // broker is transient, in-memory pub/sub between message-appending handlers
 // and blocked GET /poll requests, keyed by channel. It intentionally holds
 // no persisted state — see the package doc comment for why this isn't part
-// of internal/store.
+// of internal/store. Ticket C2 (the SSE hub) reuses this same broker as its
+// event source via subscribeAll rather than standing up a second publish
+// call site — see appendAndPublish, this type's one and only publish()
+// caller, which neither ticket had to change.
 type broker struct {
-	mu   sync.Mutex
-	subs map[string]map[chan store.ChatMessage]struct{}
+	mu       sync.Mutex
+	subs     map[string]map[chan store.ChatMessage]struct{}
+	wildcard map[chan store.ChatMessage]struct{}
 }
 
 func newBroker() *broker {
-	return &broker{subs: make(map[string]map[chan store.ChatMessage]struct{})}
+	return &broker{
+		subs:     make(map[string]map[chan store.ChatMessage]struct{}),
+		wildcard: make(map[chan store.ChatMessage]struct{}),
+	}
+}
+
+// subscribeAll registers a waiter on every channel at once — the SSE hub's
+// (ticket C2) registration path, since GET /events has no channel scoping
+// (docs/api-contract.md's query params are device/after/url only, no
+// channel). Deliberately a separate map from subs rather than a per-channel
+// subscribe to every known channel: channels come and go with whatever
+// string a caller passes to /send's toAgent, there is no fixed enumerable
+// set to subscribe to up front.
+func (b *broker) subscribeAll() (<-chan store.ChatMessage, func()) {
+	ch := make(chan store.ChatMessage, wildcardBuffer)
+	b.mu.Lock()
+	b.wildcard[ch] = struct{}{}
+	b.mu.Unlock()
+
+	cancel := func() {
+		b.mu.Lock()
+		delete(b.wildcard, ch)
+		b.mu.Unlock()
+	}
+	return ch, cancel
 }
 
 // subscribe registers a waiter on channel and returns a receive-only channel
@@ -53,10 +89,18 @@ func (b *broker) subscribe(channel string) (<-chan store.ChatMessage, func()) {
 	return ch, cancel
 }
 
-// publish delivers msg to every current waiter on msg.Channel and returns how
-// many received it. A subscriber whose buffer is already full is skipped
-// rather than blocked on — each poll request only ever wants one message
-// before it returns, so it can't be waiting to receive a second.
+// publish delivers msg to every current waiter on msg.Channel, then to every
+// subscribeAll waiter regardless of channel, and returns how many
+// channel-scoped (poll) waiters received it — subscribeAll waiters aren't
+// counted since delivered is /alert's per-channel-poller count, not
+// something the SSE hub consumes. A subscriber whose buffer is already full
+// is skipped rather than blocked on: each poll request only ever wants one
+// message before it returns, so it can't be waiting to receive a second, and
+// the hub's single subscribeAll reader is expected to drain continuously
+// (see subscribeAll's doc comment) — a full wildcard buffer means that
+// reader has stalled, and dropping the event there is preferable to
+// blocking every other publish() caller (in-flight /send, /reply, /alert
+// requests) on one wedged consumer.
 func (b *broker) publish(msg store.ChatMessage) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -65,6 +109,12 @@ func (b *broker) publish(msg store.ChatMessage) int {
 		select {
 		case ch <- msg:
 			delivered++
+		default:
+		}
+	}
+	for ch := range b.wildcard {
+		select {
+		case ch <- msg:
 		default:
 		}
 	}
@@ -87,8 +137,13 @@ func toPollMessage(m store.ChatMessage) pollMessage {
 
 // handlePoll implements GET /api/chat/poll?after=<lastId>&channel=<agentId>.
 // timeout is a parameter (rather than always defaultPollTimeout) so tests can
-// exercise the timeout path without waiting 25s.
-func handlePoll(st *store.Store, b *broker, timeout time.Duration) http.HandlerFunc {
+// exercise the timeout path without waiting 25s. hub is ticket C2's SSE fan-out
+// — a message delivered here means a queued message was just polled by its
+// destination agent, exactly the trigger docs/api-contract.md's
+// `message_received` event documents ("a queued user message was polled by
+// the agent → flips the ◌→✓ pip"), so this is the one place in the C1
+// handlers that also emits on the C2 hub.
+func handlePoll(st *store.Store, b *broker, hub *Hub, timeout time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -110,6 +165,7 @@ func handlePoll(st *store.Store, b *broker, timeout time.Duration) http.HandlerF
 			for _, m := range st.Messages.HistorySince(after) {
 				if m.Channel == channel {
 					writeJSON(w, toPollMessage(m))
+					hub.broadcast(eventMessageReceived, messageReceivedPayload{ID: m.ID})
 					return
 				}
 			}
@@ -124,6 +180,7 @@ func handlePoll(st *store.Store, b *broker, timeout time.Duration) http.HandlerF
 		select {
 		case m := <-ch:
 			writeJSON(w, toPollMessage(m))
+			hub.broadcast(eventMessageReceived, messageReceivedPayload{ID: m.ID})
 		case <-timer.C:
 			writeJSON(w, map[string]bool{"timeout": true})
 		case <-r.Context().Done():

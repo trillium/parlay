@@ -12,7 +12,7 @@ import (
 
 func TestHandlePollTimesOutWhenNothingArrives(t *testing.T) {
 	st := newTestStore(t)
-	h := handlePoll(st, newBroker(), 30*time.Millisecond)
+	h := handlePoll(st, newBroker(), nil, 30*time.Millisecond)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/poll?channel=c0", nil)
 	rec := httptest.NewRecorder()
@@ -34,7 +34,7 @@ func TestHandlePollWithoutAfterDoesNotReplayBacklog(t *testing.T) {
 		t.Fatalf("appendAndPublish: %v", err)
 	}
 
-	h := handlePoll(st, b, 30*time.Millisecond)
+	h := handlePoll(st, b, nil, 30*time.Millisecond)
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/poll?channel=c0", nil) // no after
 	rec := httptest.NewRecorder()
 	h(rec, req)
@@ -60,7 +60,7 @@ func TestHandlePollReturnsBacklogImmediatelyWhenAfterGiven(t *testing.T) {
 		t.Fatalf("appendAndPublish 2: %v", err)
 	}
 
-	h := handlePoll(st, b, time.Second)
+	h := handlePoll(st, b, nil, time.Second)
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/poll?channel=c0&after="+first.ID, nil)
 	rec := httptest.NewRecorder()
 	h(rec, req)
@@ -85,7 +85,7 @@ func TestHandlePollIgnoresBacklogOnOtherChannels(t *testing.T) {
 		t.Fatalf("appendAndPublish 2: %v", err)
 	}
 
-	h := handlePoll(st, b, 30*time.Millisecond)
+	h := handlePoll(st, b, nil, 30*time.Millisecond)
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/poll?channel=c0&after="+first.ID, nil)
 	rec := httptest.NewRecorder()
 	h(rec, req)
@@ -102,7 +102,7 @@ func TestHandlePollIgnoresBacklogOnOtherChannels(t *testing.T) {
 func TestHandlePollWakesOnNewMessage(t *testing.T) {
 	st := newTestStore(t)
 	b := newBroker()
-	h := handlePoll(st, b, 2*time.Second)
+	h := handlePoll(st, b, nil, 2*time.Second)
 
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
@@ -137,7 +137,7 @@ func TestHandlePollWakesOnNewMessage(t *testing.T) {
 func TestHandlePollWrongMethodIs405(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rec := httptest.NewRecorder()
-	handlePoll(newTestStore(t), newBroker(), time.Second)(rec, req)
+	handlePoll(newTestStore(t), newBroker(), nil, time.Second)(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}

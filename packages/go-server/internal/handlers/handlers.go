@@ -1,10 +1,11 @@
-// Package handlers implements ticket C1 of the Go rewrite of Pulse's HTTP
-// chat server: messaging, the agent registry, and the legacy long-poll
-// endpoint. Every handler here is a thin translation between HTTP and the C0
-// storage layer (internal/store) — no handler touches a file or holds a
-// substore's mutex directly, matching store.go's stated goal of isolating
-// persistence behind Store's substore API so this layer only ever calls
-// Append/History/Upsert/Remove/List/Snapshot etc.
+// Package handlers implements ticket C1 (messaging, the agent registry, and
+// the legacy long-poll endpoint) and ticket C2 (the SSE hub behind GET
+// /api/chat/events — see events.go's doc comment) of the Go rewrite of
+// Pulse's HTTP chat server. Every handler here is a thin translation between
+// HTTP and the C0 storage layer (internal/store) — no handler touches a
+// file or holds a substore's mutex directly, matching store.go's stated
+// goal of isolating persistence behind Store's substore API so this layer
+// only ever calls Append/History/Upsert/Remove/List/Snapshot etc.
 //
 // docs/scope-go-server.md, the spec named in this ticket's brief, does not
 // exist anywhere in this repository's git history (checked with `git log
@@ -66,10 +67,12 @@ import (
 	"parlay/go-server/internal/store"
 )
 
-// Register wires every C1 route onto mux. Call once at startup alongside
-// registerHealth in cmd/parlay-server/main.go.
+// Register wires every C1 (messaging/registry/legacy-poll) and C2 (SSE)
+// route onto mux. Call once at startup alongside registerHealth in
+// cmd/parlay-server/main.go.
 func Register(mux *http.ServeMux, st *store.Store) {
 	b := newBroker()
+	hub := newHub(b)
 
 	mux.HandleFunc("/api/chat/send", handleSend(st, b))
 	mux.HandleFunc("/api/chat/reply", handleReply(st, b))
@@ -77,12 +80,14 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc("/api/chat/message", handleMessage(st, b))
 	mux.HandleFunc("/api/chat/history", handleHistory(st))
 
-	mux.HandleFunc("/api/chat/register-agent", handleRegisterAgent(st))
+	mux.HandleFunc("/api/chat/register-agent", handleRegisterAgent(st, hub))
 	mux.HandleFunc("/api/chat/unregister", handleUnregister(st))
 	mux.HandleFunc("/api/chat/agents", handleAgents(st))
 	mux.HandleFunc("/api/chat/subscribers", handleSubscribers(st))
 
-	mux.HandleFunc("/api/chat/poll", handlePoll(st, b, defaultPollTimeout))
+	mux.HandleFunc("/api/chat/poll", handlePoll(st, b, hub, defaultPollTimeout))
+
+	mux.HandleFunc("/api/chat/events", handleEvents(st, hub))
 }
 
 // writeJSON encodes v as a 200 JSON response — the shared success path for

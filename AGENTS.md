@@ -87,7 +87,13 @@ of the TS original's `import.meta.url`-relative resolution.
 `packages/go-server` (module `parlay/go-server`) is the Go rewrite of Pulse's
 HTTP/SSE chat server, built ticket-by-ticket (C0: HTTP skeleton + storage
 layer in `internal/store`; C1: messaging/registry/legacy-poll handlers in
-`internal/handlers`; C2+ still open — SSE hub, drafts/uploads/settings,
+`internal/handlers`; C2: the SSE hub behind `GET /api/chat/events`, also in
+`internal/handlers` — see `events.go`'s package-level doc comment for exactly
+which of the 17 event names documented in `docs/api-contract.md` have a live
+producer today (message, message_received, agent_register, plus the
+connect-time burst of connected/history/agents/presence_map) versus which are
+wire-ready but unproduced pending a future ticket (drafts, device-cmd,
+tool/session events, etc.); C3+ still open — drafts/uploads/settings,
 eval-relay/debug-log, parity harness, deploy tooling). Ticket briefs for this
 workstream point at `docs/scope-go-server.md` as the authoritative spec —
 **that file has never existed anywhere in this repo's git history** (checked
