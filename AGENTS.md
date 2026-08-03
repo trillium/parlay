@@ -105,6 +105,28 @@ sitting on a diverged, not-yet-pushed local `main` commit. That workaround is
 now obsolete but is the reason to always check `git log --all` before
 concluding a referenced doc "doesn't exist" in future tickets.)
 
+## Go CLI ticket B5: `status`/`crew-state`/`supervise`/`unattended-queue`/`context-check`
+
+Ticket B5 (`status` verb, `crew-state`, `supervise`, `unattended-queue`,
+`context-check`) fixed one confirmed TS bug during the port —
+`crewStateForAgent(agentId)` (`commands-crew-state.ts`) resolved its status
+file via the caller's own `PARLAY_AGENT_ID`/`PARLAY_STATUS_FILE` instead of
+the passed `agentId`; the Go port (`internal/commands/status_verb.go`'s
+`statusFileForAgent`) resolves the target agent's file directly. Two sibling
+defects were found but deliberately left bug-for-bug faithful (only the
+crew-state fix was in scope) and are ported as-is, each pinned by a
+regression test:
+- `commands-supervise.ts`'s `cmdSupervise` has the identical
+  caller-identity-instead-of-argument bug (`internal/commands/supervise.go`'s
+  `Supervise` doc comment has the detail) — only matters when supervise is
+  invoked by something other than the target agent itself.
+- The shared status-line regex
+  (`/^(\w+)(?:\s*\[key=...\])?\s*:\s*(.*)$/`, ported to
+  `statusLineRe` in `internal/commands/crew_state.go`) uses `\w+` for the
+  verb, which cannot match hyphenated verbs (`needs-decision`,
+  `captain-held`) — such lines silently fail to parse and read back as
+  "unknown / no status recorded" in both crew-state and supervise.
+
 ## `bun test` only works from inside a package directory
 
 There is no root `bunfig.toml`, so running `bun test` from the repo root
