@@ -20,11 +20,10 @@ type Draft struct {
 // per-device id on GET /draft — only PUT sends clientId, and only to
 // suppress a device's own echo over SSE (see the client callers cited in
 // docs/api-contract.md §Drafts), not to key separate drafts. Combined with
-// this being a single-user personal deployment (docs/scope-go-server.md §5
-// risk #11), one global "current draft" record is the simplest model that
-// still matches what the contract actually describes. If a later ticket
-// finds evidence of real per-device drafts, this is the place to add a
-// keyed map instead.
+// this being a single-user, single-instance deployment, one global "current
+// draft" record is the simplest model that still matches what the contract
+// actually describes. If a later ticket finds evidence of real per-device
+// drafts, this is the place to add a keyed map instead.
 type DraftStore struct {
 	mu    sync.RWMutex
 	path  string

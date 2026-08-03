@@ -1,9 +1,9 @@
 // Command parlay-server is the Go rewrite of packages/server, Pulse's
-// HTTP/SSE chat server. C0 (docs/plan-go-migration-tickets.md) laid the
-// process skeleton, mux wiring, and storage layer (internal/store); C1
-// (internal/handlers) adds messaging, the agent registry, and the legacy
-// long-poll endpoint on top of it. SSE, drafts, settings, uploads, and the
-// rest of docs/api-contract.md remain out of scope for later tickets.
+// HTTP/SSE chat server. C0 laid the process skeleton, mux wiring, and
+// storage layer (internal/store); C1 (internal/handlers) adds messaging,
+// the agent registry, and the legacy long-poll endpoint on top of it. SSE,
+// drafts, settings, uploads, and the rest of docs/api-contract.md remain
+// out of scope for later tickets.
 package main
 
 import (
@@ -28,9 +28,8 @@ import (
 // defaultAddr matches packages/cli's own coded fallback
 // (packages/cli/src/config.ts: PARLAY_SERVER env > persisted config >
 // http://localhost:4242) — deliberately NOT port 31337, the captain's live
-// production Pulse instance. See docs/scope-go-server.md §5 risk #10: a
-// server built for real-world testing must never default to, or accidentally
-// bind, :31337.
+// production Pulse instance (see this repo's CLAUDE.md): a server built for
+// real-world testing must never default to, or accidentally bind, :31337.
 const defaultAddr = "127.0.0.1:4242"
 
 func main() {
@@ -110,7 +109,7 @@ func registerHealth(mux *http.ServeMux, st *store.Store) {
 // refuseProductionPort is a hard stop against ever binding :31337 from this
 // binary — that port is the captain's live, currently-connected Pulse
 // server, not something a dev/test run of this rewrite may touch (see
-// docs/scope-go-server.md §5 risk #10 and this repo's CLAUDE.md).
+// this repo's CLAUDE.md).
 func refuseProductionPort(addr string) error {
 	_, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -118,7 +117,7 @@ func refuseProductionPort(addr string) error {
 	}
 	port, err := strconv.Atoi(portStr)
 	if err == nil && port == 31337 {
-		return errors.New("refusing to bind :31337 — that is the captain's live production Pulse server (docs/scope-go-server.md §5 risk #10)")
+		return errors.New("refusing to bind :31337 — that is the captain's live production Pulse server (see this repo's CLAUDE.md)")
 	}
 	return nil
 }

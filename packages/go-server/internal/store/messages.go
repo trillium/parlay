@@ -202,10 +202,10 @@ func (ms *MessageStore) History(limit int) []ChatMessage {
 }
 
 // HistorySince returns every retained message strictly after afterID,
-// oldest first — the delta feed GET /events's `after` backfill needs (§3 of
-// docs/scope-go-server.md). If afterID is empty or falls outside the
-// retained window, the full retained ring buffer is returned (a full
-// replay), matching the reconnect contract described there.
+// oldest first — the delta feed GET /events's `after` backfill needs (see
+// "SSE Events" in docs/api-contract.md). If afterID is empty or falls
+// outside the retained window, the full retained ring buffer is returned (a
+// full replay), matching the reconnect contract described there.
 func (ms *MessageStore) HistorySince(afterID string) []ChatMessage {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()

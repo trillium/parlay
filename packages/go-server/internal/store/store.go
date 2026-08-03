@@ -1,11 +1,12 @@
 // Package store is the persistence layer for the Go rewrite of the Pulse
-// chat server (packages/go-server). See docs/scope-go-server.md §5 risk #3:
-// the real TypeScript server's on-disk format cannot be read (every handler
-// under packages/server/src/ is a broken symlink loop — see this repo's
-// CLAUDE.md), so nothing here can be a byte-for-byte port of live data.
-// Every format below is a clean-slate design chosen for minimal custom
-// parsing and for the "single personal instance" deployment model documented
-// in scope-go-server.md §5 risk #11 — not reverse-engineered from anything.
+// chat server (packages/go-server). The real TypeScript server's on-disk
+// format cannot be read (every handler under packages/server/src/ is a
+// broken symlink loop — see this repo's CLAUDE.md), so nothing here can be
+// a byte-for-byte port of live data. Every format below is a clean-slate
+// design chosen for minimal custom parsing and for this project's
+// single-user, single-instance deployment model — not reverse-engineered
+// from anything. See docs/api-contract.md for the HTTP-level behavioral
+// spec this storage layer is built to serve.
 //
 // MIGRATION: if the real TS server's on-disk format is ever recovered (the
 // symlink loop under ~/.claude/PAI/PULSE gets fixed), a one-time import
