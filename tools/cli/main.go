@@ -14,11 +14,12 @@
 //	internal/httpc     JSON transport + die()      internal/format  message rendering
 //	internal/wire      wire shapes                 internal/help    usage + per-command help
 //
-// Every other subcommand from the TS CLI's dispatch (status, subscribers,
-// monitor, guard, ...) lands here as its own ticket (B2-B9) adds it; `help`
-// and `identity`/`scratchpad` (ticket B1, internal/identity) are wired now.
-// `say`/`reply` are implemented in internal/identity too (identity.CmdSay)
-// but not yet wired here — see that file's header comment.
+// B1 wired `identity`/`scratchpad` (internal/identity); B3 wired the simple
+// read/write commands (status, subscribers, agents, agent-down, remote,
+// nickname, send, alert, history, stats). `say`/`reply` are implemented in
+// internal/identity too (identity.CmdSay) but not yet wired here — see that
+// file's header comment. Every other subcommand from the TS CLI's dispatch
+// (monitor, guard, ...) lands here as its own ticket adds it.
 package main
 
 import (
