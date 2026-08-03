@@ -3,7 +3,12 @@
 // parlay CLI usage and per-command help text.
 package help
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
+)
 
 // usageTemplate is USAGE with the live server URL replaced by a {{SERVER}} placeholder —
 // Go has no import-time SERVER snapshot, so Usage(server) substitutes it per call.
@@ -49,4 +54,26 @@ var HELP = map[string]string{
 func Lookup(cmd string) (string, bool) {
 	t, ok := HELP[cmd]
 	return t, ok
+}
+
+// Wanted checks argv for --help/-h; if present, prints cmd's help text (or
+// the full USAGE if cmd has none registered) and returns true — matching
+// help.ts's helpWanted(). Callers return immediately when this is true.
+func Wanted(cmd string, argv []string) bool {
+	asked := false
+	for _, a := range argv {
+		if a == "--help" || a == "-h" {
+			asked = true
+			break
+		}
+	}
+	if !asked {
+		return false
+	}
+	if text, ok := HELP[cmd]; ok {
+		fmt.Println(text)
+	} else {
+		fmt.Println(Usage(config.ServerURL()))
+	}
+	return true
 }
