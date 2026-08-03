@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 )
@@ -85,4 +86,54 @@ func PostJSON[T any](path string, body any) T {
 		Die(fmt.Sprintf("POST %s: invalid JSON response — %v", path, err), config.ExitRuntime)
 	}
 	return out
+}
+
+// TryGetJSON issues a GET like GetJSON but never dies: a network error, a
+// non-2xx status, or an undecodable body returns ok=false instead of
+// exiting. A deliberate exception to this package's fail-loud convention
+// (see the package doc) for commands that must degrade gracefully when the
+// relay is unreachable — crew-state and supervise reconcile agent state and
+// treat "can't ask the relay" as a valid outcome ("unknown"), not a fatal
+// error. Ported from commands-crew-state.ts's local tryJSON().
+func TryGetJSON[T any](path string, timeout time.Duration) (out T, ok bool) {
+	base := config.ServerURL()
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(base + path)
+	if err != nil {
+		return out, false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return out, false
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, false
+	}
+	return out, true
+}
+
+// TryPostJSON issues a POST like PostJSON but never dies: it returns
+// ok=false plus a short reason on network error or non-2xx status instead of
+// exiting. Same graceful-degradation exception as TryGetJSON — used by
+// supervise's postToRelay to post relay messages without killing the
+// process when the relay is down.
+func TryPostJSON(path string, body any) (ok bool, reason string) {
+	base := config.ServerURL()
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return false, err.Error()
+	}
+
+	resp, err := Client.Post(base+path, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return false, err.Error()
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, resp.Status
+	}
+	return true, ""
 }
