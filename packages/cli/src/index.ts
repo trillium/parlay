@@ -8,7 +8,7 @@
 //   config.ts    server URL + exit codes        args.ts     flag parser
 //   http.ts      fetch helpers + die()          format.ts   message rendering
 //   types.ts     wire shapes                    help.ts     usage + per-command help
-//   commands.ts  one handler per subcommand     monitor.ts  relay-backed monitor
+//   commands/    one handler per subcommand      monitor.ts  relay-backed monitor
 
 import { EXIT_USAGE } from "./config"
 import { die } from "./http"
