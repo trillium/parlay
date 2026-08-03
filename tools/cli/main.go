@@ -15,9 +15,11 @@
 //	internal/wire      wire shapes                 internal/help    usage + per-command help
 //
 // B1 wired `identity`/`scratchpad` (internal/identity); B3 wired the simple
-// read/write commands (status, subscribers, agents, agent-down, remote,
-// nickname, send, alert, history, stats); B2 wired `monitor`/`listen`
-// (internal/monitor, `agent-up` is an alias for `listen`). `say`/`reply`
+// read/write commands (subscribers, agents, agent-down, remote, nickname,
+// send, alert, history, stats); B2 wired `monitor`/`listen`
+// (internal/monitor, `agent-up` is an alias for `listen`). B5 wired
+// `status` (the fold §3.6 keyed verb — bare `parlay` stays the panel/fleet
+// snapshot), `crew-state`, `supervise`, and `context-check`. `say`/`reply`
 // are implemented in internal/identity too (identity.CmdSay) but not yet
 // wired here — see that file's header comment. Every other subcommand from
 // the TS CLI's dispatch (guard, ...) lands here as its own ticket adds it.
@@ -45,6 +47,14 @@ func main() {
 	switch cmd {
 	case "":
 		commands.Status() // bare `parlay` = panel/fleet snapshot
+	case "status":
+		commands.StatusVerb(args) // fold §3.6 keyed status verb — distinct from bare `parlay`
+	case "crew-state":
+		commands.CrewState(args)
+	case "supervise":
+		commands.Supervise(args)
+	case "context-check":
+		commands.ContextCheck(args)
 	case "subscribers":
 		commands.Subscribers(args)
 	case "agents":
