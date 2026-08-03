@@ -31,8 +31,8 @@ verb is a 3–4 file edit, no framework.
 | File | Role |
 |---|---|
 | `index.ts` | The dispatcher. A single `switch (cmd)` maps a verb string → `cmdX(args)`. This is the entry (`#!/usr/bin/env bun`). |
-| `commands.ts` | Home for most handlers (`cmdStatus`, `cmdSend`, `cmdMonitor`, …). One exported `async function cmd<Name>(args: string[])` per verb. |
-| `commands-*.ts` / `commands-<name>/` | Split-out handlers for bigger surfaces: `commands-identity/` (say/scratchpad/identity/lifecycle), `commands-nickname.ts`, `commands-doctor.ts` (`cmdDoctor`/`cmdHealth`), `commands-variant.ts`, `commands-context-check.ts`, `commands-status.ts` (`cmdStatusVerb` — the fold §3.6 keyed status verb; see the note below), `commands-guard.ts` (`cmdGuard` + `guardRepo`/`mainWorktreePath` — the fold C4 runtime tangle+liveness backstop, also called from `commands-variant.ts`'s launch/teardown), `commands-robots-watch/` (`detect`/`cursor`/`handlers`/`index` = the §2.4 poll bridge; `tail` = the §2.4 push fast-path `robots-tail`), `listen.ts` (`cmdListen`/`runListen` — one-call register + announce + `runMonitor` reuse; kept out of `commands.ts` to stay under the file-size gate), `commands-agent-down.ts` (`cmdAgentDown` — general-purpose channel deregistration via `POST /api/chat/unregister`; the counterpart to `commands-variant.ts`'s teardown, which only unregisters git-worktree variants), `commands-remote.ts` (`cmdRemote` — get/set/clear the persisted default server URL; see `config.ts` below). Same shape, just their own file when a verb grows. |
+| `commands/` (barrel `index.ts`) | Home for most handlers, split into per-topic modules — `overview.ts` (`cmdStatus`/`cmdSubscribers`/`cmdAgents`), `messaging.ts` (`cmdSend`/`cmdAlert`/`cmdHistory`/`cmdStats`), `monitor.ts` (`cmdMonitor`), `launch.ts`, `lavish.ts`, `drawdown.ts`, `idle.ts` — re-exported through `commands/index.ts` so `./commands` stays a stable import path. One exported `async function cmd<Name>(args: string[])` per verb. |
+| `commands-*.ts` / `commands-<name>/` | Split-out handlers for bigger surfaces: `commands-identity/` (say/scratchpad/identity/lifecycle), `commands-nickname.ts`, `commands-doctor.ts` (`cmdDoctor`/`cmdHealth`), `commands-variant.ts`, `commands-context-check.ts`, `commands-status.ts` (`cmdStatusVerb` — the fold §3.6 keyed status verb; see the note below), `commands-guard.ts` (`cmdGuard` + `guardRepo`/`mainWorktreePath` — the fold C4 runtime tangle+liveness backstop, also called from `commands-variant.ts`'s launch/teardown), `commands-robots-watch/` (`detect`/`cursor`/`handlers`/`index` = the §2.4 poll bridge; `tail` = the §2.4 push fast-path `robots-tail`), `listen.ts` (`cmdListen`/`runListen` — one-call register + announce + `runMonitor` reuse; kept out of `commands/` to stay under the file-size gate), `commands-agent-down.ts` (`cmdAgentDown` — general-purpose channel deregistration via `POST /api/chat/unregister`; the counterpart to `commands-variant.ts`'s teardown, which only unregisters git-worktree variants), `commands-remote.ts` (`cmdRemote` — get/set/clear the persisted default server URL; see `config.ts` below). Same shape, just their own file when a verb grows. |
 | `args.ts` | The flag parser. `parseArgs(cmd, args, boolFlags[], valueFlags[])` → `{ positionals, opts }`. Verbs declare their own bool/value flag tables (see `MEM_BOOL_FLAGS`/`MEM_VALUE_FLAGS` in `commands-identity/store.ts` for the pattern). |
 | `help.ts` | `USAGE` (the top-level listing printed by `parlay help`) + per-command help strings. `helpWanted(cmd, args)` short-circuits `--help`. |
 | `config.ts` | `serverUrl()` resolves the base URL: `PARLAY_SERVER` env > persisted `$PARLAY_STATE_HOME/config.json` (`parlay remote set/clear`, `commands-remote.ts`) > coded default. Plus exit codes (`EXIT_USAGE=2`). |
@@ -40,8 +40,9 @@ verb is a 3–4 file edit, no framework.
 | `format.ts`, `types.ts` | Output rendering + wire shapes. |
 
 ### The recipe (add `parlay foo`)
-1. **Write the handler** in `commands.ts` (or a new `commands-foo.ts` if it's
-   substantial):
+1. **Write the handler** in an existing `commands/*.ts` topic module (or a new
+   one, exported from `commands/index.ts`) — or a top-level `commands-foo.ts`
+   if it's a bigger, self-contained surface:
    ```ts
    export async function cmdFoo(args: string[]): Promise<void> {
      if (helpWanted("foo", args)) return

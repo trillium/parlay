@@ -8,7 +8,7 @@
 //   config.ts    server URL + exit codes        args.ts     flag parser
 //   http.ts      fetch helpers + die()          format.ts   message rendering
 //   types.ts     wire shapes                    help.ts     usage + per-command help
-//   commands.ts  one handler per subcommand     monitor.ts  relay-backed monitor
+//   commands/    one handler per subcommand      monitor.ts  relay-backed monitor
 
 import { EXIT_USAGE } from "./config"
 import { die } from "./http"
@@ -16,7 +16,9 @@ import { USAGE } from "./help"
 import {
   cmdAgents,
   cmdAlert,
+  cmdDrawdown,
   cmdHistory,
+  cmdIdle,
   cmdLavishImport,
   cmdLaunch,
   cmdMonitor,
@@ -73,6 +75,8 @@ async function main() {
     case "crew-state":    return cmdCrewState(args)
     case "supervise":     return cmdSupervise(args)
     case "teardown":      return cmdTeardown(args)
+    case "drawdown":      return cmdDrawdown(args)
+    case "idle":          return cmdIdle(args)
     case "lavish-import": return cmdLavishImport(args)
     case "help":
     case "--help":
