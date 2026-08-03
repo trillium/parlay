@@ -7,23 +7,36 @@ package format
 import (
 	"fmt"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
-// Truncate collapses newlines to " ⏎ " and clips text to max runes, adding a
+// Truncate collapses newlines to " ⏎ " and clips text to max UTF-16 code
+// units — matching JS string .length/.slice() semantics from the TS
+// original (format.ts's truncate()), not Go's rune count — adding a
 // "(+N chars)" suffix when it clips. Pass 0 to use config.TruncateAt.
 func Truncate(text string, max int) string {
 	if max == 0 {
 		max = config.TruncateAt
 	}
 	oneLine := strings.ReplaceAll(text, "\n", " ⏎ ")
-	runes := []rune(oneLine)
-	if len(runes) <= max {
+	units := utf16.Encode([]rune(oneLine))
+	if len(units) <= max {
 		return oneLine
 	}
-	return fmt.Sprintf("%s… (+%d chars)", string(runes[:max]), len(runes)-max)
+	return fmt.Sprintf("%s… (+%d chars)", string(utf16.Decode(units[:max])), len(units)-max)
+}
+
+// PadEnd right-pads s with spaces to width UTF-16 code units, matching JS's
+// String.prototype.padEnd(width) — not Go's rune count.
+func PadEnd(s string, width int) string {
+	n := len(utf16.Encode([]rune(s)))
+	if n >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-n)
 }
 
 // Who returns the display label for a message's sender: the agent's channel
