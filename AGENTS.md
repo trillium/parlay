@@ -64,18 +64,18 @@ on-screen console on the phone itself. Toggle via `?paConsole=1` in the URL
 (sticky, persists to localStorage) or a ~600ms long-press on the drawer
 trigger button. Default off, zero bundle cost when unused.
 
-## Go CLI (`tools/cli`, the `packages/cli` rewrite) cites docs that don't exist in this checkout
+## Go CLI (`tools/cli`, the `packages/cli` rewrite) cites two docs that don't exist in this checkout
 
-Comments across `tools/cli/**/*.go` (config, args, httpc, identity, monitor, …)
-repeatedly cite `docs/scope-go-cli.md`, `docs/plan-go-migration-tickets.md`,
-and `docs/api-contract.md` as authoritative for naming/behavior decisions
-(env var names, exit codes, FNV color-hash parity, etc.) — none of those
-three files exist under `docs/` as of this writing (only
-`CLI_VERBS_AND_EVENTS.md`, `COMMAND_DESIGN_CONTRACT.md`, and a few others are
-present). Treat the cited rationale as historical/aspirational: verify
-against the actual TS source (`packages/cli/src/*.ts`, not symlinked, safe to
-read directly) and the landed Go code's own tests instead of trying to open
-those paths. `tools/cli/internal/monitor` (ticket B2: `monitor`/`listen`) is
+Comments across `tools/cli/**/*.go` (config, args, identity, monitor, …)
+repeatedly cite `docs/scope-go-cli.md` and `docs/plan-go-migration-tickets.md`
+as authoritative for naming/behavior decisions (env var names, exit codes,
+FNV color-hash parity, etc.) — neither file exists under `docs/` as of this
+writing (`docs/api-contract.md`, also cited from `internal/httpc`, does
+exist and is accurate). Treat the `scope-go-cli.md`/`plan-go-migration-tickets.md`
+rationale as historical/aspirational: verify against the actual TS source
+(`packages/cli/src/*.ts`, not symlinked, safe to read directly) and the
+landed Go code's own tests instead of trying to open those paths.
+`tools/cli/internal/monitor` (ticket B2: `monitor`/`listen`) is
 a straight shell-out port — the relay path execs
 `tools/monitor/parlay-monitor.sh`, resolved via `exec.LookPath` first (so a
 future PATH install is picked up) and falling back to a repo-relative path
