@@ -67,6 +67,89 @@ func TestSuperviseWakesOnTerminalVerb(t *testing.T) {
 	}
 }
 
+// Regression for the follow-up fidelity fix to Supervise: it must resolve
+// the TARGET agent's status file (via statusFileForAgent), not the calling
+// process's own PARLAY_AGENT_ID/PARLAY_STATUS_FILE. Before the fix,
+// supervising an agent other than the caller itself would silently watch
+// the caller's own file instead.
+func TestSuperviseResolvesTargetAgentsStatusFileNotCallers(t *testing.T) {
+	var bodies []map[string]any
+	srv := newSuperviseServer(t, &bodies)
+	home := t.TempDir()
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	// The CALLER is a different agent than the one being supervised.
+	t.Setenv("PARLAY_AGENT_ID", "agent-caller")
+	t.Setenv("PARLAY_STATUS_FILE", "")
+	t.Setenv("PARLAY_UNATTENDED_FLAG", "")
+
+	// The caller's own status says "done" — must NOT be what gets watched.
+	writeStatus(t, home, "agent-caller", "done: caller's own task\n")
+	// The target has a routine status only — should be absorbed, no wake.
+	writeStatus(t, home, "agent-target", "working: still going\n")
+
+	captureStdout(t, func() { Supervise([]string{"agent-target"}) })
+	if len(bodies) != 0 {
+		t.Fatalf("relay posts = %d, want 0 (must watch target's file, not caller's done line)", len(bodies))
+	}
+
+	// Now give the target a terminal line; supervising it must wake on the
+	// TARGET's line.
+	writeStatus(t, home, "agent-target", "working: still going\ndone: target finished\n")
+	captureStdout(t, func() { Supervise([]string{"agent-target"}) })
+	if len(bodies) != 1 {
+		t.Fatalf("relay posts = %d, want 1", len(bodies))
+	}
+	if !strings.Contains(bodies[0]["text"].(string), "agent-target is done") {
+		t.Errorf("posted text = %v, want it to mention 'agent-target is done'", bodies[0]["text"])
+	}
+}
+
+// Regression for the follow-up fidelity fix to statusLineRe: hyphenated
+// verbs must round-trip through Supervise. needs-decision is terminal (wakes
+// immediately); captain-held is routine (absorbed, no relay post).
+func TestSuperviseWakesOnHyphenatedTerminalVerb(t *testing.T) {
+	var bodies []map[string]any
+	srv := newSuperviseServer(t, &bodies)
+	home := t.TempDir()
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_AGENT_ID", "agent-hyphen-t")
+	t.Setenv("PARLAY_STATUS_FILE", "")
+	t.Setenv("PARLAY_UNATTENDED_FLAG", "")
+
+	writeStatus(t, home, "agent-hyphen-t", "needs-decision: pick a path\n")
+
+	out := captureStdout(t, func() { Supervise([]string{"agent-hyphen-t"}) })
+	if !strings.Contains(out, "supervisor woken") || !strings.Contains(out, "needs-decision") {
+		t.Errorf("Supervise() output = %q, want a wake confirmation for needs-decision", out)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("relay posts = %d, want 1", len(bodies))
+	}
+	if !strings.Contains(bodies[0]["text"].(string), "is needs-decision") {
+		t.Errorf("posted text = %v, want it to mention 'is needs-decision'", bodies[0]["text"])
+	}
+}
+
+func TestSuperviseAbsorbsHyphenatedRoutineVerb(t *testing.T) {
+	var bodies []map[string]any
+	srv := newSuperviseServer(t, &bodies)
+	home := t.TempDir()
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_AGENT_ID", "agent-hyphen-r")
+	t.Setenv("PARLAY_STATUS_FILE", "")
+	t.Setenv("PARLAY_UNATTENDED_FLAG", "")
+
+	writeStatus(t, home, "agent-hyphen-r", "captain-held: waiting on captain\n")
+
+	captureStdout(t, func() { Supervise([]string{"agent-hyphen-r"}) })
+	if len(bodies) != 0 {
+		t.Errorf("relay posts = %d, want 0 (captain-held is a routine verb, absorbed)", len(bodies))
+	}
+}
+
 func TestSuperviseAbsorbsRoutineVerb(t *testing.T) {
 	var bodies []map[string]any
 	srv := newSuperviseServer(t, &bodies)

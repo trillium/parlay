@@ -113,19 +113,22 @@ Ticket B5 (`status` verb, `crew-state`, `supervise`, `unattended-queue`,
 file via the caller's own `PARLAY_AGENT_ID`/`PARLAY_STATUS_FILE` instead of
 the passed `agentId`; the Go port (`internal/commands/status_verb.go`'s
 `statusFileForAgent`) resolves the target agent's file directly. Two sibling
-defects were found but deliberately left bug-for-bug faithful (only the
-crew-state fix was in scope) and are ported as-is, each pinned by a
-regression test:
-- `commands-supervise.ts`'s `cmdSupervise` has the identical
-  caller-identity-instead-of-argument bug (`internal/commands/supervise.go`'s
-  `Supervise` doc comment has the detail) — only matters when supervise is
-  invoked by something other than the target agent itself.
+defects were found but deliberately left bug-for-bug faithful in B5 (only the
+crew-state fix was in scope there); a same-branch follow-up ticket then
+extended the identical fix to both, each pinned by a regression test:
+- `commands-supervise.ts`'s `cmdSupervise` had the identical
+  caller-identity-instead-of-argument bug — only mattered when supervise was
+  invoked by something other than the target agent itself. Fixed in
+  `internal/commands/supervise.go`'s `Supervise` by resolving the status file
+  via `statusFileForAgent(agentID)` instead of `statusSink()`.
 - The shared status-line regex
   (`/^(\w+)(?:\s*\[key=...\])?\s*:\s*(.*)$/`, ported to
-  `statusLineRe` in `internal/commands/crew_state.go`) uses `\w+` for the
-  verb, which cannot match hyphenated verbs (`needs-decision`,
-  `captain-held`) — such lines silently fail to parse and read back as
-  "unknown / no status recorded" in both crew-state and supervise.
+  `statusLineRe` in `internal/commands/crew_state.go`) used `\w+` for the
+  verb, which couldn't match hyphenated verbs (`needs-decision`,
+  `captain-held`) despite both being in the code's own declared verb
+  vocabulary — such lines silently failed to parse and read back as
+  "unknown / no status recorded" in both crew-state and supervise. Fixed by
+  widening the verb class to `[\w-]+`.
 
 `tools/cli/internal/commands/{guard,teardown,variant}.go` (ticket B4) port
 `commands-guard.ts`/`commands-teardown.ts`/`commands-variant.ts` verbatim,
