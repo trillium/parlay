@@ -1,0 +1,2 @@
+# compiled binary — rebuilt via `go build` (see deploy/install.sh)
+parlay-server
