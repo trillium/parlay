@@ -107,8 +107,12 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
   agent-id        kebab-slug, stable across restarts (e.g. code-reviewer)
   display-name    tab header text (e.g. "Code Reviewer")
   hex-color       tab accent color (e.g. "#c084fc")
-  initial-prompt  the task the spawned agent should work
+  initial-prompt  the task the spawned agent should work (OPTIONAL with --claim)
 
+  --claim TASK-ID the agent's first turn is 'parlay claim <task-id>', which gives
+                  it its identity, enrolls it, and pulls the task from the ticket.
+                  Shrinks the startup prompt to one line; the initial-prompt
+                  positional becomes optional (the task lives on the ticket).
   --ephemeral     mint a random hash identity (id="eph-XXXXXXXX", derived name,
                   deterministic color) instead of id/name/color positionals.
                   Must be the FIRST arg — cannot combine with an explicit agent-id.
@@ -294,9 +298,18 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
 fi
 
 if [ "$EPHEMERAL" -eq 0 ]; then
-[ $# -lt 4 ] && usage
+[ $# -lt 3 ] && usage
 
-AGENT_ID="$1"; NAME="$2"; COLOR="$3"; PROMPT="$4"; shift 4
+AGENT_ID="$1"; NAME="$2"; COLOR="$3"; shift 3
+
+# The 4th positional is the initial-prompt, OPTIONAL when --claim is used (the
+# task then lives on the ticket, not here). A 4th arg starting with '-' is the
+# start of the flag section, not a prompt.
+PROMPT=""
+case "${1:-}" in
+  ""|-*) : ;;
+  *)     PROMPT="$1"; shift ;;
+esac
 
 CWD="$HOME"
 FOCUS_FLAG="--no-focus"
@@ -305,6 +318,7 @@ MODE="report"
 EFFORT=""
 WANT_WORKTREE=0
 ACCOUNT=""
+CLAIM=""
 WORKSPACE="${HERDR_WORKSPACE_ID:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -315,11 +329,18 @@ while [ $# -gt 0 ]; do
     --effort)    EFFORT="$2"; shift 2 ;;
     --worktree)  WANT_WORKTREE=1; shift ;;
     --account)   ACCOUNT="$2"; shift 2 ;;
+    --claim)     CLAIM="$2"; shift 2 ;;
     --workspace) WORKSPACE="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
 done
+
+# Need either an inline prompt or a --claim task-id to give the agent work.
+if [ -z "$PROMPT" ] && [ -z "$CLAIM" ]; then
+  echo "parlay-spawn: give the agent work — an initial-prompt positional or --claim <task-id>" >&2
+  usage
+fi
 fi
 
 # Validate agent id shape (kebab-slug).
@@ -475,10 +496,27 @@ Never commit, branch, or push from the primary checkout.
 ")
 fi
 
-# 3. Compose the startup prompt: enrollment instructions + task contract.
+# 3. Compose the startup prompt.
+#    --claim path (idea-tm0): the brief shrinks to a single command. 'parlay
+#    claim <task-id>' hands the agent its identity, enrolls it, and returns the
+#    task from the ticket — so the enrollment prose and the task both move
+#    off this prompt. The profile env injected on the tab lets claim resolve
+#    id/name/color/model without positional prose.
+if [ -n "${CLAIM:-}" ]; then
+STARTUP_PROMPT=$(cat <<EOF
+Run this now and follow its printed output exactly:
+
+  parlay claim $CLAIM
+
+It sets your identity ($AGENT_ID), enrolls you (arm the Monitor it prints), and gives you your task.
+$SETUP_BLOCK
+When done or your context is full: run the 'handoff' skill, then immediately 'identity --submit' (nothing between).
+EOF
+)
+else
+# Default path: full enrollment block + inline task contract (fold §3.1/§3.6).
 #    The fresh claude processes this as its first turn, so it arms the Monitor
 #    (making the tab "listening") and posts a ready reply before/while working.
-#    Structure (fold §3.1/§3.6): enrollment block (unchanged) + task contract below.
 STARTUP_PROMPT=$(cat <<EOF
 You are a background agent enrolled in the Pulse/Parlay chat panel at $PARLAY.
 Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
@@ -527,6 +565,7 @@ Examples:
   parlay status failed "build error — see reply for details"
 EOF
 )
+fi
 
 # 4. Pre-trust the workdir so the spawned claude never stalls on the folder
 #    trust dialog (captain's standing policy 2026-07-13: always trust).
@@ -603,6 +642,9 @@ TAB_JSON=$(herdr tab create --cwd "$CWD" $FOCUS_FLAG --label "$AGENT_ID" \
   ${WORKSPACE:+--workspace "$WORKSPACE"} \
   --env "PARLAY_SERVER=$PARLAY" \
   --env "PARLAY_AGENT_ID=$AGENT_ID" \
+  --env "PARLAY_AGENT_NAME=$NAME" \
+  --env "PARLAY_AGENT_COLOR=$COLOR" \
+  ${MODEL:+--env "PARLAY_AGENT_MODEL=$MODEL"} \
   ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
   ${PROJECT_ENV_FLAGS[@]+"${PROJECT_ENV_FLAGS[@]}"} \
   2>/dev/null) || true
