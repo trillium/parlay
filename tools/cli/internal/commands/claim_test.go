@@ -132,6 +132,9 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 	for _, want := range []string{
 		`id="widgeteer"`,
 		"parlay listen --agent widgeteer",
+		// The arm-command is notify-safe by default so a claim-enrolled panel
+		// agent gets notification-truncation safety (robots-w9ij).
+		"parlay listen --agent widgeteer --name \\\"Widgeteer\\\" --color \\\"#abcdef\\\" --notify-safe",
 		"## Your memory — recovered",
 		"### Identity",
 		"### Scratchpad",

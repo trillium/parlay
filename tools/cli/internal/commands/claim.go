@@ -167,8 +167,14 @@ func claimBrief(agent, name, color, model string, task claimTask) string {
 	// agent no longer runs identity + scratchpad as a separate second step
 	// (robots-2x2n) — the CLI can't arm a harness Monitor{} itself, so this
 	// single arm-command is all that's left for the agent to do by hand.
+	// --notify-safe is emitted by default: a claim-enrolled panel agent
+	// receives captain messages through a harness Monitor, whose notifications
+	// truncate long lines mid-word silently. Without it a long voice-dictated
+	// message can blow the agent's context on delivery — the exact failure
+	// --notify-safe exists to prevent (robots-w9ij). `parlay listen` forwards
+	// the flag to the underlying monitor poll loop.
 	b.WriteString("Arm your monitor — your one startup command (memory is already recovered below):\n")
-	fmt.Fprintf(&b, "   Monitor({ command: \"PARLAY_SERVER=%s parlay listen --agent %s --name \\\"%s\\\" --color \\\"%s\\\"\", persistent: true })\n\n",
+	fmt.Fprintf(&b, "   Monitor({ command: \"PARLAY_SERVER=%s parlay listen --agent %s --name \\\"%s\\\" --color \\\"%s\\\" --notify-safe\", persistent: true })\n\n",
 		server, agent, name, color)
 
 	// Memory recovery, folded in from identity + scratchpad so it arrives with
