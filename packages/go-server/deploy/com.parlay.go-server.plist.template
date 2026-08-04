@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for parlay-server (com.parlay.go-server) — the Go rewrite of
+  packages/server, Pulse's HTTP/SSE chat server
+  (packages/go-server/cmd/parlay-server).
+
+  This is a TEMPLATE. install.sh substitutes the __TOKENS__ with resolved
+  absolute paths/values and writes the result to
+    ~/Library/LaunchAgents/com.parlay.go-server.plist
+  because launchd plists cannot reference $HOME or expand env vars in paths.
+
+  RunAtLoad  -> starts at login.
+  KeepAlive  -> launchd restarts it on any exit (crash or kill).
+
+  It execs the installed binary (__BIN__) directly with -addr/-state-dir
+  flags — no wrapper launcher script is needed here, unlike the relay's
+  com.parlay.relay.plist: parlay-server takes a plain TCP listen address and
+  state directory (main.go's own -addr/-state-dir flags), not a per-user
+  unix-socket runtime dir that needs resolving at launch time.
+
+  __ADDR__ must never be :31337 — that is the captain's live, currently
+  connected production Pulse server (see this repo's CLAUDE.md). install.sh
+  refuses to render this plist with that port, and the binary's own
+  refuseProductionPort (cmd/parlay-server/main.go) refuses to bind it even if
+  this file were hand-edited to say otherwise.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__BIN__</string>
+    <string>-addr</string>
+    <string>__ADDR__</string>
+    <string>-state-dir</string>
+    <string>__STATE_DIR__</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- If the server ever crash-loops on startup, back off instead of spinning. -->
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__OUT_LOG__</string>
+
+  <key>StandardErrorPath</key>
+  <string>__ERR_LOG__</string>
+</dict>
+</plist>
