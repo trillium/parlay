@@ -11,6 +11,7 @@
 set -uo pipefail
 
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
+SELFTEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PASS=0
 FAIL=0
 ok()  { echo "  OK   $1"; PASS=$((PASS+1)); }
@@ -29,6 +30,26 @@ new_tab() {
     return 1
   fi
   echo "$tab_id $root_pane"
+}
+
+# 0. herdr contract gate (robots-4v2e): assert herdr still exposes every
+#    subcommand + flag parlay-spawn shells out to. This is the post-upgrade
+#    tripwire — run it right after `herdr update` to catch API drift BEFORE it
+#    silently breaks a live dispatch. Sources bin/herdr-contract (the single
+#    source of truth shared with parlay-spawn's startup gate).
+check_herdr_contract() {
+  if [ ! -f "$SELFTEST_DIR/herdr-contract" ]; then
+    bad "herdr contract" "bin/herdr-contract missing (the contract gate is not installed)"
+    return
+  fi
+  # shellcheck source=/dev/null
+  source "$SELFTEST_DIR/herdr-contract"
+  # herdr_contract_check prints its own precise DRIFT/WARN lines to stderr.
+  if herdr_contract_check 2>&1; then
+    ok "herdr contract (every parlay-spawn flag/subcommand present)"
+  else
+    bad "herdr contract" "herdr drifted — see the DRIFT/FAIL lines above; fix parlay-spawn + bin/herdr-contract"
+  fi
 }
 
 # 1. herdr reachable at all.
@@ -160,10 +181,11 @@ check_full_launch() {
 
 run() { echo "-- $1 --"; "$2"; }
 
-CHEAP=(check_herdr_alive check_tab_lifecycle check_pane_ready_marker check_agent_start_no_prompt check_parlay_api check_dispatch_branch_logic)
-CHEAP_NAMES=("herdr alive" "tab lifecycle" "pane ready marker" "agent start (no prompt)" "Parlay API" "dispatch branch logic")
+CHEAP=(check_herdr_contract check_herdr_alive check_tab_lifecycle check_pane_ready_marker check_agent_start_no_prompt check_parlay_api check_dispatch_branch_logic)
+CHEAP_NAMES=("herdr contract" "herdr alive" "tab lifecycle" "pane ready marker" "agent start (no prompt)" "Parlay API" "dispatch branch logic")
 
 case "${1:-}" in
+  contract) run "herdr contract" check_herdr_contract ;;
   tab)      run "tab lifecycle" check_tab_lifecycle ;;
   ready)    run "pane ready marker" check_pane_ready_marker ;;
   start)    run "agent start (no prompt)" check_agent_start_no_prompt ;;
@@ -177,7 +199,7 @@ case "${1:-}" in
   "")
     for i in "${!CHEAP[@]}"; do run "${CHEAP_NAMES[$i]}" "${CHEAP[$i]}"; done
     ;;
-  *) echo "usage: pipeline-selftest [tab|ready|start|api|dispatch|full|--full]" >&2; exit 2 ;;
+  *) echo "usage: pipeline-selftest [contract|tab|ready|start|api|dispatch|full|--full]" >&2; exit 2 ;;
 esac
 
 echo
