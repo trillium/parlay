@@ -196,6 +196,13 @@ SSE hub. Two things `docs/api-contract.md` doesn't pin down, decided here:
   server-side via `http.DetectContentType` sniffing on the actual bytes
   (not the client-supplied `Content-Type` header), capped at 10MB per the
   contract's documented client-side UI copy, now also enforced server-side.
+  `handleServeUpload` re-sniffs those same bytes at serve time to set the
+  response `Content-Type` (`http.ServeContent`, not `http.ServeFile`'s
+  extension-based `mime.TypeByExtension`), and `UploadStore.Save`'s kept
+  extension is allow-listed to image extensions only
+  (`png|jpg|jpeg|gif|webp|bmp`) — together these mean a served upload's
+  declared type is always derived from its real bytes, never from a
+  client-supplied filename or extension.
 
 ## `bun test` only works from inside a package directory
 

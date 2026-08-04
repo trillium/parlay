@@ -63,6 +63,22 @@ func TestUploadStoreSaveDropsUnsafeExtension(t *testing.T) {
 	}
 }
 
+func TestUploadStoreSaveDropsNonImageExtension(t *testing.T) {
+	us, err := openUploadStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("openUploadStore: %v", err)
+	}
+	for _, origName := range []string{"evil.html", "evil.svg", "evil.js", "notes.txt"} {
+		name, err := us.Save(origName, []byte("x"))
+		if err != nil {
+			t.Fatalf("Save(%q): %v", origName, err)
+		}
+		if filepath.Ext(name) != "" {
+			t.Errorf("Save(%q) name = %q, want no extension kept (only image extensions are allow-listed)", origName, name)
+		}
+	}
+}
+
 func TestUploadStorePathResolvesSavedName(t *testing.T) {
 	dir := t.TempDir()
 	us, err := openUploadStore(dir)

@@ -58,6 +58,50 @@ func TestHandleUploadSavesImageAndReturnsServableURL(t *testing.T) {
 	}
 }
 
+func TestHandleServeUploadSetsContentTypeFromSniffedBytes(t *testing.T) {
+	st := newTestStore(t)
+	rec := httptest.NewRecorder()
+	handleUpload(st)(rec, multipartUploadRequest(t, "photo.png", pngMagic))
+
+	var got uploadResponse
+	decodeBody(t, rec, &got)
+	if !got.OK {
+		t.Fatalf("upload response = %+v, want ok=true", got)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, got.URL, nil)
+	getRec := httptest.NewRecorder()
+	handleServeUpload(st)(getRec, getReq)
+	if ct := getRec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Errorf("Content-Type = %q, want image/png (sniffed from bytes)", ct)
+	}
+}
+
+// TestHandleServeUploadContentTypeIgnoresExtension saves a file directly
+// through the store (bypassing handleUpload's own sniff check) whose
+// extension says "image" but whose bytes are plain text, then confirms
+// handleServeUpload's Content-Type reflects the real bytes rather than the
+// filename extension — the behavior the review fix (sniffing at serve time
+// instead of delegating to http.ServeFile) is meant to guarantee.
+func TestHandleServeUploadContentTypeIgnoresExtension(t *testing.T) {
+	st := newTestStore(t)
+	textData := []byte("just plain text, not an image")
+	name, err := st.Uploads.Save("photo.png", textData)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, uploadURLPrefix+name, nil)
+	getRec := httptest.NewRecorder()
+	handleServeUpload(st)(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", getRec.Code)
+	}
+	if ct := getRec.Header().Get("Content-Type"); strings.HasPrefix(ct, "image/") {
+		t.Errorf("Content-Type = %q, want a non-image type sniffed from the actual text bytes despite the .png extension", ct)
+	}
+}
+
 func TestHandleUploadRejectsNonImage(t *testing.T) {
 	st := newTestStore(t)
 	rec := httptest.NewRecorder()
