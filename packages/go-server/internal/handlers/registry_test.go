@@ -9,7 +9,7 @@ import (
 )
 
 func TestHandleRegisterAgentRequiresID(t *testing.T) {
-	rec := postJSON(t, handleRegisterAgent(newTestStore(t)), map[string]any{"name": "no id"})
+	rec := postJSON(t, handleRegisterAgent(newTestStore(t), nil), map[string]any{"name": "no id"})
 	var got map[string]string
 	decodeBody(t, rec, &got)
 	if rec.Code != http.StatusOK || got["error"] == "" {
@@ -19,7 +19,7 @@ func TestHandleRegisterAgentRequiresID(t *testing.T) {
 
 func TestHandleRegisterAgentUpsertsAndReturnsNicknames(t *testing.T) {
 	st := newTestStore(t)
-	rec := postJSON(t, handleRegisterAgent(st), map[string]any{
+	rec := postJSON(t, handleRegisterAgent(st, nil), map[string]any{
 		"id": "c1", "name": "Firstmate", "color": "#abcdef", "nicknames": []string{"fm"},
 	})
 	var got registerAgentResponse

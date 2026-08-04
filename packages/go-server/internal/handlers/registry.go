@@ -21,8 +21,11 @@ type registerAgentResponse struct {
 
 // handleRegisterAgent implements POST /api/chat/register-agent — an
 // idempotent upsert, delegated straight to RegistryStore.Upsert's own
-// partial-update-merge semantics.
-func handleRegisterAgent(st *store.Store) http.HandlerFunc {
+// partial-update-merge semantics. hub is ticket C2's SSE fan-out: every
+// successful upsert also broadcasts `agent_register` (the incremental,
+// single-agent counterpart to the bulk `agents` event sent on /events
+// connect).
+func handleRegisterAgent(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -47,6 +50,7 @@ func handleRegisterAgent(st *store.Store) http.HandlerFunc {
 			writeAppError(w, err.Error())
 			return
 		}
+		hub.broadcast(eventAgentRegister, merged)
 		writeJSON(w, registerAgentResponse{OK: true, Nicknames: merged.Nicknames})
 	}
 }

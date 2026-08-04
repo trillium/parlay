@@ -1,9 +1,10 @@
 // Command parlay-server is the Go rewrite of packages/server, Pulse's
 // HTTP/SSE chat server. C0 laid the process skeleton, mux wiring, and
 // storage layer (internal/store); C1 (internal/handlers) adds messaging,
-// the agent registry, and the legacy long-poll endpoint on top of it. SSE,
-// drafts, settings, uploads, and the rest of docs/api-contract.md remain
-// out of scope for later tickets.
+// the agent registry, and the legacy long-poll endpoint on top of it; C2
+// (also internal/handlers — see events.go) adds the SSE hub behind GET
+// /api/chat/events. Drafts, settings, uploads, and the rest of
+// docs/api-contract.md remain out of scope for later tickets.
 package main
 
 import (
