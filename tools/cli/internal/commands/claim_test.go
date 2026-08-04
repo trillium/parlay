@@ -297,6 +297,15 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if !strings.Contains(out, "robots close robots-w9dq") {
 		t.Errorf("robots ticket DoD should say to close the ticket; got:\n%s", out)
 	}
+	// Mechanic guardrails (robots-dl0r): the contract must warn against
+	// over-reporting FIXED on an unlanded PR and against tangling a shared
+	// checkout onto a feature branch.
+	if !strings.Contains(out, "actually LANDED") || !strings.Contains(out, "never done") {
+		t.Errorf("robots DoD should require a verified merge before FIXED; got:\n%s", out)
+	}
+	if !strings.Contains(out, "isolated worktree") {
+		t.Errorf("robots DoD should forbid tangling a shared checkout and require an isolated worktree; got:\n%s", out)
+	}
 }
 
 func TestClaimStoreForID(t *testing.T) {
