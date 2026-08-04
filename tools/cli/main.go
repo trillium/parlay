@@ -27,8 +27,10 @@
 // death-window primitives it depends on — internal/resolvehandoff,
 // internal/sayguard — but left undispatched here until this ticket); B6
 // wired `robots-watch`/`robots-tail` (internal/robotswatch, the
-// panic-isolated poll daemon + tailer). Every other subcommand from the TS
-// CLI's dispatch lands here as its own ticket adds it.
+// panic-isolated poll daemon + tailer); B9 wired `launch`/`drawdown`/`idle`
+// (internal/commands/{launch,drawdown,idle}.go, ported from
+// packages/cli/src/commands/{launch,drawdown,idle}.ts). Every other
+// subcommand from the TS CLI's dispatch lands here as its own ticket adds it.
 package main
 
 import (
@@ -106,6 +108,12 @@ func main() {
 		robotswatch.CmdRobotsWatch(args)
 	case "robots-tail":
 		robotswatch.CmdRobotsTail(args)
+	case "launch":
+		commands.Launch(args)
+	case "drawdown":
+		commands.Drawdown(args)
+	case "idle":
+		commands.Idle(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		os.Exit(config.ExitUsage)
