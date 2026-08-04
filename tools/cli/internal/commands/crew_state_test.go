@@ -117,22 +117,47 @@ func TestCrewStateForAgentIgnoresCallersOwnStatusFile(t *testing.T) {
 	os.MkdirAll(targetDir, 0o755)
 	os.WriteFile(filepath.Join(targetDir, "status"), []byte("needs-decision: pick one\n"), 0o644)
 	res = CrewStateForAgent("agent-target")
-	// needs-decision is hyphenated: statusLineRe's \w+ can't match it (a
-	// pre-existing TS defect, ported as-is — see statusLineRe's doc), so
-	// this line is unparseable and falls through to "no status recorded".
-	if res.State != "unknown" || res.Detail != "no status recorded" {
-		t.Errorf("CrewStateForAgent(target, hyphenated verb) = %+v, want unknown/no status recorded (documented \\w+ regex gap)", res)
+	if res.State != "needs-decision" || res.Source != "status" || res.Detail != "pick one" {
+		t.Errorf("CrewStateForAgent(target, hyphenated verb) = %+v, want state=needs-decision source=status detail=\"pick one\"", res)
 	}
 }
 
-func TestParseStatusLineHyphenatedVerbDoesNotMatch(t *testing.T) {
-	// Documents a pre-existing TS defect reproduced faithfully: \w+ does not
-	// include '-', so "needs-decision" / "captain-held" lines never parse.
-	if _, ok := parseStatusLine("needs-decision: task foo"); ok {
-		t.Error(`parseStatusLine("needs-decision: task foo") unexpectedly matched — regex gap may have been fixed; update this test and the doc comment together`)
+// Regression for the follow-up fidelity fix to statusLineRe: hyphenated
+// verbs must round-trip through CrewStateForAgent, not read back as
+// "unknown / no status recorded".
+func TestCrewStateForAgentHyphenatedVerbsRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	srv := newCrewStateServer(t, "agent-hyphen")
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+
+	dir := filepath.Join(home, "agent-hyphen")
+	os.MkdirAll(dir, 0o755)
+
+	os.WriteFile(filepath.Join(dir, "status"), []byte("needs-decision: pick a path\n"), 0o644)
+	res := CrewStateForAgent("agent-hyphen")
+	if res.State != "needs-decision" || res.Source != "status" || res.Detail != "pick a path" {
+		t.Errorf("CrewStateForAgent() = %+v, want state=needs-decision source=status detail=\"pick a path\"", res)
 	}
-	if _, ok := parseStatusLine("captain-held: waiting"); ok {
-		t.Error(`parseStatusLine("captain-held: waiting") unexpectedly matched`)
+
+	os.WriteFile(filepath.Join(dir, "status"), []byte("captain-held: waiting on captain\n"), 0o644)
+	res = CrewStateForAgent("agent-hyphen")
+	if res.State != "captain-held" || res.Source != "status" || res.Detail != "waiting on captain" {
+		t.Errorf("CrewStateForAgent() = %+v, want state=captain-held source=status detail=\"waiting on captain\"", res)
+	}
+}
+
+func TestParseStatusLineHyphenatedVerbMatches(t *testing.T) {
+	// Regression for the follow-up fidelity fix to statusLineRe: hyphenated
+	// verbs in the code's own declared vocabulary (TERMINAL_VERBS /
+	// ROUTINE_VERBS) must parse, not silently fail.
+	p, ok := parseStatusLine("needs-decision: task foo")
+	if !ok || p.verb != "needs-decision" || p.note != "task foo" {
+		t.Errorf(`parseStatusLine("needs-decision: task foo") = %+v, %v, want verb=needs-decision note="task foo"`, p, ok)
+	}
+	p, ok = parseStatusLine("captain-held: waiting")
+	if !ok || p.verb != "captain-held" || p.note != "waiting" {
+		t.Errorf(`parseStatusLine("captain-held: waiting") = %+v, %v, want verb=captain-held note="waiting"`, p, ok)
 	}
 }
 
