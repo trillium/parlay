@@ -281,6 +281,31 @@ the `PARLAY_STATE_HOME` fallback — unlike `guard.go`'s deliberately-duplicated
 `cursor.ts`'s `stateDir()` and `config.ts`'s `serverUrl()`-adjacent state-home
 logic already agree.
 
+## Go CLI ticket B9: `launch`/`drawdown`/`idle`
+
+`tools/cli/internal/commands/{launch,drawdown,idle}.go` port `cmdLaunch`/
+`cmdDrawdown`/`cmdIdle` from `packages/cli/src/commands/{launch,drawdown,
+idle}.ts` (that source has since been split from the older single
+`commands.ts` file some ticket briefs still cite — read the actual
+`packages/cli/src/commands/*.ts` files directly, not `commands.ts`). Two
+things worth knowing before touching this code:
+
+- **`launch.ts` and `commands-variant.ts` spawn different binaries, and
+  that's a real, pre-existing TS-source divergence, not a bug**: `launch.ts`
+  uses `parlay-bin spawn` (the current binary, per the `bin/parlay-spawn` →
+  `tools/parlay-bin` rename in ticket A1), while `commands-variant.ts` still
+  calls the retired `parlay-spawn` name. `launch.go` and `variant.go`
+  preserve each file's own convention rather than "fixing" the mismatch.
+- **`launch.go`'s `knownAgents()` reuses `guard.go`'s
+  `readLocalFrontmatter`/`parlayAgentsDir`/`parlayHomeDir`** instead of a
+  fourth copy of the local frontmatter parser — `launch.ts` defines its own
+  `parseFrontmatter` with the identical regex pair
+  (`^---\n([\s\S]*?)\n---` block, `^(\w+):\s*"?([^"]*)"?\s*$` KV) already
+  duplicated by `commands-teardown.ts`/`commands-variant.ts` and already
+  consolidated once in `guard.go` for the Go port (see the B4 section
+  above) — same hardcoded non-env-aware `~/.parlay/agents` resolution, so
+  the existing helpers apply directly.
+
 ## `bun test` only works from inside a package directory
 
 There is no root `bunfig.toml`, so running `bun test` from the repo root
