@@ -12,4 +12,24 @@ while [ -L "$SOURCE" ]; do
   case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE" ;; esac
 done
 REPO="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
-exec bun "$REPO/packages/cli/src/index.ts" "$@"
+
+# `lavish-import` (packages/cli/src/lavish-import.ts) has no Go port yet —
+# discovered during B10's parity pass: tools/cli/main.go's dispatch switch
+# never grew a case for it even though tools/cli/internal/help/help.go's
+# usage text already documents it. Keep routing this one command to the old
+# TS CLI so `parlay lavish-import` keeps working; tracked as Go-CLI follow-up
+# work, not silently dropped.
+if [ "$1" = "lavish-import" ]; then
+  exec bun "$REPO/packages/cli/src/index.ts" "$@"
+fi
+
+# Go rewrite of packages/cli (ticket B10, workstream B). Build the binary if
+# missing or stale (any tools/cli source newer than it), then exec it in
+# place of the old `bun packages/cli/src/index.ts`.
+CLI_DIR="$REPO/tools/cli"
+GO_BIN="$CLI_DIR/bin/parlay-cli"
+if [ ! -x "$GO_BIN" ] || [ -n "$(find "$CLI_DIR" -name '*.go' -newer "$GO_BIN" -print -quit)" ]; then
+  mkdir -p "$(dirname "$GO_BIN")"
+  (cd "$CLI_DIR" && go build -o "$GO_BIN" .) || exit 1
+fi
+exec "$GO_BIN" "$@"
