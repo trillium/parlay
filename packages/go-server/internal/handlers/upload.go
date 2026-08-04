@@ -3,6 +3,7 @@ package handlers
 import (
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"parlay/go-server/internal/store"
@@ -86,6 +87,33 @@ func handleServeUpload(st *store.Store) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		http.ServeFile(w, r, path)
+
+		f, err := os.Open(path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+
+		// Content-Type is set explicitly from the actual sniffed bytes
+		// (the same check handleUpload performs at save time), not
+		// delegated to http.ServeFile's extension-based mime.TypeByExtension
+		// lookup — otherwise a mismatched or crafted extension could make a
+		// served upload declare a Content-Type that diverges from its real
+		// content.
+		var sniff [512]byte
+		n, _ := f.Read(sniff[:])
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", http.DetectContentType(sniff[:n]))
+
+		info, err := f.Stat()
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeContent(w, r, "", info.ModTime(), f)
 	}
 }

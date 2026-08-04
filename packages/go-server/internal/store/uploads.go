@@ -33,10 +33,14 @@ func openUploadStore(dir string) (*UploadStore, error) {
 	return &UploadStore{dir: dir}, nil
 }
 
-// safeExtRe allow-lists the extension kept from a client-supplied filename;
-// anything else (including no match, e.g. no extension) is dropped rather
-// than echoed into a path.
-var safeExtRe = regexp.MustCompile(`^\.[a-zA-Z0-9]{1,8}$`)
+// safeExtRe allow-lists the extension kept from a client-supplied filename to
+// a fixed set of image extensions; anything else (including no match, e.g.
+// no extension, or a non-image extension like .html/.svg/.js) is dropped
+// rather than echoed into a path. This keeps the on-disk/served extension
+// consistent with the image-only content check handleUpload performs, so a
+// served upload's Content-Type (see handleServeUpload) can never be coaxed
+// into a non-image type via extension alone.
+var safeExtRe = regexp.MustCompile(`(?i)^\.(png|jpg|jpeg|gif|webp|bmp)$`)
 
 // Save writes data under a new random filename derived from origName's
 // (sanitized) extension and returns that filename — never origName itself.
