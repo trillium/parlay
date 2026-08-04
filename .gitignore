@@ -13,3 +13,4 @@ packages/server/server.js
 packages/server/src/parlay-ui.js
 .claude-file-plan.json
 .worktrees/
+tools/cli/bin/
