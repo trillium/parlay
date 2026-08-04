@@ -112,6 +112,14 @@ func Claim(argv []string) {
 		claimEnroll(agent, name, color, task)
 	}
 
+	// Bind the work item to the agent's identity so the relaunch guard can
+	// refuse to reboot once this item closes (robots-2x2n follow-up). Best
+	// effort: a write failure must not abort a claim — the guard just fails
+	// open (relaunches as before) when no binding is present.
+	if err := identity.BindWorkItem(agent, task.ID); err != nil {
+		fmt.Fprintf(os.Stderr, "parlay claim: note — could not bind work item %s to %s: %v\n", task.ID, agent, err)
+	}
+
 	fmt.Print(claimBrief(agent, name, color, model, task))
 }
 

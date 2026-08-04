@@ -273,12 +273,22 @@ func cmdMem(kind MemKind, argv []string) {
 			return
 		}
 		// --submit: reset WITH --reboot — relaunch fresh, recovering itself.
+		// EXCEPT when the agent's bound work item is already closed: a submit
+		// then is really a --complete (bead CLOSED + done → terminate), so we
+		// downgrade to a reset WITHOUT --reboot — a clean end, no wasteful
+		// respawn loop (robots-2x2n follow-up). Fail-open via
+		// BoundWorkItemClosed: any store hiccup keeps the normal reboot.
 		verb := "triggering"
 		if dry {
 			verb = "previewing"
 		}
-		fmt.Printf("identity submitted for %s — handoff %s pinned; %s context reset…\n", agent, pinID, verb)
 		submitArgs := []string{"--reboot"}
+		if item, closed := BoundWorkItemClosed(file); closed {
+			submitArgs = []string{} // drop --reboot → clean end, no relaunch
+			fmt.Printf("identity submitted for %s — handoff %s pinned; bound work item %s is CLOSED, so %s shutdown WITHOUT relaunch (use --complete next time)…\n", agent, pinID, item, verb)
+		} else {
+			fmt.Printf("identity submitted for %s — handoff %s pinned; %s context reset…\n", agent, pinID, verb)
+		}
 		if dry {
 			submitArgs = append(submitArgs, "--dry")
 		}
