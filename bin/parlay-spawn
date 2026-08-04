@@ -37,6 +37,29 @@ PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
 # $FM_ROOT/bin/fm-spawn.sh self-reference).
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
+# Physical dir of THIS script, following symlinks — parlay-spawn is normally
+# invoked via the ~/.local/bin/parlay-spawn symlink, so $SELF's dir is the
+# symlink's dir (~/.local/bin), NOT the repo's bin/ where our sibling scripts
+# live. Resolve the link chain so BIN_DIR always points at the real bin/ and we
+# can source herdr-contract next to us regardless of how we were invoked.
+_pspawn_src="${BASH_SOURCE[0]}"
+while [ -h "$_pspawn_src" ]; do
+  _pspawn_dir="$(cd -P "$(dirname "$_pspawn_src")" && pwd)"
+  _pspawn_src="$(readlink "$_pspawn_src")"
+  [ "${_pspawn_src#/}" = "$_pspawn_src" ] && _pspawn_src="$_pspawn_dir/$_pspawn_src"
+done
+BIN_DIR="$(cd -P "$(dirname "$_pspawn_src")" && pwd)"
+unset _pspawn_src _pspawn_dir
+
+# herdr contract gate (robots-4v2e): the single source of truth for the herdr
+# CLI shape parlay-spawn depends on. Sourced here; asserted at startup (below,
+# after arg parsing) BEFORE we register anything, so a drifted herdr fails fast
+# with a precise message instead of orphaning a half-created tab mid-launch.
+if [ -f "$BIN_DIR/herdr-contract" ]; then
+  # shellcheck source=/dev/null
+  source "$BIN_DIR/herdr-contract"
+fi
+
 # Deterministic, readable hex color from an id — a bash port of colorFromId()
 # in packages/cli/src/identity-ephemeral.ts (FNV-1a 32-bit, each channel squeezed
 # into 40–220 so no tab accent is too dark or too washed out). Same id ⇒ same
@@ -334,6 +357,19 @@ if command -v herdr >/dev/null 2>&1; then
     echo "parlay-spawn: a herdr agent named '$AGENT_ID' already exists — refusing to create a duplicate." >&2
     echo "  Reclaim the name first: 'herdr agent list' to find it, kill its process, then 'herdr tab close <its tab>'." >&2
     echo "  Or spawn under a different agent-id." >&2
+    exit 1
+  fi
+fi
+
+# herdr contract gate (robots-4v2e): assert herdr still exposes every subcommand
+# and flag we're about to shell out to, BEFORE registering the agent or creating
+# a tab. A drifted herdr fails here with a precise "no longer accepts --X" line
+# instead of a cryptic mid-dispatch rollback. Escape hatch:
+# PARLAY_SPAWN_SKIP_CONTRACT=1 (emergency-only; fix the drift and remove it).
+if [ "${PARLAY_SPAWN_SKIP_CONTRACT:-0}" != "1" ] && command -v herdr_contract_check >/dev/null 2>&1; then
+  if ! herdr_contract_check; then
+    echo "parlay-spawn: herdr contract check failed — refusing to dispatch into a drifted herdr." >&2
+    echo "  Re-run 'pipeline-selftest' after fixing, or set PARLAY_SPAWN_SKIP_CONTRACT=1 to bypass (emergency only)." >&2
     exit 1
   fi
 fi
