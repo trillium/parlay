@@ -55,28 +55,44 @@ function firstId(rows: HandoffRow[] | undefined): string | undefined {
 }
 
 // Internal: resolve the full HandoffRow for the newest open bead (returns the row so
-// callers can inspect `created` for age-based inherited detection). Query preference:
-//   1. list --assignee <agent> --status open,…  → newest open FOR this agent
-//   2. list --status open,…                     → newest open in the store
-//   3. show --current                           → store's "current" (may be closed)
+// callers can inspect `created` for age-based inherited detection).
+//
+// When the agent is KNOWN, the agent-scoped query is AUTHORITATIVE: its answer —
+// including "no open handoff for this agent" — is final, and we MUST NOT fall through
+// to the store-global newest-open handoff. That fall-through was the fleet-wide
+// misattribution bug (robots-4x9f, root-cause cluster robots-6wb/0sv/bu8/51s/vi7): a
+// fresh/resumed agent has zero open handoffs of its OWN, so the store-global fallback
+// grabbed some OTHER agent's newest open handoff (136 open store-wide) and pinned the
+// create→submit / say-guard nag on whoever was posting — every fresh agent then
+// narrated "stale/inherited handoff unrelated to my role — dismiss it". Handoffs set
+// assignee=<agent-id> (owner stays the principal), so the agent-scoped list is
+// reliable; its emptiness genuinely means "nothing unsubmitted for this agent".
+// Query preference:
+//   1. agent known    → list --assignee <agent> --status open,…  (AUTHORITATIVE)
+//   2. agent UNKNOWN   → list --status open,…                    → newest open in store
+//   3. agent UNKNOWN   → show --current                          → store's "current"
+// Steps 2/3 run ONLY when there is no agent identity to scope by (a bare CLI call with
+// no PARLAY_AGENT_ID) — so there is no one to misattribute the result to.
 function resolveRow(store: string, agent: string): HandoffRow | undefined {
-  // 1. Agent-scoped newest open handoff — the precise "for this agent" answer.
+  // 1. Agent-scoped newest open handoff — the precise, AUTHORITATIVE "for this agent"
+  //    answer. When agent is known, we stop here whether or not it found a row.
   if (agent) {
     const rows = runStore(store, [
       "list", "--status", OPEN_STATUSES, "--assignee", agent, "--sort", "updated", "-r", "--json",
     ])
     if (rows && rows.length > 0 && rows[0].id) return rows[0]
+    return undefined
   }
 
-  // 2. Newest open handoff in the store (assignee unknown / not set on the bead).
+  // 2. Agent UNKNOWN: newest open handoff in the store (no identity to scope by).
   const anyRows = runStore(store, [
     "list", "--status", OPEN_STATUSES, "--sort", "updated", "-r", "--json",
   ])
   if (anyRows && anyRows.length > 0 && anyRows[0].id) return anyRows[0]
 
-  // 3. Last resort: the store's notion of "current" (in-progress/hooked/last-touched).
-  //    Kept for stores/versions without a working `list --status` and as a bare-metal
-  //    fallback; a closed row here is filtered out.
+  // 3. Agent UNKNOWN last resort: the store's notion of "current"
+  //    (in-progress/hooked/last-touched). Kept for stores/versions without a working
+  //    `list --status`; a closed row here is filtered out.
   const current = runStore(store, ["show", "--current", "--json"])
   if (current && current.length > 0) {
     const status = (current[0]?.status ?? "").toString().trim().toLowerCase()

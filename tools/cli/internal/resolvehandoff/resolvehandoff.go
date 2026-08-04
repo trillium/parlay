@@ -71,10 +71,26 @@ func runStore(store string, args []string) ([]handoffRow, bool) {
 
 // resolveRow resolves the full handoffRow for the newest open bead (so
 // callers can inspect its created/created_at for age-based inherited
-// detection). Query preference:
-//  1. list --assignee <agent> --status open,…  -> newest open FOR this agent
-//  2. list --status open,…                     -> newest open in the store
-//  3. show --current                           -> store's "current" (may be closed)
+// detection).
+//
+// When the agent is KNOWN, the agent-scoped query is AUTHORITATIVE: its
+// answer — including "no open handoff for this agent" — is final, and we
+// MUST NOT fall through to the store-global newest-open handoff. That
+// fall-through was the fleet-wide misattribution bug (robots-4x9f, and its
+// root-cause cluster robots-6wb/0sv/bu8/51s/vi7): a fresh/resumed agent has
+// zero open handoffs of its OWN, so the store-global fallback grabbed some
+// OTHER agent's newest open handoff (136 open store-wide) and pinned the
+// create->submit / say-guard nag on whoever was posting. Every fresh agent
+// then narrated "stale/inherited handoff unrelated to my role — dismiss it".
+// Handoffs set assignee=<agent-id> (owner stays the principal), so the
+// agent-scoped list is reliable; its emptiness genuinely means "nothing
+// unsubmitted for this agent". Query preference:
+//  1. agent known -> list --assignee <agent> --status open,… (AUTHORITATIVE)
+//  2. agent UNKNOWN only -> list --status open,…  -> newest open in the store
+//  3. agent UNKNOWN only -> show --current        -> store's "current" (may be closed)
+// The store-global steps 2/3 run ONLY when there is no agent identity to
+// scope by (a bare CLI call with no PARLAY_AGENT_ID) — so there is no one to
+// misattribute the result to.
 func resolveRow(store, agent string) (handoffRow, bool) {
 	if agent != "" {
 		rows, ok := runStore(store, []string{
@@ -83,6 +99,7 @@ func resolveRow(store, agent string) (handoffRow, bool) {
 		if ok && len(rows) > 0 && strings.TrimSpace(rows[0].ID) != "" {
 			return rows[0], true
 		}
+		return handoffRow{}, false
 	}
 
 	anyRows, ok := runStore(store, []string{
