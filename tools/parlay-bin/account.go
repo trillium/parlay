@@ -13,7 +13,7 @@ import (
 // bin/parlay-spawn's resolve_account_token() (lines 62–76).
 func resolveAccountToken(account string) (string, error) {
 	out, err := exec.Command("security", "find-generic-password",
-		"-a", "ccjuggler-"+account, "-s", "ccjuggler", "-w").Output()
+		"-a", "ccjuggler", "-s", "ccjuggler-"+account, "-w").Output()
 	if err == nil {
 		if token := strings.TrimSpace(string(out)); token != "" {
 			return token, nil

@@ -89,7 +89,7 @@ resolve_account_token() {
   local account="$1"
   local token
   # macOS keychain — primary store on MacBook
-  token=$(security find-generic-password -a "ccjuggler-${account}" -s "ccjuggler" -w 2>/dev/null)
+  token=$(security find-generic-password -a "ccjuggler" -s "ccjuggler-${account}" -w 2>/dev/null)
   if [ -n "$token" ]; then printf '%s' "$token"; return 0; fi
   # Flat-file fallback
   local f="$HOME/.ccjuggler/${account}/.oauth-token"
