@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# pipeline-selftest — cheap, no-inference checks for the mechanic-dispatch
+# pipeline (robots ticket -> mechanic-dispatch -> parlay-spawn -> herdr).
+# Each check isolates one hop so a failure points at the actual broken layer
+# instead of needing a full claude agent boot (minutes + tokens) to find out.
+#
+# Usage:
+#   pipeline-selftest              # all cheap checks — no LLM launched, no tokens spent
+#   pipeline-selftest --full       # cheap checks + one real end-to-end launch (spends inference)
+#   pipeline-selftest <name>       # run just one check: tab|ready|start|api|dispatch|full
+set -uo pipefail
+
+PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
+PASS=0
+FAIL=0
+ok()  { echo "  OK   $1"; PASS=$((PASS+1)); }
+bad() { echo "  FAIL $1: $2"; FAIL=$((FAIL+1)); }
+
+UNSET_CMD='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; echo READY_$$'
+
+new_tab() {
+  # Echoes "tab_id root_pane" on success, empty on failure.
+  local label="$1" json tab_id root_pane
+  json=$(herdr tab create --cwd "$HOME" --no-focus --label "$label" 2>&1)
+  tab_id=$(printf '%s' "$json" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
+  root_pane=$(printf '%s' "$json" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)
+  if [ -z "$root_pane" ]; then
+    echo "TAB_CREATE_FAILED: $json" >&2
+    return 1
+  fi
+  echo "$tab_id $root_pane"
+}
+
+# 1. herdr reachable at all.
+check_herdr_alive() {
+  if herdr tab list >/dev/null 2>&1; then ok "herdr responds"; else bad "herdr responds" "herdr tab list failed"; fi
+}
+
+# 2. tab create/close round trip — validates the tab-create half of the herdr
+#    0.7.5 API split.
+check_tab_lifecycle() {
+  local pair tab_id root_pane
+  pair=$(new_tab "selftest-tab") || { bad "tab lifecycle" "$(new_tab "selftest-tab" 2>&1 >/dev/null)"; return; }
+  read -r tab_id root_pane <<<"$pair"
+  herdr tab close "$tab_id" >/dev/null 2>&1
+  ok "tab create/close (pane=$root_pane)"
+}
+
+# 3. pane unset + execution-confirmed READY marker — validates the exact
+#    agent_pane_busy race fix, without ever starting an agent.
+check_pane_ready_marker() {
+  local pair tab_id root_pane
+  pair=$(new_tab "selftest-ready") || { bad "pane ready marker" "tab create failed"; return; }
+  read -r tab_id root_pane <<<"$pair"
+  herdr pane send-text "$root_pane" "$UNSET_CMD" >/dev/null 2>&1
+  herdr pane send-keys "$root_pane" enter >/dev/null 2>&1
+  if herdr pane wait-output "$root_pane" --regex 'READY_[0-9]+' --timeout 5000 >/dev/null 2>&1; then
+    ok "pane ready marker observed"
+  else
+    bad "pane ready marker" "wait-output never matched READY_<pid> within 5s"
+  fi
+  herdr tab close "$tab_id" >/dev/null 2>&1
+}
+
+# 4. agent start accepted with NO prompt delivered — validates the agent-start
+#    call shape and the busy-pane race fix under the real sequence, at zero
+#    inference cost (claude idles at its composer; no API call happens until a
+#    prompt is submitted).
+check_agent_start_no_prompt() {
+  local id="selftest-$$" pair tab_id root_pane
+  pair=$(new_tab "$id") || { bad "agent start (no prompt)" "tab create failed"; return; }
+  read -r tab_id root_pane <<<"$pair"
+  herdr pane send-text "$root_pane" "$UNSET_CMD" >/dev/null 2>&1
+  herdr pane send-keys "$root_pane" enter >/dev/null 2>&1
+  herdr pane wait-output "$root_pane" --regex 'READY_[0-9]+' --timeout 5000 >/dev/null 2>&1
+  if herdr agent start "$id" --kind claude --pane "$root_pane" \
+      -- --dangerously-skip-permissions --fallback-model sonnet >/dev/null 2>&1; then
+    ok "agent start accepted (id=$id, no prompt sent, no inference spent)"
+  else
+    bad "agent start (no prompt)" "herdr agent start rejected the call"
+  fi
+  herdr tab close "$tab_id" >/dev/null 2>&1
+}
+
+# 5. Parlay HTTP API reachable — register round trip, no herdr involved at all.
+check_parlay_api() {
+  local id="selftest-api-$$"
+  if curl -sf -X POST "$PARLAY/api/chat/register-agent" \
+      -H "Content-Type: application/json" \
+      -d "{\"id\":\"$id\",\"name\":\"Selftest\",\"color\":\"#888888\"}" >/dev/null 2>&1; then
+    ok "Parlay register-agent API"
+  else
+    bad "Parlay register-agent API" "POST $PARLAY/api/chat/register-agent failed — is Pulse running?"
+  fi
+}
+
+# 6. mechanic-dispatch's absent/alive liveness branch, with herdr/parlay/robots
+#    stubbed out — proves the routing decision without launching anything real.
+check_dispatch_branch_logic() {
+  local stub_dir; stub_dir=$(mktemp -d)
+  cat > "$stub_dir/parlay-spawn" <<'EOF'
+#!/usr/bin/env bash
+echo "STUB: parlay-spawn called with: $*"
+exit 0
+EOF
+  cat > "$stub_dir/parlay" <<'EOF'
+#!/usr/bin/env bash
+echo "STUB: parlay called with: $*"
+exit 0
+EOF
+  cat > "$stub_dir/herdr" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "agent" ] && [ "$2" = "get" ]; then
+  echo '{"error":{"code":"agent_not_found"}}'
+  exit 0
+fi
+exit 0
+EOF
+  cat > "$stub_dir/robots" <<'EOF'
+#!/usr/bin/env bash
+echo "[OPEN] fake ticket"
+exit 0
+EOF
+  chmod +x "$stub_dir"/parlay-spawn "$stub_dir"/parlay "$stub_dir"/herdr "$stub_dir"/robots
+  local out
+  out=$(PATH="$stub_dir:$PATH" mechanic-dispatch selftest-ticket default 2>&1)
+  if printf '%s' "$out" | grep -q "STUB: parlay-spawn called"; then
+    ok "dispatch routes an absent mechanic to parlay-spawn"
+  else
+    bad "dispatch branch logic" "expected a parlay-spawn stub call, got: $out"
+  fi
+  rm -rf "$stub_dir"
+}
+
+# 7. FULL end-to-end — real charter, real inference, costs tokens. Opt-in only.
+check_full_launch() {
+  local id="selftest-full-$$"
+  echo "  spending real inference: launching $id and waiting for 'working' ..."
+  if parlay-spawn "$id" "Selftest" "#888888" "Reply with OK then stop." --cwd "$HOME" --model sonnet >/dev/null 2>&1 \
+     && herdr agent wait "$id" --status working --timeout 60000 >/dev/null 2>&1; then
+    ok "full launch reached working"
+  else
+    bad "full launch" "never reached working within 60s"
+  fi
+  herdr tab list 2>/dev/null | jq -r --arg id "$id" '.result.tabs[] | select(.label==$id) | .tab_id' 2>/dev/null \
+    | xargs -I{} herdr tab close {} >/dev/null 2>&1
+}
+
+run() { echo "-- $1 --"; "$2"; }
+
+CHEAP=(check_herdr_alive check_tab_lifecycle check_pane_ready_marker check_agent_start_no_prompt check_parlay_api check_dispatch_branch_logic)
+CHEAP_NAMES=("herdr alive" "tab lifecycle" "pane ready marker" "agent start (no prompt)" "Parlay API" "dispatch branch logic")
+
+case "${1:-}" in
+  tab)      run "tab lifecycle" check_tab_lifecycle ;;
+  ready)    run "pane ready marker" check_pane_ready_marker ;;
+  start)    run "agent start (no prompt)" check_agent_start_no_prompt ;;
+  api)      run "Parlay API" check_parlay_api ;;
+  dispatch) run "dispatch branch logic" check_dispatch_branch_logic ;;
+  full)     run "FULL end-to-end (spends inference)" check_full_launch ;;
+  --full)
+    for i in "${!CHEAP[@]}"; do run "${CHEAP_NAMES[$i]}" "${CHEAP[$i]}"; done
+    run "FULL end-to-end (spends inference)" check_full_launch
+    ;;
+  "")
+    for i in "${!CHEAP[@]}"; do run "${CHEAP_NAMES[$i]}" "${CHEAP[$i]}"; done
+    ;;
+  *) echo "usage: pipeline-selftest [tab|ready|start|api|dispatch|full|--full]" >&2; exit 2 ;;
+esac
+
+echo
+echo "passed=$PASS failed=$FAIL"
+[ "$FAIL" -eq 0 ]
