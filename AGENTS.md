@@ -245,6 +245,42 @@ intentional fidelity to the TS source, not an oversight. `commands-doctor.ts`
 has no dedicated TS test file to mirror; `doctor_test.go`'s cases were
 derived directly from reading the implementation.
 
+## Go CLI ticket B6: `robots-watch`/`robots-tail` — a TS command-*folder* becomes its own Go package
+
+`internal/robotswatch` ports `packages/cli/src/commands-robots-watch/{index,
+detect,handlers,cursor,tail}.ts` (the panic-isolated event poll-daemon plus
+its byte-offset tailer). Confirms the layout convention `internal/identity`
+already established: a TS command implemented as a *folder* of files (not a
+single `commands-X.ts`) gets its own Go package under `internal/`, not a file
+inside `internal/commands` — `internal/commands` is reserved for the
+single-file `commands-*.ts` ports (ticket B3/B4 style).
+
+Two things worth knowing before touching this code:
+- **Panic isolation is `defer`/`recover` at the same two boundaries as the TS
+  try/catch**, not smeared into every I/O helper. `watch.go`'s `runPollOnce`
+  recovers a whole bad pass (mirrors `index.ts`'s outer try/catch);
+  `handleRoutedEvent` recovers one failing handler without losing the rest of
+  that pass's diff (mirrors the per-event try/catch inside `pollOnce`).
+  `tail.go`'s `tickIsolated` is the same pattern for the tailer's loop. To
+  make this work, `cursor.go`'s `writeCursor` and `tail.go`'s `writeOffset`/
+  `readNewLines` deliberately `panic()` on unexpected fs errors instead of
+  swallowing them — matching an unguarded `mkdirSync`/`writeFileSync` throw in
+  the TS source bubbling up to that same outer catch. Don't add local
+  error-swallowing to those helpers; the isolation boundary belongs at the
+  call sites named above, not inside the low-level I/O.
+- **`detectEvents`' event order is bead-id sorted, not TS's Object.entries
+  insertion order** — Go map iteration has no ordering guarantee (unlike a JS
+  object's insertion-order iteration), and no test or caller depends on
+  event order, so this is a deliberate, faithful-in-substance divergence, not
+  a bug.
+
+`cursor.go`'s `stateDir()` (shared by the poll cursor and the tailer's
+offset file) reuses `internal/config.StateHome()` rather than reimplementing
+the `PARLAY_STATE_HOME` fallback — unlike `guard.go`'s deliberately-duplicated
+`guardStateHome()`, there is no TS-side inconsistency to preserve here:
+`cursor.ts`'s `stateDir()` and `config.ts`'s `serverUrl()`-adjacent state-home
+logic already agree.
+
 ## `bun test` only works from inside a package directory
 
 There is no root `bunfig.toml`, so running `bun test` from the repo root

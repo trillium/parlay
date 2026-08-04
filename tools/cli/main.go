@@ -25,9 +25,10 @@
 // from commands-doctor.ts). B8 wired `say`/`reply` (identity.CmdSay,
 // already implemented in B1 alongside the resolve-handoff/say-guard
 // death-window primitives it depends on — internal/resolvehandoff,
-// internal/sayguard — but left undispatched here until this ticket). Every
-// other subcommand from the TS CLI's dispatch lands here as its own ticket
-// adds it.
+// internal/sayguard — but left undispatched here until this ticket); B6
+// wired `robots-watch`/`robots-tail` (internal/robotswatch, the
+// panic-isolated poll daemon + tailer). Every other subcommand from the TS
+// CLI's dispatch lands here as its own ticket adds it.
 package main
 
 import (
@@ -39,6 +40,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/help"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
 	"github.com/trillium/parlay/tools/cli/internal/monitor"
+	"github.com/trillium/parlay/tools/cli/internal/robotswatch"
 )
 
 func main() {
@@ -100,6 +102,10 @@ func main() {
 		commands.Doctor(args)
 	case "health":
 		commands.Health(args)
+	case "robots-watch":
+		robotswatch.CmdRobotsWatch(args)
+	case "robots-tail":
+		robotswatch.CmdRobotsTail(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		os.Exit(config.ExitUsage)
