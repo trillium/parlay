@@ -332,19 +332,9 @@ func cmdMem(kind MemKind, argv []string) {
 	}
 	readMode := len(res.Positionals) == 0 || first == "show" || first == "read"
 	if readMode {
-		// Hide the launch-spec frontmatter (machine-facing); show the human identity.
-		raw := ""
-		if data, err := os.ReadFile(file); err == nil {
-			raw = string(data)
-		}
-		body := strings.TrimRight(frontmatterStripRe.ReplaceAllString(raw, ""), " \t\n\r")
-		if body != "" {
-			fmt.Println(body)
-		} else if kind == KindIdentity {
-			fmt.Printf("(no identity recorded yet for %s — add with: identity 'a fact about yourself')\n", agent)
-		} else {
-			fmt.Printf("(scratchpad empty for %s — write with: scratchpad 'note')\n", agent)
-		}
+		// Hide the launch-spec frontmatter (machine-facing); show the human
+		// identity. Shared with `parlay claim`, which folds both bodies inline.
+		fmt.Println(ReadMemBody(kind, agent))
 		return
 	}
 
@@ -392,6 +382,32 @@ func cmdMem(kind MemKind, argv []string) {
 		noun = "notes"
 	}
 	fmt.Printf("%s += %s (%d %s)\n", kind, agent, count, noun)
+}
+
+// ReadMemBody returns the human-facing body of an agent's identity or
+// scratchpad file — launch-spec frontmatter stripped, trailing whitespace
+// trimmed — or the empty-state placeholder line when nothing is recorded yet
+// (including any pinned "> 📎 Handoff:" pointer, which lives in the body).
+//
+// It is a pure read: unlike MemFile it neither creates the agent directory nor
+// Dies when the file is absent, so it is safe to call for display. Shared by
+// the bare `identity`/`scratchpad` read path and by `parlay claim`, which folds
+// both bodies inline so a claiming agent recovers its memory in one shot rather
+// than running identity + scratchpad as a separate manual step (robots-2x2n).
+func ReadMemBody(kind MemKind, agent string) string {
+	file := filepath.Join(AgentsRoot(), agent, string(kind)+".md")
+	raw := ""
+	if data, err := os.ReadFile(file); err == nil {
+		raw = string(data)
+	}
+	body := strings.TrimRight(frontmatterStripRe.ReplaceAllString(raw, ""), " \t\n\r")
+	if body != "" {
+		return body
+	}
+	if kind == KindIdentity {
+		return fmt.Sprintf("(no identity recorded yet for %s — add with: identity 'a fact about yourself')", agent)
+	}
+	return fmt.Sprintf("(scratchpad empty for %s — write with: scratchpad 'note')", agent)
 }
 
 // CmdScratchpad is `parlay scratchpad`'s entry point.
