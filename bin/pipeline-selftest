@@ -73,11 +73,23 @@ check_agent_start_no_prompt() {
   herdr pane send-text "$root_pane" "$UNSET_CMD" >/dev/null 2>&1
   herdr pane send-keys "$root_pane" enter >/dev/null 2>&1
   herdr pane wait-output "$root_pane" --regex 'READY_[0-9]+' --timeout 5000 >/dev/null 2>&1
-  if herdr agent start "$id" --kind claude --pane "$root_pane" \
-      -- --dangerously-skip-permissions --fallback-model sonnet >/dev/null 2>&1; then
+  # Mirror parlay-spawn's agent_pane_busy retry (robots-i4pi): the first attempt
+  # on a brand-new pane reliably loses the race with herdr's availability
+  # bookkeeping; the retry closes it. Single-attempt here would flap FAIL while
+  # production is actually fine.
+  local started=0 out attempts="${PARLAY_SPAWN_START_RETRIES:-12}" _a=1
+  while [ "$_a" -le "$attempts" ]; do
+    out=$(herdr agent start "$id" --kind claude --pane "$root_pane" \
+        -- --dangerously-skip-permissions --fallback-model sonnet 2>&1) \
+      && ! printf '%s' "$out" | grep -q agent_pane_busy && { started=1; break; }
+    printf '%s' "$out" | grep -q agent_pane_busy || break
+    sleep 0.3
+    _a=$((_a + 1))
+  done
+  if [ "$started" -eq 1 ]; then
     ok "agent start accepted (id=$id, no prompt sent, no inference spent)"
   else
-    bad "agent start (no prompt)" "herdr agent start rejected the call"
+    bad "agent start (no prompt)" "herdr agent start rejected the call (last: $out)"
   fi
   herdr tab close "$tab_id" >/dev/null 2>&1
 }
@@ -137,7 +149,7 @@ check_full_launch() {
   local id="selftest-full-$$"
   echo "  spending real inference: launching $id and waiting for 'working' ..."
   if parlay-spawn "$id" "Selftest" "#888888" "Reply with OK then stop." --cwd "$HOME" --model sonnet >/dev/null 2>&1 \
-     && herdr agent wait "$id" --status working --timeout 60000 >/dev/null 2>&1; then
+     && herdr agent wait "$id" --until working --timeout 60000 >/dev/null 2>&1; then
     ok "full launch reached working"
   else
     bad "full launch" "never reached working within 60s"

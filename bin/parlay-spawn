@@ -602,9 +602,40 @@ herdr pane wait-output "$ROOT_PANE" --regex 'READY_[0-9]+' --timeout 5000 >/dev/
 # refuses to encode it ("agent arguments cannot be encoded safely for the
 # target shell"). So claude launches bare, then `agent prompt` below delivers
 # the real charter through herdr's paste-safe submission channel instead.
-if ! herdr agent start "$AGENT_ID" --kind claude --pane "$ROOT_PANE" \
-  -- --dangerously-skip-permissions --fallback-model sonnet ${MODEL:+--model "$MODEL"}; then
-  echo "parlay-spawn: herdr agent start failed — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
+# Retry 'agent start' on the agent_pane_busy race (robots-i4pi). Even after the
+# READY marker confirms the pane's shell executed a command, herdr's own
+# pane-availability bookkeeping lags by a beat, so the FIRST 'agent start'
+# reliably rejects with agent_pane_busy ('… is not an available shell') on a
+# brand-new per-ticket pane — NOT the shared-pane case robots-1uez fixed.
+# Empirically the pane settles within 0–3 retries at 300ms, but the tail
+# occasionally runs longer under load, so the budget is generous (12 attempts,
+# tunable via PARLAY_SPAWN_START_RETRIES); it is only spent while the pane is
+# genuinely busy. Only agent_pane_busy is retried — any other failure is
+# non-transient and rolls back immediately.
+_start_attempts="${PARLAY_SPAWN_START_RETRIES:-12}"
+_start_ok=0
+_start_out=""
+_try=1
+while [ "$_try" -le "$_start_attempts" ]; do
+  if _start_out=$(herdr agent start "$AGENT_ID" --kind claude --pane "$ROOT_PANE" \
+      -- --dangerously-skip-permissions --fallback-model sonnet ${MODEL:+--model "$MODEL"} 2>&1); then
+    # Guard against a hypothetical exit-0-with-error-object; treat a busy marker
+    # in the output as failure regardless of exit code.
+    case "$_start_out" in
+      *agent_pane_busy*) : ;;
+      *) _start_ok=1; break ;;
+    esac
+  else
+    case "$_start_out" in
+      *agent_pane_busy*) : ;;                 # transient — retry after a beat
+      *) break ;;                             # non-transient failure — stop
+    esac
+  fi
+  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; sleep 0.3; }
+  _try=$((_try + 1))
+done
+if [ "$_start_ok" -ne 1 ]; then
+  echo "parlay-spawn: herdr agent start failed after $_try attempt(s) — rolling back the tab to avoid a ghost '$AGENT_ID' tab. (last: $_start_out)" >&2
   [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
   exit 1
 fi
@@ -653,7 +684,7 @@ if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && command -v herdr >/dev/null 2>
   (
     # `agent wait` returns 0 as soon as the agent is observed 'working' — the
     # normal auto-start path exits here having done nothing.
-    if herdr agent wait "$AGENT_ID" --status working --timeout "$LIVENESS_TIMEOUT_MS" >/dev/null 2>&1; then
+    if herdr agent wait "$AGENT_ID" --until working --timeout "$LIVENESS_TIMEOUT_MS" >/dev/null 2>&1; then
       exit 0
     fi
     echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: initial turn never fired within ${LIVENESS_TIMEOUT_MS}ms — resubmitting charter." >&2
