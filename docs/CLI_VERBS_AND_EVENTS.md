@@ -68,9 +68,11 @@ manifest, no codegen, no server change unless the verb calls a server endpoint.
 + two `index.ts` cases + help.)
 
 **Thin wrappers on PATH.** `~/.local/bin/{parlay,identity,reply,scratchpad}` are
-one-line bash wrappers that `exec bun …/cli/src/index.ts <verb> "$@"` (see
-`bin/parlay`). A new agent-facing verb usually wants a matching wrapper so agents
-call `foo …` not `parlay foo …`.
+one-line bash wrappers pointing at `bin/parlay`, which now builds and execs the
+`tools/cli` Go binary instead of `bun …/cli/src/index.ts` (ticket B10; the
+`lavish-import` verb is the sole exception still routed to the TS CLI — see
+`bin/parlay` and the AGENTS.md B10 section). A new agent-facing verb usually
+wants a matching wrapper so agents call `foo …` not `parlay foo …`.
 
 #### The `status` verb — a name repurposed, not overloaded (fold §3.6, task-ve2v)
 
