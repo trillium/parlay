@@ -1,5 +1,8 @@
 # 01KY3JR9MV1QHP7PX01G9DDFK8 — Changelog
 
+## 2026-08-04 — session e6bd4965
+
+Files: tools/cli/internal/identity/mem.go, tools/cli/internal/commands/claim.go, tools/cli/internal/commands/claim_test.go
 ## 2026-08-04 — session 7ac27638
 
 Files: bin/herdr-contract, bin/parlay-spawn, bin/pipeline-selftest, .changeset/herdr-contract-gate.md
