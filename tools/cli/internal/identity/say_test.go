@@ -138,4 +138,3 @@ func TestSayNoWarningWhenHandoffAlreadyPinned(t *testing.T) {
 		t.Errorf("stderr = %q, want no warning once the handoff is pinned", errOut)
 	}
 }
-
