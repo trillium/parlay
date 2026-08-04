@@ -21,8 +21,9 @@
 // `status` (the fold §3.6 keyed verb — bare `parlay` stays the panel/fleet
 // snapshot), `crew-state`, `supervise`, and `context-check`; B4 wired
 // `guard`/`teardown`/`variant` (internal/commands, the git-shell-out command
-// chains). `say`/`reply` are implemented in internal/identity too
-// (identity.CmdSay) but not yet wired here — see that file's header
+// chains); B7 wired `doctor`/`health` (internal/commands/doctor.go, ported
+// from commands-doctor.ts). `say`/`reply` are implemented in internal/identity
+// too (identity.CmdSay) but not yet wired here — see that file's header
 // comment. Every other subcommand from the TS CLI's dispatch lands here as
 // its own ticket adds it.
 package main
@@ -91,6 +92,10 @@ func main() {
 		commands.Teardown(args)
 	case "variant":
 		commands.Variant(args)
+	case "doctor":
+		commands.Doctor(args)
+	case "health":
+		commands.Health(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		os.Exit(config.ExitUsage)

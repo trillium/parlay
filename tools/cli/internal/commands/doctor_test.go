@@ -1,0 +1,266 @@
+// Mirrors packages/cli/src/commands-doctor.ts's cmdHealth/cmdDoctor
+// behavior (that TS source has no dedicated test file to mirror cases
+// from — this suite is derived directly from reading the implementation).
+package commands
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
+)
+
+func jsonHandler(t *testing.T, v any) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(v)
+	}
+}
+
+// ── health ───────────────────────────────────────────────────────────────
+
+func TestHealthAllOK(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", jsonHandler(t, map[string]any{
+		"parlay":     map[string]any{"clients": 2},
+		"poll":       map[string]any{"count": 1},
+		"registered": map[string]any{"count": 3},
+		"memory":     map[string]any{"rssMB": 45, "heapUsedMB": 20},
+		"history":    map[string]any{"count": 100, "approxKB": 12},
+	}))
+	mux.HandleFunc("/api/pulse/health", jsonHandler(t, map[string]any{"status": "ok", "uptime": 120.0, "pid": 999}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	engineMux := http.NewServeMux()
+	engineMux.HandleFunc("/health", jsonHandler(t, map[string]any{"ok": true, "protocol": 3}))
+	engineSrv := httptest.NewServer(engineMux)
+	t.Cleanup(engineSrv.Close)
+
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", engineSrv.URL)
+
+	var exited bool
+	out := captureStdout(t, func() {
+		_, exited = withExitTrap(t, func() { Health(nil) })
+	})
+	if exited {
+		t.Errorf("Health() exited unexpectedly on an all-ok server: %q", out)
+	}
+	for _, want := range []string{
+		"ok    relay " + srv.URL + " — 2 client(s), 1 poller(s), 3 agent(s)",
+		"ok    memory — rss 45MB, heap 20MB; history 100 msgs (12KB)",
+		"ok    pulse — status ok, pid 999, up 2min",
+		"ok    eval-engine " + engineSrv.URL + " — protocol v3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Health() output missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestHealthSickWhenRelayUnreachable(t *testing.T) {
+	engineMux := http.NewServeMux()
+	engineMux.HandleFunc("/health", jsonHandler(t, map[string]any{"ok": true, "protocol": 1}))
+	engineSrv := httptest.NewServer(engineMux)
+	t.Cleanup(engineSrv.Close)
+
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", engineSrv.URL)
+
+	var code int
+	var exited bool
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { Health(nil) })
+	})
+	if !exited || code != config.ExitRuntime {
+		t.Errorf("Health() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
+	}
+	if !strings.Contains(out, "FAIL  relay http://127.0.0.1:1") {
+		t.Errorf("Health() output = %q, want a FAIL relay line", out)
+	}
+}
+
+func TestHealthSickWhenEngineUnreachable(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", jsonHandler(t, map[string]any{}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+
+	var code int
+	var exited bool
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { Health(nil) })
+	})
+	if !exited || code != config.ExitRuntime {
+		t.Errorf("Health() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
+	}
+	if !strings.Contains(out, "FAIL  eval-engine http://127.0.0.1:1") {
+		t.Errorf("Health() output = %q, want a FAIL eval-engine line", out)
+	}
+}
+
+func TestHealthHelpDoesNotPanic(t *testing.T) {
+	out := captureStdout(t, func() { Health([]string{"--help"}) })
+	if !strings.Contains(out, "parlay health") {
+		t.Errorf("Health(--help) = %q, want the health help text", out)
+	}
+}
+
+// ── doctor ───────────────────────────────────────────────────────────────
+
+func TestDoctorFailsWithNoAgentID(t *testing.T) {
+	t.Setenv("PARLAY_AGENT_ID", "")
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+
+	var code int
+	var exited bool
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { Doctor(nil) })
+	})
+	if !exited || code != config.ExitRuntime {
+		t.Errorf("Doctor() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
+	}
+	if !strings.Contains(out, "FAIL  PARLAY_AGENT_ID is not set") {
+		t.Errorf("Doctor() output = %q, want a FAIL PARLAY_AGENT_ID line", out)
+	}
+}
+
+func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, "doc-agent")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\nid: doc-agent\nname: Doc\n---\n# Identity\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "scratchpad.md"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", jsonHandler(t, map[string]any{
+		"presence": []map[string]any{{"channel": "doc-agent", "status": "listening", "lastSeen": "2026-08-03T00:00:00Z"}},
+	}))
+	mux.HandleFunc("/api/chat/agents", jsonHandler(t, []map[string]any{{"id": "doc-agent", "name": "Doc", "color": "#fff"}}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	engineMux := http.NewServeMux()
+	engineMux.HandleFunc("/health", jsonHandler(t, map[string]any{"ok": true}))
+	engineSrv := httptest.NewServer(engineMux)
+	t.Cleanup(engineSrv.Close)
+
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", engineSrv.URL)
+
+	var exited bool
+	out := captureStdout(t, func() {
+		_, exited = withExitTrap(t, func() { Doctor(nil) })
+	})
+	if exited {
+		t.Errorf("Doctor() exited unexpectedly when everything is healthy: %q", out)
+	}
+	if strings.Contains(out, "FAIL") {
+		t.Errorf("Doctor() output has a FAIL line, want all clear:\n%s", out)
+	}
+	for _, want := range []string{
+		"PASS  PARLAY_AGENT_ID = doc-agent",
+		"PASS  server reachable at " + srv.URL,
+		`PASS  registered as "doc-agent" on the relay`,
+		"PASS  monitor listening (last poll 2026-08-03T00:00:00Z)",
+		"PASS  identity.md ok",
+		"PASS  scratchpad.md ok",
+		"PASS  eval-engine healthy at " + engineSrv.URL,
+		"all clear (0 warn)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Doctor() output missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestDoctorFailsWhenIdentityIDMismatches(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, "doc-agent-2")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\nid: someone-else\n---\n"), 0o644)
+
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-2")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+
+	var code int
+	var exited bool
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { Doctor(nil) })
+	})
+	if !exited || code != config.ExitRuntime {
+		t.Errorf("Doctor() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
+	}
+	if !strings.Contains(out, `FAIL  identity.md frontmatter id "someone-else" != PARLAY_AGENT_ID "doc-agent-2"`) {
+		t.Errorf("Doctor() output = %q, want a FAIL identity id-mismatch line", out)
+	}
+}
+
+func TestDoctorWarnsWhenIdentityMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_AGENT_ID", "no-files-agent")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+
+	var exited bool
+	out := captureStdout(t, func() {
+		_, exited = withExitTrap(t, func() { Doctor(nil) })
+	})
+	// Still exits nonzero overall (server unreachable is a FAIL), but the
+	// missing-file checks themselves must be WARN, not FAIL.
+	if !exited {
+		t.Errorf("Doctor() did not exit despite an unreachable server")
+	}
+	if !strings.Contains(out, "WARN  identity.md missing") || !strings.Contains(out, "WARN  scratchpad.md missing") {
+		t.Errorf("Doctor() output = %q, want WARN lines for missing identity/scratchpad", out)
+	}
+}
+
+func TestDoctorHandoffPointerNoted(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, "doc-agent-3")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\nid: doc-agent-3\n---\n📎 Handoff: handoff-abc123\n"), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "scratchpad.md"), []byte("notes\n"), 0o644)
+
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-3")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+
+	out := captureStdout(t, func() {
+		withExitTrap(t, func() { Doctor(nil) })
+	})
+	if !strings.Contains(out, "note: handoff pointer → handoff-abc123 (run: handoff show handoff-abc123)") {
+		t.Errorf("Doctor() output = %q, want the handoff pointer note", out)
+	}
+}
+
+func TestDoctorHelpDoesNotPanic(t *testing.T) {
+	out := captureStdout(t, func() { Doctor([]string{"--help"}) })
+	if !strings.Contains(out, "parlay doctor") {
+		t.Errorf("Doctor(--help) = %q, want the doctor help text", out)
+	}
+}
