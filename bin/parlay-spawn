@@ -108,6 +108,9 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   Claude usage across accounts. Resolves CLAUDE_CODE_OAUTH_TOKEN from
                   keychain (security find-generic-password -a ccjuggler-NAME -s ccjuggler)
                   or ~/.ccjuggler/NAME/.oauth-token. Injected via herdr --env.
+  --workspace ID  land the new tab in an existing herdr workspace instead of
+                  wherever the caller's shell currently is. Falls back to
+                  \$HERDR_WORKSPACE_ID when not given.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -279,15 +282,17 @@ MODE="report"
 EFFORT=""
 WANT_WORKTREE=0
 ACCOUNT=""
+WORKSPACE="${HERDR_WORKSPACE_ID:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --cwd)      CWD="$2"; shift 2 ;;
-    --focus)    FOCUS_FLAG="--focus"; shift ;;
-    --model)    MODEL="$2"; shift 2 ;;
-    --mode)     MODE="$2"; shift 2 ;;
-    --effort)   EFFORT="$2"; shift 2 ;;
-    --worktree) WANT_WORKTREE=1; shift ;;
-    --account)  ACCOUNT="$2"; shift 2 ;;
+    --cwd)       CWD="$2"; shift 2 ;;
+    --focus)     FOCUS_FLAG="--focus"; shift ;;
+    --model)     MODEL="$2"; shift 2 ;;
+    --mode)      MODE="$2"; shift 2 ;;
+    --effort)    EFFORT="$2"; shift 2 ;;
+    --worktree)  WANT_WORKTREE=1; shift ;;
+    --account)   ACCOUNT="$2"; shift 2 ;;
+    --workspace) WORKSPACE="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
@@ -559,7 +564,7 @@ fi
 # pane becomes the agent's pane directly — `agent start` targets it below via
 # --pane, so there is no redundant pane to close afterward.
 TAB_JSON=$(herdr tab create --cwd "$CWD" $FOCUS_FLAG --label "$AGENT_ID" \
-  ${HERDR_WORKSPACE_ID:+--workspace "$HERDR_WORKSPACE_ID"} \
+  ${WORKSPACE:+--workspace "$WORKSPACE"} \
   --env "PARLAY_SERVER=$PARLAY" \
   --env "PARLAY_AGENT_ID=$AGENT_ID" \
   ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
