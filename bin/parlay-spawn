@@ -533,33 +533,20 @@ if [ -f "$CWD/.envrc" ] && command -v direnv >/dev/null 2>&1; then
 fi
 
 # 5. Launch a fresh, TOP-LEVEL claude in a detached herdr terminal.
-#    The bash wrapper UNSETS the nesting-marker env vars so Claude Code does not
-#    treat this as a nested subprocess (empty-string via --env is NOT enough —
-#    the guard checks presence, so we must `unset`).
+#    herdr 0.7.5 split the old monolithic launch call: `herdr tab create` now
+#    owns --cwd/--env/--focus/--label/--workspace, while `herdr agent start`
+#    only starts a validated --kind inside an *existing* --pane and passes
+#    args after `--` straight to that binary — no shell wrapper is possible
+#    anymore, so we can no longer `exec claude ...` via `bash -lc`.
+#    We replicate the old wrapper's env-unset by pre-clearing the
+#    nesting-marker vars directly in the pane before starting the agent
+#    (empty-string via --env is NOT enough — the guard checks presence, so
+#    we must `unset` — and new panes inherit the herdr server's own
+#    CLAUDECODE/CLAUDE_CODE_* env, confirmed empirically).
 echo "parlay-spawn: launching detached claude via herdr (cwd=$CWD, $FOCUS_FLAG) ..." >&2
 
-# shellcheck disable=SC2016
-# Runs in YOLO mode (skip-permissions + sonnet fallback) — same as the `yolo`
-# command — so a remotely-driven agent never stalls on a permission prompt the
-# absent user can't answer. `yolo` is a zsh function, unavailable in this bash
-# login shell, so we replicate its exact behaviour here.
-LAUNCH_SCRIPT='unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; exec claude --dangerously-skip-permissions --fallback-model sonnet ${PARLAY_SPAWN_MODEL:+--model "$PARLAY_SPAWN_MODEL"} "$PARLAY_SPAWN_PROMPT"'
-
-# Give the agent its OWN tab (captain's rule 2026-07-13: agents never split the
-# captain's current tab, and they launch unfocused/background). The tab's root
-# shell pane is a harmless side effect — no pane-close verb exists in herdr 0.7.3.
-TAB_FLAG=""
-ROOT_PANE=""
-TAB_JSON=$(herdr tab create --no-focus --label "$AGENT_ID" ${HERDR_WORKSPACE_ID:+--workspace "$HERDR_WORKSPACE_ID"} 2>/dev/null) || true
-TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
-ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
-[ -n "$TAB_ID" ] && TAB_FLAG="--tab $TAB_ID"
-
-# Roll back on failure: if agent start fails (e.g. name taken), close the tab we
-# just created so it does not linger as a ghost "$AGENT_ID" tab. Without this,
-# set -e aborts here and orphans the labeled tab — the exact two-same-name-tabs bug.
-# Resolve account token if --account was given. Fail before tab creation so
-# there is no ghost tab to clean up on a bad keychain lookup.
+# Resolve account token if --account was given, before tab creation so there
+# is no ghost tab to clean up on a bad keychain lookup.
 OAUTH_ENV_FLAG=()
 if [ -n "$ACCOUNT" ]; then
   _token=$(resolve_account_token "$ACCOUNT") || exit 1
@@ -567,23 +554,61 @@ if [ -n "$ACCOUNT" ]; then
   echo "parlay-spawn: using account '$ACCOUNT' (token resolved)" >&2
 fi
 
-if ! herdr agent start "$AGENT_ID" --cwd "$CWD" $FOCUS_FLAG $TAB_FLAG \
-  --env "PARLAY_SPAWN_PROMPT=$STARTUP_PROMPT" \
-  --env "PARLAY_SPAWN_MODEL=$MODEL" \
+# Give the agent its OWN tab (captain's rule 2026-07-13: agents never split the
+# captain's current tab, and they launch unfocused/background). The tab's root
+# pane becomes the agent's pane directly — `agent start` targets it below via
+# --pane, so there is no redundant pane to close afterward.
+TAB_JSON=$(herdr tab create --cwd "$CWD" $FOCUS_FLAG --label "$AGENT_ID" \
+  ${HERDR_WORKSPACE_ID:+--workspace "$HERDR_WORKSPACE_ID"} \
   --env "PARLAY_SERVER=$PARLAY" \
   --env "PARLAY_AGENT_ID=$AGENT_ID" \
   ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
   ${PROJECT_ENV_FLAGS[@]+"${PROJECT_ENV_FLAGS[@]}"} \
-  -- bash -lc "$LAUNCH_SCRIPT"; then
+  2>/dev/null) || true
+TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
+ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
+
+if [ -z "$ROOT_PANE" ]; then
+  echo "parlay-spawn: herdr tab create failed — no root pane returned." >&2
+  [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+# Pre-clear the nesting-marker vars in the pane's login shell before handing
+# it to `agent start` — this is the `unset` half of the old bash wrapper.
+# `agent start` immediately afterward needs the pane genuinely back at an idle
+# prompt ("agent target pane is not an available shell" otherwise), so confirm
+# execution rather than guessing a sleep is long enough. The trailing
+# `echo READY_$$` marker sits as literal unresolved text ($$ shown verbatim)
+# while merely typed-but-unsubmitted in the pane, and only expands to an
+# actual PID once the shell truly executes it — wait-output matches the
+# expanded (digits) form so it can't fire on the echoed keystrokes alone.
+herdr pane send-text "$ROOT_PANE" \
+  "unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; echo READY_\$\$" \
+  >/dev/null 2>&1 || true
+herdr pane send-keys "$ROOT_PANE" enter >/dev/null 2>&1 || true
+herdr pane wait-output "$ROOT_PANE" --regex 'READY_[0-9]+' --timeout 5000 >/dev/null 2>&1 || true
+
+# Runs in YOLO mode (skip-permissions + sonnet fallback) — same as the `yolo`
+# command — so a remotely-driven agent never stalls on a permission prompt the
+# absent user can't answer. The charter is NOT passed here: `agent start` types
+# its trailing args into the pane as a shell command line, and the charter is
+# multi-line — an embedded newline would submit the command early and herdr
+# refuses to encode it ("agent arguments cannot be encoded safely for the
+# target shell"). So claude launches bare, then `agent prompt` below delivers
+# the real charter through herdr's paste-safe submission channel instead.
+if ! herdr agent start "$AGENT_ID" --kind claude --pane "$ROOT_PANE" \
+  -- --dangerously-skip-permissions --fallback-model sonnet ${MODEL:+--model "$MODEL"}; then
   echo "parlay-spawn: herdr agent start failed — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
   [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
   exit 1
 fi
 
-# Drop the tab's now-redundant root shell pane so the agent has the tab to
-# itself. Only after the agent pane exists — closing a tab's only pane closes
-# the tab (and a workspace's last tab closes the workspace).
-[ -n "$ROOT_PANE" ] && herdr pane close "$ROOT_PANE" >/dev/null 2>&1 || true
+if ! herdr agent prompt "$AGENT_ID" "$STARTUP_PROMPT" >/dev/null 2>&1; then
+  echo "parlay-spawn: herdr agent prompt failed to deliver the charter — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
+  [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
+  exit 1
+fi
 
 # Seed the identity's LAUNCH SPEC (frontmatter) so the agent can reconstitute itself
 # on context reset — the identity fully describes how to relaunch it. Best-effort.
@@ -603,13 +628,15 @@ if [ "$EPHEMERAL" -eq 0 ]; then
     >/dev/null 2>&1 || true
 fi
 
-# 6. Post-launch liveness watchdog (robots-3c0). The charter is passed as
-#    claude's initial prompt arg (exec claude ... "$PARLAY_SPAWN_PROMPT"), which
-#    should auto-run the first turn — but intermittently that turn never fires
-#    (a boot race, or a rendered trust dialog swallowing the first keystrokes)
-#    and the agent sits idle at an empty composer, silently doing nothing until a
-#    supervisor happens to peek. Confirm it goes 'working' within a generous
-#    window; if it never does, re-send the charter and verify the send lands.
+# 6. Post-launch liveness watchdog (robots-3c0). The charter was just delivered
+#    via `agent prompt` above, which should auto-run the first turn — but
+#    intermittently that turn never fires (a boot race, or a rendered trust
+#    dialog swallowing the submission) and the agent sits idle at an empty
+#    composer, silently doing nothing until a supervisor happens to peek.
+#    Confirm it goes 'working' within a generous window; if it never does,
+#    resubmit the charter via the same paste-safe `agent prompt` channel
+#    (herdr 0.7.5 removed the old no-Enter `agent send` + `verify-send` pair
+#    this used to rely on — `agent prompt` submits and confirms in one call).
 #    Backgrounded + disowned so batch spawns keep their fast return. The 60s
 #    default is generous on purpose: a real first turn (enroll + arm monitor +
 #    reply + begin the task) runs well past it, so a working agent is observed
@@ -624,15 +651,13 @@ if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && command -v herdr >/dev/null 2>
     if herdr agent wait "$AGENT_ID" --status working --timeout "$LIVENESS_TIMEOUT_MS" >/dev/null 2>&1; then
       exit 0
     fi
-    echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: initial turn never fired within ${LIVENESS_TIMEOUT_MS}ms — re-sending charter." >&2
-    # A never-started agent has done no work, so re-sending the charter kicks it
-    # off without duplicating anything. `agent send` writes literal text with NO
-    # Enter, so verify-send confirms the submission actually landed (retrying the
-    # Enter once) rather than leaving the charter staged in the composer.
-    herdr agent send "$AGENT_ID" "$STARTUP_PROMPT" >/dev/null 2>&1 || true
-    if command -v verify-send >/dev/null 2>&1; then
-      verify-send "$AGENT_ID" --timeout 30 --quiet \
-        || echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: nudge did not confirm landing — inspect the tab." >&2
+    echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: initial turn never fired within ${LIVENESS_TIMEOUT_MS}ms — resubmitting charter." >&2
+    # A never-started agent has done no work, so resubmitting the charter kicks
+    # it off without duplicating anything.
+    if herdr agent prompt "$AGENT_ID" "$STARTUP_PROMPT" --wait --until working --timeout 30000 >/dev/null 2>&1; then
+      echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: nudge confirmed — agent working." >&2
+    else
+      echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: nudge did not confirm landing — inspect the tab." >&2
     fi
   ) </dev/null >>"$WATCHDOG_LOG" 2>&1 &
   disown 2>/dev/null || true
