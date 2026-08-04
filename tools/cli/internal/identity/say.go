@@ -5,10 +5,6 @@
 // replies pipe in).
 //
 // Ported from packages/cli/src/commands-identity/say.ts.
-//
-// NOTE: `say`/`reply` are not yet wired into main.go's dispatch (this
-// ticket's DoD only wires `identity`/`scratchpad`) — CmdSay is implemented
-// and ready for whichever ticket adds the case.
 package identity
 
 import (

@@ -22,10 +22,12 @@
 // snapshot), `crew-state`, `supervise`, and `context-check`; B4 wired
 // `guard`/`teardown`/`variant` (internal/commands, the git-shell-out command
 // chains); B7 wired `doctor`/`health` (internal/commands/doctor.go, ported
-// from commands-doctor.ts). `say`/`reply` are implemented in internal/identity
-// too (identity.CmdSay) but not yet wired here — see that file's header
-// comment. Every other subcommand from the TS CLI's dispatch lands here as
-// its own ticket adds it.
+// from commands-doctor.ts). B8 wired `say`/`reply` (identity.CmdSay,
+// already implemented in B1 alongside the resolve-handoff/say-guard
+// death-window primitives it depends on — internal/resolvehandoff,
+// internal/sayguard — but left undispatched here until this ticket). Every
+// other subcommand from the TS CLI's dispatch lands here as its own ticket
+// adds it.
 package main
 
 import (
@@ -82,6 +84,8 @@ func main() {
 		identity.CmdIdentity(args)
 	case "scratchpad":
 		identity.CmdScratchpad(args)
+	case "say", "reply":
+		identity.CmdSay(args)
 	case "monitor":
 		monitor.CmdMonitor(args)
 	case "listen", "agent-up":

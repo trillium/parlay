@@ -23,6 +23,7 @@ import (
 type harness struct {
 	mu             sync.Mutex
 	registerBodies []map[string]any
+	replyBodies    []map[string]any
 	server         *httptest.Server
 }
 
@@ -42,6 +43,15 @@ func startHarness(t *testing.T) *harness {
 		h.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	mux.HandleFunc("/api/chat/reply", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		h.mu.Lock()
+		h.replyBodies = append(h.replyBodies, body)
+		h.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "reply-1"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -142,6 +152,28 @@ func captureStdout(t *testing.T, fn func()) string {
 	fn()
 	_ = w.Close()
 	os.Stdout = orig
+	return <-out
+}
+
+// captureStderr runs fn with os.Stderr redirected to an in-memory pipe and
+// returns everything written to it — sayguard's warnings land on stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	out := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		out <- buf.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stderr = orig
 	return <-out
 }
 
