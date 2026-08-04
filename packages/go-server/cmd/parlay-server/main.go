@@ -3,8 +3,9 @@
 // storage layer (internal/store); C1 (internal/handlers) adds messaging,
 // the agent registry, and the legacy long-poll endpoint on top of it; C2
 // (also internal/handlers — see events.go) adds the SSE hub behind GET
-// /api/chat/events. Drafts, settings, uploads, and the rest of
-// docs/api-contract.md remain out of scope for later tickets.
+// /api/chat/events; C3 (also internal/handlers, registered separately via
+// RegisterData) adds drafts, uploads, and settings. The rest of
+// docs/api-contract.md remains out of scope for later tickets.
 package main
 
 import (
@@ -39,7 +40,7 @@ func main() {
 
 	var (
 		addrFlag = flag.String("addr", envOr("PARLAY_SERVER_ADDR", defaultAddr), "address to listen on")
-		dirFlag  = flag.String("state-dir", envOr("PARLAY_STATE_HOME", defaultStateHome()), "directory for persisted state (messages/agents/drafts/settings)")
+		dirFlag  = flag.String("state-dir", envOr("PARLAY_STATE_HOME", defaultStateHome()), "directory for persisted state (messages/agents/drafts/settings/uploads)")
 	)
 	flag.Parse()
 
@@ -56,6 +57,7 @@ func main() {
 	mux := http.NewServeMux()
 	registerHealth(mux, st)
 	handlers.Register(mux, st)
+	handlers.RegisterData(mux, st)
 
 	srv := &http.Server{Addr: *addrFlag, Handler: mux}
 
