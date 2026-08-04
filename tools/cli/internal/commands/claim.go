@@ -10,7 +10,10 @@
 //     Monitor command the agent arms to keep its persistent poll loop running.
 //     (A CLI process can't itself arm a harness Monitor{} — the persistent loop
 //     has to run under the harness — so claim does the synchronous half here and
-//     hands back the exact arm-command for the loop.)
+//     hands back the exact arm-command for the loop.) It also folds the agent's
+//     identity + scratchpad bodies inline (robots-2x2n), so memory recovery is
+//     not a separate second step — arming the monitor is the only startup
+//     command left for the agent to run by hand.
 //  3. THE TASK — resolves <task-id> against the beads/robots federation and
 //     prints the ticket's title + description as the actual work. This is what
 //     lets the task prompt move OFF the spawn-time startup prompt and live on the
@@ -151,10 +154,22 @@ func claimBrief(agent, name, color, model string, task claimTask) string {
 	}
 	fmt.Fprintf(&b, "You are agent %s. Parlay panel: %s.\n\n", idLine, server)
 
-	b.WriteString("1. Arm your monitor:\n")
-	fmt.Fprintf(&b, "   Monitor({ command: \"PARLAY_SERVER=%s parlay listen --agent %s --name \\\"%s\\\" --color \\\"%s\\\"\", persistent: true })\n",
+	// One startup command: arm the persistent monitor. Memory is already
+	// recovered inline below (see the "Your memory" section), so a claiming
+	// agent no longer runs identity + scratchpad as a separate second step
+	// (robots-2x2n) — the CLI can't arm a harness Monitor{} itself, so this
+	// single arm-command is all that's left for the agent to do by hand.
+	b.WriteString("Arm your monitor — your one startup command (memory is already recovered below):\n")
+	fmt.Fprintf(&b, "   Monitor({ command: \"PARLAY_SERVER=%s parlay listen --agent %s --name \\\"%s\\\" --color \\\"%s\\\"\", persistent: true })\n\n",
 		server, agent, name, color)
-	b.WriteString("2. Run 'identity' and 'scratchpad' to recover your memory; follow any 📎 Handoff pointer.\n\n")
+
+	// Memory recovery, folded in from identity + scratchpad so it arrives with
+	// the claim instead of costing the agent two more commands. A pinned
+	// "📎 Handoff:" pointer, if any, rides along in the identity body.
+	fmt.Fprintf(&b, "## Your memory — recovered\n\n### Identity\n%s\n\n### Scratchpad\n%s\n\n",
+		identity.ReadMemBody(identity.KindIdentity, agent),
+		identity.ReadMemBody(identity.KindScratchpad, agent))
+	b.WriteString("If a 📎 Handoff pointer appears above, run `handoff show <that-id>` for full session state before you start.\n\n")
 
 	fmt.Fprintf(&b, "## Task — %s\n\n", task.ID)
 	if strings.TrimSpace(task.Title) != "" {

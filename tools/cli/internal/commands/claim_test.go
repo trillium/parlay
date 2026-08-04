@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -55,6 +57,9 @@ func newClaimServer(t *testing.T) *claimServer {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	testsupport.TempStateHome(t)
+	// Point the per-agent memory store at a temp dir so folding identity +
+	// scratchpad into the brief reads/writes there, never the live ~/.parlay.
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
 	t.Setenv("PARLAY_SERVER", srv.URL)
 	return cs
 }
@@ -122,10 +127,15 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 		t.Errorf("announce text = %q, want it to name the ticket + title", txt)
 	}
 
-	// Brief content: profile, the listen command, task, DoD, status protocol.
+	// Brief content: profile, the listen command, the folded-in memory section,
+	// task, DoD, status protocol.
 	for _, want := range []string{
 		`id="widgeteer"`,
 		"parlay listen --agent widgeteer",
+		"## Your memory — recovered",
+		"### Identity",
+		"### Scratchpad",
+		"📎 Handoff",
 		"## Task — task-42",
 		"Ship the widget",
 		"Build and ship the widget end to end.",
@@ -134,6 +144,46 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("brief missing %q\n---\n%s", want, out)
+		}
+	}
+	// The old two-step startup ("run identity and scratchpad") is gone — memory
+	// recovery is now folded in, leaving one startup command (arm the monitor).
+	if strings.Contains(out, "recover your memory") {
+		t.Errorf("brief should no longer tell the agent to run identity + scratchpad; got:\n%s", out)
+	}
+}
+
+// A recorded identity/scratchpad body is folded into the claim brief verbatim,
+// so a claiming agent recovers its memory without a second step (robots-2x2n).
+func TestClaimFoldsRecordedMemory(t *testing.T) {
+	newClaimServer(t)
+	stubTask(t, claimTask{ID: "task-77", Title: "Resume work"}, nil)
+	t.Setenv("PARLAY_AGENT_ID", "returner")
+
+	// Seed identity + scratchpad under the temp PARLAY_AGENT_HOME.
+	dir := filepath.Join(os.Getenv("PARLAY_AGENT_HOME"), "returner")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identityMD := "# Identity — returner\n\n> 📎 Handoff: handoff-abc — run `handoff show handoff-abc` for full session state\n\n- [2026-08-04] I am the returner, mid-migration.\n"
+	scratchMD := "# Scratchpad — returner\n\n- [2026-08-04 09:00] left off at step 3 of 5.\n"
+	if err := os.WriteFile(filepath.Join(dir, "identity.md"), []byte(identityMD), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scratchpad.md"), []byte(scratchMD), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() { Claim([]string{"task-77"}) })
+
+	for _, want := range []string{
+		"I am the returner, mid-migration.",
+		"left off at step 3 of 5.",
+		"📎 Handoff: handoff-abc",
+		"handoff show handoff-abc",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("brief should fold recorded memory %q; got:\n%s", want, out)
 		}
 	}
 }
