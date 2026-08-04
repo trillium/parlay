@@ -193,6 +193,50 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 	}
 }
 
+// packages/go-server's /api/chat/subscribers never sends a "status" key on
+// presence entries (see internal/handlers/registry.go's
+// subscribersPresenceEntry) — only "channel"/"lastSeen". commands-doctor.ts
+// handles the resulting missing/undefined field via `pres?.status ??
+// "unknown"`; this locks in the Go port's equivalent fallback.
+func TestDoctorReportsUnknownWhenPresenceEntryHasNoStatus(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, "doc-agent-nostatus")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\nid: doc-agent-nostatus\nname: Doc\n---\n# Identity\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "scratchpad.md"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", jsonHandler(t, map[string]any{
+		"presence": []map[string]any{{"channel": "doc-agent-nostatus", "lastSeen": "2026-08-03T00:00:00Z"}},
+	}))
+	mux.HandleFunc("/api/chat/agents", jsonHandler(t, []map[string]any{{"id": "doc-agent-nostatus", "name": "Doc", "color": "#fff"}}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	engineMux := http.NewServeMux()
+	engineMux.HandleFunc("/health", jsonHandler(t, map[string]any{"ok": true}))
+	engineSrv := httptest.NewServer(engineMux)
+	t.Cleanup(engineSrv.Close)
+
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-nostatus")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", engineSrv.URL)
+
+	out := captureStdout(t, func() {
+		withExitTrap(t, func() { Doctor(nil) })
+	})
+	if !strings.Contains(out, "WARN  monitor not listening (presence: unknown)") {
+		t.Errorf("Doctor() output = %q, want WARN monitor not listening (presence: unknown), not an empty presence value", out)
+	}
+}
+
 func TestDoctorFailsWhenIdentityIDMismatches(t *testing.T) {
 	home := t.TempDir()
 	agentDir := filepath.Join(home, "doc-agent-2")

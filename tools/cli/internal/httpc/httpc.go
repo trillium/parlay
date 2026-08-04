@@ -50,7 +50,10 @@ func GetJSON[T any](path string) T {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		Die(fmt.Sprintf("GET %s failed: %d %s", path, resp.StatusCode, resp.Status), config.ExitRuntime)
+		// resp.Status is already "<code> <text>" (e.g. "404 Not Found"),
+		// matching http.ts's `${res.status} ${res.statusText}" — do not also
+		// prefix resp.StatusCode or the code prints twice.
+		Die(fmt.Sprintf("GET %s failed: %s", path, resp.Status), config.ExitRuntime)
 	}
 
 	var out T
@@ -78,7 +81,8 @@ func PostJSON[T any](path string, body any) T {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		Die(fmt.Sprintf("POST %s failed: %d %s", path, resp.StatusCode, resp.Status), config.ExitRuntime)
+		// See GetJSON's comment: resp.Status already includes the code.
+		Die(fmt.Sprintf("POST %s failed: %s", path, resp.Status), config.ExitRuntime)
 	}
 
 	var out T

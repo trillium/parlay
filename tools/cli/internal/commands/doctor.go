@@ -299,8 +299,15 @@ func Doctor(argv []string) {
 			}
 			verdicts = append(verdicts, report(vPass, fmt.Sprintf("monitor listening (last poll %s)", lastSeen), ""))
 		} else {
+			// pres.Status ends up "" (Go's zero value) both when pres is nil
+			// and when the server's presence entry simply has no "status"
+			// key (packages/go-server's subscribersPresenceEntry never sends
+			// one — see registry.go) — the latter unmarshals to an empty
+			// string, not a distinguishable "absent". Treat both as unknown
+			// to match commands-doctor.ts's `pres?.status ?? "unknown"`,
+			// where a missing JS property is `undefined` and `??` catches it.
 			status := "unknown"
-			if pres != nil {
+			if pres != nil && pres.Status != "" {
 				status = pres.Status
 			}
 			verdicts = append(verdicts, report(vWarn,

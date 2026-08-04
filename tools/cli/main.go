@@ -120,15 +120,14 @@ func main() {
 	}
 }
 
-// cmdHelp prints the help text for a named subcommand ("parlay help <cmd>"),
-// or the full USAGE when no subcommand is given or none matches — the same
-// fallback as help.ts's helpWanted() using HELP[cmd] ?? USAGE.
-func cmdHelp(args []string) {
-	if len(args) > 0 {
-		if text, ok := help.Lookup(args[0]); ok {
-			fmt.Println(text)
-			return
-		}
-	}
+// cmdHelp always prints the full USAGE, ignoring any trailing args — matching
+// index.ts's `case "help": case "--help": case "-h": console.log(USAGE)`
+// exactly. The TS CLI has no "parlay help <cmd>" per-subcommand form; that
+// per-command text (help.HELP / HELP in help.ts) is reached a different way,
+// via "parlay <cmd> --help" (each command's own helpWanted/Wanted check).
+// Ticket B10's parity harness caught an earlier version of this function
+// doing a HELP[args[0]] lookup — a real divergence from the TS source, not a
+// fix for a TS bug, so it was removed rather than kept.
+func cmdHelp(_ []string) {
 	fmt.Println(help.Usage(config.ServerURL()))
 }
