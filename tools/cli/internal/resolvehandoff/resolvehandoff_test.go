@@ -61,14 +61,70 @@ func TestAcceptsSingleObjectListResponse(t *testing.T) {
 }
 
 func TestFallsBackToCurrentWhenListYieldsNothing(t *testing.T) {
+	// The store-global `list` and `show --current` fallbacks are only reached
+	// when the agent is UNKNOWN (bare CLI call, no PARLAY_AGENT_ID). A KNOWN
+	// agent's agent-scoped query is authoritative and never falls through
+	// (robots-4x9f) — see TestKnownAgentEmptyDoesNotGrabStoreGlobal.
+	t.Setenv("PARLAY_AGENT_ID", "")
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncase \"$1\" in\n  list) exit 1;;\n  show) printf '%s' '[{\"id\":\"handoff-cur\",\"status\":\"in_progress\"}]'; exit 0;;\n  *) exit 3;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(dir, "handoff"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if got := ResolveCurrentHandoff("handoff", "mayor"); got != "handoff-cur" {
+	if got := ResolveCurrentHandoff("handoff", ""); got != "handoff-cur" {
 		t.Errorf("got %q, want handoff-cur", got)
+	}
+}
+
+// assigneeAwareStore installs a `handoff` store that answers `list` DIFFERENTLY
+// depending on whether `--assignee` appears in argv: the agent-scoped query
+// gets scopedJSON, an un-scoped store-global query gets globalJSON. This is the
+// distinction the real store makes and that the earlier flat stub could not.
+func assigneeAwareStore(t *testing.T, scopedJSON, globalJSON string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\n"+
+		"if [ \"$1\" = list ]; then\n"+
+		"  case \"$*\" in\n"+
+		"    *--assignee*) printf '%%s' %s;;\n"+
+		"    *) printf '%%s' %s;;\n"+
+		"  esac\n"+
+		"  exit 0\n"+
+		"fi\n"+
+		"exit 3\n", shQuote(scopedJSON), shQuote(globalJSON))
+	if err := os.WriteFile(filepath.Join(dir, "handoff"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// robots-4x9f regression: a KNOWN agent with no open handoff of its OWN must
+// resolve to EMPTY — it must NOT fall through and grab the store-global newest
+// open handoff (a DIFFERENT agent's), which is what mis-nagged every fresh agent.
+func TestKnownAgentEmptyDoesNotGrabStoreGlobal(t *testing.T) {
+	assigneeAwareStore(t, `[]`, `[{"id":"handoff-stranger","status":"open"}]`)
+	if got := ResolveCurrentHandoff("handoff", "fresh-agent"); got != "" {
+		t.Errorf("got %q, want empty — known agent must not inherit a stranger's store-global handoff", got)
+	}
+}
+
+// The same misattribution through the detect path (say-guard / create->submit
+// nag): a known agent with no own handoff yields no unsubmitted result even
+// when the store has other agents' open handoffs.
+func TestDetectDoesNotMisattributeStoreGlobalToKnownAgent(t *testing.T) {
+	assigneeAwareStore(t, `[]`, `[{"id":"handoff-stranger","status":"open"}]`)
+	if r, ok := DetectUnsubmittedHandoff("", "handoff", "fresh-agent", nil); ok {
+		t.Errorf("got %+v, want no result — a stranger's store-global handoff must not be nagged onto a known agent", r)
+	}
+}
+
+// The agent-scoped query stays authoritative in the positive direction too:
+// the agent's OWN open handoff resolves, unaffected by the store-global rows.
+func TestKnownAgentResolvesItsOwnHandoffNotGlobal(t *testing.T) {
+	assigneeAwareStore(t, `[{"id":"handoff-mine","status":"open"}]`, `[{"id":"handoff-stranger","status":"open"}]`)
+	if got := ResolveCurrentHandoff("handoff", "fresh-agent"); got != "handoff-mine" {
+		t.Errorf("got %q, want handoff-mine", got)
 	}
 }
 
