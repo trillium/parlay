@@ -103,17 +103,18 @@ launchctl kickstart -k "${TARGET}"
 
 # ── 5. Verify it is up ─────────────────────────────────────────────────────────
 echo "==> verifying relay health" >&2
+# Adaptive, not a fixed 5s (robots-mpr3): a relay whose runtime dir already holds
+# a large spool spends real time resuming those agents, and a fixed bound would
+# fail a perfectly good install. parlay_relay_wait_health keeps waiting while the
+# relay is demonstrably still working and gives up on a quiet one.
 ok=0
-for _ in $(seq 1 20); do
-  if parlay_relay_health_ok; then ok=1; break; fi
-  sleep 0.25
-done
+if parlay_relay_wait_health; then ok=1; fi
 if [ "${ok}" = 1 ]; then
   echo "OK: relay is up under launchd (${TARGET})" >&2
   echo "    socket : $(parlay_relay_sock)" >&2
   echo "    logs   : ${PARLAY_RELAY_OUT_LOG} / ${PARLAY_RELAY_ERR_LOG}" >&2
   launchctl print "${TARGET}" 2>/dev/null | grep -E '^\s*(state|pid|program|last exit) ' || true
 else
-  echo "install.sh: relay did not answer /health within 5s — check ${PARLAY_RELAY_ERR_LOG}" >&2
+  echo "install.sh: relay did not answer /health within ${PARLAY_RELAY_HEALTH_WAIT}s of quiet — check ${PARLAY_RELAY_ERR_LOG}" >&2
   exit 1
 fi
