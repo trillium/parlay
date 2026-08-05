@@ -66,9 +66,16 @@ var coderabbitRateLimited = regexp.MustCompile(`(?i)rate limited by coderabbit\.
 
 // coderabbitReviewed matches a CodeRabbit comment that represents an actual
 // completed review. `walkthrough_start` is the machine marker wrapping the
-// generated walkthrough; the other two are the human-visible sections that
-// only exist once files were really processed.
-var coderabbitReviewed = regexp.MustCompile(`(?i)<!-- walkthrough_start -->|files selected for processing|actionable comments posted`)
+// generated walkthrough; "actionable comments posted" heads a real findings
+// list. Both only ever appear once a review truly ran.
+//
+// "Files selected for processing" is deliberately NOT in this set, even
+// though it reads like review evidence: the rate-limit template embeds a
+// "Review details" section listing the files it WOULD have reviewed, so
+// matching it classifies a refusal as a review. Caught on this very fix's
+// own PR (#47) — see reviewEvidence for the ordering that makes it moot
+// anyway.
+var coderabbitReviewed = regexp.MustCompile(`(?i)<!-- walkthrough_start -->|actionable comments posted`)
 
 // sha40 pulls full commit sha's out of a CodeRabbit review body, which states
 // the exact range it reviewed ("...changed from the base of the PR and
@@ -213,15 +220,22 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		}
 	}
 
+	// Order matters: the rate-limit check runs FIRST, and a body carrying that
+	// marker is never counted as review evidence no matter what else it says.
+	// CodeRabbit's refusal template is not a bare error — it embeds a "Review
+	// details" section enumerating the files and the exact base..head range it
+	// WOULD have processed, which reads exactly like a completed review to any
+	// content match. Scanning for review markers first lets a refusal
+	// masquerade as the review it explicitly declined to do.
 	reviewedBodies := []string{}
 	rateLimited := false
 	for _, body := range botBodies(s.PR) {
-		if coderabbitReviewed.MatchString(body) {
-			reviewedBodies = append(reviewedBodies, body)
-			continue
-		}
 		if coderabbitRateLimited.MatchString(body) {
 			rateLimited = true
+			continue
+		}
+		if coderabbitReviewed.MatchString(body) {
+			reviewedBodies = append(reviewedBodies, body)
 		}
 	}
 

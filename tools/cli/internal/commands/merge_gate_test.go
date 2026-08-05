@@ -29,6 +29,25 @@ const rateLimitedBody = "<!-- This is an auto-generated comment: summarize by co
 	"> [!WARNING]\n> ## Review limit reached\n>\n> `@trillium`, you've reached your PR review limit, " +
 	"so we couldn't start this review.\n"
 
+// rateLimitedWithReviewDetailsBody is the REAL body CodeRabbit posted on this
+// fix's own PR (#47), trimmed. The refusal template is not a bare error: it
+// embeds a "Review details" section enumerating the files and the exact
+// base..head range it WOULD have processed. An earlier version of this gate
+// treated "Files selected for processing" as review evidence and so read this
+// refusal as a completed review of the current head — the very false-green it
+// exists to stop.
+func rateLimitedWithReviewDetailsBody(base, head string) string {
+	return "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n" +
+		"<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n\n" +
+		"> [!WARNING]\n> ## Review limit reached\n>\n> `@trillium`, you've reached your PR review limit, " +
+		"so we couldn't start this review.\n>\n> **Next review available in:** **51 minutes**\n>\n" +
+		"> <details>\n> <summary>Review details</summary>\n>\n" +
+		"> <summary>📥 Commits</summary>\n" +
+		"> Reviewing files that changed from the base of the PR and between " + base + " and " + head + ".\n" +
+		"> <summary>📒 Files selected for processing (7)</summary>\n" +
+		"> * `tools/cli/main.go`\n> </details>\n"
+}
+
 const headSHA = "b124d8f769d5d25cc29d162ec5ee79181f15a1e1"
 const baseSHA = "3dc74abe3208aa8f3d12250c0764b664225f268e"
 
@@ -101,6 +120,31 @@ func TestRateLimitedCheckIsNotAPassEvenThoughGitHubSaysPass(t *testing.T) {
 	}
 	if v.ExitCode != ExitMergeBlocked {
 		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergeBlocked)
+	}
+}
+
+// The refusal template lists the files and the base..head range it WOULD
+// have reviewed, so a content match for "files selected for processing"
+// classifies a refusal as a review OF THE CURRENT HEAD — passing both the
+// review-evidence and staleness rules. Found live on PR #47, this fix's own
+// PR: only the vacuous-pass rule caught it, and on a repo whose check
+// description were less honest nothing would have.
+func TestRateLimitTemplateIsNeverReviewEvidenceDespiteListingFiles(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = []ghComment{{
+		Author: ghAuthor{Login: "coderabbitai"},
+		Body:   rateLimitedWithReviewDetailsBody(baseSHA, headSHA),
+	}}
+	// Description deliberately honest-looking, so ONLY the review-evidence
+	// rule can catch this — isolating the regression from vacuous-pass.
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"}}
+
+	v := ComputeMergeGate(s)
+	if v.Ready {
+		t.Fatal("a rate-limit refusal that lists files must NOT count as a review")
+	}
+	if !hasBlocker(v, "review-rate-limited") {
+		t.Errorf("want review-rate-limited, got %v", blockerCodes(v))
 	}
 }
 
