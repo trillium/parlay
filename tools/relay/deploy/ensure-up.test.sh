@@ -11,10 +11,21 @@
 #      healthy relay dead — silently breaking agent enrollment.
 #
 # Hermetic harness: $HOME, $PATH, the runtime dir and the relay's log are all
-# redirected into a temp root, and `launchctl`/`curl` are stubs. Nothing touches
-# the real LaunchAgent, the real relay, or the real socket. Every launchctl
+# redirected into a temp root, and `getconf`/`launchctl`/`curl` are stubs. Nothing
+# touches the real LaunchAgent, the real relay, or the real socket. Every launchctl
 # invocation is appended to $ROOT/launchctl.log so the tests can assert on
 # exactly which subcommands ran.
+#
+# The sandbox runtime dir must be the CANONICAL one (robots-t66l). ensure-up only
+# takes the launchd path when the requested runtime dir, socket and upstream
+# server all match the launchd relay's (the robots-buu8 scoping guard) — so a
+# harness that merely points $PARLAY_RELAY_RUNTIME at some temp dir makes
+# ensure-up correctly decline launchd, fall through to methods 2 and 3, find no
+# relay binary in the sandbox, and exit 1. Every launchctl assertion below then
+# passes or fails for reasons that have nothing to do with the start/wait policy
+# it is meant to pin. So instead of overriding the runtime dir out of band, the
+# `getconf` stub moves the canonical dir itself inside $ROOT, and `run()` asserts
+# the launchd path was actually taken.
 set -u
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +38,10 @@ pass() { printf 'ok: %s\n' "$1"; }
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pu.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
 
-RUNTIME="$ROOT/rt"
+# $ROOT is what the stubbed `getconf DARWIN_USER_TEMP_DIR` reports, so
+# parlay_relay_runtime_dir's canonical answer is $ROOT/parlay — see the note
+# above on why the runtime dir has to BE the canonical one.
+RUNTIME="$ROOT/parlay"
 SOCK="$RUNTIME/relay.sock"
 STUB="$ROOT/stubs"
 FAKE_HOME="$ROOT/home"
@@ -73,7 +87,33 @@ case "${1:-}" in
 esac
 exit 0
 S
-chmod +x "$STUB/curl" "$STUB/launchctl"
+
+# getconf: relocates the canonical per-user temp dir into $ROOT, which is what
+# makes $RUNTIME the canonical runtime dir and so lets ensure-up use launchd
+# (robots-t66l). Every other query is delegated to the real getconf.
+cat > "$STUB/getconf" <<'S'
+#!/usr/bin/env bash
+[ "${1:-}" = DARWIN_USER_TEMP_DIR ] && { printf '%s\n' "$ROOT"; exit 0; }
+exec /usr/bin/getconf "$@"
+S
+chmod +x "$STUB/curl" "$STUB/launchctl" "$STUB/getconf"
+
+# A REAL plist, not a `touch`ed empty file: ensure-up reads PARLAY_SERVER back
+# out of it (parlay_relay_installed_plist_server) and declines launchd when the
+# installed relay serves a different upstream than the caller wants. An empty
+# file makes PlistBuddy fail and that check pass vacuously; a real one with the
+# default server exercises it.
+cat > "$PLIST" <<'S'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.parlay.relay</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PARLAY_SERVER</key><string>http://localhost:31337</string></dict>
+</dict>
+</plist>
+S
 
 # ── Harness ───────────────────────────────────────────────────────────────────
 # run <job-state> <health-at-offset-seconds|never> [extra ensure-up args...]
@@ -97,12 +137,19 @@ run() {
     PARLAY_RELAY_HEALTH_WAIT="${WAIT:-1}" \
     PARLAY_RELAY_HEALTH_MAX_WAIT="${MAXWAIT:-20}" \
     /bin/bash "$ENSURE_UP" "$@" >"$ROOT/out" 2>&1 || RC=$?
+  # Harness self-check (robots-t66l): if ensure-up declined the launchd path, no
+  # assertion below is testing what it claims to. Say so once, loudly, instead of
+  # letting it surface as several unrelated-looking policy failures.
+  if grep -q 'not using launchd' "$ROOT/out"; then
+    fail "HARNESS: ensure-up declined launchd, so the start/wait policy was never
+      exercised — the sandbox no longer looks like the launchd relay's own runtime
+      dir/socket/server. Fix the stubs, not the assertions. ($(cat "$ROOT/out"))"
+  fi
 }
 
 lc_log() { cat "$ROOT/launchctl.log"; }
 
 # ── 1. Fast path: a healthy relay is left completely alone ────────────────────
-touch "$PLIST"
 run running 0
 if [ "$RC" -ne 0 ]; then
   fail "healthy relay: exit $RC, want 0 ($(cat "$ROOT/out"))"
