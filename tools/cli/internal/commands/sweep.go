@@ -213,6 +213,7 @@ func readSweepKeep() map[string]bool {
 func sweepCandidates() []string {
 	entries, err := os.ReadDir(parlayAgentsDir())
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "sweep: cannot read agents dir: %v\n", err)
 		return nil
 	}
 	var ids []string
@@ -274,7 +275,6 @@ func Sweep(argv []string) {
 
 	opts := SweepOpts{
 		Self:     strings.TrimSpace(os.Getenv("PARLAY_AGENT_ID")),
-		Keep:     readSweepKeep(),
 		Explicit: explicitID != "",
 		All:      r.Bool("--all"),
 		Force:    r.Bool("--force"),
@@ -295,6 +295,7 @@ func Sweep(argv []string) {
 // tear down. A teardown refusal is reported and the pass continues; one
 // stuck agent must never stall the collector.
 func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
+	opts.Keep = readSweepKeep()
 	ids := []string{explicitID}
 	if explicitID == "" {
 		ids = sweepCandidates()
