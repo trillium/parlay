@@ -204,6 +204,47 @@ func TestCmdListenLegacyPollIsForwardedToMonitor(t *testing.T) {
 	}
 }
 
+func TestCmdListenNotifySafeIsForwardedToMonitor(t *testing.T) {
+	startListenHarness(t)
+	monitorCalls := stubMonitor(t)
+	trapExit(t)
+
+	// robots-w9ij: --notify-safe must reach the underlying monitor poll loop
+	// so a claim-enrolled panel agent gets notification-truncation safety.
+	CmdListen([]string{"--agent", "brain-dev", "--notify-safe"})
+
+	want := []string{"--agent", "brain-dev", "--notify-safe"}
+	got := (*monitorCalls)[0]
+	if len(got) != len(want) {
+		t.Fatalf("monitor args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("monitor args = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCmdListenForwardsBothLegacyPollAndNotifySafe(t *testing.T) {
+	startListenHarness(t)
+	monitorCalls := stubMonitor(t)
+	trapExit(t)
+
+	CmdListen([]string{"--agent", "brain-dev", "--legacy-poll", "--notify-safe"})
+
+	// Order is deterministic: --legacy-poll appended before --notify-safe.
+	want := []string{"--agent", "brain-dev", "--legacy-poll", "--notify-safe"}
+	got := (*monitorCalls)[0]
+	if len(got) != len(want) {
+		t.Fatalf("monitor args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("monitor args = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestCmdListenIsIdempotentAcrossReRuns(t *testing.T) {
 	h := startListenHarness(t)
 	monitorCalls := stubMonitor(t)

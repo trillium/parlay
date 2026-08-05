@@ -108,6 +108,8 @@ func main() {
 		robotswatch.CmdRobotsWatch(args)
 	case "robots-tail":
 		robotswatch.CmdRobotsTail(args)
+	case "claim":
+		commands.Claim(args)
 	case "launch":
 		commands.Launch(args)
 	case "drawdown":

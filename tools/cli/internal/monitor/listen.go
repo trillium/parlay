@@ -46,7 +46,7 @@ func CmdListen(argv []string) {
 	if help.Wanted("listen", argv) {
 		return
 	}
-	res := args.Parse("listen", argv, []string{"--legacy-poll"}, []string{"--agent", "--name", "--color", "--caps"})
+	res := args.Parse("listen", argv, []string{"--legacy-poll", "--notify-safe"}, []string{"--agent", "--name", "--color", "--caps"})
 
 	agentRaw, _ := res.String("--agent")
 	agent := strings.TrimSpace(agentRaw)
@@ -103,9 +103,17 @@ func CmdListen(argv []string) {
 	// mechanism as `parlay monitor --agent <id>`, so a harness Monitor{}
 	// wakes on CHAT_MSG lines. Never returns on the real path (runRelayMonitor
 	// calls os.Exit / runLegacyPoll loops forever).
+	// --notify-safe and --legacy-poll are forwarded straight through so the
+	// self-enroll path has the same notification-truncation safety `parlay
+	// monitor --notify-safe` gives (robots-w9ij): claim-enrolled panel agents
+	// arm their monitor via this command, and without the passthrough a long
+	// captain message could blow the agent's context on delivery.
 	monitorArgs := []string{"--agent", agent}
 	if res.Bool("--legacy-poll") {
 		monitorArgs = append(monitorArgs, "--legacy-poll")
+	}
+	if res.Bool("--notify-safe") {
+		monitorArgs = append(monitorArgs, "--notify-safe")
 	}
 	runMonitor(monitorArgs)
 }

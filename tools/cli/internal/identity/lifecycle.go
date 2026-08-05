@@ -73,6 +73,19 @@ func HandleLaunch(kind MemKind, opts args.Result) bool {
 	if id == "" {
 		id = launchID
 	}
+	// Closed-item relaunch guard (robots-2x2n follow-up): if this agent is
+	// bound to a work item the store now reports closed, do NOT relaunch —
+	// the work is done, so a fresh context would just recover, find nothing
+	// to do, and shut down again. Fail-open: only an affirmative closed
+	// status suppresses the launch (see BoundWorkItemClosed).
+	if item, closed := BoundWorkItemClosed(file); closed {
+		if opts.Bool("--dry") {
+			fmt.Printf("identity --launch %s [dry] → SUPPRESSED: bound work item %s is closed; would NOT relaunch (clean end).\n", id, item)
+		} else {
+			fmt.Printf("identity --launch %s: bound work item %s is closed — NOT relaunching (clean end). The work is done; a respawn would only recover and re-exit.\n", id, item)
+		}
+		return true
+	}
 	name := fm.Get("name")
 	if name == "" {
 		name = id

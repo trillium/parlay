@@ -70,13 +70,48 @@ test("accepts a single-object (non-array) list response", () => {
   expect(resolveCurrentHandoff("handoff", "mayor")).toBe("handoff-xyz")
 })
 
-test("falls back to store 'current' when list yields nothing open", () => {
-  // list exits non-zero (verb unsupported); show --current answers with an OPEN row.
+test("falls back to store 'current' when list yields nothing open (agent UNKNOWN only)", () => {
+  // The store-global `list` / `show --current` fallbacks are only reached when the
+  // agent is UNKNOWN (bare CLI call, no PARLAY_AGENT_ID). A KNOWN agent's agent-scoped
+  // query is authoritative and never falls through (robots-4x9f) — see the regression
+  // test below. list exits non-zero (verb unsupported); show --current answers OPEN.
   stubStore("handoff", {
     list: { json: "", status: 1 },
     show: { json: JSON.stringify([{ id: "handoff-cur", status: "in_progress" }]) },
   })
-  expect(resolveCurrentHandoff("handoff", "mayor")).toBe("handoff-cur")
+  expect(resolveCurrentHandoff("handoff", "")).toBe("handoff-cur")
+})
+
+// A `handoff` store that answers `list` DIFFERENTLY by whether `--assignee` is
+// present: the agent-scoped query gets `scoped`, an un-scoped store-global query
+// gets `global`. Mirrors the real store, unlike the flat stub above.
+function stubAssigneeAwareStore(scoped: string, global: string): void {
+  const dir = mkdtempSync(join(tmpdir(), "parlay-handoff-scoped-"))
+  dirs.push(dir)
+  const bin = join(dir, "handoff")
+  const esc = (s: string) => s.replace(/'/g, "'\\''")
+  writeFileSync(bin,
+    `#!/usr/bin/env bash\n[ "$1" = list ] || exit 3\n` +
+    `case "$*" in *--assignee*) printf '%s' '${esc(scoped)}';; *) printf '%s' '${esc(global)}';; esac\n`,
+  )
+  chmodSync(bin, 0o755)
+  process.env.PATH = `${dir}:${origPath}`
+}
+
+const STRANGER = JSON.stringify([{ id: "handoff-stranger", status: "open" }])
+
+// robots-4x9f regression: a KNOWN agent with no open handoff of its OWN must resolve to
+// undefined — it must NOT fall through and grab the store-global newest open handoff (a
+// DIFFERENT agent's), the misattribution that mis-nagged every fresh/resumed agent.
+test("known agent with no own handoff does NOT inherit a store-global stranger's handoff", () => {
+  stubAssigneeAwareStore("[]", STRANGER)
+  expect(resolveCurrentHandoff("handoff", "fresh-agent")).toBeUndefined()
+  expect(detectUnsubmittedHandoff(undefined, "handoff", "fresh-agent")).toBeUndefined()
+})
+
+test("known agent still resolves its OWN open handoff, unaffected by store-global rows", () => {
+  stubAssigneeAwareStore(JSON.stringify([{ id: "handoff-mine", status: "open" }]), STRANGER)
+  expect(resolveCurrentHandoff("handoff", "fresh-agent")).toBe("handoff-mine")
 })
 
 test("does NOT return a CLOSED 'current' handoff (last-touched but done)", () => {
