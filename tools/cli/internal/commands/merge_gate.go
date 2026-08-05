@@ -31,9 +31,21 @@
 //
 // Exit codes are deliberately fail-closed in every direction: 0 only when
 // the PR is genuinely ready (or already merged), 3 when a real blocker is
-// found, 1 when gh/network could not answer, 2 on usage. A caller that just
-// branches on non-zero refuses the merge in all three failure modes, which
+// found, 4 when the only thing missing is a reviewer that is unavailable,
+// 1 when gh/network could not answer, 2 on usage. A caller that just
+// branches on non-zero refuses the merge in all four failure modes, which
 // is the correct default for a gate.
+//
+// 4 exists because 3 alone gave the fleet no bounded answer (robots-8kkq).
+// "CodeRabbit is rate limited" and "a test is failing" are both non-zero, but
+// they call for opposite behavior: the second is fixed by working on the PR,
+// while the first cannot be fixed from the PR at all and has already, in
+// practice, outlasted the stated window by hours — `@coderabbitai review`
+// recovered one PR once and then stayed limited across three further attempts
+// over ~40 minutes. A mechanic told only "blocked" polls forever. Splitting
+// the exit code lets the caller stop and hand the captain the two honest
+// options — merge-and-disclose, or park — instead of burning the night on a
+// wait with no terminating condition.
 package commands
 
 import (
@@ -52,6 +64,22 @@ import (
 // can tell "the gate answered and said no" from "the gate could not answer".
 // Both are non-zero — a gate must fail closed either way.
 const ExitMergeBlocked = 3
+
+// ExitMergeNeedsDecision is the gate's answer when every blocker it found is
+// about the REVIEWER being unavailable rather than about the code. Still
+// non-zero, so the naive "non-zero = do not merge" caller is unchanged and
+// still fails closed; a caller that reads the code knows the difference
+// between "wait, this will resolve" and "this needs a human to choose".
+const ExitMergeNeedsDecision = 4
+
+// Blocker classes. ClassCode is the default and means the finding is about
+// this PR — fix it here. ClassReviewerUnavailable means the PR may be
+// perfectly fine and the reviewing service simply did not participate; no
+// amount of work on the branch changes it.
+const (
+	ClassCode                = "code"
+	ClassReviewerUnavailable = "reviewer-unavailable"
+)
 
 // vacuousCheckDesc matches a status-check description that ADMITS the check
 // did no work, even though its conclusion is green. The description is the
@@ -142,23 +170,38 @@ type MergeGateSnapshot struct {
 }
 
 // MergeBlocker is one reason the PR must not be merged. Code is a stable
-// machine-readable slug; Detail is the human sentence.
+// machine-readable slug; Detail is the human sentence; Class says whether
+// acting on this blocker is even possible from the PR.
 type MergeBlocker struct {
 	Code   string `json:"code"`
+	Class  string `json:"class"`
 	Detail string `json:"detail"`
 }
 
 // MergeGateVerdict is the gate's answer.
 type MergeGateVerdict struct {
-	Ready    bool           `json:"ready"`
-	Merged   bool           `json:"merged"`
-	Blockers []MergeBlocker `json:"blockers"`
-	Notes    []string       `json:"notes"`
-	ExitCode int            `json:"exitCode"`
+	Ready  bool `json:"ready"`
+	Merged bool `json:"merged"`
+	// NeedsDecision is true when there ARE blockers but every one of them is
+	// reviewer-unavailability. The PR is not ready and must not be
+	// auto-merged, but nothing here is fixable on the branch — the captain
+	// has to choose merge-and-disclose or park.
+	NeedsDecision bool           `json:"needsDecision"`
+	Blockers      []MergeBlocker `json:"blockers"`
+	Notes         []string       `json:"notes"`
+	ExitCode      int            `json:"exitCode"`
 }
 
 func block(v *MergeGateVerdict, code, format string, a ...any) {
-	v.Blockers = append(v.Blockers, MergeBlocker{Code: code, Detail: fmt.Sprintf(format, a...)})
+	blockAs(v, code, ClassCode, format, a...)
+}
+
+// blockAs records a blocker with an explicit class. Everything that is not
+// positively identified as reviewer-unavailability stays ClassCode, so an
+// unrecognized failure keeps the harsher exit code — the conservative
+// direction for a gate.
+func blockAs(v *MergeGateVerdict, code, class, format string, a ...any) {
+	v.Blockers = append(v.Blockers, MergeBlocker{Code: code, Class: class, Detail: fmt.Sprintf(format, a...)})
 }
 
 // ComputeMergeGate is the whole decision, as a pure function of a snapshot.
@@ -201,7 +244,11 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			// it never ran. This is the robots-jap6 defect: bucket=pass with
 			// description="Review rate limited".
 			if vacuousCheckDesc.MatchString(c.Description) {
-				block(&v, "vacuous-pass",
+				// Classed reviewer-unavailable, not code: the check admitting
+				// it did no work says nothing bad about the diff. It is still
+				// a blocker — absence of evidence is not evidence — but it is
+				// not something the branch can be edited into passing.
+				blockAs(&v, "vacuous-pass", ClassReviewerUnavailable,
 					"check %q reports %s but its description says it did not run: %q. A green conclusion here is not evidence of anything.",
 					name, c.Bucket, c.Description)
 			}
@@ -242,12 +289,22 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 	switch {
 	case len(reviewedBodies) > 0:
 		if s.PR.HeadRefOid != "" && !bodiesCoverHead(reviewedBodies, s.PR.HeadRefOid) {
-			block(&v, "stale-review",
+			// A stale review is normally a code-class blocker: push again and
+			// the reviewer catches up. But when a rate-limit template sits on
+			// the PR alongside the old review, the re-review is exactly what
+			// is being refused — that is the trillium/no-mistakes#7 shape,
+			// where one `@coderabbitai review` recovered the first push and
+			// the follow-up commit then never got reviewed at all.
+			class := ClassCode
+			if rateLimited {
+				class = ClassReviewerUnavailable
+			}
+			blockAs(&v, "stale-review", class,
 				"the automated review covered an earlier commit, not the current head %s — the code that would merge is unreviewed.",
 				shortSHA(s.PR.HeadRefOid))
 		}
 	case rateLimited:
-		block(&v, "review-rate-limited",
+		blockAs(&v, "review-rate-limited", ClassReviewerUnavailable,
 			"CodeRabbit posted its rate-limit template and never reviewed this PR. Re-request after the window, or enable usage-based reviews.")
 	case humanReviewer != "":
 		v.Notes = append(v.Notes,
@@ -266,12 +323,35 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			s.UnresolvedThreads)
 	}
 
-	if len(v.Blockers) == 0 {
+	switch {
+	case len(v.Blockers) == 0:
 		v.Ready, v.ExitCode = true, config.ExitOK
-	} else {
+	case allReviewerUnavailable(v.Blockers):
+		// Nothing here is about the diff, and nothing on the branch will
+		// change it. Say so, and say what the two honest answers are, so the
+		// caller has a terminating condition instead of a poll loop.
+		v.NeedsDecision, v.ExitCode = true, ExitMergeNeedsDecision
+		v.Notes = append(v.Notes,
+			"Every blocker above is the reviewer being unavailable, not a finding about this code.",
+			"Do NOT wait on this unbounded — the stated rate-limit window has expired without a review before.",
+			"Signal `parlay status needs-decision` and let the captain pick: merge-and-disclose (land it, and state plainly in the merge/close note that no review ran) or park (leave it open until the reviewer returns). Do not pick for them.")
+	default:
 		v.ExitCode = ExitMergeBlocked
 	}
 	return v
+}
+
+// allReviewerUnavailable reports whether every blocker is reviewer
+// unavailability. One code-class blocker among them makes the whole verdict
+// a hard block: a failing test is still a failing test, whatever else is
+// also wrong.
+func allReviewerUnavailable(bs []MergeBlocker) bool {
+	for _, b := range bs {
+		if b.Class != ClassReviewerUnavailable {
+			return false
+		}
+	}
+	return len(bs) > 0
 }
 
 // botBodies returns every automated-review body on the PR — CodeRabbit posts
@@ -342,6 +422,8 @@ func FormatMergeGate(pr ghPRView, v MergeGateVerdict) string {
 		fmt.Fprintf(&b, "MERGED — %s\n", head)
 	case v.Ready:
 		fmt.Fprintf(&b, "READY — %s\n", head)
+	case v.NeedsDecision:
+		fmt.Fprintf(&b, "NEEDS-DECISION (%d) — %s\n", len(v.Blockers), head)
 	default:
 		fmt.Fprintf(&b, "BLOCKED (%d) — %s\n", len(v.Blockers), head)
 	}
