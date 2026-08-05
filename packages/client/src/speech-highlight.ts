@@ -1,4 +1,9 @@
 import { esc, linkify, CHAT_BASE } from './config'
+import { splitBlocksRaw, linkRanges, type RawBlock } from './speech-segment'
+
+// Re-export the pure segmentation core (unit-tested in speech-segment.test.ts).
+export { splitBlocksRaw, linkRanges }
+export type { RawBlock }
 
 // ── Per-sentence speaking highlight + mispronunciation flagging ─────────────
 // At speak time the bubble's content is re-rendered as one span per playback
@@ -6,31 +11,25 @@ import { esc, linkify, CHAT_BASE } from './config'
 // pre-wrap formatting survives). As each block starts, .pa-speaking-block
 // moves to its span; the bubble-level .pa-speaking stays for compat.
 
-export interface RawBlock { synth: string; raw: string }
-
-// Split into sentence blocks; merge fragments so blocks are ≥60 chars — small
-// enough for fast first synthesis, big enough to keep Kokoro prosody natural.
-// Raw segments concatenate back to the original text (pre-wrap rendering).
-export function splitBlocksRaw(text: string): RawBlock[] {
-  const parts = text.match(/[^.!?\n]+[.!?]*\s*/g) ?? [text]
-  const blocks: RawBlock[] = []
-  let cur = ''
-  for (const p of parts) {
-    cur += p
-    if (cur.trim().length >= 60) { blocks.push({ synth: cur.trim(), raw: cur }); cur = '' }
-  }
-  if (cur.trim()) blocks.push({ synth: cur.trim(), raw: cur })
-  return blocks.length ? blocks : [{ synth: text.trim(), raw: text }]
-}
-
-// Render-time block structure for agent bubbles (#18): one row per playback
-// block with a replay dot in the gutter, then play/stop + flag controls.
+// Render-time structure for agent bubbles (task-1h47): the message stays ONE
+// paragraph. Passages are INLINE <span class="pa-sb"> inside a single .pa-para
+// block — NOT block-level rows — so paragraphs flow and a link that spans two
+// passages keeps its anchor whole (splitBlocksRaw won't cut mid-link). Each span
+// is tap-to-re-read (rewired in thread.ts to __paSpeakFrom by its data-bi). The
+// reading-progress "dots" are kept as a compact row, one per passage, likewise
+// tappable to re-read. Play/stop + flag controls follow.
 export function blocksHtml(text: string): string {
   if (!text.trim()) return ''
-  const rows = splitBlocksRaw(text).map((b, i) =>
-    `<div class="pa-block" data-bi="${i}"><button class="pa-dot-btn" title="Replay from here"></button><span class="pa-sb">${linkify(esc(b.raw))}</span></div>`
+  const blocks = splitBlocksRaw(text)
+  const spans = blocks.map((b, i) =>
+    `<span class="pa-sb" data-bi="${i}" title="Tap to re-read this passage">${linkify(esc(b.raw))}</span>`
   ).join('')
-  return rows + `<div class="pa-block-ctl"><button class="pa-playpause" title="Play / stop">▶</button><button class="pa-flag" title="Report mispronunciation">🚩</button></div>`
+  const dots = blocks.map((_, i) =>
+    `<button class="pa-replay-dot" data-bi="${i}" title="Re-read passage ${i + 1}"></button>`
+  ).join('')
+  return `<div class="pa-para">${spans}</div>`
+    + `<div class="pa-dots">${dots}</div>`
+    + `<div class="pa-block-ctl"><button class="pa-playpause" title="Play / stop">▶</button><button class="pa-flag" title="Report mispronunciation">🚩</button></div>`
 }
 
 // Spans already rendered for this message (render-time structure)
@@ -61,8 +60,11 @@ export function wrapBlocks(msgId: string | undefined, blocks: RawBlock[]): HTMLE
   const bubble = msgId ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`) : null
   if (!bubble) return null
   bubble.classList.add('pa-speaking')
-  bubble.innerHTML = blocks.map(b => `<span class="pa-sb">${linkify(esc(b.raw))}</span>`).join('')
-    + `<button class="pa-flag" title="Report mispronunciation">🚩</button>`
+  // Fallback path (only when render-time .pa-sb spans are absent). Keep the same
+  // one-paragraph inline structure as blocksHtml so highlighting stays consistent.
+  bubble.innerHTML = `<div class="pa-para">`
+    + blocks.map(b => `<span class="pa-sb">${linkify(esc(b.raw))}</span>`).join('')
+    + `</div><button class="pa-flag" title="Report mispronunciation">🚩</button>`
   ;(bubble.querySelector('.pa-flag') as HTMLElement).addEventListener('click', (e) => {
     e.stopPropagation()
     void flagLastSpoken()
@@ -72,6 +74,10 @@ export function wrapBlocks(msgId: string | undefined, blocks: RawBlock[]): HTMLE
 
 export function highlightBlock(spans: HTMLElement[] | null, active: number) {
   spans?.forEach((s, i) => s.classList.toggle('pa-speaking-block', i === active))
+  // Sync the progress dots in the same message so the active dot follows the
+  // spoken passage (task-1h47: dots kept as reading-progress, decoupled from text).
+  const root = spans?.[0]?.closest('[data-pa-id]')
+  root?.querySelectorAll('.pa-replay-dot').forEach((d, i) => d.classList.toggle('pa-replay-dot-active', i === active))
 }
 
 export function clearAllSpeechHighlights() {

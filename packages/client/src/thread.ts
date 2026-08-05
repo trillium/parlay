@@ -156,7 +156,7 @@ export function _appendMsgEl(m: any, skipScroll = false) {
     })
     // Replay dots + ▶/⏸ + 🚩 (#18) — all stopPropagation so click-to-speak
     // on the row doesn't double-fire
-    el.querySelectorAll('.pa-dot-btn').forEach((d, i) => d.addEventListener('click', (e) => {
+    el.querySelectorAll('.pa-replay-dot').forEach((d, i) => d.addEventListener('click', (e) => {
       e.stopPropagation()
       if ((window as any).__paSpeakFrom) (window as any).__paSpeakFrom(m.text, m.id, i)
     }))
