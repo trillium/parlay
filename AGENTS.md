@@ -635,6 +635,18 @@ reviewer-unavailability, because the re-review is exactly what is being
 refused. That pairing is the no-mistakes#7 shape and is the one case where
 `stale-review` reclassifies.
 
+**Never let `gh` pick the repository implicitly (robots-g4qz).** gh's
+base-repo resolution prefers a remote named `upstream` over `origin`, so in a
+fork clone — origin=`trillium/<repo>` plus an `upstream` remote, which is every
+clone the fleet works in — a bare `gh pr view N` reads the *upstream* project's
+PR #N. The numbers collide freely and the failure is silent: a well-formed
+verdict about somebody else's pull request, worst case exit 0 "already MERGED"
+for a fork PR that is still open and unreviewed. `resolveMergeGateRepo` now
+resolves once (explicit `--repo` > `origin` remote > gh's pick, and only with no
+usable origin) and passes that one answer to every gh call, and every verdict
+prints the repo it answered about. Any new code here that shells out to `gh`
+against a PR must pass `--repo` explicitly for the same reason.
+
 Decision logic lives in the pure `ComputeMergeGate(MergeGateSnapshot)` so
 `merge_gate_test.go` pins the regressions with no gh binary and no network;
 `fetchMergeGateSnapshot` is the only part that shells out. **Go-only, no TS

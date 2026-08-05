@@ -5,6 +5,8 @@
 package commands
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -456,5 +458,141 @@ func TestSplitRepoParsesOwnerAndName(t *testing.T) {
 	}
 	if _, _, ok := splitRepo("no-slash"); ok {
 		t.Error("splitRepo should reject a repo with no owner")
+	}
+}
+
+// --- robots-g4qz: which repository is this verdict even about? -----------
+
+func TestRepoFromRemoteURLHandlesEveryGitRemoteShape(t *testing.T) {
+	for _, tc := range []struct {
+		url  string
+		want string
+	}{
+		{"https://github.com/trillium/beads.git", "trillium/beads"},
+		{"https://github.com/trillium/beads", "trillium/beads"},
+		{"git@github.com:trillium/beads.git", "trillium/beads"},
+		{"git@github.com:trillium/beads", "trillium/beads"},
+		{"ssh://git@github.com/trillium/beads.git", "trillium/beads"},
+		{"git://github.com/trillium/beads.git", "trillium/beads"},
+		{"https://github.com/trillium/beads/", "trillium/beads"},
+	} {
+		got, ok := repoFromRemoteURL(tc.url)
+		if !ok || got != tc.want {
+			t.Errorf("repoFromRemoteURL(%q) = %q %v, want %q", tc.url, got, ok, tc.want)
+		}
+	}
+	if _, ok := repoFromRemoteURL("not a url"); ok {
+		t.Error("a non-URL should not resolve to a repo")
+	}
+	if _, ok := repoFromRemoteURL(""); ok {
+		t.Error("an empty remote URL should not resolve to a repo")
+	}
+}
+
+func TestRepoFromPRURL(t *testing.T) {
+	got, ok := repoFromPRURL("https://github.com/gastownhall/gastown/pull/2")
+	if !ok || got != "gastownhall/gastown" {
+		t.Errorf("repoFromPRURL = %q %v, want gastownhall/gastown", got, ok)
+	}
+	if _, ok := repoFromPRURL("https://github.com/trillium/parlay"); ok {
+		t.Error("a URL with no /pull/ segment is not a PR URL")
+	}
+}
+
+// The gate must always say which repository it answered about. Without this,
+// a misresolved repo produces a well-formed verdict about somebody else's PR
+// and nothing in the output gives it away.
+func TestVerdictAlwaysNamesTheRepositoryItAnsweredAbout(t *testing.T) {
+	s := reviewedPR()
+	s.Repo, s.RepoSource = "trillium/parlay", "origin remote"
+	out := FormatMergeGate(s.PR, ComputeMergeGate(s))
+	if !strings.Contains(out, "repo: trillium/parlay (from origin remote)") {
+		t.Errorf("report must name the resolved repo and its source, got:\n%s", out)
+	}
+}
+
+// The robots-g4qz fail-open: an upstream PR that landed months ago answers
+// "already MERGED" (exit 0) for a fork PR that is still open and unreviewed.
+// Even on that early-return path the repo has to be stated.
+func TestMergedShortCircuitStillNamesTheRepository(t *testing.T) {
+	s := reviewedPR()
+	s.PR.State = "MERGED"
+	s.Repo, s.RepoSource = "gastownhall/gastown", "gh default (no origin remote)"
+	v := ComputeMergeGate(s)
+	if !v.Merged {
+		t.Fatalf("want merged verdict, got %+v", v)
+	}
+	out := FormatMergeGate(s.PR, v)
+	if !strings.Contains(out, "repo: gastownhall/gastown") {
+		t.Errorf("an exit-0 MERGED verdict must still name its repo, got:\n%s", out)
+	}
+}
+
+func TestAnswerAboutADifferentRepositoryIsCalledOut(t *testing.T) {
+	s := reviewedPR()
+	s.Repo, s.RepoSource = "trillium/gastown", "origin remote"
+	s.PR.URL = "https://github.com/gastownhall/gastown/pull/2"
+	out := FormatMergeGate(s.PR, ComputeMergeGate(s))
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "gastownhall/gastown") {
+		t.Errorf("a repo mismatch between request and answer must be called out, got:\n%s", out)
+	}
+}
+
+func TestNoRepoMismatchWarningWhenTheyAgree(t *testing.T) {
+	s := reviewedPR()
+	s.Repo, s.RepoSource = "trillium/gastown", "origin remote"
+	s.PR.URL = "https://github.com/trillium/gastown/pull/2"
+	out := FormatMergeGate(s.PR, ComputeMergeGate(s))
+	if strings.Contains(out, "WARNING") {
+		t.Errorf("matching repos must not warn, got:\n%s", out)
+	}
+}
+
+func TestResolveMergeGateRepoPrefersAnExplicitFlag(t *testing.T) {
+	repo, src, err := resolveMergeGateRepo("trillium/beads")
+	if err != nil || repo != "trillium/beads" || src != "--repo" {
+		t.Errorf("resolveMergeGateRepo(explicit) = %q %q %v", repo, src, err)
+	}
+	if _, _, err := resolveMergeGateRepo("no-slash"); err == nil {
+		t.Error("a malformed --repo must be a usage error, not a silent fallback")
+	}
+}
+
+// The defect itself: in a clone with BOTH an origin and an upstream remote,
+// gh's own base-repo resolution prefers `upstream`. The gate must pick
+// origin — that is where the fleet's PR lives, and it is the same remote the
+// mechanic contract's `git branch -r --contains` proof checks against.
+func TestResolveMergeGateRepoPicksOriginOverUpstream(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("remote", "add", "origin", "https://github.com/trillium/beads.git")
+	run("remote", "add", "upstream", "https://github.com/gastownhall/beads.git")
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+
+	repo, src, err := resolveMergeGateRepo("")
+	if err != nil {
+		t.Fatalf("resolveMergeGateRepo: %v", err)
+	}
+	if repo != "trillium/beads" {
+		t.Errorf("resolved %q, want the origin fork trillium/beads — gh would have picked upstream", repo)
+	}
+	if src != "origin remote" {
+		t.Errorf("source = %q, want %q", src, "origin remote")
 	}
 }
