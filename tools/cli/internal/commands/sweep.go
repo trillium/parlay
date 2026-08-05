@@ -50,6 +50,13 @@
 // uncommitted or unlanded work is refused there too, and reported as refused
 // rather than forced.
 //
+// That shared chain is also why a swept agent's terminal actually goes away:
+// `teardownAgent` closes the agent's herdr pane/tab as its last step (see
+// herdr.go, robots-iz9o). Before that, a sweep printed `closed` for agents
+// whose panes and OS processes were all still alive — the relay record was
+// the only thing it reclaimed, and 57 panes had to be closed by hand after a
+// sweep reported them all closed.
+//
 // Go-only, no TS port — same call as merge_gate.go (bin/parlay execs the Go
 // binary for everything except lavish-import; packages/cli is the retired
 // path). Do not add it to tools/cli/parity/run.sh; there is no TS side to
