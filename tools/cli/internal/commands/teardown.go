@@ -125,6 +125,11 @@ func teardownAgent(agentID string, force bool) (string, error) {
 	// Check for uncommitted changes.
 	if hasUncommitted(worktree) {
 		if !force {
+			// The refusals below are user-facing CLI messages printed verbatim to
+			// stderr, not Go errors meant for wrapping — the trailing period and
+			// second sentence are part of the TS original's byte-for-byte output,
+			// so they must not be reworded to satisfy ST1005.
+			//lint:ignore ST1005 verbatim CLI message; see comment above
 			return "", fmt.Errorf("parlay teardown: %s has uncommitted changes. Run 'git diff' or --force to discard.", agentID)
 		}
 		fmt.Fprintf(os.Stderr, "warn: --force: discarding uncommitted changes in %s\n", worktree)
@@ -135,6 +140,7 @@ func teardownAgent(agentID string, force bool) (string, error) {
 		if !force {
 			head := sh("git", "-C", worktree, "rev-parse", "HEAD")
 			if !head.ok || !isContentLanded(worktree, head.out) {
+				//lint:ignore ST1005 verbatim CLI message, same as the uncommitted-changes refusal above
 				return "", fmt.Errorf("parlay teardown: %s has unpushed commits not yet landed. Push or --force.", agentID)
 			}
 			fmt.Fprintf(os.Stderr, "teardown %s: unpushed commits but content is landed.\n", agentID)
