@@ -87,3 +87,75 @@ parlay_relay_health_ok() {
   curl -fsS --max-time 2 --unix-socket "${sock}" http://relay/health 2>/dev/null \
     | grep -q '"ok":true'
 }
+
+# ── Waiting for a relay to become healthy ─────────────────────────────────────
+# Base budget in seconds for a relay to answer /health after a start, and the
+# hard ceiling the adaptive extension can never exceed. Both overridable so a
+# test (or a very large fleet) can tune them without editing this file.
+PARLAY_RELAY_HEALTH_WAIT="${PARLAY_RELAY_HEALTH_WAIT:-45}"
+PARLAY_RELAY_HEALTH_MAX_WAIT="${PARLAY_RELAY_HEALTH_MAX_WAIT:-300}"
+
+# parlay_relay_launchd_pid prints the pid of the running LaunchAgent job, or
+# nothing if the job is loaded-but-not-running, unknown, or launchctl is absent.
+# A pid here means "a relay process exists" — which is NOT the same as "a relay
+# is answering /health", because the relay may still be starting up.
+# Arg 1: the launchd target (default gui/<uid>/<label>).
+parlay_relay_launchd_pid() {
+  local target="${1:-$(parlay_relay_domain)/${PARLAY_RELAY_LABEL}}"
+  # `launchctl print` emits one top-level `pid = N` for a running job (nested
+  # blocks have no pid), so the first match is the job's own pid.
+  launchctl print "${target}" 2>/dev/null \
+    | awk '/^[[:space:]]*pid = [0-9]+$/ { gsub(/[^0-9]/, "", $0); print; exit }'
+}
+
+# _parlay_relay_progress_mark prints a cheap liveness fingerprint: the byte size
+# of the relay's stderr log. A relay that is still doing startup work keeps
+# logging (spool resume, poll errors), so a changing mark means "still working".
+# Prints nothing when the log is missing/unreadable — the caller treats "no
+# mark" as "no evidence of progress". Guarded with -r because a `<` redirect on
+# a missing file is a shell error that `2>/dev/null` on wc would not suppress.
+_parlay_relay_progress_mark() {
+  [ -r "${PARLAY_RELAY_ERR_LOG}" ] || return 0
+  wc -c < "${PARLAY_RELAY_ERR_LOG}" 2>/dev/null | tr -d '[:space:]'
+}
+
+# parlay_relay_wait_health polls /health until it passes or the budget runs out.
+# Returns 0 as soon as the relay is healthy, 1 on timeout.
+#
+# The deadline is ADAPTIVE (robots-mpr3): a relay replaying a large spool can
+# take far longer than any fixed bound is comfortable with, so whenever the base
+# budget expires the relay's log is checked for growth. If it grew, the relay is
+# demonstrably alive and still working, and the budget is granted again — up to
+# the hard ceiling. A wedged relay that has gone quiet still fails on the base
+# budget, so this can never wait forever.
+#
+# Arg 1: base budget seconds  (default $PARLAY_RELAY_HEALTH_WAIT)
+# Arg 2: hard ceiling seconds (default $PARLAY_RELAY_HEALTH_MAX_WAIT)
+parlay_relay_wait_health() {
+  local budget="${1:-${PARLAY_RELAY_HEALTH_WAIT}}"
+  local ceiling="${2:-${PARLAY_RELAY_HEALTH_MAX_WAIT}}"
+  local start now deadline hard mark last
+  start="$(date +%s)"
+  deadline=$(( start + budget ))
+  hard=$(( start + ceiling ))
+  last="$(_parlay_relay_progress_mark)"
+  while :; do
+    if parlay_relay_health_ok; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if [ "${now}" -ge "${hard}" ]; then
+      return 1
+    fi
+    if [ "${now}" -ge "${deadline}" ]; then
+      mark="$(_parlay_relay_progress_mark)"
+      if [ -n "${mark}" ] && [ "${mark}" != "${last}" ]; then
+        last="${mark}"
+        deadline=$(( now + budget ))   # still logging — grant another budget
+      else
+        return 1                        # gone quiet and still not healthy
+      fi
+    fi
+    sleep 0.25
+  done
+}
