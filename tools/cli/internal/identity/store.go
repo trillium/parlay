@@ -36,6 +36,17 @@ var (
 	MemValueFlags = []string{
 		"--agent", "--complete", "--launch", "--name", "--color", "--model", "--cwd",
 		"--rename", "--to", "--older-than", "--mode", "--effort", "--kind", "--yolo",
+		// --worktree/--project were dropped from this table during the port
+		// (they ARE in store.ts's MEM_VALUE_FLAGS). args.Parse dies with
+		// EXIT_USAGE on an unknown flag, so every `parlay identity --register
+		// … --worktree <path> --project <path>` call parlay-spawn makes for a
+		// worktree agent exited 2 and wrote NO frontmatter at all — and
+		// parlay-spawn's registerIdentity swallows the exit code (`_ =
+		// cmd.Run()`), so the agent launched looking fine with an empty
+		// launch spec. Downstream that made `parlay teardown` read no
+		// worktree, delete the store, and orphan the worktree (and any
+		// unpushed commits in it) unchecked. Restored: robots-6xq7.
+		"--worktree", "--project",
 	}
 )
 
