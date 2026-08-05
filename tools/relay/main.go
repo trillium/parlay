@@ -112,6 +112,7 @@ func main() {
 	}
 
 	// Register any startup agents before serving so they are live immediately.
+	// Bounded by the flag's own size, so this cannot delay the bind below.
 	for _, id := range splitAgents(*agentsFlag) {
 		if _, err := r.register(id); err != nil {
 			log.Fatalf("startup register %q: %v", id, err)
@@ -119,30 +120,20 @@ func main() {
 		log.Printf("registered agent %q at startup", id)
 	}
 
-	// Resume agents from existing spools. The registry is in-memory only, so a
-	// relay restart would otherwise silently stop every enrolled agent's
-	// upstream poll loop while their monitors keep tailing dead spools —
-	// observed fleet-wide on 2026-07-17 (19 agents deaf until hand re-enrolled).
-	// A spool file is durable evidence of enrollment; re-register it at boot.
-	// register() is idempotent, so overlap with --agents is harmless.
-	if entries, err := os.ReadDir(runtimeDir); err == nil {
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || !strings.HasSuffix(name, ".chan") {
-				continue
-			}
-			id := strings.TrimSuffix(name, ".chan")
-			if !validAgentID(id) {
-				continue
-			}
-			if _, err := r.register(id); err != nil {
-				log.Printf("spool-resume register %q: %v", id, err)
-				continue
-			}
-			log.Printf("resumed agent %q from spool", id)
-		}
-	}
-
+	// Bind + serve the control socket BEFORE replaying the spool (robots-mpr3).
+	//
+	// The replay below is O(agents on disk) and on a real fleet is not fast: 206
+	// spools took ~7s on 2026-08-05. While it ran, nothing was bound, so
+	// /health was unanswerable and `ensure-up.sh` — which only waited 10s and
+	// force-restarted on a miss — declared a perfectly healthy, mid-startup
+	// relay dead and killed it, restarting the replay from scratch. Binding
+	// first makes /health answerable in milliseconds regardless of fleet size.
+	//
+	// Serving during the replay is safe: register() is mutex-guarded and
+	// idempotent, so a control-socket register racing the replay either wins
+	// (and the replay's own call is a no-op) or loses (and returns the same
+	// spool path). Binding first also surfaces a duplicate-relay bind failure
+	// before doing any replay work, rather than after.
 	sockPath := filepath.Join(runtimeDir, "relay.sock")
 	ln, err := listenControl(sockPath)
 	if err != nil {
@@ -163,6 +154,10 @@ func main() {
 
 	log.Printf("up — server=%s runtime=%s socket=%s", server, runtimeDir, sockPath)
 
+	// Resume agents from existing spools, now that /health already answers.
+	resumed := resumeFromSpools(r, runtimeDir)
+	log.Printf("spool resume complete — %d agent(s) resumed", resumed)
+
 	// Wait for a termination signal or a fatal serve error.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -179,6 +174,43 @@ func main() {
 	r.shutdown(srv)
 	_ = os.Remove(sockPath) // best-effort: leave no stale socket behind
 	log.Print("stopped")
+}
+
+// resumeFromSpools re-registers every agent that has a spool file in runtimeDir
+// and returns how many were resumed.
+//
+// The registry is in-memory only, so a relay restart would otherwise silently
+// stop every enrolled agent's upstream poll loop while their monitors keep
+// tailing dead spools — observed fleet-wide on 2026-07-17 (19 agents deaf until
+// hand re-enrolled). A spool file is durable evidence of enrollment, so it is
+// re-registered at boot. register() is idempotent, so overlap with -agents (or
+// with a concurrent control-socket register) is harmless.
+//
+// Callers must have already bound the control socket — see the comment in
+// main(); this walk is O(agents on disk) and must not gate /health.
+func resumeFromSpools(r *relay, runtimeDir string) int {
+	entries, err := os.ReadDir(runtimeDir)
+	if err != nil {
+		return 0
+	}
+	resumed := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".chan") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".chan")
+		if !validAgentID(id) {
+			continue
+		}
+		if _, err := r.register(id); err != nil {
+			log.Printf("spool-resume register %q: %v", id, err)
+			continue
+		}
+		log.Printf("resumed agent %q from spool", id)
+		resumed++
+	}
+	return resumed
 }
 
 // ── Registry ──────────────────────────────────────────────────────────────────

@@ -76,20 +76,47 @@ use it; any legacy poll-path monitors keep working untouched.
 2. Otherwise takes a per-user lock (atomic `mkdir`) so two monitors starting at
    once cannot both launch a relay, re-checks health, then starts the relay by
    the best method available:
-   - **launchd** — if the agent is installed, `launchctl kickstart` (or
-     `bootstrap` if it was unloaded). This restores full `KeepAlive` supervision.
+   - **launchd** — if the agent is installed but **not running**, `launchctl
+     kickstart` (or `bootstrap` if it was unloaded). This restores full
+     `KeepAlive` supervision. If launchd reports a **live pid**, nothing is
+     started: the relay already exists and is simply not answering yet.
    - **installed binary** — unsupervised fallback if no plist is present.
    - **repo binary** — dev fallback when nothing is installed.
-3. Waits (bounded) for `/health`, then returns 0/1.
+3. Waits adaptively for `/health`, then returns 0/1.
 
 The relay's control socket is single-binder (a second live relay fails to bind
 and exits), so even a lost lock race can never produce two live relays.
 
-You can run it directly to heal the relay from anywhere:
+### It never force-restarts a running relay (robots-mpr3)
+
+"Not answering `/health`" and "not running" are different states, and ensure-up
+must not confuse them. It used to `launchctl kickstart -k` unconditionally —
+`-k` **kills** a running job — and then wait only 10s. On a real fleet that
+killed relays that were alive but mid-startup and then reported them dead,
+silently breaking agent enrollment for the affected monitor.
+
+Two things keep that from recurring:
+
+- **The relay binds its control socket before replaying the spool**, so
+  `/health` answers in milliseconds no matter how many agents are enrolled.
+  (Previously the replay ran first — ~7s for 206 agents.)
+- **The wait is adaptive.** `parlay_relay_wait_health` (in `lib.sh`) polls
+  `/health` for `$PARLAY_RELAY_HEALTH_WAIT` seconds (default 45) and grants
+  itself another budget whenever the relay's log has grown — evidence it is
+  alive and still working — up to `$PARLAY_RELAY_HEALTH_MAX_WAIT` (default
+  300). A wedged relay that has gone quiet still fails on the base budget, so
+  this can never hang.
+
+Force-restarting is now an explicit, deliberate act:
 
 ```sh
-tools/relay/deploy/ensure-up.sh
+tools/relay/deploy/ensure-up.sh                # heal the relay from anywhere
+tools/relay/deploy/ensure-up.sh --force-restart # restart even a running relay
 ```
+
+Behavior is pinned by `tools/relay/deploy/ensure-up.test.sh` (hermetic: stubbed
+`launchctl`/`curl`, redirected `$HOME` and runtime dir) and by
+`TestControlSocketBindsBeforeSpoolResume` in `tools/relay/startup_test.go`.
 
 ## Operate
 
