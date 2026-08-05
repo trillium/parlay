@@ -85,12 +85,12 @@ export function broadcastPresenceMap(force = false) {
 setInterval(() => broadcastPresenceMap(), 10_000)
 
 // ── CORS headers ────────────────────────────────────────────────────────────
-
-export const CORS = {
-  "Access-Control-Allow-Origin":  "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-}
+// The wildcard CORS constant now lives in guard.ts, next to the policy that
+// decides which routes still get it: it applies to the READ/SSE routes only,
+// while the mutating routes are re-headered with a reflected single origin
+// (guard.ts's withGuardedCors). Re-exported here so existing importers keep
+// their `from "./sse"` path.
+export { CORS } from "./guard"
 
 // ── SSE helpers ─────────────────────────────────────────────────────────────
 

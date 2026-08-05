@@ -14,11 +14,29 @@ import { handleEvalRequest } from "./eval-relay"
 import { handleTTSValidateRequest } from "./tts-validate"
 import { handleTtsEventRequest } from "./router-tts-events"
 import { handleDeviceCmdRequest } from "./router-device-cmd"
+import { guardChatRequest, isGuardedChatPath, preflightResponse, withGuardedCors } from "./guard"
 
+// Entry point. Everything security-relevant happens here, at the one boundary
+// every /api/chat request crosses: OPTIONS gets a real preflight decision,
+// mutating routes are origin/content-type checked before dispatch (guard.ts),
+// and their responses are re-headered so the wildcard ACAO the handlers spread
+// never reaches the wire. Read/SSE routes are unchanged.
 export function handleChatRequest(req: Request, pathname: string): Response | Promise<Response | null> | null {
   if (!pathname.startsWith("/api/chat")) return null
 
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
+  if (req.method === "OPTIONS") return preflightResponse(req, pathname)
+
+  const denied = guardChatRequest(req, pathname)
+  if (denied) return denied
+
+  const resp = dispatchChatRequest(req, pathname)
+  if (resp === null || !isGuardedChatPath(pathname)) return resp
+  return resp instanceof Promise
+    ? resp.then(r => (r === null ? null : withGuardedCors(req, r)))
+    : withGuardedCors(req, resp)
+}
+
+function dispatchChatRequest(req: Request, pathname: string): Response | Promise<Response | null> | null {
 
   // Server-side eval (feat/server-side-eval): async routes that await the Go
   // engine; the outer Bun fetch handler (async) resolves the returned Promise.

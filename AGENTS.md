@@ -25,6 +25,28 @@ symlinks replaced with real files. The Pulse side must stop importing
 standalone server; that rewire and removing the `~/.claude` loop symlink are
 production changes made outside this repo (never edit `~/.claude` from here).
 
+### Adding a mutating `/api/chat` route? Add it to `GUARDED_CHAT_PATHS`
+
+`packages/server/src/guard.ts` is the one security boundary for the chat API
+(which still has **no authentication**). `handleChatRequest` in `router.ts`
+runs it before dispatch: paths listed in `GUARDED_CHAT_PATHS` require an
+allowed `Origin` (missing Origin = allowed, which is how the CLI/hooks/curl
+keep working) and `Content-Type: application/json` (415 otherwise — this is
+what stops a cross-origin CORS *simple request* from reaching a handler
+without a preflight, and preflight on those paths is refused). Their
+responses are re-headered by `withGuardedCors` so the wildcard `CORS` the
+handlers spread never reaches the wire. Read/SSE/upload routes keep the old
+wildcard and stay world-readable.
+
+A new route that injects into an agent turn, mutates the registry, or drives a
+device is unguarded until you add it to that set — and if its callers do not
+send a JSON content type, adding it breaks them. Test with
+`packages/server/src/guard.test.ts` (pure, no side effects — `guard.ts`
+deliberately imports nothing) and `guard.integration.test.ts` (spawns a real
+server on a random 45xxx port with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`
+redirected to a temp dir). `packages/go-server` has the same unauthenticated
+write surface and no equivalent guard yet.
+
 `packages/server/src/debug-log.ts` was written during the loop outage as a
 standalone, not-yet-wired handler (Write could still create files whose names
 did not already exist in the symlink farm). Now that `src/` holds real files
