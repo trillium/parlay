@@ -39,6 +39,17 @@ Files: bin/parlay-spawn-triage
 - Variable interpolation tested independently of parlay-spawn's dispatch logic
 
 ## 2026-08-04 — Go CLI `claim` command and identity memory
+## 2026-08-05 — robots-1186 (worktree guardrail names the symlink case)
+
+Files: tools/cli/internal/commands/claim.go, tools/cli/internal/commands/claim_test.go
+
+The mechanic DoD said "do all repo work in an isolated worktree". Followed literally over a symlinked subtree that is a silent no-op: `git worktree add` copies the symlink, not the tree behind it, so writes land in the shared checkout it points at. The agent believes it is isolated while dirtying a checkout other sessions hold — and a follow-up `git checkout -b` there strands them, the exact failure the guardrail exists to prevent.
+
+- **claim.go**: added a guardrail clause naming the symlink case, the general remedy (worktree the repo that actually owns the files), the concrete instance (`~/.claude/hooks` work → worktree `~/code/pai-hooks`, not `~/.claude`), and a one-command precheck (`ls -ld <the-dir-you-will-edit>`).
+- **claim_test.go**: asserts both the general warning and the concrete pointer survive future edits to the DoD.
+
+Enforcement backstop ships separately in pai-hooks (`WorktreeDiscipline/symlink.ts`), which blocks such a write at the Edit/Write layer.
+
 
 Files: tools/cli/internal/identity/mem.go, tools/cli/internal/commands/claim.go, tools/cli/internal/commands/claim_test.go
 ## 2026-08-04 — herdr contract gate for spawn and pipeline selftest
