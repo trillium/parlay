@@ -183,3 +183,34 @@ func TestRegisterRecordsWorktreeAndProject(t *testing.T) {
 		t.Errorf("fm.project = %q, want /tmp/repo", got)
 	}
 }
+
+// robots-jusi: the whole launch spec parlay-spawn issues must survive one
+// --register call. A flag missing from MemValueFlags is fatal (args.Parse exits
+// 2 before anything is written), so a single dropped lifecycle flag loses every
+// field, not just its own — this drives all of them through at once and checks
+// they round-trip, matching mem.ts's field loop.
+func TestRegisterRecordsAllLifecycleFields(t *testing.T) {
+	startHarness(t)
+	trapExit(t)
+	home := freshHome(t)
+
+	captureStdout(t, func() {
+		CmdIdentity([]string{
+			"--register", "--agent", "wt-worker", "--name", "WT Worker",
+			"--color", "#f97316", "--cwd", "/tmp/wt", "--mode", "crew",
+			"--yolo", "on", "--effort", "high", "--kind", "worker",
+			"--worktree", "/tmp/wt", "--project", "/tmp/proj",
+		})
+	})
+
+	fm := ReadFrontmatter(filepath.Join(home, "wt-worker", "identity.md"))
+	for k, want := range map[string]string{
+		"id": "wt-worker", "name": "WT Worker", "cwd": "/tmp/wt",
+		"mode": "crew", "yolo": "on", "effort": "high", "kind": "worker",
+		"worktree": "/tmp/wt", "project": "/tmp/proj",
+	} {
+		if got := fm.Get(k); got != want {
+			t.Errorf("fm.%s = %q, want %q", k, got, want)
+		}
+	}
+}
