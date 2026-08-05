@@ -211,7 +211,8 @@ func claimBrief(agent, name, color, model string, task claimTask) string {
 		if claimStoreForID(task.ID) == "robots" {
 			dod = fmt.Sprintf("Fix it, then run 'robots close %s' and report the outcome with 'reply'.\n\n"+
 				"Mechanic guardrails (a premature 'FIXED' or a tangled checkout is itself a defect):\n"+
-				"- Only claim FIXED when the fix has actually LANDED. For a PR that means origin/main contains the commit AND all required checks are green — verify with `git branch -r --contains <sha>` (must list origin/main) and `gh pr view <n> --json state,mergedAt` (state MERGED). An OPEN or check-failing PR is NOT fixed: signal needs-decision or blocked, never done.\n"+
+				"- Only claim FIXED when the fix has actually LANDED. For a PR that means origin/main contains the commit — verify with `git branch -r --contains <sha>` (must list origin/main) and `gh pr view <n> --json state,mergedAt` (state MERGED). An OPEN or check-failing PR is NOT fixed: signal needs-decision or blocked, never done.\n"+
+				"- Before merging, run `parlay merge-gate <n>` and obey it (non-zero = do NOT merge). Do NOT decide from `gh pr checks` yourself: a green check is not evidence anything reviewed the code. CodeRabbit reports the conclusion `pass` when it never ran (rate limit) and reports success regardless of how many findings it posted — robots-jap6. The gate reads the truthful fields instead.\n"+
 				"- NEVER switch or leave a primary/shared checkout on a feature branch — that strands whatever session sits there. Do all repo work in an isolated worktree (fm-spawn crew, or `git worktree add`), and leave the primary on its original branch.", task.ID)
 		} else {
 			dod = "Do the task, then reply your result with 'reply \"<summary>\"' and run: parlay status done \"<one-line summary>\""
