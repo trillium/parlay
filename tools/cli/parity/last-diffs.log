@@ -1,0 +1,460 @@
+=== help (usage) ===
+args: help
+--- ts (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+--- go (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay claim <task-id>          One-call agent bootstrap: profile + enroll + the task, from a ticket (idea-tm0)
+  parlay merge-gate <pr>          Is this PR ACTUALLY safe to merge? (catches green-but-vacuous checks)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay sweep [--apply]          Fleet closure sweep: close every done agent, surface the rest
+  parlay sweep --agent <id>       Sweep one agent by id (skips the per-task-spawn proof)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+
+=== help status ===
+args: help status
+--- ts (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+--- go (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay claim <task-id>          One-call agent bootstrap: profile + enroll + the task, from a ticket (idea-tm0)
+  parlay merge-gate <pr>          Is this PR ACTUALLY safe to merge? (catches green-but-vacuous checks)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay sweep [--apply]          Fleet closure sweep: close every done agent, surface the rest
+  parlay sweep --agent <id>       Sweep one agent by id (skips the per-task-spawn proof)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+
+=== help agents ===
+args: help agents
+--- ts (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+--- go (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay claim <task-id>          One-call agent bootstrap: profile + enroll + the task, from a ticket (idea-tm0)
+  parlay merge-gate <pr>          Is this PR ACTUALLY safe to merge? (catches green-but-vacuous checks)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay sweep [--apply]          Fleet closure sweep: close every done agent, surface the rest
+  parlay sweep --agent <id>       Sweep one agent by id (skips the per-task-spawn proof)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+
+=== help doctor ===
+args: help doctor
+--- ts (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+--- go (exit 0) ---
+parlay — talk to a Parlay chat server (current target: http://127.0.0.1:24242)
+
+Usage:
+  parlay                          Panel/fleet snapshot: subscribers, agents, last 3 messages
+  parlay status <verb> [--key <slug>] <note...>   Emit a keyed agent→supervisor status line (fold §3.6)
+  parlay status                   Read THIS agent's keyed status file
+  parlay subscribers [--full]     Connection counts (--full: raw JSON)
+  parlay agents [--full]          List registered agents (--full: raw JSON)
+  parlay agent-down <id>          Deregister any agent channel (general-purpose; not just variants)
+  parlay remote                   Show the current server URL + its source (env/config/default)
+  parlay remote set <url>         Persist a default server URL (~/.parlay/config.json; survives shells)
+  parlay remote clear             Remove the persisted default server URL
+  parlay nickname <nick...>       Set voice nicknames for THIS agent (picker/voice channel-switch)
+  parlay nickname --agent <id> <nick...>   Set nicknames for a named agent (--clear to remove)
+  parlay send                     List agents you can message
+  parlay send --<agent-id> <text> Send attributed message to that agent's channel
+  parlay say <text...>            Reply to YOUR OWN channel (spawned agents; identity from PARLAY_AGENT_ID)
+  parlay reply <text...>          Alias for 'say' (bare 'reply' wraps this)
+  parlay scratchpad [<note>]      Your durable task notes; no args = read (bare 'scratchpad' wraps this)
+  parlay identity [<fact>]        Your durable self-knowledge; no args = read (bare 'identity' wraps this)
+  parlay alert <text...>          Broadcast an alert to all pollers + agents
+  parlay alert --agent <id> <text...>   Alert one agent channel
+  parlay history [N] [--full]     Last N messages, truncated (default 20; --full: untruncated)
+  parlay monitor --agent <id> [--notify-safe]   Relay-backed enroll + stream — emits CHAT_MSG lines (for Monitor{})
+  parlay monitor --legacy-poll [--agent <id>]   Old independent poll loop (no relay)
+  parlay listen --agent <id> [--name <name>] [--caps <json>] [--notify-safe]   One-call self-enroll: register + announce + monitor (alias: agent-up)
+  parlay stats                    Message memory/complexity stats (count, sizes, ages, images)
+  parlay health                   Server vitals: relay, memory, pulse wrapper, eval-engine
+  parlay doctor                   THIS agent's self-diagnosis: PASS/WARN/FAIL + fix per check
+  parlay context-check <pct>      Rotation advisory: OK, or ROTATE (exit 3) at/above the threshold (default 85%)
+  parlay robots-watch [--once]    Event poll-daemon: robots-created→mechanic-dispatch, request-closed→notify
+  parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
+  parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
+  parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay claim <task-id>          One-call agent bootstrap: profile + enroll + the task, from a ticket (idea-tm0)
+  parlay merge-gate <pr>          Is this PR ACTUALLY safe to merge? (catches green-but-vacuous checks)
+  parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
+  parlay variant list [<id>]      List variants (optionally filtered to one primary)
+  parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
+  parlay variant teardown <id>    Merge + remove worktree + unregister variant
+  parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
+  parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
+  parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay sweep [--apply]          Fleet closure sweep: close every done agent, surface the rest
+  parlay sweep --agent <id>       Sweep one agent by id (skips the per-task-spawn proof)
+  parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
+  parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
+  parlay lavish-import            Import lavish sessions
+  parlay help                     Show this help
+
+Any subcommand accepts --help. Exit codes: 0 ok, 1 server/runtime error, 2 usage error.
+
+Env:
+  PARLAY_SERVER   Server base URL override (highest precedence; wins over persisted config and the coded default)
+
+Server URL resolution (highest wins): PARLAY_SERVER env var > ~/.parlay/config.json ("server" key,
+  set via 'parlay remote set <url>') > coded default http://localhost:4242. See 'parlay remote --help'.
+

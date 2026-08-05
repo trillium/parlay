@@ -2,8 +2,10 @@
 //
 // Ported from packages/cli/src/commands-teardown.ts (ticket B4). Refuses to
 // destroy uncommitted changes or unpushed commits unless explicitly forced
-// (--force). Validates that work is either committed + pushed, or that
-// commits appear in a landed PR (falls back to a merge-tree equality test).
+// (--force). Validates that work is either committed + pushed, or that its
+// content is already present in the default branch (a merge-tree equality
+// test — see isContentLanded). There is no PR/patch-id strategy here; the
+// docs that claimed one were wrong (robots-ceon).
 //
 // Steps: 1) check uncommitted changes, 2) check unpushed commits, 3)
 // validate landed-content containment, 4) deregister from the relay
@@ -37,19 +39,71 @@ func hasUnpushed(repoPath string) bool {
 }
 
 // isContentLanded validates landed-content containment via a merge-tree
-// equality test: merge headRef into the default branch; if the tree is
-// unchanged, content is isolated (already landed there).
+// equality test: three-way merge headRef into the default branch and compare
+// the resulting tree against the default branch's own tree. When headRef
+// introduces nothing the default branch does not already have (e.g. its change
+// landed as a squash commit, so the original commits are unreachable from any
+// remote), the merged tree is byte-identical to the default branch's tree.
+// Comparing trees — rather than commits — is what makes squash-merged work
+// detectable at all.
+//
+// This replaces a version that shelled out to two-arg `git merge-tree <branch>
+// <head>` and then tested `out == "" || strings.Contains(out, branch)`
+// (robots-ceon). On git >= 2.38 that form prints a bare tree OID, so `out` was
+// never empty, and a branch name like "main" can never appear in 40 hex digits
+// — the function returned false unconditionally and the landed escape in
+// teardownAgent had never once fired. The correct form, mirrored from
+// firstmate's bin/fm-teardown.sh `content_in_default`, is `merge-tree
+// --write-tree` (git >= 2.38) compared against the real default-branch tree.
+//
+// Every inconclusive path returns false so teardown refuses rather than
+// guesses: no origin/HEAD, no resolvable default ref, a merge conflict, or a
+// git too old for --write-tree (which exits non-zero on the unknown flag).
 func isContentLanded(repoPath, headRef string) bool {
 	defBranch := sh("git", "-C", repoPath, "symbolic-ref", "refs/remotes/origin/HEAD")
 	if !defBranch.ok {
 		return false
 	}
 	branch := strings.Replace(defBranch.out, "refs/remotes/origin/", "", 1)
-	mergeTree := sh("git", "-C", repoPath, "merge-tree", branch, headRef)
+
+	// Refresh the remote-tracking ref first: the whole point of this check is
+	// work that landed upstream after the worktree last synced, which a stale
+	// origin/<branch> cannot see. Best-effort — an offline teardown falls
+	// through to whatever ref already exists rather than refusing outright.
+	remoteRef := "refs/remotes/origin/" + branch
+	if sh("git", "-C", repoPath, "remote", "get-url", "origin").ok {
+		sh("git", "-C", repoPath, "fetch", "--quiet", "origin",
+			"+refs/heads/"+branch+":"+remoteRef)
+	}
+
+	// Prefer the remote-tracking ref (what "landed" actually means); fall back
+	// to the local branch for a repo with no origin at all.
+	ref := remoteRef
+	if !sh("git", "-C", repoPath, "rev-parse", "--quiet", "--verify", ref).ok {
+		ref = "refs/heads/" + branch
+		if !sh("git", "-C", repoPath, "rev-parse", "--quiet", "--verify", ref).ok {
+			return false
+		}
+	}
+
+	defaultTree := sh("git", "-C", repoPath, "rev-parse", "--quiet", "--verify", ref+"^{tree}")
+	if !defaultTree.ok || defaultTree.out == "" {
+		return false
+	}
+
+	// --write-tree prints the merged tree OID on the first line; on conflict it
+	// exits non-zero and prints the conflict report instead.
+	mergeTree := sh("git", "-C", repoPath, "merge-tree", "--write-tree", ref, headRef)
 	if !mergeTree.ok {
 		return false
 	}
-	return mergeTree.out == "" || strings.Contains(mergeTree.out, branch)
+	merged := mergeTree.out
+	if i := strings.IndexByte(merged, '\n'); i >= 0 {
+		merged = merged[:i]
+	}
+	merged = strings.TrimSpace(merged)
+
+	return merged != "" && merged == defaultTree.out
 }
 
 // bestEffortUnregister POSTs /api/chat/unregister and swallows every error
