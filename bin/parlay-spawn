@@ -82,6 +82,19 @@ color_from_id() {
   printf '#%02x%02x%02x' "$r" "$g" "$b"
 }
 
+# Repo identity of a directory: the absolute, symlink-resolved path of the
+# repo's COMMON git dir. Every linked worktree of a repo shares it with the
+# primary checkout, and two different repos never share it — so it is the
+# right key for "is this worktree actually a worktree of that repo?"
+# (robots-d04t). Prints nothing and returns non-zero if not a git repo.
+repo_identity() {
+  local d="$1" common
+  common=$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ -n "$common" ] || return 1
+  # Resolve symlinks so /var vs /private/var (etc.) can't cause a false mismatch.
+  (cd "$common" 2>/dev/null && pwd -P) || printf '%s' "$common"
+}
+
 # Resolve a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler account name.
 # Tries: macOS keychain (ccjuggler-<name>) → ~/.ccjuggler/<name>/.oauth-token
 # Prints the token or exits non-zero with an error message.
@@ -133,7 +146,7 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   treehouse if on PATH, else plain git worktree. Recorded in meta.
   --account NAME  spawn the agent under a ccjuggler account (e.g. acc2) to spread
                   Claude usage across accounts. Resolves CLAUDE_CODE_OAUTH_TOKEN from
-                  keychain (security find-generic-password -a ccjuggler-NAME -s ccjuggler)
+                  keychain (security find-generic-password -a ccjuggler -s ccjuggler-NAME)
                   or ~/.ccjuggler/NAME/.oauth-token. Injected via herdr --env.
   --workspace ID  land the new tab in an existing herdr workspace instead of
                   wherever the caller's shell currently is. Falls back to
@@ -428,14 +441,28 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
   mkdir -p "$PROJECT_PATH/.worktrees"
 
   # Try treehouse first (firstmate-only tool, gracefully absent on minis).
+  #
+  # robots-d04t: treehouse has no --repo flag — it picks its pool from the
+  # PROCESS cwd. Running it inherited from the CALLER's shell, so spawning
+  # `--cwd ~/code/herdr-web` from inside a firstmate worktree leased a
+  # *firstmate* worktree and launched the agent in the wrong repo, silently.
+  # Always run it with cwd = $PROJECT_PATH (the repo --cwd resolved to), and
+  # verify the repo identity of whatever it hands back before trusting it.
   _wt_created=0
   if command -v treehouse >/dev/null 2>&1; then
-    _th_out=$(treehouse get --lease "parlay-$AGENT_ID" 2>/dev/null) && {
+    _th_out=$(cd "$PROJECT_PATH" && treehouse get --lease "parlay-$AGENT_ID" 2>/dev/null) && {
       _th_path=$(printf '%s' "$_th_out" | tr -d '[:space:]')
       if [ -d "$_th_path" ]; then
-        WORKTREE_PATH="$_th_path"
-        _wt_created=1
-        echo "parlay-spawn: worktree via treehouse at $WORKTREE_PATH" >&2
+        if [ "$(repo_identity "$_th_path")" = "$(repo_identity "$PROJECT_PATH")" ]; then
+          WORKTREE_PATH="$_th_path"
+          _wt_created=1
+          echo "parlay-spawn: worktree via treehouse at $WORKTREE_PATH" >&2
+        else
+          echo "parlay-spawn: WRONG-REPO WORKTREE — treehouse handed back $_th_path," >&2
+          echo "  which belongs to $(repo_identity "$_th_path") but --cwd resolved to $PROJECT_PATH" >&2
+          echo "  ($(repo_identity "$PROJECT_PATH")). Rejecting it and falling back to plain git worktree." >&2
+          (cd "$PROJECT_PATH" && treehouse return "$_th_path" >/dev/null 2>&1) || true
+        fi
       fi
     } || true
   fi
@@ -464,6 +491,20 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
   _proj_real=$(cd "$PROJECT_PATH" 2>/dev/null && pwd -P)
   if [ "$_wt_real" = "$_proj_real" ]; then
     echo "parlay-spawn: ISOLATION FAILURE — worktree resolved to primary checkout ($PROJECT_PATH); aborting." >&2
+    exit 1
+  fi
+
+  # IDENTITY (robots-d04t): hard post-condition — the worktree we are about to
+  # launch the agent in must be a worktree of the SAME repo --cwd resolved to.
+  # Getting this wrong is silent and expensive (a full agent run spent in an
+  # unrelated repo, possibly leaving commits/branches there), so refuse loudly.
+  _wt_repo=$(repo_identity "$WORKTREE_PATH") || _wt_repo=""
+  _proj_repo=$(repo_identity "$PROJECT_PATH") || _proj_repo=""
+  if [ -z "$_wt_repo" ] || [ "$_wt_repo" != "$_proj_repo" ]; then
+    echo "parlay-spawn: REPO MISMATCH — refusing to launch in the wrong repository." >&2
+    echo "  --cwd resolved to project: $PROJECT_PATH (git dir: ${_proj_repo:-<none>})" >&2
+    echo "  worktree resolved to:      $WORKTREE_PATH (git dir: ${_wt_repo:-<none>})" >&2
+    echo "  These are different repos. Aborting instead of burning an agent run in the wrong one." >&2
     exit 1
   fi
 
