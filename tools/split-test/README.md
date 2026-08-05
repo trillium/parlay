@@ -28,7 +28,7 @@ This tool exists to test Parlay **beside** the live system, never through it.
 | Never bind reserved ports | Sandboxes pick a **free high port** (42000+) via a real bind-test. `31337`, `31338`, `31339`, `4242`, `4343` are refused outright (`assertNotReserved`). |
 | Never use `launchctl` | Sandbox relays run as **plain background processes**, not launchd jobs. The prod relay (`com.parlay.relay`) is never signaled. |
 | Kill exactly what we started | `sandbox down` reads the recorded PID manifest and kills **only** those PIDs — after verifying each still matches the command line we started (guards against PID recycling). No broad `pkill`. |
-| No prod-path writes | Each sandbox gets its own `PARLAY_DATA_DIR`, `PARLAY_RELAY_RUNTIME`, `PARLAY_AGENT_HOME`, **and `PAI_DIR`** (see Isolation gaps). Prod `~/exchange`, `$TMPDIR/parlay`, and `$PAI_DIR/MEMORY/STATE/parlay-agents.json` are never written. |
+| No prod-path writes | Each sandbox gets its own `PARLAY_DATA_DIR`, `PARLAY_RELAY_RUNTIME`, `PARLAY_AGENT_HOME`, **and `PAI_DIR`** (see Isolation gaps). Prod `~/exchange`, `$TMPDIR/parlay`, and `$PAI_DIR/MEMORY/STATE/parlay-agents.json` are never written. (The registry now follows `PARLAY_DATA_DIR` too — gap #1 below.) |
 | Prod untouched, proven | `sandbox up` snapshots prod relay + eval-engine PIDs before boot and asserts they are unchanged after — failing loudly if a sandbox disturbed prod. |
 | Probe traffic is quarantined | Any probe that reaches a real store uses a throwaway agent id prefixed `split-probe-…`, so it stays in its own channel. |
 
@@ -70,7 +70,7 @@ boot it asserts:
 1. the server is **listening on the chosen port** (`PARLAY_PORT` honored),
 2. the data dir is **ours and not prod `~/exchange`** (`PARLAY_DATA_DIR` honored),
 3. the **agent registry is empty** — a fresh sandbox that rehydrated prod agents
-   would prove `PAI_DIR` leaked (see Isolation gaps),
+   would prove the registry redirect leaked (see Isolation gaps),
 4. the relay created `relay.sock` **in our runtime dir**, and its `/agents`
    endpoint **reports our runtime dir** (`--runtime-dir` honored),
 5. the eval-engine (if any) is **listening on the chosen port**,
@@ -168,24 +168,29 @@ env surface is **not** sufficient on its own. The first two are handled at the
 *sandbox level* (env overrides + seeding), never by editing prod paths in the
 server. The third (below) has no sandbox-level fix.
 
-### 1. Agent registry is keyed off `PAI_DIR`, not `PARLAY_DATA_DIR`
+### 1. Agent registry was keyed off `PAI_DIR`, not `PARLAY_DATA_DIR` — FIXED
 
-`packages/server/src/sse.ts` persists the agent registry to
-`$PAI_DIR/MEMORY/STATE/parlay-agents.json` and **rehydrates it at module init**.
-`PARLAY_DATA_DIR` isolates chat *history* but **not** the agent *registry*. A
-naive sandbox that only overrode `PARLAY_DATA_DIR` would:
+*Historical, kept because it explains why the sandbox sets `PAI_DIR` too.*
 
-- boot with the ~20+ prod agents already loaded, and
-- write the registry back to the **prod** file.
+`packages/server/src/sse.ts` used to persist the agent registry to
+`$PAI_DIR/MEMORY/STATE/parlay-agents.json` and **rehydrate it at module init**,
+so `PARLAY_DATA_DIR` isolated chat *history* but not the agent *registry*. A
+naive sandbox that only overrode `PARLAY_DATA_DIR` would boot with the prod
+agents loaded and write the registry back to the **prod** file. This tool worked
+around it by also setting `PAI_DIR` to a sandbox-local `pai/` dir.
 
-**Handling:** the sandbox also sets `PAI_DIR` to a sandbox-local `pai/` dir. That
-cleanly redirects the registry (and the tts cache/reports + tool/hook tailers,
-which also key off `PAI_DIR`) into the sandbox. `sandbox up` then asserts the
-sandbox registry is **empty** on first boot — proving the redirect took.
+That workaround was not enough for everyone: Pulse's `boot-smoke.test.ts` cannot
+redirect `PAI_DIR` (its other modules need the real one), so it booted against
+the live registry and the startup prune sweep deleted two real agent channels
+(robots-jcjj). The gap is now closed at the source — `packages/server/src/paths.ts`
+resolves **every** persisted path, and `PARLAY_DATA_DIR` alone redirects all of
+them, registry included.
 
-*This is a genuine finding about Parlay's env contract:* `PARLAY_DATA_DIR` alone
-does not fully isolate a server. Full isolation needs `PARLAY_DATA_DIR` **and**
-`PAI_DIR`. Worth folding into the server's own isolation story eventually.
+**Handling here is unchanged and still correct:** the sandbox sets both
+`PARLAY_DATA_DIR` and `PAI_DIR` (the latter still covers the tts cache/reports
+and the tool/hook tailers, which are not persistence paths and still key off
+`PAI_DIR`). `sandbox up`'s assertion is behavioral — the sandbox registry must be
+**empty** on first boot — so it holds either way.
 
 ### 2. `parlay-ui.{ts,js}` are untracked runtime-required working files
 
