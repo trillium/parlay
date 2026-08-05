@@ -51,13 +51,50 @@ The socket is `<runtime>/relay.sock` (or `$PARLAY_RELAY_SOCK` if set). Keep the
 runtime path short: a Unix socket path must fit `sun_path` (~104 bytes on macOS);
 `$TMPDIR/parlay/relay.sock` is well within it.
 
+### The canonical dir is reserved for the default server (robots-buu8/93xu)
+
+A relay is a per-runtime-dir **singleton bound to exactly one upstream server**,
+picked when it starts — so the relay you enroll on, not your `$PARLAY_SERVER`,
+decides whose registry you land in. The rule that keeps that honest:
+
+- **`$TMPDIR/parlay` (the canonical dir) belongs to the default server**
+  `http://localhost:31337` — the LaunchAgent's dir.
+- **Any other `$PARLAY_SERVER` gets `<canonical>/srv-<hash>`** and therefore its
+  own, unsupervised relay (`parlay_relay_scoped_runtime_dir` in `deploy/lib.sh`).
+  A non-default server needs no install at all: `ensure-up.sh` starts a scoped
+  relay for it on demand.
+
+Scoping keeps non-default servers *out* of the canonical dir; it cannot stop a
+relay from **occupying** it. That is what the install guard and ensure-up's
+binding check below are for — see [`../monitor/NOTES.md`](../monitor/NOTES.md).
+
 ## Install
 
 ```sh
 tools/relay/deploy/install.sh            # build if needed, install, load, verify
 tools/relay/deploy/install.sh --rebuild  # force a fresh build first
-tools/relay/deploy/install.sh --server http://localhost:31337   # custom Pulse URL
+tools/relay/deploy/install.sh --server http://localhost:31337   # explicit (= default)
 ```
+
+### install.sh refuses a non-default server (robots-93xu)
+
+`install.sh` used to default `--server` from an ambient `$PARLAY_SERVER`. The
+LaunchAgent it installs is a fixed singleton on the **canonical** dir, so one
+install run from a shell that happened to export `http://localhost:4242` rebound
+the captain's production relay — permanently, across reboots. Every agent on the
+default server was then refused enrollment, fleet-wide, and the only symptom was
+agents failing to start.
+
+It now exits 2 on any server other than `http://localhost:31337`, and says so
+louder when the value came from the environment rather than from the flag:
+
+```sh
+tools/relay/deploy/install.sh --server http://localhost:4242 \
+  --allow-non-default-server        # deliberate rebind; the only way through
+```
+
+Pinned by `tools/relay/deploy/install.test.sh` (hermetic: every case either stops
+at the guard or at a stubbed non-Darwin `uname`, so nothing is ever installed).
 
 `install.sh` is **idempotent** — re-run it to update the binary/plist; it boots
 out the old agent and reloads cleanly. It finishes by verifying the relay answers
@@ -72,7 +109,8 @@ use it; any legacy poll-path monitors keep working untouched.
 `parlay monitor --agent <id>` (via `tools/monitor/parlay-monitor.sh`) calls
 `tools/relay/deploy/ensure-up.sh` before enrolling. ensure-up:
 
-1. Returns immediately if the relay already answers `/health` (no double-start).
+1. Returns immediately if the relay already answers `/health` **and is bound to
+   the server this caller wants** (no double-start).
 2. Otherwise takes a per-user lock (atomic `mkdir`) so two monitors starting at
    once cannot both launch a relay, re-checks health, then starts the relay by
    the best method available:
@@ -86,6 +124,21 @@ use it; any legacy poll-path monitors keep working untouched.
 
 The relay's control socket is single-binder (a second live relay fails to bind
 and exits), so even a lost lock race can never produce two live relays.
+
+### `/health` alone is a false green (robots-93xu)
+
+`/health` proves a relay answers; it says nothing about **which upstream server
+it is bound to**. The old fast path returned 0 for any healthy relay, so a caller
+got a success line and then died at its own pre-enroll guard one step later.
+
+ensure-up now reads the relay's `GET /agents` → `server` and, on a mismatch,
+exits **3** — deliberately distinct from 1 ("no relay could be started"), because
+the two need opposite responses. It does **not** restart the relay: that relay is
+a live singleton, possibly serving a whole fleet on its own server (robots-mpr3).
+It prints the bound server, the wanted server, and the repair command; when the
+squatted dir is the canonical one it names `install.sh --server …` specifically.
+`parlay-monitor.sh` recognizes exit 3 and stays quiet rather than contradicting
+it with "install the relay" — a relay is precisely what is already running.
 
 ### It never force-restarts a running relay (robots-mpr3)
 

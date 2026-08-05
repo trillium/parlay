@@ -27,7 +27,14 @@ pass() { printf 'ok: %s\n' "$1"; }
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pu.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
 
-RUNTIME="$ROOT/rt"
+# The runtime dir must be the CANONICAL one as lib.sh resolves it — i.e.
+# <getconf DARWIN_USER_TEMP_DIR>/parlay — not an arbitrary dir pinned via
+# $PARLAY_RELAY_RUNTIME. ensure-up's launchd-matching logic (robots-buu8) refuses
+# to use launchd for any *other* runtime dir, so pinning one made every launchd
+# case below fall through to "no relay binary found" and fail. We stub `getconf`
+# instead (see $STUB/getconf), which redirects the canonical dir into $ROOT while
+# leaving the override unset — exactly the shape production runs in.
+RUNTIME="$ROOT/parlay"
 SOCK="$RUNTIME/relay.sock"
 STUB="$ROOT/stubs"
 FAKE_HOME="$ROOT/home"
@@ -73,7 +80,15 @@ case "${1:-}" in
 esac
 exit 0
 S
-chmod +x "$STUB/curl" "$STUB/launchctl"
+# getconf: makes lib.sh's canonical-runtime-dir resolution land inside $ROOT, so
+# the tests exercise the real (unpinned) resolution path without touching the
+# host's actual $TMPDIR/parlay. Any other query falls through to the real binary.
+cat > "$STUB/getconf" <<'S'
+#!/usr/bin/env bash
+if [ "${1:-}" = DARWIN_USER_TEMP_DIR ]; then echo "${ROOT}"; exit 0; fi
+exec /usr/bin/getconf "$@"
+S
+chmod +x "$STUB/curl" "$STUB/launchctl" "$STUB/getconf"
 
 # ── Harness ───────────────────────────────────────────────────────────────────
 # run <job-state> <health-at-offset-seconds|never> [extra ensure-up args...]
@@ -93,7 +108,6 @@ run() {
     PATH="$STUB:/usr/bin:/bin:/usr/sbin:/sbin" \
     HOME="$FAKE_HOME" \
     ROOT="$ROOT" \
-    PARLAY_RELAY_RUNTIME="$RUNTIME" \
     PARLAY_RELAY_HEALTH_WAIT="${WAIT:-1}" \
     PARLAY_RELAY_HEALTH_MAX_WAIT="${MAXWAIT:-20}" \
     /bin/bash "$ENSURE_UP" "$@" >"$ROOT/out" 2>&1 || RC=$?
@@ -176,7 +190,68 @@ else
   pass "--force-restart force-restarts even a healthy relay"
 fi
 
-# ── 7. Unknown flags are rejected rather than silently ignored ────────────────
+# ── 7. A healthy relay bound to the WRONG server is not "up" (robots-93xu) ────
+# /health proves a relay answers; it says nothing about which upstream server it
+# is bound to. Pre-fix the fast path returned 0 here — a false green that sent
+# the caller on to die at its own enroll guard with a success line above it.
+# The relay must NOT be restarted (it is a live singleton), and the exit code
+# must be the distinct 3 so callers can tell this from "no relay".
+cat > "$STUB/curl" <<'S'
+#!/usr/bin/env bash
+# /agents reports the server this relay is bound to; /health is always ok.
+for a in "$@"; do
+  case "$a" in
+    */agents) echo '{"agents":[],"server":"http://localhost:4242","runtime":"x"}'; exit 0 ;;
+  esac
+done
+echo '{"ok":true}'
+S
+chmod +x "$STUB/curl"
+run running 0
+if [ "$RC" -ne 3 ]; then
+  fail "wrong-server relay: exit $RC, want 3 ($(cat "$ROOT/out"))"
+elif [ -s "$ROOT/launchctl.log" ]; then
+  fail "wrong-server relay: it was restarted/kickstarted — $(lc_log)"
+elif ! grep -q "bound to http://localhost:4242" "$ROOT/out"; then
+  fail "wrong-server relay: message does not name the relay's actual server ($(cat "$ROOT/out"))"
+elif ! grep -q -- "install.sh --server http://localhost:31337" "$ROOT/out"; then
+  fail "wrong-server relay: message does not give the repair command ($(cat "$ROOT/out"))"
+else
+  pass "healthy-but-wrong-server relay exits 3, is left running, and names the repair"
+fi
+
+# ── 8. A healthy relay bound to the RIGHT server is still the fast path ────────
+# The guard must not become a blanket failure: same stub shape, matching server.
+cat > "$STUB/curl" <<'S'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    */agents) echo '{"agents":[],"server":"http://localhost:31337/","runtime":"x"}'; exit 0 ;;
+  esac
+done
+echo '{"ok":true}'
+S
+chmod +x "$STUB/curl"
+run running 0
+if [ "$RC" -ne 0 ]; then
+  fail "matching-server relay: exit $RC, want 0 — the guard is over-broad ($(cat "$ROOT/out"))"
+elif [ -s "$ROOT/launchctl.log" ]; then
+  fail "matching-server relay: launchctl was invoked — $(lc_log)"
+else
+  pass "matching server (trailing slash and all) still takes the untouched fast path"
+fi
+
+# Restore the plain health-only stub for the remaining cases.
+cat > "$STUB/curl" <<'S'
+#!/usr/bin/env bash
+at="$(cat "${ROOT}/health-at" 2>/dev/null || echo never)"
+[ "$at" = "never" ] && exit 22
+[ "$(date +%s)" -ge "$at" ] || exit 22
+echo '{"ok":true}'
+S
+chmod +x "$STUB/curl"
+
+# ── 9. Unknown flags are rejected rather than silently ignored ────────────────
 run running 0 --bogus
 if [ "$RC" -ne 2 ]; then
   fail "unknown flag: exit $RC, want 2"
