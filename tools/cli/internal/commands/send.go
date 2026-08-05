@@ -3,7 +3,9 @@ package commands
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/format"
@@ -17,11 +19,41 @@ type sendResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
+// registryLookupTimeout bounds the pre-flight target check so a slow or wedged
+// server degrades to "skip the check" rather than hanging the send.
+const registryLookupTimeout = 5 * time.Second
+
 // Send ports commands.ts's cmdSend. docs/scope-go-cli.md §5 item 1: the
 // target agent is parsed from ANY unrecognized --foo token
 // (`send --mayor "msg"` -> target "mayor"), which no generic flag parser
 // expresses — this hand-rolls the exact loop from commands.ts rather than
 // calling internal/args.Parse.
+//
+// That "any unrecognized --flag is the target" rule is a sharp edge, and it
+// drew blood (robots-ngg5). Every OTHER parlay verb that takes an agent spells
+// it `--agent <id>` — `parlay listen --agent <id>`, the Monitor line `parlay
+// claim` prints — so callers naturally typed
+// `parlay send --agent mc-foo --from firstmate "steer"`. Under the old loop
+// `--agent` fell through to the catch-all and parsed as target "agent", with
+// "mc-foo" folded into the message BODY. The steer landed on a phantom channel
+// named `agent` that no relay poll loop watches, the intended recipient never
+// saw it, and the caller still got `{ok:true, id:<uuid>}` back. A steer that
+// looks delivered and isn't is the worst failure shape there is: the supervisor
+// has no signal to retry.
+//
+// Two changes close that off:
+//
+//   - `--agent <id>` / `--to <id>` are recognized explicitly and consume the
+//     NEXT token as the target, so the house-standard spelling routes correctly
+//     instead of silently inventing a channel. The bare `--<agent-id>`
+//     shorthand documented in help is unchanged.
+//   - The target is checked against the live registry (`GET /api/chat/agents`)
+//     before posting. An unregistered target aborts with a non-zero exit and
+//     near-match suggestions rather than minting a dead channel. The check
+//     fails OPEN — if the registry is unreachable or empty we warn and send
+//     anyway, since a transport problem must not become a new way to lose a
+//     message. `--force` skips it outright, for deliberately seeding a channel
+//     before its agent has registered.
 func Send(argv []string) {
 	if helpWanted("send", argv) {
 		return
@@ -29,6 +61,7 @@ func Send(argv []string) {
 
 	var target, fromOverride string
 	var positionals []string
+	force := false
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
 		switch {
@@ -37,6 +70,16 @@ func Send(argv []string) {
 			if i < len(argv) {
 				fromOverride = argv[i]
 			}
+		case a == "--agent" || a == "--to":
+			// House-standard spelling, shared with `parlay listen --agent`.
+			// Must consume the NEXT token — falling through to the catch-all
+			// below is exactly what produced the phantom `agent` channel.
+			i++
+			if i < len(argv) {
+				target = argv[i]
+			}
+		case a == "--force":
+			force = true
 		case strings.HasPrefix(a, "--"):
 			// Any other unrecognized --flag is the target agent id.
 			target = a[2:]
@@ -73,6 +116,10 @@ func Send(argv []string) {
 		return
 	}
 
+	if !force {
+		requireRegisteredTarget(target)
+	}
+
 	from := strings.TrimSpace(fromOverride)
 	if from == "" {
 		from = strings.TrimSpace(os.Getenv("PARLAY_AGENT_ID"))
@@ -94,4 +141,59 @@ func Send(argv []string) {
 	}
 	fmt.Printf("sent to %s%s — id %s\n", target, fromSuffix, r.ID)
 	format.NextStep("parlay history 5")
+}
+
+// requireRegisteredTarget aborts the send when target is not a registered
+// agent channel. See Send's doc comment for why: POST /api/chat/send accepts
+// any string as toAgent and mints a message id for it, so a send to an
+// unregistered channel is a message written where nothing is polling —
+// indistinguishable, from the caller's side, from a delivered one.
+//
+// Deliberately fails OPEN. If the registry cannot be read (server down, route
+// missing, empty list) we warn on stderr and let the send proceed: this check
+// exists to catch typos and misparsed flags, and turning every registry
+// hiccup into a refused send would trade one lost-message mode for another.
+func requireRegisteredTarget(target string) {
+	agentsList, ok := httpc.TryGetJSON[[]wire.AgentInfo]("/api/chat/agents", registryLookupTimeout)
+	if !ok || len(agentsList) == 0 {
+		fmt.Fprintf(os.Stderr,
+			"parlay send: could not read the agent registry — sending to %q unverified.\n", target)
+		return
+	}
+
+	ids := make([]string, 0, len(agentsList))
+	for _, a := range agentsList {
+		if a.ID == target {
+			return
+		}
+		ids = append(ids, a.ID)
+	}
+
+	msg := fmt.Sprintf("parlay send: %q is not a registered agent — refusing to send.\n", target) +
+		"  Nothing polls an unregistered channel, so this message would be accepted and never delivered.\n"
+	if near := nearestAgentIDs(target, ids); len(near) > 0 {
+		msg += "  Did you mean: " + strings.Join(near, ", ") + "\n"
+	}
+	msg += "  Run 'parlay send' with no arguments to list every targetable agent.\n" +
+		"  Use --force to send anyway (e.g. seeding a channel before its agent registers)."
+	httpc.Die(msg, config.ExitUsage)
+}
+
+// nearestAgentIDs returns up to 5 registered ids sharing a substring with
+// target, case-insensitively — best-effort, enough to turn "refused" into
+// "here is the id you meant" for the common typo and copy-paste cases.
+func nearestAgentIDs(target string, ids []string) []string {
+	t := strings.ToLower(target)
+	var hits []string
+	for _, id := range ids {
+		l := strings.ToLower(id)
+		if strings.Contains(l, t) || strings.Contains(t, l) {
+			hits = append(hits, id)
+		}
+	}
+	sort.Strings(hits)
+	if len(hits) > 5 {
+		hits = hits[:5]
+	}
+	return hits
 }
