@@ -112,8 +112,54 @@ DOMAIN="$(parlay_relay_domain)"
 TARGET="${DOMAIN}/${PARLAY_RELAY_LABEL}"
 started=""
 
-# ── Method 1: supervised launchd agent, if installed ───────────────────────────
-if [ -e "${PARLAY_RELAY_PLIST}" ] && launchctl print "${TARGET}" >/dev/null 2>&1; then
+# ── Is the launchd relay the right relay for what we were asked for? ───────────
+# The LaunchAgent is a fixed singleton: it always serves the CANONICAL runtime dir
+# (its launcher resolves it from getconf, not from our env — launchd does not
+# inherit ours) and the PARLAY_SERVER baked into its plist. Kickstarting it to
+# satisfy a request for a different runtime dir or a different upstream server is
+# wrong twice over: the socket we then wait on never appears (10s dead wait), and
+# worse, if the caller reuses the canonical socket anyway its agent lands in the
+# launchd relay's registry — the production-registry leak of robots-buu8.
+# So: only use launchd when it actually matches what was asked for.
+launchd_matches=1
+# Subshell + unset, NOT a `VAR= func` prefix: in bash a variable assignment
+# preceding a *function* call persists after the function returns.
+if [ "${RUNTIME}" != "$(unset PARLAY_RELAY_RUNTIME; parlay_relay_runtime_dir)" ]; then
+  launchd_matches=0
+  log "requested runtime ${RUNTIME} is not the launchd relay's — not using launchd"
+fi
+if [ "${launchd_matches}" = 1 ] && [ -n "${PARLAY_RELAY_SOCK:-}" ] \
+   && [ "${PARLAY_RELAY_SOCK}" != "$(unset PARLAY_RELAY_SOCK PARLAY_RELAY_RUNTIME; parlay_relay_sock)" ]; then
+  launchd_matches=0
+  log "requested socket ${PARLAY_RELAY_SOCK} is not the launchd relay's — not using launchd"
+fi
+# Guarded on the helper existing: this script can be paired with an older
+# installed lib.sh (see the lib.sh resolution at the top), and an unresolved
+# function under `set -e` would abort the whole start instead of degrading.
+if [ "${launchd_matches}" = 1 ] && command -v parlay_relay_target_server >/dev/null 2>&1; then
+  want_server="$(parlay_relay_target_server)"
+  plist_server="$(parlay_relay_installed_plist_server 2>/dev/null || true)"
+  plist_server="${plist_server%/}"
+  if [ -n "${plist_server}" ] && [ "${plist_server}" != "${want_server}" ]; then
+    launchd_matches=0
+    log "launchd relay serves ${plist_server}, we need ${want_server} — not using launchd"
+  fi
+fi
+
+# A relay we start for a NON-canonical runtime dir is a scoped/scratch relay. Keep
+# its output out of ~/Library/Logs/parlay — production's crash trail must stay
+# readable, and a scratch relay pointed at a dead port emits a poll error per
+# agent per retry. Its log lives beside its own socket instead.
+if [ "${launchd_matches}" = 0 ]; then
+  PARLAY_RELAY_OUT_LOG="${RUNTIME}/relay.out.log"
+  PARLAY_RELAY_ERR_LOG="${RUNTIME}/relay.err.log"
+  PARLAY_RELAY_LOG_DIR="${RUNTIME}"
+fi
+
+# ── Method 1: supervised launchd agent, if installed and matching ──────────────
+if [ "${launchd_matches}" = 0 ]; then
+  : # fall through to a directly-started, correctly-scoped relay
+elif [ -e "${PARLAY_RELAY_PLIST}" ] && launchctl print "${TARGET}" >/dev/null 2>&1; then
   relay_pid="$(parlay_relay_launchd_pid "${TARGET}")"
   if [ -n "${relay_pid}" ] && [ "${FORCE_RESTART}" != 1 ]; then
     # A relay process ALREADY EXISTS — it just is not answering /health yet.
