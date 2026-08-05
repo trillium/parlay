@@ -177,6 +177,17 @@ func claimBrief(agent, name, color, model string, task claimTask) string {
 	fmt.Fprintf(&b, "   Monitor({ command: \"PARLAY_SERVER=%s parlay listen --agent %s --name \\\"%s\\\" --color \\\"%s\\\" --notify-safe\", persistent: true })\n\n",
 		server, agent, name, color)
 
+	// Note the task-ID returned by Monitor{} and keep it. After a context
+	// compaction, TaskList returns 'No tasks found' — that is the harness
+	// todo-board, NOT the Monitor registry. A monitor that was alive before
+	// compaction is still alive after it; TaskList empty ≠ monitor dead.
+	// To verify a monitor survived compaction, use its task-ID:
+	//   TaskOutput({ task_id: "<id>", block: false, timeout: 0 })
+	// status "running" means it is live — do NOT re-arm. Only arm a fresh
+	// monitor when TaskOutput returns an error or status other than "running".
+	// Re-arming on a false-empty TaskList creates duplicate pollers (robots-j9n3).
+	b.WriteString("Note the task-ID that Monitor{} returns and save it in your scratchpad. After a context compaction, TaskList will return 'No tasks found' — that is the harness todo-board, NOT the Monitor registry. Your monitor is still running. To confirm: TaskOutput({ task_id: \"<your-monitor-id>\", block: false, timeout: 0 }) — status 'running' means live. Only re-arm if TaskOutput errors or shows a non-running status. Re-arming on a false-empty TaskList creates duplicate pollers (robots-j9n3).\n\n")
+
 	// Memory recovery, folded in from identity + scratchpad so it arrives with
 	// the claim instead of costing the agent two more commands. A pinned
 	// "📎 Handoff:" pointer, if any, rides along in the identity body.

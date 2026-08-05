@@ -144,6 +144,12 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 		"Build and ship the widget end to end.",
 		"## Definition of done",
 		"## Status protocol",
+		// Guard against the duplicate-arming failure (robots-j9n3): the brief
+		// must warn that TaskList is the todo-board, not the Monitor registry,
+		// and explain how to verify a monitor survived context compaction.
+		"TaskList will return 'No tasks found'",
+		"NOT the Monitor registry",
+		"TaskOutput",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("brief missing %q\n---\n%s", want, out)
@@ -153,6 +159,31 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 	// recovery is now folded in, leaving one startup command (arm the monitor).
 	if strings.Contains(out, "recover your memory") {
 		t.Errorf("brief should no longer tell the agent to run identity + scratchpad; got:\n%s", out)
+	}
+}
+
+// The claim brief warns agents that TaskList is the harness todo-board (not
+// the Monitor registry) so they don't re-arm duplicate monitors after a context
+// compaction that empties the task list (robots-j9n3).
+func TestClaimBriefIncludesTaskListMonitorWarning(t *testing.T) {
+	newClaimServer(t)
+	stubTask(t, claimTask{ID: "task-99", Title: "Keep watching"}, nil)
+	t.Setenv("PARLAY_AGENT_ID", "watcher")
+	t.Setenv("PARLAY_AGENT_NAME", "Watcher")
+	t.Setenv("PARLAY_AGENT_COLOR", "#112233")
+
+	out := captureStdout(t, func() { Claim([]string{"task-99"}) })
+
+	for _, want := range []string{
+		"TaskList will return 'No tasks found'",
+		"NOT the Monitor registry",
+		"TaskOutput",
+		"status 'running' means live",
+		"robots-j9n3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("brief missing TaskList/Monitor warning %q\n---\n%s", want, out)
+		}
 	}
 }
 
