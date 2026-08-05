@@ -4,28 +4,32 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Add durable project-specific notes here as they are discovered through real work.
 
-## `packages/server` is a symlink into the live Pulse install
+## `packages/server` is a standalone Bun server for the Parlay chat API
 
-`packages/server/src/*` (all files except `package.json`) are symlinks into
-`~/.claude/PAI/PULSE/modules/chat` — the actual code that runs live inside
-Pulse. There is one copy of the source; edits from either path hit the same
-file. See `packages/server/README.md` for the rationale and the known
-`tools/split-test` tradeoff (per-branch server testing no longer works since
-every branch resolves to the same external PULSE code).
+`packages/server/src/*` are real files: a self-contained `bun serve()`
+application that owns `/api/chat/*`. Entrypoint `src/index.ts` binds
+`PARLAY_PORT` (default 4242) and routes every request through
+`handleChatRequest`. Run it standalone — `bun run start` (or `bun run dev`
+for watch); config is `PARLAY_PORT` and `PARLAY_DATA_DIR` (history/draft dir,
+default `~/exchange`). See `packages/server/README.md` for the full config
+surface and data-file locations. Live chat history is `~/exchange/chat-history.jsonl`
+— do not move or clobber it.
 
-**As of 2026-08-01, every file in that chain is a broken self-referential
-symlink loop** (verify with `python3 -c "import os; print(os.path.realpath(p))"`
-— it resolves to a path `os.path.exists()` reports `False` for). Confirmed on
-both a disposable treehouse worktree and the primary checkout at
-`~/code/parlay`, so it is not worktree-specific. No file under
-`packages/server/src/` can currently be read or edited through normal tooling
-until someone fixes the symlinks directly under `~/.claude/PAI/PULSE` (outside
-any git worktree — not something an isolated agent should attempt). New
-files with names that don't already exist in that farm are unaffected (Write
-creates a plain file), but they can't be wired into `router.ts`/`index.ts`
-until the loop is fixed. `packages/server/src/debug-log.ts` was added this
-way — a standalone, not-yet-wired handler with wiring instructions in its
-header comment.
+Historical sharp edge (fixed here): `src/*` were once committed symlinks into
+`~/.claude/PAI/PULSE/modules/chat`, which was itself a symlink back to this
+directory — a self-referential loop that made every `import` throw `ELOOP`, so
+Pulse's in-process chat module never loaded and `/api/chat/*` returned 404 to
+the CLI, relay, and panel. The real source was recovered from git and the loop
+symlinks replaced with real files. The Pulse side must stop importing
+`modules/chat` in-process and instead reverse-proxy `/api/chat/*` to this
+standalone server; that rewire and removing the `~/.claude` loop symlink are
+production changes made outside this repo (never edit `~/.claude` from here).
+
+`packages/server/src/debug-log.ts` was written during the loop outage as a
+standalone, not-yet-wired handler (Write could still create files whose names
+did not already exist in the symlink farm). Now that `src/` holds real files
+again it can be wired into `router.ts`/`index.ts` normally; see its header
+comment for the intended wiring.
 
 **`packages/client`'s `build.ts` has a live side effect**: every successful
 build POSTs to `http://127.0.0.1:31337/api/chat/reload`, and that port is the
@@ -45,7 +49,7 @@ persisted `$PARLAY_STATE_HOME/config.json` (default `~/.parlay/config.json`,
 `"server"` key, managed via `parlay remote set/clear`) > coded default
 `http://localhost:4242`. `parlay doctor` reports which source is active. The
 CLI does not import `packages/server` as code, so its functionality is
-independent of the symlink structure below.
+independent of how the server is deployed.
 
 ## Remote debug log + on-screen mobile console (phone-only bug triage)
 
@@ -349,9 +353,8 @@ for eventual publishing but have never actually been published, and the
 `tsc --emitDeclarationOnly` (via a package-local `tsconfig.json`) emits the
 `.d.ts` — `bun run build` runs both. `packages/server` was evaluated and is
 not reasonably publishable: it's a `bun serve()` application with side
-effects on import (opens a port, touches disk), not an importable library,
-and its source is symlinked into the user's live personal Pulse install
-(see the section above) — it remains `private: true`.
+effects on import (opens a port, touches disk), not an importable library
+(see the standalone-server section above) — it remains `private: true`.
 
 `packages/client` also gained `main`/`module`/`exports`/`types` fields and a
 `dist/index.js` build target (`src/lib.ts`), but stays `private: true` — this
