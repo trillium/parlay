@@ -10,24 +10,24 @@ export const CSS_SPEECH = `
   .pa-bubble.pa-speaking .pa-flag, .pa-bubble:hover .pa-flag { display: block; }
   .pa-flag:active { transform: scale(1.2); }
   @keyframes pa-speak-pulse { 0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pa-amber) 55%, transparent); } 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pa-amber) 25%, transparent); } }
-  /* Replay dots + per-reply transport (#18). Dots hang OUTSIDE the bubble in
-     the avatar gap (absolute, zero horizontal room in the content area). */
-  .pa-block { position: relative; display: block; }
-  .pa-block + .pa-block { margin-top: 2px; }
-  .pa-dot-btn {
-    position: absolute; left: -26px; top: 3px;
-    width: 16px; height: 16px; padding: 0; cursor: pointer;
-    background: none; border: none;
-  }
-  .pa-dot-btn::before {
-    content: ''; display: block; width: 9px; height: 9px; margin: 3px auto;
+  /* task-1h47: passages render INLINE inside ONE paragraph — no block-per-passage
+     splits — so paragraphs flow naturally and a link spanning two passages keeps
+     its anchor whole. Each passage span is tap-to-re-read. */
+  .pa-para { white-space: pre-wrap; }
+  .pa-sb { display: inline; cursor: pointer; border-radius: 3px; }
+  .pa-sb:hover { background: color-mix(in srgb, var(--pa-green) 10%, transparent); }
+  /* Reading-progress dots kept as a compact row under the text; one per passage,
+     each re-reads its passage; the active dot follows the spoken passage. */
+  .pa-dots { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+  .pa-replay-dot { width: 14px; height: 14px; padding: 0; cursor: pointer; background: none; border: none; line-height: 0; }
+  .pa-replay-dot::before {
+    content: ''; display: block; width: 8px; height: 8px; margin: 3px;
     border-radius: 50%;
     background: color-mix(in srgb, var(--pa-green) 25%, transparent);
     border: 1px solid color-mix(in srgb, var(--pa-green) 60%, transparent);
   }
-  .pa-dot-btn:hover::before { background: var(--pa-green); }
-  .pa-block .pa-sb { display: block; white-space: pre-wrap; }
-  .pa-block:has(.pa-sb.pa-speaking-block) .pa-dot-btn::before { background: var(--pa-amber); border-color: var(--pa-amber); }
+  .pa-replay-dot:hover::before { background: var(--pa-green); }
+  .pa-replay-dot.pa-replay-dot-active::before { background: var(--pa-amber); border-color: var(--pa-amber); }
   .pa-block-ctl { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
   .pa-playpause { width: 26px; height: 22px; padding: 0; border-radius: 6px; cursor: pointer; background: color-mix(in srgb, var(--pa-green) 12%, transparent); border: 1px solid color-mix(in srgb, var(--pa-green) 40%, transparent); color: var(--pa-green); font-size: 10px; line-height: 1; }
   .pa-block-ctl .pa-flag { position: static; display: inline-block; width: 22px; height: 22px; }

@@ -23,9 +23,11 @@ export function openCorrector(api: any) {
   if (!last) return
   document.querySelectorAll('.pa-corrector').forEach(e => e.remove())
 
-  // Anchor under the spoken block when we know it, else under the bubble
-  const anchor = (last.msgId && last.blockIdx != null
-    ? document.querySelector(`[data-pa-id="${last.msgId}"] .pa-block[data-bi="${last.blockIdx}"]`)
+  // Anchor under the message paragraph, else under the bubble. task-1h47: passages
+  // are inline `.pa-sb` spans in ONE `.pa-para` block now, so there is no per-block
+  // element to anchor to — attach the corrector below the whole paragraph.
+  const anchor = (last.msgId
+    ? document.querySelector(`[data-pa-id="${last.msgId}"] .pa-para`)
     : null) ?? (last.msgId ? document.querySelector(`[data-pa-id="${last.msgId}"] .pa-bubble`) : null)
   if (!anchor) return
 
