@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
@@ -168,5 +169,50 @@ func TestPostJSONSendsBodyAndDecodesResponse(t *testing.T) {
 	}
 	if gotBody["text"] != "hi" {
 		t.Errorf("server saw body %+v, want text=hi", gotBody)
+	}
+}
+
+// Regression for robots-gxlb: TryPostJSON used the shared, timeout-less
+// Client, so a relay that accepted the TCP connection and then never
+// answered hung the calling process forever — fatal on the supervision path,
+// where `parlay supervise` posts the wake. It now takes an explicit timeout
+// like TryGetJSON always has, and must give up on its own.
+func TestTryPostJSONGivesUpOnAServerThatNeverAnswers(t *testing.T) {
+	release := make(chan struct{})
+	withServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// Accept the request, then hold it open past the client's timeout.
+		<-release
+	})
+	// Registered AFTER withServer so it runs BEFORE the server's own Close
+	// cleanup (t.Cleanup is LIFO) — httptest.Server.Close blocks on
+	// outstanding requests, so the handler must be let go first.
+	t.Cleanup(func() { close(release) })
+
+	done := make(chan bool, 1)
+	go func() {
+		ok, _ := TryPostJSON("/api/chat/message", map[string]any{"text": "hi"}, 150*time.Millisecond)
+		done <- ok
+	}()
+
+	select {
+	case ok := <-done:
+		if ok {
+			t.Error("TryPostJSON() ok = true, want false when the server never answers")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("TryPostJSON() never returned — its timeout is not being honored")
+	}
+}
+
+// The shared one-shot client must stay bounded, and the long-poll client
+// must stay unbounded. Both halves matter: an unbounded Client is the
+// robots-gxlb hang, and a bounded UnboundedClient would sever every
+// `parlay monitor` poll (the server holds one open for 25s).
+func TestClientIsBoundedAndOnlyTheLongPollClientIsNot(t *testing.T) {
+	if Client.Timeout <= 0 {
+		t.Errorf("Client.Timeout = %v, want a positive bound (robots-gxlb)", Client.Timeout)
+	}
+	if UnboundedClient.Timeout != 0 {
+		t.Errorf("UnboundedClient.Timeout = %v, want 0 — the long-poll caller must not be severed", UnboundedClient.Timeout)
 	}
 }

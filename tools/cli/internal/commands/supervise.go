@@ -155,7 +155,7 @@ func postToRelay(agentID, text string) bool {
 		"channel": agentID,
 		"role":    "agent",
 		"text":    text,
-	})
+	}, httpc.DefaultTimeout)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "warn: failed to post to relay — %s\n", reason)
 	}
@@ -216,8 +216,14 @@ func Supervise(argv []string) {
 			}
 		}
 		message := fmt.Sprintf("%screw: %s away-mode digest — %s", daemonMarker, agentID, strings.Join(parts, "; "))
+		// Exit non-zero, not 0-with-an-error-line: the queue is retained and
+		// nothing was delivered, and a caller that can only see the exit code
+		// must be able to tell that apart from a real drain (robots-gxlb).
 		if !postToRelay(agentID, message) {
-			fmt.Fprintln(os.Stderr, "error: failed to deliver buffered events; queue retained")
+			httpc.Die(
+				fmt.Sprintf("error: failed to deliver %d buffered event(s) for %s; queue retained", len(buffered), agentID),
+				config.ExitRuntime,
+			)
 			return
 		}
 		ClearUnattendedQueue(agentID)
@@ -246,12 +252,23 @@ func Supervise(argv []string) {
 	}
 
 	message := fmt.Sprintf("%screw: %s is %s%s", daemonMarker, agentID, act.parsed.verb, detail)
-	posted := postToRelay(agentID, message)
+
+	// A failed post must not print the success-shaped "supervisor woken:"
+	// line, and must not exit 0. The marker is deliberately left un-advanced
+	// so the event is not lost — which means this exact line re-fires on the
+	// next call, so a caller reading stdout would have looped forever on a
+	// down relay while the exit code said everything was fine (robots-gxlb).
+	if !postToRelay(agentID, message) {
+		httpc.Die(
+			fmt.Sprintf("supervise %s: supervisor NOT woken (%s%s) — relay post failed; marker not advanced, retry when the relay is back", agentID, act.parsed.verb, detail),
+			config.ExitRuntime,
+		)
+		return
+	}
+
 	fmt.Printf("supervisor woken: %s %s%s\n", agentID, act.parsed.verb, detail)
 
 	// Mark the line seen only after a successful post, to prevent event
 	// loss on relay failure.
-	if posted {
-		writeSeenMarker(agentID, act.lineIndex, hashLine(act.line))
-	}
+	writeSeenMarker(agentID, act.lineIndex, hashLine(act.line))
 }

@@ -296,7 +296,11 @@ type pollMessage struct {
 // !res.ok (non-2xx -> sleep 2s) branches exactly, plus the
 // `msg.id && msg.role && msg.text != null` guard before emitting a line.
 func pollOnce(server, channelParam string, lastID *string, notifySafe bool, notifyBudget int, out io.Writer) time.Duration {
-	resp, err := httpc.Client.Get(fmt.Sprintf("%s/api/chat/poll?after=%s%s", server, *lastID, channelParam))
+	// UnboundedClient, not Client: the server holds a poll open for 25s
+	// before answering with its {"timeout":true} marker, so the shared
+	// client's DefaultTimeout would sever every poll in flight. This loop is
+	// the one place a total-timeout-free client is correct (robots-gxlb).
+	resp, err := httpc.UnboundedClient.Get(fmt.Sprintf("%s/api/chat/poll?after=%s%s", server, *lastID, channelParam))
 	if err != nil {
 		return 3 * time.Second
 	}

@@ -281,3 +281,102 @@ func TestHashLineIsShortAndStable(t *testing.T) {
 		t.Error("hashLine() collided for different input (may be a coincidence, but check)")
 	}
 }
+
+// deadServerURL returns a URL nothing is listening on — the "relay is down"
+// case both regressions below turn on.
+func deadServerURL(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+	return url
+}
+
+// Regression for robots-gxlb defect 1: a failed relay post used to print the
+// success-shaped "supervisor woken: ..." line to stdout and exit 0, while
+// deliberately not advancing the seen marker — so the same line re-fired on
+// every subsequent call and a caller trusting stdout would loop forever.
+// It must now exit non-zero and print no wake line; the marker must still
+// stay put so the event is not lost.
+func TestSuperviseFailedPostExitsNonZeroAndPrintsNoWakeLine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_SERVER", deadServerURL(t))
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_AGENT_ID", "agent-fp")
+	t.Setenv("PARLAY_STATUS_FILE", "")
+	t.Setenv("PARLAY_UNATTENDED_FLAG", "")
+
+	writeStatus(t, home, "agent-fp", "done: finished\n")
+
+	var out string
+	code, exited := withExitTrap(t, func() {
+		out = captureStdout(t, func() { Supervise([]string{"agent-fp"}) })
+	})
+	if !exited || code != 1 {
+		t.Errorf("Supervise() with a dead relay exit = (%d, %v), want (1, true)", code, exited)
+	}
+	if strings.Contains(out, "supervisor woken") {
+		t.Errorf("stdout = %q, want no success-shaped wake line when the post failed", out)
+	}
+	if _, err := os.Stat(markerFile("agent-fp")); !os.IsNotExist(err) {
+		t.Errorf("seen marker exists after a failed post — the event would be lost on retry")
+	}
+}
+
+// The event-loss guarantee the un-advanced marker exists for: once the relay
+// is back, the very same terminal line must still wake the supervisor.
+func TestSuperviseRetriesTheSameLineAfterTheRelayRecovers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_AGENT_ID", "agent-fr")
+	t.Setenv("PARLAY_STATUS_FILE", "")
+	t.Setenv("PARLAY_UNATTENDED_FLAG", "")
+
+	writeStatus(t, home, "agent-fr", "blocked: waiting on ci\n")
+
+	t.Setenv("PARLAY_SERVER", deadServerURL(t))
+	withExitTrap(t, func() { captureStdout(t, func() { Supervise([]string{"agent-fr"}) }) })
+
+	var bodies []map[string]any
+	srv := newSuperviseServer(t, &bodies)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+
+	out := captureStdout(t, func() { Supervise([]string{"agent-fr"}) })
+	if !strings.Contains(out, "supervisor woken") {
+		t.Errorf("stdout after recovery = %q, want the wake line", out)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("relay posts after recovery = %d, want 1 (the missed event must re-fire)", len(bodies))
+	}
+	if !strings.Contains(bodies[0]["text"].(string), "is blocked") {
+		t.Errorf("posted text = %v, want it to mention 'is blocked'", bodies[0]["text"])
+	}
+}
+
+// Regression for robots-gxlb defect 2: --drain used to print its
+// delivery-failed line and still exit 0, so a caller could not tell a
+// delivered drain from a retained one by exit code.
+func TestSuperviseDrainFailureExitsNonZeroAndRetainsQueue(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_SERVER", deadServerURL(t))
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_AGENT_ID", "agent-df")
+	t.Setenv("PARLAY_STATUS_FILE", "")
+	t.Setenv("PARLAY_UNATTENDED_FLAG", "")
+
+	EnqueueUnattended("agent-df", "done", "finished while away")
+
+	var out string
+	code, exited := withExitTrap(t, func() {
+		out = captureStdout(t, func() { Supervise([]string{"agent-df", "--drain"}) })
+	})
+	if !exited || code != 1 {
+		t.Errorf("Supervise(--drain) with a dead relay exit = (%d, %v), want (1, true)", code, exited)
+	}
+	if strings.Contains(out, "drained") {
+		t.Errorf("stdout = %q, want no drained confirmation when delivery failed", out)
+	}
+	if got := ReadUnattendedQueue("agent-df"); len(got) != 1 {
+		t.Errorf("queue after a failed drain = %v, want the 1 event retained", got)
+	}
+}
