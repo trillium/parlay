@@ -57,6 +57,10 @@ const sock = process.argv[2]
 const boundServer = process.argv[3]
 const runtime = process.argv[4]
 const log = process.argv[5]
+// Milliseconds to stall GET /agents before answering, simulating a real relay
+// whose registry response grows with the fleet (robots-dcag). /health stays
+// instant, matching the real relay: it binds and serves before spool replay.
+const agentsDelayMs = Number(process.argv[6] ?? 0)
 
 Bun.serve({
   unix: sock,
@@ -64,8 +68,11 @@ Bun.serve({
     const path = new URL(req.url).pathname
     appendFileSync(log, `${req.method} ${path}\n`)
     if (path === "/health") return Response.json({ ok: true })
-    if (path === "/agents")
+    if (path === "/agents") {
+      if (agentsDelayMs > 0)
+        await new Promise((r) => setTimeout(r, agentsDelayMs))
       return Response.json({ agents: [], server: boundServer, runtime })
+    }
     if (path === "/register") {
       const body = (await req.json()) as { agent: string }
       const spool = join(runtime, `${body.agent}.chan`)
@@ -77,15 +84,16 @@ Bun.serve({
 })
 TS
 
-# start_stub <dir> <bound-server> → sets STUB_SOCK / STUB_LOG / STUB_RUNTIME
+# start_stub <dir> <bound-server> [agents-delay-ms] → STUB_SOCK/STUB_LOG/STUB_RUNTIME
 start_stub() {
   STUB_RUNTIME="$1"
   local bound="$2"
+  local delay="${3:-0}"
   mkdir -p "${STUB_RUNTIME}"
   STUB_SOCK="${STUB_RUNTIME}/relay.sock"
   STUB_LOG="${STUB_RUNTIME}/requests.log"
   : >"${STUB_LOG}"
-  bun "${ROOT}/stub-relay.ts" "${STUB_SOCK}" "${bound}" "${STUB_RUNTIME}" "${STUB_LOG}" \
+  bun "${ROOT}/stub-relay.ts" "${STUB_SOCK}" "${bound}" "${STUB_RUNTIME}" "${STUB_LOG}" "${delay}" \
     >"${STUB_RUNTIME}/stub.log" 2>&1 &
   STUBS="${STUBS} $!"
   for _ in $(seq 1 60); do
@@ -109,6 +117,10 @@ run_monitor() {
     export PARLAY_RELAY_RUNTIME="${runtime}"
     export PARLAY_RELAY_SOCK="${sock}"
     [ -n "${server}" ] && export PARLAY_SERVER="${server}"
+    # Set by a caller that needs a specific probe bound (section C); unset
+    # otherwise so every other test exercises the shipped default.
+    [ -n "${PROBE_TIMEOUT_OVERRIDE:-}" ] \
+      && export PARLAY_RELAY_PROBE_TIMEOUT="${PROBE_TIMEOUT_OVERRIDE}"
     exec "${MONITOR}" --agent "${agent}"
   ) >"${out}" 2>"${err}" &
   local pid=$!
@@ -265,6 +277,97 @@ if grep -q "/register" "${STUB_LOG}"; then
 else
   bad "unset PARLAY_SERVER was blocked" "exit=${CODE} ${ERR}"
 fi
+
+# ══ C. a slow /agents probe must never kill the monitor ══════════════════════
+# robots-dcag: the section-B probe was a bare `VAR=$(curl … | sed …)`, and under
+# the monitor's `set -euo pipefail` a curl timeout (exit 28) became the
+# assignment's status and killed the script right here — before /register, with
+# curl's stderr sent to /dev/null. `parlay listen` had already registered and
+# announced the agent, so it sat in the panel looking healthy with no stream.
+echo
+echo "C. a slow/failed server probe degrades to unverified, never to death"
+
+# C1. /agents stalls past the probe bound. Pre-fix: exit 28, no /register.
+start_stub "${ROOT}/c1" "http://127.0.0.1:45001" 3000 || exit 1
+PROBE_TIMEOUT_OVERRIDE=1
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45001" "verify-agent"
+if [ "${CODE}" = 28 ]; then
+  bad "monitor died with curl's timeout code — robots-dcag is still open" "exit=28"
+elif grep -q "/register" "${STUB_LOG}"; then
+  ok "enrolls anyway when the /agents probe times out"
+else
+  bad "a slow /agents probe stopped the monitor from enrolling" "exit=${CODE} ${ERR}"
+fi
+case "${ERR}" in
+  *"proceeding unverified"*) ok "says out loud that the server could not be verified" ;;
+  *) bad "skipped verification silently — a real mismatch would slip through" "${ERR}" ;;
+esac
+
+# C2. Same, with no lib.sh alongside: the inline fallback probe is a second copy
+#     of the same code and must be guarded identically. This path can also name
+#     curl's exit code, which the lib.sh helper swallows by design.
+start_stub "${ROOT}/c2" "http://127.0.0.1:45001" 3000 || exit 1
+MONITOR_SAVED="${MONITOR}"
+MONITOR="${ROOT}/nolib/tools/monitor/parlay-monitor.sh"
+cp "${MONITOR_SAVED}" "${MONITOR}"; chmod +x "${MONITOR}"
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45001" "verify-agent"
+MONITOR="${MONITOR_SAVED}"
+if grep -q "/register" "${STUB_LOG}"; then
+  ok "inline fallback probe is guarded too (no lib.sh)"
+else
+  bad "fallback probe still aborts on timeout" "exit=${CODE} ${ERR}"
+fi
+case "${ERR}" in
+  *"curl exit 28"*) ok "names curl's timeout code so the cause is diagnosable" ;;
+  *) bad "probe failure does not report why" "${ERR}" ;;
+esac
+PROBE_TIMEOUT_OVERRIDE=""
+
+# C3. THE GUARD MUST NOT BECOME A NO-OP. A relay that is merely slow — but still
+#     answers inside the (now generous) budget — must be read and refused when it
+#     serves the wrong server. Tolerating an unknown answer is the fix; treating
+#     every answer as unknown would silently reopen robots-buu8.
+start_stub "${ROOT}/c3" "${DEFAULT_SERVER}" 1200 || exit 1
+PROBE_TIMEOUT_OVERRIDE=10
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45001" "verify-agent"
+PROBE_TIMEOUT_OVERRIDE=""
+if [ "${CODE}" = 1 ] && ! grep -q "/register" "${STUB_LOG}"; then
+  ok "a slow but answering relay is still verified and refused (buu8 intact)"
+else
+  bad "the cross-server guard went slack — robots-buu8 reopens" \
+      "exit=${CODE} requests: $(tr '\n' ' ' <"${STUB_LOG}")"
+fi
+
+# C4. Any setup failure must announce the registered-but-deaf consequence. The
+#     original bug was survivable only because it was silent; nothing in the
+#     monitor's output distinguished "died" from "streaming quietly".
+case "${ERR}" in
+  *"registered-but-deaf"*) ok "a setup failure names the registered-but-deaf outcome" ;;
+  *) bad "setup failure exits without warning the agent is deaf" "${ERR}" ;;
+esac
+
+# C5. The default probe bound must be well clear of a real /agents response. The
+#     shipped default was 2s; the captain's box answers in >2s at 269 agents.
+default_probe="$(sed -n 's/.*PARLAY_RELAY_PROBE_TIMEOUT:-\([0-9]*\)}.*/\1/p' "${MONITOR}" | head -1)"
+if [ -n "${default_probe}" ] && [ "${default_probe}" -ge 10 ]; then
+  ok "default probe timeout is ${default_probe}s (clear of a real /agents read)"
+else
+  bad "default probe timeout is too tight for a real fleet" "got '${default_probe}'"
+fi
+
+# C6. lib.sh's own helper must honor the same tunable and still return 0 on a
+#     timeout — it is the probe the monitor uses whenever lib.sh is present, so a
+#     hardcoded 2s there would leave the real >2s /agents read unverifiable.
+start_stub "${ROOT}/c6" "${DEFAULT_SERVER}" 1500 || exit 1
+got="$(PARLAY_RELAY_PROBE_TIMEOUT=10 parlay_relay_reported_server "${STUB_SOCK}")"
+[ "${got}" = "${DEFAULT_SERVER}" ] \
+  && ok "parlay_relay_reported_server reads a slow relay when given the budget" \
+  || bad "helper ignores PARLAY_RELAY_PROBE_TIMEOUT (still capped at 2s?)" "got '${got}'"
+
+got="$(PARLAY_RELAY_PROBE_TIMEOUT=1 parlay_relay_reported_server "${STUB_SOCK}")"; rc=$?
+[ "${rc}" = 0 ] && [ -z "${got}" ] \
+  && ok "helper returns 0 with an empty result on timeout (never aborts a caller)" \
+  || bad "helper signals failure on timeout — set -e callers would die" "rc=${rc} got='${got}'"
 
 echo
 echo "parlay-monitor.test: ${pass} passed, ${fail} failed"
