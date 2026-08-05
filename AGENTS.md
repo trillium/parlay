@@ -556,7 +556,7 @@ The relay side now binds and serves before `resumeFromSpools`, so `/health`
 answers in milliseconds at any fleet size. `TestControlSocketBindsBeforeSpoolResume`
 (`tools/relay/startup_test.go`) pins that ordering against the process's own log;
 `tools/relay/deploy/ensure-up.test.sh` pins the start/wait policy with stubbed
-`launchctl`/`curl`. Anything reordering relay startup must keep the bind first.
+`getconf`/`launchctl`/`curl`. Anything reordering relay startup must keep the bind first.
 ## Never merge on a green check alone — run `parlay merge-gate <pr>` (robots-jap6)
 
 A green status check in this repo is **not** evidence that anything reviewed

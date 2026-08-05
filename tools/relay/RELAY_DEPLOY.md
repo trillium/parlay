@@ -115,7 +115,7 @@ tools/relay/deploy/ensure-up.sh --force-restart # restart even a running relay
 ```
 
 Behavior is pinned by `tools/relay/deploy/ensure-up.test.sh` (hermetic: stubbed
-`launchctl`/`curl`, redirected `$HOME` and runtime dir) and by
+`getconf`/`launchctl`/`curl`, redirected `$HOME` and runtime dir) and by
 `TestControlSocketBindsBeforeSpoolResume` in `tools/relay/startup_test.go`.
 
 ## Operate
