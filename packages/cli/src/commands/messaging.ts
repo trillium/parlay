@@ -5,19 +5,88 @@ import { fmtMsg, nextStep } from "../format"
 import { helpWanted } from "../help"
 import type { AgentInfo, ChatMessage } from "../types"
 
+/** Bounds the pre-flight registry lookup so a wedged server skips the check
+ *  rather than hanging the send. */
+const REGISTRY_LOOKUP_TIMEOUT_MS = 5_000
+
+/**
+ * Aborts the send when `target` is not a registered agent channel.
+ *
+ * `POST /api/chat/send` accepts any string as `toAgent` and mints a message id
+ * for it, so a send to an unregistered channel is a message written where
+ * nothing polls — indistinguishable, from the caller's side, from a delivered
+ * one (robots-ngg5).
+ *
+ * Deliberately fails OPEN: an unreadable registry warns and proceeds. This
+ * check catches typos and misparsed flags; making every registry hiccup a
+ * refused send would trade one lost-message mode for another.
+ */
+async function requireRegisteredTarget(target: string) {
+  let agents: AgentInfo[] | undefined
+  try {
+    const res = await fetch(`${SERVER}/api/chat/agents`, {
+      signal: AbortSignal.timeout(REGISTRY_LOOKUP_TIMEOUT_MS),
+    })
+    if (res.ok) agents = (await res.json()) as AgentInfo[]
+  } catch {
+    // fall through to the fail-open branch below
+  }
+
+  if (!agents?.length) {
+    console.error(`parlay send: could not read the agent registry — sending to "${target}" unverified.`)
+    return
+  }
+  if (agents.some((a) => a.id === target)) return
+
+  const t = target.toLowerCase()
+  const near = agents
+    .map((a) => a.id)
+    .filter((id) => {
+      const l = id.toLowerCase()
+      return l.includes(t) || t.includes(l)
+    })
+    .sort()
+    .slice(0, 5)
+
+  return die(
+    [
+      `parlay send: "${target}" is not a registered agent — refusing to send.`,
+      "  Nothing polls an unregistered channel, so this message would be accepted and never delivered.",
+      ...(near.length ? [`  Did you mean: ${near.join(", ")}`] : []),
+      "  Run 'parlay send' with no arguments to list every targetable agent.",
+      "  Use --force to send anyway (e.g. seeding a channel before its agent registers).",
+    ].join("\n"),
+    EXIT_USAGE,
+  )
+}
+
 export async function cmdSend(args: string[]) {
   if (helpWanted("send", args)) return
 
-  // Separate known flags (--from) from the dynamic --<agent-id> target flag.
-  // `send --mayor "msg"` → target=mayor, text="msg"
-  // `send` (no args)    → list targetable agents
+  // Separate known flags (--from, --agent/--to, --force) from the dynamic
+  // --<agent-id> target flag.
+  // `send --mayor "msg"`        → target=mayor, text="msg"
+  // `send --agent mayor "msg"`  → same, house-standard spelling
+  // `send` (no args)            → list targetable agents
+  //
+  // robots-ngg5: `--agent` used to fall through to the catch-all below and
+  // parse as target "agent", folding the intended recipient into the message
+  // BODY — so a steer landed on a phantom channel no relay polls while the
+  // caller still got `{ok:true, id}` back. Every other parlay verb spells this
+  // `--agent <id>` (`parlay listen --agent <id>`), so it must consume the NEXT
+  // token here too.
   let target: string | undefined
   let fromOverride: string | undefined
+  let force = false
   const positionals: string[] = []
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === "--from") {
       fromOverride = args[++i]
+    } else if (a === "--agent" || a === "--to") {
+      target = args[++i]
+    } else if (a === "--force") {
+      force = true
     } else if (a.startsWith("--")) {
       // Any unrecognized --flag is the target agent id (e.g. --mayor → "mayor")
       target = a.slice(2)
@@ -43,6 +112,8 @@ export async function cmdSend(args: string[]) {
   const text = positionals.join(" ").trim()
   if (!text) return die(`parlay send: message text required (e.g. send --${target ?? "<agent-id>"} "your message")`, EXIT_USAGE)
   if (!target) return die("parlay send: no target agent — use send --<agent-id> \"msg\" or bare send to list agents", EXIT_USAGE)
+
+  if (!force) await requireRegisteredTarget(target)
 
   // Auto-fill from PARLAY_AGENT_ID so agent→agent attribution works with no boilerplate.
   const from = (fromOverride ?? process.env.PARLAY_AGENT_ID ?? "").trim()
