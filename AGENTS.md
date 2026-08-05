@@ -587,8 +587,30 @@ Decision logic lives in the pure `ComputeMergeGate(MergeGateSnapshot)` so
 `fetchMergeGateSnapshot` is the only part that shells out. **Go-only, no TS
 port** — `bin/parlay` execs the Go binary for everything except
 `lavish-import`, so the verb is reachable everywhere, and `packages/cli` is
-the retired path. Do not add it to `tools/cli/parity/run.sh`; there is no TS
-side to diff against.
+the retired path. Do not add a `check` case for it to `tools/cli/parity/run.sh`;
+there is no TS side to diff against. Its **help text is the exception** — see
+the help-parity note below.
+
+### A Go-only verb still needs its help text mirrored into `packages/cli/src/help.ts`
+
+"No TS port" applies to the implementation, not the documentation.
+`tools/cli/internal/help/help.go` is a *data port* of
+`packages/cli/src/help.ts` (its own header says so), and the parity harness's
+four `help …` cases each print the **entire** usage block before any
+per-command text — so one line present in the Go usage and absent from the TS
+one fails all four at once, and the harness's fail count stops reading as a
+clean gate. That is exactly what happened when `claim`, `merge-gate`, and
+`sweep` were added Go-side only (robots-ya4f: `pass=39 fail=4`, four failures
+from a single drift). All three are now documented in `help.ts` — in `USAGE`
+and in `HELP` — even though `index.ts` has no `case` for them, because that
+text describes what the *shipped* CLI (the Go binary) supports, not what
+`packages/cli` dispatches.
+
+When you add a verb to the Go CLI, add its usage line and `HELP` entry to
+`packages/cli/src/help.ts` in the same change, byte-identical (Go's
+`{{SERVER}}` placeholder ↔ TS's `${SERVER}`). Verify with
+`tools/cli/parity/run.sh` — `fail=0` is the bar; a non-zero baseline means a
+real regression can land inside pre-existing noise.
 
 ## Finished agents are only collected by `parlay sweep` — firstmate can never see them (robots-6xq7)
 
@@ -608,7 +630,9 @@ for each one, and tears down the provably-finished through
 error the sweep reports and steps over instead of an `os.Exit`. Default is a
 dry run; `--apply` acts. Policy lives in the pure `ClassifySweep`, tested
 with no filesystem in `sweep_test.go`. **Go-only, no TS port** — same
-reasoning as `merge-gate` above; keep it out of `tools/cli/parity/run.sh`.
+reasoning as `merge-gate` above; keep its `check` case out of
+`tools/cli/parity/run.sh`, but mirror its help text into
+`packages/cli/src/help.ts` (see the help-parity note above).
 
 Four things are never swept, and each guard exists because of a real way this
 could destroy work: the sweeping agent itself; ids listed in

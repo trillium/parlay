@@ -2,6 +2,17 @@
 
 import { SERVER } from "./config"
 
+// This file is the SOURCE OF TRUTH for the shipped CLI's help text:
+// tools/cli/internal/help/help.go is a data port of it, and
+// tools/cli/parity/run.sh diffs the two on every `help …` case (each prints the
+// full USAGE first, so one drifted line fails four cases at once).
+//
+// Some verbs documented below are Go-only and have no `case` in index.ts —
+// `claim`, `merge-gate`, `sweep` (see this repo's CLAUDE.md). That is
+// deliberate: bin/parlay execs the Go binary for everything except
+// lavish-import, so this text describes what the shipped CLI supports, not what
+// packages/cli dispatches. Adding a Go-only verb means adding its USAGE line and
+// HELP entry HERE too, or the harness's help cases go red.
 export const USAGE = `parlay — talk to a Parlay chat server (current target: ${SERVER})
 
 Usage:
@@ -36,6 +47,8 @@ Usage:
   parlay robots-tail [--once]     Push fast-path: tail robots events.jsonl → mechanic-dispatch (~1s, poll stays fallback)
   parlay launch                   List all known agents + live status (from ~/.parlay/agents/)
   parlay launch <id>              Spawn an offline agent via parlay-spawn (uses identity frontmatter)
+  parlay claim <task-id>          One-call agent bootstrap: profile + enroll + the task, from a ticket (idea-tm0)
+  parlay merge-gate <pr>          Is this PR ACTUALLY safe to merge? (catches green-but-vacuous checks)
   parlay variant launch <id>      Fork a live agent into an isolated git-worktree variant
   parlay variant list [<id>]      List variants (optionally filtered to one primary)
   parlay variant merge <id>       Merge variant's insights back into primary (idempotent)
@@ -43,6 +56,8 @@ Usage:
   parlay crew-state <id>          Read an agent's current state (reconcile status vs oracle)
   parlay supervise <id>           Wake-on-actionable-status loop with absorb-when-working logic
   parlay teardown <id> [--force]  Safe destroy of an agent with worktree (refuses unlanded work)
+  parlay sweep [--apply]          Fleet closure sweep: close every done agent, surface the rest
+  parlay sweep --agent <id>       Sweep one agent by id (skips the per-task-spawn proof)
   parlay guard [--repo P]         Runtime worktree-tangle + watcher-liveness alarm (advisory; never blocks)
   parlay guard --beat             Touch the liveness beacon (watcher heartbeat, per poll cycle)
   parlay lavish-import            Import lavish sessions
@@ -76,12 +91,15 @@ const HELP: Record<string, string> = {
   health: `parlay health — the SERVER's vitals in one glance.\nChecks: relay reachable (subscribers/pollers/agents counts + memory/history stats), the Pulse wrapper's\n/api/pulse/health when the relay runs inside Pulse, and the eval-engine /health (protocol version).\nExit 1 if the relay or engine is down. Same view for every caller — for YOUR OWN state, run: parlay doctor`,
   doctor: `parlay doctor — THIS agent's self-diagnosis; every check prints PASS/WARN/FAIL plus the fix command.\nChecks: server URL source (env/config/default) → PARLAY_AGENT_ID set → server reachable → registered on\nthe relay → monitor listening (presence) → identity.md/scratchpad.md exist, identity frontmatter parses\nand matches the agent id (handoff pointer noted) → eval-engine reachable. Runs every check even after\nfailures. Exit 1 if anything FAILed.\nEnv: PARLAY_SERVER, PARLAY_AGENT_ID, PARLAY_AGENT_HOME, PARLAY_EVAL_ENGINE_URL, PARLAY_STATE_HOME.\nSee 'parlay remote --help' for the persisted server-URL config.`,
   launch: `parlay launch — discover and launch agents defined in ~/.parlay/agents/.\nUsage: parlay launch          → list all known agents with live status\n       parlay launch <id>    → spawn the named agent via parlay-spawn (reads identity.md for name/color/cwd/model)\nOffline agents are clearly marked; spawning fires the standard identity→handoff→scratchpad recovery chain.`,
+  claim: `parlay claim — one-call agent bootstrap (idea-tm0): profile + enrollment + the task, from a ticket.\nUsage: parlay claim <task-id> [--agent <id>] [--name <name>] [--color <hex>] [--model <m>] [--no-register]\nA freshly-launched agent runs this and follows its printed brief. In one call it:\n  1. Resolves its agent PROFILE (id/name/color/model): flags > env (PARLAY_AGENT_ID/_NAME/_COLOR/_MODEL) >\n     the ticket's own metadata (parlay_agent_id/parlay_name/parlay_color/parlay_model) > derived (color from id).\n  2. ENROLLS: registers with the chat server + announces the claim on its channel (tab goes live now), then\n     prints the ONE 'parlay listen' Monitor command to arm its persistent poll loop (a CLI can't arm a harness\n     Monitor itself). --no-register skips the synchronous register/announce (still prints the brief).\n  3. Resolves the TASK: <task-id> against the beads/robots federation (task-/robots-/idea-…), printing the\n     ticket's title + description as the actual work — so the task prompt lives on the ticket, not the spawn prompt.\nTask-id resolution shells out to the store wrapper for the id's leading token (task/robots/idea/…), falling back\nto a bare 'bd' on PATH. Exit 2 if <task-id> or an agent id is missing; exit 1 if the ticket can't be resolved.`,
+  "merge-gate": `parlay merge-gate — the truthful "is this PR actually safe to merge?" check (robots-jap6).\nUsage: parlay merge-gate <pr> [--repo owner/name] [--json]\nA green status check is NOT evidence that anything reviewed the code. CodeRabbit reports a check\nCONCLUSION of 'pass' even when it never ran (account-wide review rate limit) — only the free-text\ndescription says so — and it reports success regardless of how many findings it posted. An agent\nfollowing 'merge when all required checks are green' therefore auto-merges unreviewed code.\nThis verb refuses to treat the check conclusion as the merge signal. It asserts, in order:\n  1. PR is OPEN and not CONFLICTING\n  2. at least one check exists; none failing, none pending\n  3. no VACUOUS pass — green conclusion whose description admits it did not run\n  4. a review actually happened — a human review, or a CodeRabbit comment carrying a real-review\n     marker rather than the rate-limit template\n  5. that review covered the CURRENT head sha, not an older push\n  6. no review thread left unresolved\nExit codes: 0 ready (or already merged), 3 BLOCKED (the gate answered no), 1 gh/network could not\nanswer, 2 usage. Fail-closed in every direction — a caller branching on non-zero refuses correctly.\nRun it before any merge: parlay merge-gate 45 || echo REFUSING`,
   variant: `parlay variant — manage variant agents (isolated git-worktree forks of an existing agent).\nSubcommands:\n  launch <primary-id> [--label <suffix>] [--model MODEL]\n      Fork a primary into a new variant. Creates a git worktree at ~/.parlay/worktrees/<variant-id>.\n      Label defaults to wt1, wt2, … (auto-incremented). Variant id: <primary>-<label>.\n  list [<primary-id>]\n      List all variants, optionally filtered to a specific primary.\n  merge <variant-id>\n      Append novel identity facts + scratchpad notes from the variant into the primary.\n      Deduplicated by content; merged lines tagged [from: <variant-id>]. Idempotent.\n  teardown <variant-id> [--force]\n      Merge insights (unless --force), remove the git worktree, unregister from Parlay,\n      and delete the variant home. Refuses if unmerged insights exist unless --force.`,
   "crew-state": `parlay crew-state — reconcile an agent's keyed status line against parlay's oracle (fold §3.6 Slice 3).\nUsage: parlay crew-state <id>\n  Outputs: <state> · source: <src> · <detail>\n  States: working, done, blocked, needs-decision, paused, failed, resolved, captain-held, unknown.\n  Reconciliation precedence: worktree/session gone → unknown; run attribution (extension point);\n  pane liveness checked BEFORE trusting stale log. Dead pane + no run → unknown, not inferred.`,
   supervise: `parlay supervise — wake-on-actionable-status loop with absorb-when-working logic (fold §3.6 Slice 3).
   Routine verbs (working, paused, resolved, captain-held) are absorbed and only wake if a wedge is detected.
   Env: PARLAY_UNATTENDED_FLAG — when set to a file path that exists, supervise runs in unattended
   (away) mode: buffers escalations in a durable queue, detects captain return via in-band marker.`,
+  sweep: `parlay sweep — the fleet closure sweep (robots-6xq7): the collector that walks every\nparlay agent store, reads its crew-state, and tears down the ones that are provably finished.\n  Usage: parlay sweep [--apply] [--agent <id>] [--all] [--force] [--interval <sec>] [--verbose]\n  Default is a DRY RUN — it prints the plan and changes nothing.\n  --apply            Actually tear down (each via the same chain 'parlay teardown' runs).\n  --agent <id>       Sweep just this agent; substitutes for the per-task-spawn proof.\n  --all              Drop the per-task-spawn proof fleet-wide (still honors every safety hold).\n  --force            Also sweep agents with no launch spec on disk (implies --all). Their\n                     worktree, if any, is unrecorded and therefore unchecked by teardown —\n                     read the HOLD reason first.\n  --interval <sec>   Loop forever on this cadence (run it alongside robots-watch).\n  --verbose          Also print the quiet skips (agents that are simply still working).\n  Never swept: the sweeping agent itself; ids in \$PARLAY_STATE_HOME/sweep-keep; anything in\n  needs-decision/blocked/failed (HELD for the captain — a teardown would destroy what he needs\n  to read). A done agent with uncommitted or unlanded work is refused by teardown, not forced.`,
   teardown: `parlay teardown — safe destroy of an agent with an isolated worktree (fold §3.7 Slice 3).
   Refuses to remove agents that have uncommitted changes or unpushed commits not yet landed.
   Validates landed-content containment via PR patch-id (if available) or merge-tree equality test.
