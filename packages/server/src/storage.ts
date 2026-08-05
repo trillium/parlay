@@ -3,11 +3,11 @@ import { join } from "path"
 import type { ChatMessage } from "./types"
 
 // ── Constants ───────────────────────────────────────────────────────────────
+// Resolved in paths.ts so PARLAY_DATA_DIR redirects these together with every
+// other persisted file. Re-exported under the historical names for callers.
 
-const HOME        = process.env.HOME ?? ""
-export const HISTORY_DIR  = process.env.PARLAY_DATA_DIR ?? join(HOME, "exchange")
-export const HISTORY_FILE = join(HISTORY_DIR, "chat-history.jsonl")
-export const DRAFT_FILE   = join(HISTORY_DIR, "chat-draft.txt")
+export { DATA_DIR as HISTORY_DIR, HISTORY_FILE, DRAFT_FILE } from "./paths"
+import { DATA_DIR as HISTORY_DIR, HISTORY_FILE, DRAFT_FILE } from "./paths"
 
 // ── In-memory history (shared across modules) ───────────────────────────────
 

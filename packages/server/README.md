@@ -22,31 +22,43 @@ pages watcher, and serves every request through `handleChatRequest`
 | Env var           | Default          | Purpose                                                        |
 | ----------------- | ---------------- | -------------------------------------------------------------- |
 | `PARLAY_PORT`     | `4242`           | TCP port the server listens on.                                |
-| `PARLAY_DATA_DIR` | `~/exchange`     | Directory for chat history + draft (`storage.ts`).             |
+| `PARLAY_DATA_DIR` | *(unset)*        | Redirects **every** persisted file into one directory (`paths.ts`). Unset ⇒ the production locations below. |
 | `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events.            |
 | `PARLAY_AGENT_ID` | *(unset)*        | Identifies the calling agent for per-agent context lookups.    |
 | `PARLAY_EVAL_ENGINE_URL` | `http://127.0.0.1:4343` | External eval engine for `/api/chat/eval`; returns 502 until running (Go engine deliberately deferred). |
 
 ## Data files
 
-History and draft honor `PARLAY_DATA_DIR`; the rest are anchored under the
-user's home directory:
+Every path the server writes is resolved in `src/paths.ts`. With
+`PARLAY_DATA_DIR` unset they sit in their production locations:
 
-- `$PARLAY_DATA_DIR/chat-history.jsonl` — message log (rotates at 5 MB).
-  **Live data — do not move or clobber `~/exchange/chat-history.jsonl`.**
-- `$PARLAY_DATA_DIR/chat-draft.txt` — persisted composer draft.
-- `~/exchange/parlay-agent-channels.json` — agent registry / channel declarations.
+- `~/exchange/chat-history.jsonl` — message log (rotates at 5 MB).
+  **Live data — do not move or clobber it.**
+- `~/exchange/chat-draft.txt` — persisted composer draft.
+- `~/exchange/parlay-agent-channels.json` — session → channel declarations.
 - `~/exchange/parlay-settings.json` — server-persisted settings.
 - `~/exchange/parlay-uploads/` — uploaded image attachments.
-- `~/pulse-pages/` — watched page directory served to clients.
+- `$PAI_DIR/MEMORY/STATE/parlay-agents.json` — the agent/channel registry.
+  **The prune sweep deletes from this file** (`prune.ts`).
+- `$PAI_DIR/MEMORY/STATE/parlay-session-channels.json` — session → channel map
+  learned from tool activity.
 
-When testing locally, set `PARLAY_DATA_DIR` to a scratch directory so you never
-touch the live `~/exchange` history.
+`~/pulse-pages/` (watched page directory) is served, never written, and is not
+affected by `PARLAY_DATA_DIR`.
+
+Set `PARLAY_DATA_DIR` to a scratch directory and **all** of the above relocate
+into it, flat — nothing under `~/exchange` or `$PAI_DIR` is read or written.
+Any test or local run that imports this module must do this. Importing the
+module and calling `startChat()` runs a startup prune sweep against whatever
+registry `paths.ts` resolves; against the live one it permanently removes real
+agent channels (robots-jcjj). `src/paths.test.ts` pins the guarantee that no
+persisted path escapes the override — add new persisted files to `paths.ts`,
+never inline in the module that uses them.
 
 ## Tests
 
 ```sh
-cd packages/server && bun test    # 37 tests across link-rewrite + prune
+cd packages/server && bun test    # 44 tests across link-rewrite + prune + paths
 ```
 
 Run from inside this package (there is no root `bunfig.toml`; see the repo

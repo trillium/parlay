@@ -1,6 +1,5 @@
 import { readFile, writeFile, mkdir } from "fs/promises"
-import { join } from "path"
-import { homedir } from "os"
+import { dirname } from "path"
 import { CORS } from "./sse"
 
 export interface ParlaySettings {
@@ -18,7 +17,7 @@ export interface ParlaySettings {
   voiceSettleMs:       number    // eval up-channel debounce tuned to the dictation settle time
 }
 
-const SETTINGS_PATH = join(homedir(), "exchange", "parlay-settings.json")
+import { SETTINGS_FILE as SETTINGS_PATH } from "./paths"
 
 const DEFAULTS: ParlaySettings = {
   panelSide:           "left",
@@ -51,7 +50,7 @@ export async function readSettings(): Promise<ParlaySettings> {
 }
 
 async function writeSettings(s: ParlaySettings): Promise<void> {
-  await mkdir(join(homedir(), "exchange"), { recursive: true })
+  await mkdir(dirname(SETTINGS_PATH), { recursive: true })
   await writeFile(SETTINGS_PATH, JSON.stringify(s, null, 2), "utf8")
 }
 
