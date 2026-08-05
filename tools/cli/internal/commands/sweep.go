@@ -93,6 +93,10 @@ type SweepAgent struct {
 	HasFrontmatter bool
 	Task           string
 	Worktree       string
+	// NotFound is set when the agent's store directory does not exist at all.
+	// Distinct from HasFrontmatter=false, which means the directory exists but
+	// identity.md lacks a parseable frontmatter block.
+	NotFound bool
 }
 
 // SweepOpts is the policy context ClassifySweep decides against.
@@ -229,7 +233,11 @@ func sweepCandidates() []string {
 // resolveSweepAgent reads one candidate's on-disk launch spec and its
 // reconciled crew state.
 func resolveSweepAgent(id string) SweepAgent {
-	fm := readLocalFrontmatter(filepath.Join(parlayAgentsDir(), id, "identity.md"))
+	dir := filepath.Join(parlayAgentsDir(), id)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return SweepAgent{ID: id, NotFound: true}
+	}
+	fm := readLocalFrontmatter(filepath.Join(dir, "identity.md"))
 	st := CrewStateForAgent(id)
 	return SweepAgent{
 		ID:             id,
@@ -303,7 +311,15 @@ func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
 
 	var swept, refused, held, skipped int
 	for _, id := range ids {
-		v := ClassifySweep(resolveSweepAgent(id), opts)
+		agent := resolveSweepAgent(id)
+		if agent.NotFound {
+			if explicitID != "" {
+				httpc.Die(fmt.Sprintf("parlay sweep: agent %q not found in agents dir", id), config.ExitUsage)
+				return
+			}
+			continue
+		}
+		v := ClassifySweep(agent, opts)
 		switch v.Action {
 		case SweepSkip:
 			skipped++
