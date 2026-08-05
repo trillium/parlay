@@ -347,6 +347,13 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if strings.Contains(out, "all required checks are green") {
 		t.Errorf("robots DoD must not tell the mechanic to merge on green checks alone; got:\n%s", out)
 	}
+	// robots-8kkq: routing through the gate is not enough on its own —
+	// "non-zero = do not merge" leaves a rate-limited reviewer as an
+	// unbounded wait. The contract has to name exit 4 and its terminating
+	// action so the mechanic stops and hands the choice over.
+	if !strings.Contains(out, "needs-decision") || !strings.Contains(out, "merge-and-disclose") {
+		t.Errorf("robots DoD should give a bounded answer for an unavailable reviewer; got:\n%s", out)
+	}
 }
 
 func TestClaimStoreForID(t *testing.T) {
