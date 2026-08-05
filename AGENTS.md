@@ -25,19 +25,11 @@ symlinks replaced with real files. The Pulse side must stop importing
 standalone server; that rewire and removing the `~/.claude` loop symlink are
 production changes made outside this repo (never edit `~/.claude` from here).
 
-**As of 2026-08-01, every file in that chain is a broken self-referential
-symlink loop** (verify with `python3 -c "import os; print(os.path.realpath(p))"`
-— it resolves to a path `os.path.exists()` reports `False` for). Confirmed on
-both a disposable treehouse worktree and the primary checkout at
-`~/code/parlay`, so it is not worktree-specific. No file under
-`packages/server/src/` can currently be read or edited through normal tooling
-until someone fixes the symlinks directly under `~/.claude/PAI/PULSE` (outside
-any git worktree — not something an isolated agent should attempt). New
-files with names that don't already exist in that farm are unaffected (Write
-creates a plain file), but they can't be wired into `router.ts`/`index.ts`
-until the loop is fixed. `packages/server/src/debug-log.ts` was added this
-way — a standalone, not-yet-wired handler with wiring instructions in its
-header comment.
+`packages/server/src/debug-log.ts` was written during the loop outage as a
+standalone, not-yet-wired handler (Write could still create files whose names
+did not already exist in the symlink farm). Now that `src/` holds real files
+again it can be wired into `router.ts`/`index.ts` normally; see its header
+comment for the intended wiring.
 
 **`packages/client`'s `build.ts` has a live side effect**: every successful
 build POSTs to `http://127.0.0.1:31337/api/chat/reload`, and that port is the
