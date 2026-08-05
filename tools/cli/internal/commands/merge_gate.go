@@ -159,6 +159,11 @@ type ghPRView struct {
 // unit-testable without a network or a gh binary.
 type MergeGateSnapshot struct {
 	PR ghPRView
+	// Repo is the "owner/name" every gh call in this run was pinned to, and
+	// RepoSource says how it was chosen. Both are reported, because a gate
+	// that answers about the wrong repository is worse than no gate.
+	Repo       string
+	RepoSource string
 	// Checks is empty when the PR has no checks reported at all — which is
 	// itself a blocker, not a pass.
 	Checks []ghCheck
@@ -207,6 +212,22 @@ func blockAs(v *MergeGateVerdict, code, class, format string, a ...any) {
 // ComputeMergeGate is the whole decision, as a pure function of a snapshot.
 func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 	v := MergeGateVerdict{Blockers: []MergeBlocker{}, Notes: []string{}}
+
+	// Which repository this answer is about comes FIRST, above even the
+	// merged short-circuit — the whole robots-g4qz defect was a verdict that
+	// read perfectly while describing a different repository's PR.
+	if s.Repo != "" {
+		src := s.RepoSource
+		if src == "" {
+			src = "unspecified"
+		}
+		v.Notes = append(v.Notes, fmt.Sprintf("repo: %s (from %s)", s.Repo, src))
+	}
+	if got, ok := repoFromPRURL(s.PR.URL); ok && s.Repo != "" && !strings.EqualFold(got, s.Repo) {
+		v.Notes = append(v.Notes, fmt.Sprintf(
+			"WARNING: asked about %s but GitHub answered for %s — if that is not a repository rename, this verdict is about the wrong PR.",
+			s.Repo, got))
+	}
 
 	switch strings.ToUpper(s.PR.State) {
 	case "MERGED":
@@ -455,9 +476,15 @@ func MergeGate(argv []string) {
 		httpc.Die(fmt.Sprintf("parlay merge-gate: %q is not a PR number", r.Positionals[0]), config.ExitUsage)
 		return
 	}
-	repo, _ := r.String("--repo")
+	repoFlag, _ := r.String("--repo")
 
-	snap, err := fetchMergeGateSnapshot(repo, prNum)
+	repo, repoSource, err := resolveMergeGateRepo(repoFlag)
+	if err != nil {
+		httpc.Die(fmt.Sprintf("parlay merge-gate: %v", err), config.ExitRuntime)
+		return
+	}
+
+	snap, err := fetchMergeGateSnapshot(repo, repoSource, prNum)
 	if err != nil {
 		// Could not answer — exit 1, distinct from a real block, still non-zero.
 		httpc.Die(fmt.Sprintf("parlay merge-gate: %v", err), config.ExitRuntime)
@@ -468,12 +495,14 @@ func MergeGate(argv []string) {
 
 	if r.Bool("--json") {
 		out, _ := json.MarshalIndent(struct {
-			PR       int              `json:"pr"`
-			URL      string           `json:"url"`
-			Verdict  MergeGateVerdict `json:"verdict"`
-			Checks   []ghCheck        `json:"checks"`
-			Unresolv int              `json:"unresolvedThreads"`
-		}{snap.PR.Number, snap.PR.URL, v, snap.Checks, snap.UnresolvedThreads}, "", "  ")
+			PR         int              `json:"pr"`
+			URL        string           `json:"url"`
+			Repo       string           `json:"repo"`
+			RepoSource string           `json:"repoSource"`
+			Verdict    MergeGateVerdict `json:"verdict"`
+			Checks     []ghCheck        `json:"checks"`
+			Unresolv   int              `json:"unresolvedThreads"`
+		}{snap.PR.Number, snap.PR.URL, snap.Repo, snap.RepoSource, v, snap.Checks, snap.UnresolvedThreads}, "", "  ")
 		fmt.Println(string(out))
 	} else {
 		fmt.Println(FormatMergeGate(snap.PR, v))
@@ -491,8 +520,13 @@ const prViewFields = "number,url,state,mergeable,mergeStateStatus,headRefOid,aut
 // field for thread resolution, so this is the one place GraphQL is needed.
 const reviewThreadsQuery = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved}}}}}`
 
-func fetchMergeGateSnapshot(repo string, pr int) (MergeGateSnapshot, error) {
+// fetchMergeGateSnapshot reads the PR. `repo` is the already-resolved
+// "owner/name" from resolveMergeGateRepo and is passed to EVERY gh call, so
+// the three sources that make up one verdict can never disagree about which
+// repository they describe.
+func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot, error) {
 	var s MergeGateSnapshot
+	s.Repo, s.RepoSource = repo, repoSource
 
 	viewArgs := []string{"pr", "view", strconv.Itoa(pr), "--json", prViewFields}
 	if repo != "" {
@@ -500,7 +534,7 @@ func fetchMergeGateSnapshot(repo string, pr int) (MergeGateSnapshot, error) {
 	}
 	res := sh("gh", viewArgs...)
 	if !res.ok {
-		return s, fmt.Errorf("could not read PR #%d: %s", pr, firstLine(res.err))
+		return s, fmt.Errorf("could not read PR #%d in %s: %s", pr, repoLabel(repo), firstLine(res.err))
 	}
 	if err := json.Unmarshal([]byte(res.out), &s.PR); err != nil {
 		return s, fmt.Errorf("could not parse `gh pr view` output: %w", err)
@@ -535,22 +569,113 @@ func fetchMergeGateSnapshot(repo string, pr int) (MergeGateSnapshot, error) {
 	return s, nil
 }
 
-// splitRepo resolves "owner/name". An empty repo falls back to the current
-// checkout's default remote, which is what `gh pr view` alone already used.
+// splitRepo splits "owner/name" (tolerating a trailing .git and any leading
+// host/path segments). Pure — repo resolution lives in resolveMergeGateRepo.
 func splitRepo(repo string) (owner, name string, ok bool) {
-	if repo == "" {
-		res := sh("gh", "repo", "view", "--json", "owner,name",
-			"--jq", `.owner.login + "/" + .name`)
-		if !res.ok {
-			return "", "", false
-		}
-		repo = strings.TrimSpace(res.out)
-	}
-	parts := strings.Split(strings.TrimSuffix(repo, ".git"), "/")
+	repo = strings.TrimSuffix(strings.TrimSpace(repo), ".git")
+	parts := strings.Split(strings.Trim(repo, "/"), "/")
 	if len(parts) < 2 || parts[len(parts)-1] == "" || parts[len(parts)-2] == "" {
 		return "", "", false
 	}
 	return parts[len(parts)-2], parts[len(parts)-1], true
+}
+
+// resolveMergeGateRepo decides, ONCE, which repository this run is about.
+//
+// This is the robots-g4qz defect. Letting `gh` pick the repo implicitly is
+// not neutral: gh's base-repo resolution deliberately prefers a remote named
+// `upstream` over `origin` (its remote sort order is upstream, github,
+// origin, …). In a fork clone — which is every clone the fleet works in,
+// origin=trillium/<repo> with an `upstream` remote pointing at the project
+// it was forked from — `parlay merge-gate 2` therefore read UPSTREAM's PR #2
+// while the mechanic was asking about the fork's. The numbers collide freely
+// between the two repositories, and the failure is silent: the gate prints a
+// perfectly well-formed verdict about somebody else's pull request. Worst
+// case it is exit 0 "PR is already MERGED — nothing left to gate" for an
+// upstream PR that landed months ago, which is a gate that fails OPEN on an
+// unreviewed, still-open fork PR. That is the exact thing this verb exists
+// to prevent.
+//
+// Precedence, highest first:
+//
+//  1. an explicit --repo — the caller said it, so it wins outright;
+//  2. the `origin` remote — for the fleet, origin is where the PR under
+//     review lives, and it is the same remote the mechanic contract's
+//     `git branch -r --contains <sha>` proof checks against;
+//  3. gh's own resolution — only for a checkout with no usable origin (or no
+//     git repo at all), where gh's guess is the only thing available.
+//
+// The chosen repo and the step that chose it are both reported, so a wrong
+// answer is visible in the output rather than inferred from a URL nobody
+// reads.
+func resolveMergeGateRepo(explicit string) (repo, source string, err error) {
+	if strings.TrimSpace(explicit) != "" {
+		if _, _, ok := splitRepo(explicit); !ok {
+			return "", "", fmt.Errorf("--repo %q is not owner/name", explicit)
+		}
+		return strings.TrimSuffix(strings.TrimSpace(explicit), ".git"), "--repo", nil
+	}
+
+	if res := sh("git", "remote", "get-url", "origin"); res.ok {
+		if r, ok := repoFromRemoteURL(res.out); ok {
+			return r, "origin remote", nil
+		}
+	}
+
+	// No origin to trust. Fall back to gh, which is what this verb always did
+	// — but say so, because this is the branch that can pick `upstream`.
+	res := sh("gh", "repo", "view", "--json", "owner,name",
+		"--jq", `.owner.login + "/" + .name`)
+	if !res.ok {
+		return "", "", fmt.Errorf(
+			"could not determine which repository to gate (no `origin` remote here, and `gh repo view` failed: %s). Pass --repo owner/name",
+			firstLine(res.err))
+	}
+	r := strings.TrimSpace(res.out)
+	if _, _, ok := splitRepo(r); !ok {
+		return "", "", fmt.Errorf("could not determine which repository to gate (`gh repo view` returned %q). Pass --repo owner/name", r)
+	}
+	return r, "gh default (no origin remote)", nil
+}
+
+// remoteURLRe pulls owner/name out of any git remote URL shape: the scp-like
+// git@host:owner/name.git, https://host/owner/name(.git), ssh://git@host/…,
+// and git://host/…. Only the last two path segments matter, so host and
+// credentials are deliberately not modeled.
+var remoteURLRe = regexp.MustCompile(`^(?:[a-z+]+://)?(?:[^/@]+@)?[^/:]+[:/](.+?)(?:\.git)?/?$`)
+
+// repoFromRemoteURL converts a git remote URL to "owner/name".
+func repoFromRemoteURL(url string) (string, bool) {
+	m := remoteURLRe.FindStringSubmatch(strings.TrimSpace(url))
+	if m == nil {
+		return "", false
+	}
+	owner, name, ok := splitRepo(m[1])
+	if !ok {
+		return "", false
+	}
+	return owner + "/" + name, true
+}
+
+// repoFromPRURL converts a PR's html_url to "owner/name" so the answer can be
+// checked against the repository that was actually asked about.
+func repoFromPRURL(u string) (string, bool) {
+	i := strings.Index(u, "/pull/")
+	if i < 0 {
+		return "", false
+	}
+	owner, name, ok := splitRepo(u[:i])
+	if !ok {
+		return "", false
+	}
+	return owner + "/" + name, true
+}
+
+func repoLabel(repo string) string {
+	if strings.TrimSpace(repo) == "" {
+		return "the current repository"
+	}
+	return repo
 }
 
 func firstLine(s string) string {
