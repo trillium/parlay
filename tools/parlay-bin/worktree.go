@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -46,6 +47,48 @@ func repoIdentity(dir string) (string, error) {
 	return common, nil
 }
 
+// guardScriptPath resolves bin/parlay-treehouse-guard: PATH first (so an
+// installed copy or a test stub wins), then the repo-relative location. This
+// source file lives at tools/parlay-bin/worktree.go, two directories below
+// the repo root. Mirrors internal/monitor.scriptPath's precedence.
+func guardScriptPath() (string, error) {
+	if abs, err := exec.LookPath("parlay-treehouse-guard"); err == nil && abs != "" {
+		return abs, nil
+	}
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("cannot locate parlay-treehouse-guard: not on PATH and own source path unavailable")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	path := filepath.Join(root, "bin", "parlay-treehouse-guard")
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("parlay-treehouse-guard not found on PATH or at %s", path)
+	}
+	return path, nil
+}
+
+// guardTreehousePool protects still-occupied pool slots before `treehouse get`
+// is allowed to reclaim one (robots-n8d9). `treehouse get` checks origin/main
+// out over whatever branch the slot held, and its eligibility rules could not
+// see a live agent sitting in a clean slot — one run reclaimed a worktree out
+// from under a running agent that belonged to a different firstmate home. The
+// guard takes a protective treehouse lease on every occupied slot, which
+// treehouse does honor. Strictly best effort: a missing or failing guard must
+// never block a spawn, so every error here is a note on stderr, not a return.
+func guardTreehousePool(projectPath string) {
+	guard, err := guardScriptPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parlay-spawn: treehouse pool guard unavailable (%v); continuing unguarded\n", err)
+		return
+	}
+	cmd := exec.Command(guard, projectPath)
+	cmd.Dir = projectPath
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "parlay-spawn: treehouse pool guard failed (%v); continuing unguarded\n", err)
+	}
+}
+
 // setupWorktree creates (or reuses) an isolated git worktree for agentID
 // under projectPath/.worktrees, per bin/parlay-spawn's worktree block
 // (lines 364–409, fold §3.3). Tries treehouse first (firstmate-only tool,
@@ -69,6 +112,7 @@ func setupWorktree(projectPath, agentID, mode string) (string, error) {
 
 	created := false
 	if thPath, err := exec.LookPath("treehouse"); err == nil {
+		guardTreehousePool(projectPath)
 		cmd := exec.Command(thPath, "get", "--lease", "parlay-"+agentID)
 		cmd.Dir = projectPath
 		out, thErr := cmd.Output()
