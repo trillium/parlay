@@ -41,7 +41,12 @@ channel-scoped poll auto-registers the agent server-side. Default server is
 ### Registry (monitor → relay, Unix control socket)
 
 Socket: `<runtime>/relay.sock`. `<runtime>` defaults to `$TMPDIR/parlay`
-(`/tmp/parlay` fallback).
+(`/tmp/parlay` fallback) **for the default server only** — a relay is a
+per-runtime-dir singleton bound to one upstream server, so a non-default
+`$PARLAY_SERVER` resolves to its own `<runtime>/srv-<hash>` and gets its own
+relay. The monitor also reads `/agents` → `server` and refuses to `/register`
+against a relay bound elsewhere. See `monitor/NOTES.md` § Upstream-server scoping
+(robots-buu8) — without this, a sandbox enrolled into the live registry.
 
 | Route | Method | Body | Response |
 |-------|--------|------|----------|

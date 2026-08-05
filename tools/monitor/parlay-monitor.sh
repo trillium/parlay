@@ -24,8 +24,13 @@
 #   consumers of the stream keep getting complete, unmodified lines.
 #
 # Env:
+#   PARLAY_SERVER          upstream Pulse server to enroll against. Anything other
+#                          than the default (http://localhost:31337) gets its own
+#                          server-scoped runtime dir and relay, so a sandbox can
+#                          never enroll into the production registry (robots-buu8).
 #   PARLAY_RELAY_RUNTIME   runtime dir holding relay.sock + <agent>.chan spools
-#                          (default: $TMPDIR/parlay, falling back to /tmp/parlay)
+#                          (default: server-scoped; $TMPDIR/parlay for the default
+#                          server, $TMPDIR/parlay/by-server/<slug> otherwise)
 #   PARLAY_RELAY_SOCK      explicit control-socket path (default: <runtime>/relay.sock)
 #   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
 #
@@ -44,7 +49,9 @@ to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
                   lines mid-word; this makes that recoverable). Default off.
 
 Env:
-  PARLAY_RELAY_RUNTIME   runtime dir (default \$TMPDIR/parlay or /tmp/parlay)
+  PARLAY_SERVER          upstream server; a non-default value gets its own
+                         server-scoped runtime dir + relay
+  PARLAY_RELAY_RUNTIME   runtime dir (default: server-scoped under \$TMPDIR/parlay)
   PARLAY_RELAY_SOCK      control socket path (default <runtime>/relay.sock)
   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
 EOF
@@ -70,19 +77,74 @@ if ! printf '%s' "$AGENT" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
   exit 2
 fi
 
-# Resolve the runtime dir and control socket. TMPDIR is per-user on macOS, so the
-# default matches the relay's own default (defaultRuntimeDir in relay/main.go).
-RUNTIME="${PARLAY_RELAY_RUNTIME:-${TMPDIR:-/tmp}/parlay}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ENSURE_UP="$HERE/../relay/deploy/ensure-up.sh"
+RELAY_LIB="$HERE/../relay/deploy/lib.sh"
+
+# ── Resolve the runtime dir, SCOPED BY UPSTREAM SERVER (robots-buu8) ───────────
+# A relay is a per-runtime-dir singleton bound to ONE upstream server, so which
+# relay we enroll on decides which server's registry we land in — $PARLAY_SERVER
+# alone does not. Enrolling on the shared $TMPDIR/parlay relay (bound to
+# production :31337) while $PARLAY_SERVER points at a scratch server silently
+# registered the agent in the captain's LIVE registry.
+#
+# parlay_relay_scoped_runtime_dir reserves the canonical dir for the default
+# server and gives every other $PARLAY_SERVER its own dir (and thus its own
+# relay). Exported so ensure-up.sh and the relay launcher it starts resolve the
+# identical dir. An explicit $PARLAY_RELAY_RUNTIME still wins — a caller that
+# pinned a dir keeps it, and the mismatch guard below covers the rest.
+if [ -r "$RELAY_LIB" ]; then
+  # shellcheck source=../relay/deploy/lib.sh
+  . "$RELAY_LIB"
+fi
+# Guarded on the helper, not just the file: a stale lib.sh would make this an
+# unresolved command, and under `set -e` that aborts the monitor outright.
+if command -v parlay_relay_scoped_runtime_dir >/dev/null 2>&1; then
+  RUNTIME="$(parlay_relay_scoped_runtime_dir)"
+  # Say so out loud. Scoping means this monitor is NOT on the shared relay, so if
+  # the target server is wrong or dead the agent goes quiet — that must be visible
+  # in the monitor's own stderr, not diagnosed later from an empty channel.
+  if [ -z "${PARLAY_RELAY_RUNTIME:-}" ] && [ "$RUNTIME" != "$(parlay_relay_runtime_dir)" ]; then
+    echo "parlay-monitor: PARLAY_SERVER=$(parlay_relay_target_server) is not the default" >&2
+    echo "parlay-monitor:   server — using a server-scoped relay at $RUNTIME" >&2
+    SCOPED=1
+  fi
+  export PARLAY_RELAY_RUNTIME="$RUNTIME"
+else
+  # lib.sh missing or stale (older/partial checkout): keep the original
+  # resolution. The pre-enroll server check below still catches a cross-server
+  # enroll, so the leak stays closed even without scoping.
+  RUNTIME="${PARLAY_RELAY_RUNTIME:-${TMPDIR:-/tmp}/parlay}"
+fi
 RUNTIME="${RUNTIME%/}"
 SOCK="${PARLAY_RELAY_SOCK:-$RUNTIME/relay.sock}"
 SPOOL="$RUNTIME/$AGENT.chan"
 
+# A Unix socket path over sun_path (104 bytes) fails bind() with a bare "invalid
+# argument" that names neither the limit nor the path. Check up front and say it.
+if command -v parlay_relay_sock_path_ok >/dev/null 2>&1 \
+   && ! parlay_relay_sock_path_ok "$SOCK"; then
+  echo "parlay-monitor: control socket path is ${#SOCK} bytes, over the 103-byte" >&2
+  echo "parlay-monitor:   Unix-socket limit — the relay cannot bind it:" >&2
+  echo "parlay-monitor:   $SOCK" >&2
+  echo "parlay-monitor: set PARLAY_RELAY_RUNTIME to a shorter directory." >&2
+  exit 1
+fi
+
+# Record which upstream server this scoped runtime dir belongs to. The dir name
+# is a hash (sun_path is tight), so this marker is what makes a stray scoped
+# relay identifiable by a human later. Not a .chan file, so no relay reads it.
+if [ "${SCOPED:-0}" = 1 ]; then
+  mkdir -p "$RUNTIME" 2>/dev/null || true
+  printf '%s\n' "$(parlay_relay_target_server)" >"$RUNTIME/server" 2>/dev/null || true
+fi
+
 # Ensure a relay is up before enrolling, so a monitor never dead-ends on a
 # missing relay. ensure-up is idempotent and concurrency-safe: it no-ops if the
-# relay already answers /health, otherwise it starts it (launchd if installed,
-# else the binary) and waits for /health. It respects PARLAY_RELAY_RUNTIME/SOCK
-# via the same lib resolution, and honors PARLAY_SERVER for the started relay.
-ENSURE_UP="$(cd "$(dirname "$0")" && pwd)/../relay/deploy/ensure-up.sh"
+# relay already answers /health, otherwise it starts it (launchd if installed AND
+# it serves this runtime dir + server, else the binary) and waits for /health. It
+# respects PARLAY_RELAY_RUNTIME/SOCK via the same lib resolution, and honors
+# PARLAY_SERVER for the started relay.
 if [ -x "$ENSURE_UP" ]; then
   if ! "$ENSURE_UP"; then
     echo "parlay-monitor: relay is not up and could not be started" >&2
@@ -100,6 +162,30 @@ fi
 if [ ! -S "$SOCK" ]; then
   echo "parlay-monitor: relay control socket still not found at $SOCK after ensure-up" >&2
   exit 1
+fi
+
+# ── Refuse to enroll on a relay bound to the wrong upstream server ────────────
+# Last line of defence for robots-buu8, and the one that holds even when the
+# scoping above is bypassed (explicit $PARLAY_RELAY_RUNTIME/$PARLAY_RELAY_SOCK,
+# a lib.sh-less checkout, or a relay someone started by hand). GET /agents is
+# read-only, so this runs BEFORE /register — a mismatch must abort without ever
+# touching the wrong registry. An unreachable/older relay reports nothing; that
+# is not a mismatch, so we proceed rather than hard-fail on unknown.
+if [ -n "${PARLAY_SERVER:-}" ]; then
+  WANT_SERVER="${PARLAY_SERVER%/}"
+  RELAY_SERVER=$(curl -fsS --max-time 2 --unix-socket "$SOCK" http://relay/agents 2>/dev/null \
+    | sed -n 's/.*"server":"\([^"]*\)".*/\1/p')
+  RELAY_SERVER="${RELAY_SERVER%/}"
+  if [ -n "$RELAY_SERVER" ] && [ "$RELAY_SERVER" != "$WANT_SERVER" ]; then
+    echo "parlay-monitor: refusing to enroll '$AGENT' — relay at $SOCK is bound to" >&2
+    echo "parlay-monitor:   $RELAY_SERVER but PARLAY_SERVER is $WANT_SERVER." >&2
+    echo "parlay-monitor: enrolling anyway would register this agent in the WRONG" >&2
+    echo "parlay-monitor:   server's registry (robots-buu8)." >&2
+    echo "parlay-monitor: unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK to get an" >&2
+    echo "parlay-monitor:   automatically server-scoped relay, or point them at a" >&2
+    echo "parlay-monitor:   runtime dir whose relay serves $WANT_SERVER." >&2
+    exit 1
+  fi
 fi
 
 # 1. Enroll: POST /register {"agent":"<id>"} to the relay over its Unix socket.
