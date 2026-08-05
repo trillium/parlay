@@ -118,8 +118,124 @@ func TestRateLimitedCheckIsNotAPassEvenThoughGitHubSaysPass(t *testing.T) {
 	if !hasBlocker(v, "review-rate-limited") {
 		t.Errorf("want review-rate-limited blocker, got %v", blockerCodes(v))
 	}
+	// Both blockers are the reviewer not participating, so this is the
+	// needs-decision case (robots-8kkq), not a hard block — still non-zero.
+	if v.ExitCode != ExitMergeNeedsDecision {
+		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergeNeedsDecision)
+	}
+}
+
+// robots-8kkq: exit 3 alone gave a mechanic no terminating condition — it
+// says "do not merge" and nothing about whether waiting will ever help. When
+// the ONLY blockers are the reviewer being unavailable, the gate must say so
+// distinctly and hand over the two honest options.
+func TestReviewerUnavailableIsNeedsDecisionNotAHardBlock(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
+	s.PR.Comments = []ghComment{{Author: ghAuthor{Login: "coderabbitai"}, Body: rateLimitedBody}}
+
+	v := ComputeMergeGate(s)
+	if v.Ready {
+		t.Fatal("needs-decision must never read as ready")
+	}
+	if !v.NeedsDecision {
+		t.Fatalf("want NeedsDecision, got blockers %v", blockerCodes(v))
+	}
+	if v.ExitCode != ExitMergeNeedsDecision {
+		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergeNeedsDecision)
+	}
+	if v.ExitCode == config.ExitOK {
+		t.Error("needs-decision must stay non-zero so a naive caller still fails closed")
+	}
+	for _, b := range v.Blockers {
+		if b.Class != ClassReviewerUnavailable {
+			t.Errorf("blocker %q classed %q, want %q", b.Code, b.Class, ClassReviewerUnavailable)
+		}
+	}
+	notes := strings.Join(v.Notes, " ")
+	for _, want := range []string{"merge-and-disclose", "park", "needs-decision", "unbounded"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes should name %q so the caller has a bounded answer, got %v", want, v.Notes)
+		}
+	}
+}
+
+// One real finding alongside the rate limit is still a hard block: the
+// downgrade must not become a way to launder a failing test into "the
+// captain's call".
+func TestOneCodeBlockerKeepsTheWholeVerdictHardBlocked(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = []ghComment{{Author: ghAuthor{Login: "coderabbitai"}, Body: rateLimitedBody}}
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"},
+		{Name: "build", Bucket: "fail", Description: "2 tests failed"},
+	}
+
+	v := ComputeMergeGate(s)
+	if v.NeedsDecision {
+		t.Fatalf("a failing check must not be downgraded to needs-decision, got %v", blockerCodes(v))
+	}
 	if v.ExitCode != ExitMergeBlocked {
 		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergeBlocked)
+	}
+}
+
+// No review evidence at all is NOT reviewer-unavailability: the gate cannot
+// tell why nothing reviewed the PR, so it keeps the harsher code.
+func TestUnexplainedMissingReviewStaysAHardBlock(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = nil
+	v := ComputeMergeGate(s)
+	if v.NeedsDecision {
+		t.Fatalf("an unexplained missing review must not be downgraded, got %v", blockerCodes(v))
+	}
+	if v.ExitCode != ExitMergeBlocked {
+		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergeBlocked)
+	}
+}
+
+// The trillium/no-mistakes#7 shape: `@coderabbitai review` recovered the
+// first push, then the account stayed limited, so the follow-up commit
+// merged unreviewed. A stale review PLUS a live rate-limit template is the
+// reviewer being unavailable, not something the branch can fix.
+func TestStaleReviewUnderAnActiveRateLimitIsReviewerUnavailable(t *testing.T) {
+	s := reviewedPR()
+	s.PR.HeadRefOid = "0000000000000000000000000000000000000000"
+	s.PR.Comments = append(s.PR.Comments,
+		ghComment{Author: ghAuthor{Login: "coderabbitai"}, Body: rateLimitedBody})
+
+	v := ComputeMergeGate(s)
+	if !hasBlocker(v, "stale-review") {
+		t.Fatalf("want stale-review, got %v", blockerCodes(v))
+	}
+	if !v.NeedsDecision || v.ExitCode != ExitMergeNeedsDecision {
+		t.Errorf("stale review under an active rate limit should be needs-decision, got %+v", v)
+	}
+}
+
+// Without a rate limit, a stale review is ordinary code-class work: push
+// again and the reviewer catches up. It must NOT reach the captain.
+func TestStaleReviewWithoutARateLimitStaysAHardBlock(t *testing.T) {
+	s := reviewedPR()
+	s.PR.HeadRefOid = "0000000000000000000000000000000000000000"
+
+	v := ComputeMergeGate(s)
+	if v.NeedsDecision {
+		t.Fatalf("a plain stale review is fixable on the branch, got %v", blockerCodes(v))
+	}
+	if v.ExitCode != ExitMergeBlocked {
+		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergeBlocked)
+	}
+}
+
+func TestNeedsDecisionVerdictLeadsWithItsOwnHeader(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
+	s.PR.Comments = []ghComment{{Author: ghAuthor{Login: "coderabbitai"}, Body: rateLimitedBody}}
+
+	out := FormatMergeGate(s.PR, ComputeMergeGate(s))
+	if !strings.HasPrefix(out, "NEEDS-DECISION") {
+		t.Errorf("report should lead with NEEDS-DECISION, got:\n%s", out)
 	}
 }
 
@@ -316,8 +432,10 @@ func TestClosedUnmergedPRBlocks(t *testing.T) {
 
 func TestFormatLeadsWithTheVerdictAndNamesEveryBlocker(t *testing.T) {
 	s := reviewedPR()
-	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
-	s.PR.Comments = []ghComment{{Author: ghAuthor{Login: "coderabbitai"}, Body: rateLimitedBody}}
+	// A code-class blocker, so this exercises the BLOCKED header specifically;
+	// the NEEDS-DECISION header has its own test.
+	s.Checks = []ghCheck{{Name: "build", Bucket: "fail", Description: "2 tests failed"}}
+	s.PR.Mergeable = "CONFLICTING"
 
 	v := ComputeMergeGate(s)
 	out := FormatMergeGate(s.PR, v)

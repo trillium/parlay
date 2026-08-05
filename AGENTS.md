@@ -578,9 +578,30 @@ CodeRabbit edits one comment in place, so `createdAt` can never detect a
 stale review, but the body always prints the exact `base..head` range it
 processed — and counts unresolved review threads via GraphQL, since
 `gh pr view` has no field for thread resolution. Exit codes are fail-closed
-in every direction: `0` ready/already-merged, `3` blocked, `1` gh could not
-answer, `2` usage. The mechanic contract in `claim.go`'s robots DoD now sends
-every merge decision through it.
+in every direction: `0` ready/already-merged, `3` blocked on the code, `4`
+needs-decision, `1` gh could not answer, `2` usage. The mechanic contract in
+`claim.go`'s robots DoD now sends every merge decision through it.
+
+**Exit 4 is the bounded answer for "the reviewer is unavailable"
+(robots-8kkq).** Non-zero alone was not enough: "a test is failing" and
+"CodeRabbit is rate limited" are both blocked, but only the first is fixable
+on the branch, so a mechanic told just "blocked" polls a rate limit forever —
+`@coderabbitai review` recovered one PR once and then stayed limited across
+three further attempts over ~40 minutes, and trillium/no-mistakes#7's
+follow-up commit merged unreviewed as a result. Every blocker now carries a
+`Class` (`code` / `reviewer-unavailable`); when *every* blocker is
+reviewer-unavailability the verdict is `NeedsDecision` and exit `4`, and the
+notes name the only two honest options — merge-and-disclose or park — for the
+captain to pick. One code-class blocker among them keeps the whole verdict at
+`3`, so the downgrade can never launder a failing test into "the captain's
+call". `no-review-evidence` deliberately stays code-class: the gate cannot
+tell *why* nothing reviewed the PR, and unexplained gets the harsher code.
+
+A stale review is normally code-class (push again, the reviewer catches up) —
+but a stale review sitting next to a *live* rate-limit template is
+reviewer-unavailability, because the re-review is exactly what is being
+refused. That pairing is the no-mistakes#7 shape and is the one case where
+`stale-review` reclassifies.
 
 Decision logic lives in the pure `ComputeMergeGate(MergeGateSnapshot)` so
 `merge_gate_test.go` pins the regressions with no gh binary and no network;
