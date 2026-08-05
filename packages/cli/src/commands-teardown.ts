@@ -116,6 +116,41 @@ export function isContentLanded(repoPath: string, headRef: string): boolean {
   return merged.length > 0 && merged === defaultTree.out
 }
 
+// The git half of a safe destroy: returns a refusal message if worktree still
+// holds uncommitted changes, or commits that are neither pushed nor landed —
+// null when it is safe to remove (or --force overrode the refusal). Exported so
+// commands-variant.ts's teardown can share it: that path used to jump straight
+// to `git worktree remove --force` with zero git checks, permanently destroying
+// a variant's working tree while `parlay teardown` refused the identical
+// situation (robots-cncx). `cmd` is the user-facing command prefix.
+export function checkWorktreeGitSafety(
+  cmd: string,
+  agentId: string,
+  worktree: string,
+  force: boolean
+): string | null {
+  // Check for uncommitted changes.
+  if (hasUncommitted(worktree)) {
+    if (!force) return `${cmd}: ${agentId} has uncommitted changes. Run 'git diff' or --force to discard.`
+    process.stderr.write(`warn: --force: discarding uncommitted changes in ${worktree}\n`)
+  }
+
+  // Check for unpushed commits.
+  if (hasUnpushed(worktree)) {
+    if (!force) {
+      // Try to validate landed-content containment.
+      const head = sh("git", ["-C", worktree, "rev-parse", "HEAD"])
+      if (!head.ok || !isContentLanded(worktree, head.out)) {
+        return `${cmd}: ${agentId} has unpushed commits not yet landed. Push or --force.`
+      }
+      process.stderr.write(`teardown ${agentId}: unpushed commits but content is landed.\n`)
+    } else {
+      process.stderr.write(`warn: --force: discarding unpushed commits in ${worktree}\n`)
+    }
+  }
+  return null
+}
+
 export async function cmdTeardown(args: string[]) {
   if (helpWanted("teardown", args)) return
   const { positionals, opts } = parseArgs("teardown", args, ["--force"])
@@ -157,34 +192,9 @@ export async function cmdTeardown(args: string[]) {
     return
   }
 
-  // Check for uncommitted changes.
-  if (hasUncommitted(worktree)) {
-    if (!force)
-      return die(
-        `parlay teardown: ${agentId} has uncommitted changes. Run 'git diff' or --force to discard.`,
-        EXIT_USAGE
-      )
-    process.stderr.write(
-      `warn: --force: discarding uncommitted changes in ${worktree}\n`
-    )
-  }
-
-  // Check for unpushed commits.
-  if (hasUnpushed(worktree)) {
-    if (!force) {
-      // Try to validate landed-content containment.
-      const head = sh("git", ["-C", worktree, "rev-parse", "HEAD"])
-      if (!head.ok || !isContentLanded(worktree, head.out)) {
-        return die(
-          `parlay teardown: ${agentId} has unpushed commits not yet landed. Push or --force.`,
-          EXIT_USAGE
-        )
-      }
-      process.stderr.write(`teardown ${agentId}: unpushed commits but content is landed.\n`)
-    } else {
-      process.stderr.write(`warn: --force: discarding unpushed commits in ${worktree}\n`)
-    }
-  }
+  // Refuse to destroy uncommitted changes or unlanded commits.
+  const refusal = checkWorktreeGitSafety("parlay teardown", agentId, worktree, force)
+  if (refusal) return die(refusal, EXIT_USAGE)
 
   // Remove the worktree.
   if (project) {

@@ -10,6 +10,7 @@ import { die, postJSON } from "./http"
 import { parseArgs } from "./args"
 import { helpWanted } from "./help"
 import { guardRepo, mainWorktreePath } from "./commands-guard"
+import { checkWorktreeGitSafety } from "./commands-teardown"
 
 const AGENTS_DIR  = join(homedir(), ".parlay", "agents")
 const WKTREES_DIR = join(homedir(), ".parlay", "worktrees")
@@ -149,14 +150,26 @@ export async function cmdVariantTeardown(args: string[]) {
   const fm = readFm(variantId)
   if (!fm.variant_of) return die(`parlay variant teardown: '${variantId}' is not a variant (no variant_of field)`, EXIT_USAGE)
   const pId = fm.variant_of
+  const force = opts["--force"] === true
+  const wkPath = join(WKTREES_DIR, variantId)
+  const wkExists = existsSync(wkPath)
+  // Git safety FIRST — before the memory checks and before mergeKind writes
+  // anything into the primary. A variant's worktree is the only copy of its
+  // working tree, and the removal below is `--force`; refusing here is the only
+  // thing standing between a stale teardown and destroyed source (robots-cncx).
+  // Same rules and same --force override as `parlay teardown`, which has always
+  // checked this.
+  if (wkExists) {
+    const refusal = checkWorktreeGitSafety("parlay variant teardown", variantId, wkPath, force)
+    if (refusal) return die(refusal, EXIT_USAGE)
+  }
   const unId = unmergedCount(variantId, pId, "identity")
   const unSp = unmergedCount(variantId, pId, "scratchpad")
-  if (unId + unSp > 0 && opts["--force"] !== true)
+  if (unId + unSp > 0 && !force)
     return die(`parlay variant teardown: ${variantId} has ${unId} unmerged identity fact(s) + ${unSp} scratchpad note(s). Run 'parlay variant merge ${variantId}' first, or --force to discard.`, EXIT_USAGE)
   const iN = mergeKind(variantId, pId, "identity"); const sN = mergeKind(variantId, pId, "scratchpad")
   if (iN + sN > 0) console.log(`auto-merged ${iN} identity + ${sN} scratchpad into ${pId}`)
-  const wkPath = join(WKTREES_DIR, variantId)
-  if (existsSync(wkPath)) {
+  if (wkExists) {
     // Tangle backstop on teardown too: check the PRIMARY (not this variant's own
     // worktree) so a stranded primary surfaces on the next fleet action. Advisory.
     const primary = mainWorktreePath(wkPath)
