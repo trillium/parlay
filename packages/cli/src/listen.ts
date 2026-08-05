@@ -28,7 +28,7 @@ export async function runListen(args: string[], deps: ListenDeps): Promise<void>
   const { exitUsage, die, helpWanted, parseArgs, postJSON } = deps
   if (helpWanted("listen", args)) return
 
-  const { opts } = parseArgs("listen", args, ["--legacy-poll"], ["--agent", "--name", "--color", "--caps"])
+  const { opts } = parseArgs("listen", args, ["--legacy-poll", "--notify-safe"], ["--agent", "--name", "--color", "--caps"])
   const agent = (opts["--agent"] as string | undefined)?.trim()
   if (!agent) return die("parlay listen: --agent <id> is required", exitUsage)
 
@@ -58,7 +58,14 @@ export async function runListen(args: string[], deps: ListenDeps): Promise<void>
   // 3. exec into the poll loop. Reuses runMonitor verbatim — same mechanism as
   // `parlay monitor --agent <id>`, so a harness Monitor{} wakes on CHAT_MSG lines.
   // Never returns (runMonitor calls process.exit on the relay path).
-  const monitorArgs = ["--agent", agent, ...(opts["--legacy-poll"] ? ["--legacy-poll"] : [])]
+  // --notify-safe and --legacy-poll are forwarded straight through so the
+  // self-enroll path has the same notification-truncation safety `parlay
+  // monitor --notify-safe` gives (robots-w9ij).
+  const monitorArgs = [
+    "--agent", agent,
+    ...(opts["--legacy-poll"] ? ["--legacy-poll"] : []),
+    ...(opts["--notify-safe"] ? ["--notify-safe"] : []),
+  ]
   const monitorImpl = deps.runMonitor ?? runMonitor
   await monitorImpl(monitorArgs, { server: deps.server, exitUsage, die, helpWanted, parseArgs })
 }

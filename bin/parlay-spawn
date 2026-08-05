@@ -37,6 +37,29 @@ PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
 # $FM_ROOT/bin/fm-spawn.sh self-reference).
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
+# Physical dir of THIS script, following symlinks — parlay-spawn is normally
+# invoked via the ~/.local/bin/parlay-spawn symlink, so $SELF's dir is the
+# symlink's dir (~/.local/bin), NOT the repo's bin/ where our sibling scripts
+# live. Resolve the link chain so BIN_DIR always points at the real bin/ and we
+# can source herdr-contract next to us regardless of how we were invoked.
+_pspawn_src="${BASH_SOURCE[0]}"
+while [ -h "$_pspawn_src" ]; do
+  _pspawn_dir="$(cd -P "$(dirname "$_pspawn_src")" && pwd)"
+  _pspawn_src="$(readlink "$_pspawn_src")"
+  [ "${_pspawn_src#/}" = "$_pspawn_src" ] && _pspawn_src="$_pspawn_dir/$_pspawn_src"
+done
+BIN_DIR="$(cd -P "$(dirname "$_pspawn_src")" && pwd)"
+unset _pspawn_src _pspawn_dir
+
+# herdr contract gate (robots-4v2e): the single source of truth for the herdr
+# CLI shape parlay-spawn depends on. Sourced here; asserted at startup (below,
+# after arg parsing) BEFORE we register anything, so a drifted herdr fails fast
+# with a precise message instead of orphaning a half-created tab mid-launch.
+if [ -f "$BIN_DIR/herdr-contract" ]; then
+  # shellcheck source=/dev/null
+  source "$BIN_DIR/herdr-contract"
+fi
+
 # Deterministic, readable hex color from an id — a bash port of colorFromId()
 # in packages/cli/src/identity-ephemeral.ts (FNV-1a 32-bit, each channel squeezed
 # into 40–220 so no tab accent is too dark or too washed out). Same id ⇒ same
@@ -59,6 +82,19 @@ color_from_id() {
   printf '#%02x%02x%02x' "$r" "$g" "$b"
 }
 
+# Repo identity of a directory: the absolute, symlink-resolved path of the
+# repo's COMMON git dir. Every linked worktree of a repo shares it with the
+# primary checkout, and two different repos never share it — so it is the
+# right key for "is this worktree actually a worktree of that repo?"
+# (robots-d04t). Prints nothing and returns non-zero if not a git repo.
+repo_identity() {
+  local d="$1" common
+  common=$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ -n "$common" ] || return 1
+  # Resolve symlinks so /var vs /private/var (etc.) can't cause a false mismatch.
+  (cd "$common" 2>/dev/null && pwd -P) || printf '%s' "$common"
+}
+
 # Resolve a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler account name.
 # Tries: macOS keychain (ccjuggler-<name>) → ~/.ccjuggler/<name>/.oauth-token
 # Prints the token or exits non-zero with an error message.
@@ -66,7 +102,7 @@ resolve_account_token() {
   local account="$1"
   local token
   # macOS keychain — primary store on MacBook
-  token=$(security find-generic-password -a "ccjuggler-${account}" -s "ccjuggler" -w 2>/dev/null)
+  token=$(security find-generic-password -a "ccjuggler" -s "ccjuggler-${account}" -w 2>/dev/null)
   if [ -n "$token" ]; then printf '%s' "$token"; return 0; fi
   # Flat-file fallback
   local f="$HOME/.ccjuggler/${account}/.oauth-token"
@@ -84,8 +120,12 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
   agent-id        kebab-slug, stable across restarts (e.g. code-reviewer)
   display-name    tab header text (e.g. "Code Reviewer")
   hex-color       tab accent color (e.g. "#c084fc")
-  initial-prompt  the task the spawned agent should work
+  initial-prompt  the task the spawned agent should work (OPTIONAL with --claim)
 
+  --claim TASK-ID the agent's first turn is 'parlay claim <task-id>', which gives
+                  it its identity, enrolls it, and pulls the task from the ticket.
+                  Shrinks the startup prompt to one line; the initial-prompt
+                  positional becomes optional (the task lives on the ticket).
   --ephemeral     mint a random hash identity (id="eph-XXXXXXXX", derived name,
                   deterministic color) instead of id/name/color positionals.
                   Must be the FIRST arg — cannot combine with an explicit agent-id.
@@ -106,7 +146,7 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   treehouse if on PATH, else plain git worktree. Recorded in meta.
   --account NAME  spawn the agent under a ccjuggler account (e.g. acc2) to spread
                   Claude usage across accounts. Resolves CLAUDE_CODE_OAUTH_TOKEN from
-                  keychain (security find-generic-password -a ccjuggler-NAME -s ccjuggler)
+                  keychain (security find-generic-password -a ccjuggler -s ccjuggler-NAME)
                   or ~/.ccjuggler/NAME/.oauth-token. Injected via herdr --env.
   --workspace ID  land the new tab in an existing herdr workspace instead of
                   wherever the caller's shell currently is. Falls back to
@@ -271,9 +311,18 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
 fi
 
 if [ "$EPHEMERAL" -eq 0 ]; then
-[ $# -lt 4 ] && usage
+[ $# -lt 3 ] && usage
 
-AGENT_ID="$1"; NAME="$2"; COLOR="$3"; PROMPT="$4"; shift 4
+AGENT_ID="$1"; NAME="$2"; COLOR="$3"; shift 3
+
+# The 4th positional is the initial-prompt, OPTIONAL when --claim is used (the
+# task then lives on the ticket, not here). A 4th arg starting with '-' is the
+# start of the flag section, not a prompt.
+PROMPT=""
+case "${1:-}" in
+  ""|-*) : ;;
+  *)     PROMPT="$1"; shift ;;
+esac
 
 CWD="$HOME"
 FOCUS_FLAG="--no-focus"
@@ -282,6 +331,7 @@ MODE="report"
 EFFORT=""
 WANT_WORKTREE=0
 ACCOUNT=""
+CLAIM=""
 WORKSPACE="${HERDR_WORKSPACE_ID:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -292,11 +342,18 @@ while [ $# -gt 0 ]; do
     --effort)    EFFORT="$2"; shift 2 ;;
     --worktree)  WANT_WORKTREE=1; shift ;;
     --account)   ACCOUNT="$2"; shift 2 ;;
+    --claim)     CLAIM="$2"; shift 2 ;;
     --workspace) WORKSPACE="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
 done
+
+# Need either an inline prompt or a --claim task-id to give the agent work.
+if [ -z "$PROMPT" ] && [ -z "$CLAIM" ]; then
+  echo "parlay-spawn: give the agent work — an initial-prompt positional or --claim <task-id>" >&2
+  usage
+fi
 fi
 
 # Validate agent id shape (kebab-slug).
@@ -338,6 +395,19 @@ if command -v herdr >/dev/null 2>&1; then
   fi
 fi
 
+# herdr contract gate (robots-4v2e): assert herdr still exposes every subcommand
+# and flag we're about to shell out to, BEFORE registering the agent or creating
+# a tab. A drifted herdr fails here with a precise "no longer accepts --X" line
+# instead of a cryptic mid-dispatch rollback. Escape hatch:
+# PARLAY_SPAWN_SKIP_CONTRACT=1 (emergency-only; fix the drift and remove it).
+if [ "${PARLAY_SPAWN_SKIP_CONTRACT:-0}" != "1" ] && command -v herdr_contract_check >/dev/null 2>&1; then
+  if ! herdr_contract_check; then
+    echo "parlay-spawn: herdr contract check failed — refusing to dispatch into a drifted herdr." >&2
+    echo "  Re-run 'pipeline-selftest' after fixing, or set PARLAY_SPAWN_SKIP_CONTRACT=1 to bypass (emergency only)." >&2
+    exit 1
+  fi
+fi
+
 echo "parlay-spawn: registering agent '$AGENT_ID' with Parlay at $PARLAY ..." >&2
 
 # 1. Register the agent so the tab exists.
@@ -371,14 +441,28 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
   mkdir -p "$PROJECT_PATH/.worktrees"
 
   # Try treehouse first (firstmate-only tool, gracefully absent on minis).
+  #
+  # robots-d04t: treehouse has no --repo flag — it picks its pool from the
+  # PROCESS cwd. Running it inherited from the CALLER's shell, so spawning
+  # `--cwd ~/code/herdr-web` from inside a firstmate worktree leased a
+  # *firstmate* worktree and launched the agent in the wrong repo, silently.
+  # Always run it with cwd = $PROJECT_PATH (the repo --cwd resolved to), and
+  # verify the repo identity of whatever it hands back before trusting it.
   _wt_created=0
   if command -v treehouse >/dev/null 2>&1; then
-    _th_out=$(treehouse get --lease "parlay-$AGENT_ID" 2>/dev/null) && {
+    _th_out=$(cd "$PROJECT_PATH" && treehouse get --lease "parlay-$AGENT_ID" 2>/dev/null) && {
       _th_path=$(printf '%s' "$_th_out" | tr -d '[:space:]')
       if [ -d "$_th_path" ]; then
-        WORKTREE_PATH="$_th_path"
-        _wt_created=1
-        echo "parlay-spawn: worktree via treehouse at $WORKTREE_PATH" >&2
+        if [ "$(repo_identity "$_th_path")" = "$(repo_identity "$PROJECT_PATH")" ]; then
+          WORKTREE_PATH="$_th_path"
+          _wt_created=1
+          echo "parlay-spawn: worktree via treehouse at $WORKTREE_PATH" >&2
+        else
+          echo "parlay-spawn: WRONG-REPO WORKTREE — treehouse handed back $_th_path," >&2
+          echo "  which belongs to $(repo_identity "$_th_path") but --cwd resolved to $PROJECT_PATH" >&2
+          echo "  ($(repo_identity "$PROJECT_PATH")). Rejecting it and falling back to plain git worktree." >&2
+          (cd "$PROJECT_PATH" && treehouse return "$_th_path" >/dev/null 2>&1) || true
+        fi
       fi
     } || true
   fi
@@ -407,6 +491,20 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
   _proj_real=$(cd "$PROJECT_PATH" 2>/dev/null && pwd -P)
   if [ "$_wt_real" = "$_proj_real" ]; then
     echo "parlay-spawn: ISOLATION FAILURE — worktree resolved to primary checkout ($PROJECT_PATH); aborting." >&2
+    exit 1
+  fi
+
+  # IDENTITY (robots-d04t): hard post-condition — the worktree we are about to
+  # launch the agent in must be a worktree of the SAME repo --cwd resolved to.
+  # Getting this wrong is silent and expensive (a full agent run spent in an
+  # unrelated repo, possibly leaving commits/branches there), so refuse loudly.
+  _wt_repo=$(repo_identity "$WORKTREE_PATH") || _wt_repo=""
+  _proj_repo=$(repo_identity "$PROJECT_PATH") || _proj_repo=""
+  if [ -z "$_wt_repo" ] || [ "$_wt_repo" != "$_proj_repo" ]; then
+    echo "parlay-spawn: REPO MISMATCH — refusing to launch in the wrong repository." >&2
+    echo "  --cwd resolved to project: $PROJECT_PATH (git dir: ${_proj_repo:-<none>})" >&2
+    echo "  worktree resolved to:      $WORKTREE_PATH (git dir: ${_wt_repo:-<none>})" >&2
+    echo "  These are different repos. Aborting instead of burning an agent run in the wrong one." >&2
     exit 1
   fi
 
@@ -439,10 +537,27 @@ Never commit, branch, or push from the primary checkout.
 ")
 fi
 
-# 3. Compose the startup prompt: enrollment instructions + task contract.
+# 3. Compose the startup prompt.
+#    --claim path (idea-tm0): the brief shrinks to a single command. 'parlay
+#    claim <task-id>' hands the agent its identity, enrolls it, and returns the
+#    task from the ticket — so the enrollment prose and the task both move
+#    off this prompt. The profile env injected on the tab lets claim resolve
+#    id/name/color/model without positional prose.
+if [ -n "${CLAIM:-}" ]; then
+STARTUP_PROMPT=$(cat <<EOF
+Run this now and follow its printed output exactly:
+
+  parlay claim $CLAIM
+
+It sets your identity ($AGENT_ID), enrolls you (arm the Monitor it prints), and gives you your task.
+$SETUP_BLOCK
+When done or your context is full: run the 'handoff' skill, then immediately 'identity --submit' (nothing between).
+EOF
+)
+else
+# Default path: full enrollment block + inline task contract (fold §3.1/§3.6).
 #    The fresh claude processes this as its first turn, so it arms the Monitor
 #    (making the tab "listening") and posts a ready reply before/while working.
-#    Structure (fold §3.1/§3.6): enrollment block (unchanged) + task contract below.
 STARTUP_PROMPT=$(cat <<EOF
 You are a background agent enrolled in the Pulse/Parlay chat panel at $PARLAY.
 Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
@@ -491,6 +606,7 @@ Examples:
   parlay status failed "build error — see reply for details"
 EOF
 )
+fi
 
 # 4. Pre-trust the workdir so the spawned claude never stalls on the folder
 #    trust dialog (captain's standing policy 2026-07-13: always trust).
@@ -567,6 +683,9 @@ TAB_JSON=$(herdr tab create --cwd "$CWD" $FOCUS_FLAG --label "$AGENT_ID" \
   ${WORKSPACE:+--workspace "$WORKSPACE"} \
   --env "PARLAY_SERVER=$PARLAY" \
   --env "PARLAY_AGENT_ID=$AGENT_ID" \
+  --env "PARLAY_AGENT_NAME=$NAME" \
+  --env "PARLAY_AGENT_COLOR=$COLOR" \
+  ${MODEL:+--env "PARLAY_AGENT_MODEL=$MODEL"} \
   ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
   ${PROJECT_ENV_FLAGS[@]+"${PROJECT_ENV_FLAGS[@]}"} \
   2>/dev/null) || true
@@ -602,9 +721,40 @@ herdr pane wait-output "$ROOT_PANE" --regex 'READY_[0-9]+' --timeout 5000 >/dev/
 # refuses to encode it ("agent arguments cannot be encoded safely for the
 # target shell"). So claude launches bare, then `agent prompt` below delivers
 # the real charter through herdr's paste-safe submission channel instead.
-if ! herdr agent start "$AGENT_ID" --kind claude --pane "$ROOT_PANE" \
-  -- --dangerously-skip-permissions --fallback-model sonnet ${MODEL:+--model "$MODEL"}; then
-  echo "parlay-spawn: herdr agent start failed — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
+# Retry 'agent start' on the agent_pane_busy race (robots-i4pi). Even after the
+# READY marker confirms the pane's shell executed a command, herdr's own
+# pane-availability bookkeeping lags by a beat, so the FIRST 'agent start'
+# reliably rejects with agent_pane_busy ('… is not an available shell') on a
+# brand-new per-ticket pane — NOT the shared-pane case robots-1uez fixed.
+# Empirically the pane settles within 0–3 retries at 300ms, but the tail
+# occasionally runs longer under load, so the budget is generous (12 attempts,
+# tunable via PARLAY_SPAWN_START_RETRIES); it is only spent while the pane is
+# genuinely busy. Only agent_pane_busy is retried — any other failure is
+# non-transient and rolls back immediately.
+_start_attempts="${PARLAY_SPAWN_START_RETRIES:-12}"
+_start_ok=0
+_start_out=""
+_try=1
+while [ "$_try" -le "$_start_attempts" ]; do
+  if _start_out=$(herdr agent start "$AGENT_ID" --kind claude --pane "$ROOT_PANE" \
+      -- --dangerously-skip-permissions --fallback-model sonnet ${MODEL:+--model "$MODEL"} 2>&1); then
+    # Guard against a hypothetical exit-0-with-error-object; treat a busy marker
+    # in the output as failure regardless of exit code.
+    case "$_start_out" in
+      *agent_pane_busy*) : ;;
+      *) _start_ok=1; break ;;
+    esac
+  else
+    case "$_start_out" in
+      *agent_pane_busy*) : ;;                 # transient — retry after a beat
+      *) break ;;                             # non-transient failure — stop
+    esac
+  fi
+  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; sleep 0.3; }
+  _try=$((_try + 1))
+done
+if [ "$_start_ok" -ne 1 ]; then
+  echo "parlay-spawn: herdr agent start failed after $_try attempt(s) — rolling back the tab to avoid a ghost '$AGENT_ID' tab. (last: $_start_out)" >&2
   [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
   exit 1
 fi
@@ -653,7 +803,7 @@ if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && command -v herdr >/dev/null 2>
   (
     # `agent wait` returns 0 as soon as the agent is observed 'working' — the
     # normal auto-start path exits here having done nothing.
-    if herdr agent wait "$AGENT_ID" --status working --timeout "$LIVENESS_TIMEOUT_MS" >/dev/null 2>&1; then
+    if herdr agent wait "$AGENT_ID" --until working --timeout "$LIVENESS_TIMEOUT_MS" >/dev/null 2>&1; then
       exit 0
     fi
     echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: initial turn never fired within ${LIVENESS_TIMEOUT_MS}ms — resubmitting charter." >&2

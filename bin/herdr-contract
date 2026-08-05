@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# herdr-contract — single source of truth for the herdr CLI contract that
+# parlay-spawn depends on, plus a preflight gate that asserts it.
+#
+# WHY THIS EXISTS (robots-4v2e):
+#   parlay-spawn shells out to `herdr` with zero version pin and no contract
+#   check, so every herdr upgrade is a live-fire test in production dispatch.
+#   In a single day herdr drift silently broke mechanic-dispatch three times:
+#     • robots-1uez: `agent start --cwd` flag removed (0.7.5 API split)
+#     • robots-i4pi: agent_pane_busy availability-gate race
+#     • robots-tzpe: `agent wait --status` -> `--until`, `.agent_id` -> `.agent`
+#   Each surfaced only as a cryptic mid-dispatch `unknown option: ...` that
+#   rolled back a half-created tab — the ticket never got a mechanic.
+#
+#   This file turns that class of failure from a silent, per-ticket production
+#   break into a single loud, precise, up-front assertion: parlay-spawn calls
+#   herdr_contract_check() at startup BEFORE registering anything, so a drifted
+#   herdr fails fast with a message naming the exact flag/subcommand that moved,
+#   instead of orphaning a tab mid-launch.
+#
+# USAGE:
+#   • Sourced (the normal path): `source .../herdr-contract` then call
+#     `herdr_contract_check`  -> returns 0 if the contract holds, 1 if a
+#     depended-on flag/subcommand is missing (hard drift). A version outside the
+#     pinned range with all flags intact is a loud stderr WARNING, not a failure.
+#   • Run directly: `herdr-contract`            # assert + human-readable report
+#                   `herdr-contract --quiet`    # assert silently, exit code only
+#                   `herdr-contract --version`  # print the parsed herdr version
+#
+# WHEN HERDR IS UPGRADED (the post-upgrade gate, fix-direction (b)):
+#   1. Run `pipeline-selftest` (its first check is `contract`, which calls this).
+#   2. If the version-range WARNING fires but everything else is green, the
+#      contract still holds — bump PARLAY_HERDR_MAX below to the new version.
+#   3. If a flag/subcommand assertion FAILS, herdr genuinely moved the contract:
+#      fix bin/parlay-spawn's call sites, update the assertions here to match,
+#      then bump the pin. This file and parlay-spawn move together, on purpose.
+#
+# ENV OVERRIDES:
+#   PARLAY_HERDR_MIN / PARLAY_HERDR_MAX   override the pinned range (see below)
+#   PARLAY_SPAWN_SKIP_CONTRACT=1          escape hatch: skip the gate entirely
+#                                         (parlay-spawn honors this; use only to
+#                                          unblock in an emergency, then fix)
+
+# --- The pin -----------------------------------------------------------------
+# Tested-good range: parlay-spawn is written against herdr's 0.7.5 agent-start
+# API split and verified through 0.8.x. MAX is exclusive — the next minor is the
+# most likely place a fresh contract break lands, so we want a tripwire there.
+PARLAY_HERDR_MIN="${PARLAY_HERDR_MIN:-0.7.5}"
+PARLAY_HERDR_MAX="${PARLAY_HERDR_MAX:-0.9.0}"
+
+# --- The contract ------------------------------------------------------------
+# Every (subcommand, required-flag) pair parlay-spawn actually invokes. Keep this
+# in lockstep with bin/parlay-spawn's herdr call sites — that is the whole point
+# of the file. Format: "subcommand words|flag" (flag empty => just assert the
+# subcommand exists / accepts --help).
+_HERDR_CONTRACT=(
+  "tab create|--cwd"          # step 5: pane cwd (moved here in 0.7.5)
+  "tab create|--env"          # step 5: env injection (moved here in 0.7.5)
+  "tab create|--label"        # tab label = agent id
+  "tab create|--no-focus"     # detached spawn
+  "tab close|"                # rollback on failure
+  "agent get|"                # duplicate-name guard + liveness
+  "agent start|--kind"        # required in 0.7.5+
+  "agent start|--pane"        # target the tab's root pane (replaced --tab)
+  "agent prompt|--wait"       # watchdog resubmit path
+  "agent prompt|--until"      # 0.8.0 renamed --status -> --until
+  "agent wait|--until"        # 0.8.0 renamed --status -> --until (robots-tzpe)
+  "pane send-text|"           # pre-clear the CLAUDECODE nesting guard
+  "pane send-keys|"           # submit the pre-clear line
+  "pane wait-output|--regex"  # READY_<pid> execution-confirmed marker
+)
+
+# --- Version helpers ---------------------------------------------------------
+# Parse "herdr 0.8.0" (or "herdr 0.8.0-preview.3") -> "0.8.0".
+herdr_version() {
+  local raw
+  raw=$(herdr --version 2>/dev/null) || return 1
+  # first dotted numeric token
+  printf '%s\n' "$raw" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+}
+
+# Return 0 if $1 (dotted) < $2 (dotted). Pads missing components with 0.
+_ver_lt() {
+  local a b IFS=.
+  local -a A B
+  read -ra A <<<"$1"; read -ra B <<<"$2"
+  local i
+  for i in 0 1 2; do
+    local x=${A[i]:-0} y=${B[i]:-0}
+    if [ "$x" -lt "$y" ]; then return 0; fi
+    if [ "$x" -gt "$y" ]; then return 1; fi
+  done
+  return 1  # equal => not <
+}
+
+# --- The gate ----------------------------------------------------------------
+# Prints diagnostics to stderr. Returns 0 iff every depended-on flag/subcommand
+# is present. A version outside [MIN, MAX) with all flags intact warns but
+# returns 0 (a harmless patch/minor bump shouldn't block dispatch).
+herdr_contract_check() {
+  local strict_report="${1:-}"   # "report" => also print an OK line on success
+
+  if ! command -v herdr >/dev/null 2>&1; then
+    echo "herdr-contract: FATAL — herdr is not on \$PATH. parlay-spawn cannot dispatch without it." >&2
+    return 1
+  fi
+
+  local ver
+  ver=$(herdr_version)
+  if [ -z "$ver" ]; then
+    echo "herdr-contract: WARN — could not parse 'herdr --version'; skipping version-range check." >&2
+  else
+    if _ver_lt "$ver" "$PARLAY_HERDR_MIN" || ! _ver_lt "$ver" "$PARLAY_HERDR_MAX"; then
+      echo "herdr-contract: WARN — herdr $ver is outside the tested range ${PARLAY_HERDR_MIN} <= v < ${PARLAY_HERDR_MAX}." >&2
+      echo "  The flag contract is still checked below. If it holds, run 'pipeline-selftest'" >&2
+      echo "  and bump PARLAY_HERDR_MAX in bin/herdr-contract to $ver before relying on dispatch." >&2
+    fi
+  fi
+
+  # Flag/subcommand assertions — the part that actually gates dispatch.
+  local entry sub flag help missing=0
+  for entry in "${_HERDR_CONTRACT[@]}"; do
+    sub="${entry%%|*}"
+    flag="${entry#*|}"
+    # `herdr <sub> --help` prints the subcommand help; a missing subcommand
+    # errors non-zero.
+    if ! help=$(herdr $sub --help 2>&1); then
+      echo "herdr-contract: DRIFT — 'herdr $sub' no longer exists (parlay-spawn depends on it)." >&2
+      missing=$((missing + 1))
+      continue
+    fi
+    if [ -n "$flag" ] && ! printf '%s' "$help" | grep -qE -- "(^|[^a-z-])$flag([^a-z-]|$)"; then
+      echo "herdr-contract: DRIFT — 'herdr $sub' no longer accepts '$flag' (parlay-spawn passes it)." >&2
+      missing=$((missing + 1))
+    fi
+  done
+
+  if [ "$missing" -gt 0 ]; then
+    echo "herdr-contract: FAIL — $missing herdr contract point(s) drifted. Dispatch WILL break." >&2
+    echo "  Fix bin/parlay-spawn's herdr call sites + the assertions in bin/herdr-contract, then re-run pipeline-selftest." >&2
+    return 1
+  fi
+
+  if [ "$strict_report" = "report" ]; then
+    echo "herdr-contract: OK — herdr ${ver:-?} satisfies all ${#_HERDR_CONTRACT[@]} contract points (range ${PARLAY_HERDR_MIN} <= v < ${PARLAY_HERDR_MAX})."
+  fi
+  return 0
+}
+
+# --- Direct-invocation entrypoint --------------------------------------------
+# Only runs when executed, not when sourced.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  case "${1:-}" in
+    --version) herdr_version ;;
+    --quiet)   herdr_contract_check ;;
+    -h|--help) sed -n '2,50p' "$0" ;;
+    *)         herdr_contract_check report ;;
+  esac
+  exit $?
+fi
