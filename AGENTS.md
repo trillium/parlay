@@ -529,6 +529,38 @@ answers in milliseconds at any fleet size. `TestControlSocketBindsBeforeSpoolRes
 (`tools/relay/startup_test.go`) pins that ordering against the process's own log;
 `tools/relay/deploy/ensure-up.test.sh` pins the start/wait policy with stubbed
 `launchctl`/`curl`. Anything reordering relay startup must keep the bind first.
+## Never merge on a green check alone — run `parlay merge-gate <pr>` (robots-jap6)
+
+A green status check in this repo is **not** evidence that anything reviewed
+the code. CodeRabbit is the only check — there are no `.github/workflows` at
+all — and it lies in two known ways: it reports the check CONCLUSION `pass`
+when it never ran (the account-wide PR review limit; only the free-text
+*description* says "Review rate limited"), and it reports success regardless
+of how many findings it posted. `gh pr view` compounds it with
+`mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`, `reviews=0`. PRs #43 and #46
+both landed completely unreviewed this way.
+
+`parlay merge-gate <pr> [--repo owner/name] [--json]`
+(`tools/cli/internal/commands/merge_gate.go`) is the truthful replacement. It
+refuses to treat the conclusion as the merge signal: it reads each check's
+*description* for a vacuous pass, requires an actual review (a human review,
+or a CodeRabbit comment carrying `walkthrough_start` rather than the
+rate-limit template), requires that review to name the **current head sha** —
+CodeRabbit edits one comment in place, so `createdAt` can never detect a
+stale review, but the body always prints the exact `base..head` range it
+processed — and counts unresolved review threads via GraphQL, since
+`gh pr view` has no field for thread resolution. Exit codes are fail-closed
+in every direction: `0` ready/already-merged, `3` blocked, `1` gh could not
+answer, `2` usage. The mechanic contract in `claim.go`'s robots DoD now sends
+every merge decision through it.
+
+Decision logic lives in the pure `ComputeMergeGate(MergeGateSnapshot)` so
+`merge_gate_test.go` pins the regressions with no gh binary and no network;
+`fetchMergeGateSnapshot` is the only part that shells out. **Go-only, no TS
+port** — `bin/parlay` execs the Go binary for everything except
+`lavish-import`, so the verb is reachable everywhere, and `packages/cli` is
+the retired path. Do not add it to `tools/cli/parity/run.sh`; there is no TS
+side to diff against.
 
 ## Maintaining this file
 

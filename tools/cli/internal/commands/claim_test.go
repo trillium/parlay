@@ -337,6 +337,16 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if !strings.Contains(out, "isolated worktree") {
 		t.Errorf("robots DoD should forbid tangling a shared checkout and require an isolated worktree; got:\n%s", out)
 	}
+	// robots-jap6: the previous wording ("all required checks are green") was
+	// itself the merge-gate defect — CodeRabbit reports `pass` when it never
+	// ran. The contract must send the mechanic through `parlay merge-gate`
+	// rather than letting it read the check conclusion directly.
+	if !strings.Contains(out, "parlay merge-gate") {
+		t.Errorf("robots DoD should route the merge decision through the gate; got:\n%s", out)
+	}
+	if strings.Contains(out, "all required checks are green") {
+		t.Errorf("robots DoD must not tell the mechanic to merge on green checks alone; got:\n%s", out)
+	}
 }
 
 func TestClaimStoreForID(t *testing.T) {
