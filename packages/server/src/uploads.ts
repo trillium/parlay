@@ -19,7 +19,7 @@ import { CORS } from "./sse"
 // Agents: Read that filesystem path directly — the Read tool renders images
 // for vision. Implement this one mapping identically everywhere.
 
-const UPLOAD_DIR = join(process.env.HOME ?? "", "exchange", "parlay-uploads")
+import { UPLOAD_DIR } from "./paths"
 const MAX_BYTES = 10 * 1024 * 1024
 
 const EXT_TYPES: Record<string, string> = {

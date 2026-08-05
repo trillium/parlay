@@ -127,11 +127,12 @@ export interface ParlayEnv {
   /** per-agent home for identity/scratchpad (default ~/.parlay/agents) */
   PARLAY_AGENT_HOME: string
   /**
-   * PAI root the server keys several persistence paths off (agent registry
-   * parlay-agents.json, tts cache/reports, tool/hook tailers). NOT covered by
-   * PARLAY_DATA_DIR — see README "Isolation gaps". We redirect it to a
-   * sandbox-local dir so a sandbox never rehydrates or overwrites the prod
-   * agent registry. This is a sandbox-level env override, not a prod-path patch.
+   * PAI root the server keys its tts cache/reports and tool/hook tailers off.
+   * It used to also own the agent registry (parlay-agents.json), which
+   * PARLAY_DATA_DIR did not cover — see README "Isolation gaps" #1. The server
+   * now resolves every persisted path (registry included) through paths.ts, so
+   * PARLAY_DATA_DIR covers that on its own; we still redirect PAI_DIR for the
+   * tailers/cache. Sandbox-level env override, not a prod-path patch.
    */
   PAI_DIR: string
 }

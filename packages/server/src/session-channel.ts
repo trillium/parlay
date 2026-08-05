@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, openSync, readSync, closeSync } from "fs"
 import { join } from "path"
-import { homedir } from "os"
 
 // ── Session → agent channel map ──────────────────────────────────────────────
 // Processing signals (hook firings, tool activity) are stamped with the Claude
@@ -24,13 +23,9 @@ import { homedir } from "os"
 //    haven't switched to JSON declaration yet.
 
 // Primary: JSON declaration file agents write to explicitly
-const DECLARE_PATH = join(homedir(), "exchange", "parlay-agent-channels.json")
-
 // Fallback: internal state learned from tool-activity.jsonl parsing
-const STATE_PATH = join(
-  process.env.PAI_DIR ?? join(process.env.HOME ?? "", ".claude", "PAI"),
-  "MEMORY", "STATE", "parlay-session-channels.json",
-)
+// Both resolved in paths.ts so PARLAY_DATA_DIR can redirect them (robots-jcjj).
+import { AGENT_CHANNELS_FILE as DECLARE_PATH, SESSION_CHANNELS_FILE as STATE_PATH } from "./paths"
 
 // In-memory map built from the fallback path
 const sessionChannel = new Map<string, string>()

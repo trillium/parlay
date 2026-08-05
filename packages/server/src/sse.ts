@@ -13,10 +13,7 @@ export const agents      = new Map<string, AgentInfo>()
 // computed from live pollers as before.
 import { readFileSync, writeFileSync, mkdirSync } from "fs"
 import { join } from "path"
-const AGENTS_PATH = join(
-  process.env.PAI_DIR ?? join(process.env.HOME ?? "", ".claude", "PAI"),
-  "MEMORY", "STATE", "parlay-agents.json",
-)
+import { AGENTS_FILE as AGENTS_PATH } from "./paths"
 
 export function persistAgents(): void {
   try {
