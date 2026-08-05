@@ -590,6 +590,49 @@ port** — `bin/parlay` execs the Go binary for everything except
 the retired path. Do not add it to `tools/cli/parity/run.sh`; there is no TS
 side to diff against.
 
+## Finished agents are only collected by `parlay sweep` — firstmate can never see them (robots-6xq7)
+
+Parlay-spawned agents are **structurally invisible** to firstmate's idle>2h
+auto-close: every firstmate shutdown path enumerates sessions via
+`$STATE/*.meta`, and a parlay agent has no `.meta` file. Nothing else closed
+them either — `crew-state` reports a terminal state, `teardown` does the safe
+destroy, `supervise` is per-agent wake-on-status — so finished agents posted
+`done` and waited forever (38 stale panes against 2 live orchestrators).
+
+`parlay sweep [--apply] [--agent <id>] [--all] [--force] [--interval <sec>]
+[--verbose]` (`tools/cli/internal/commands/sweep.go`) is the missing
+collector: it walks every store under `~/.parlay/agents`, asks `crew-state`
+for each one, and tears down the provably-finished through
+`teardownAgent` — the same chain `parlay teardown` uses, factored out of
+`Teardown` so a refusal (uncommitted work, unlanded commits) surfaces as an
+error the sweep reports and steps over instead of an `os.Exit`. Default is a
+dry run; `--apply` acts. Policy lives in the pure `ClassifySweep`, tested
+with no filesystem in `sweep_test.go`. **Go-only, no TS port** — same
+reasoning as `merge-gate` above; keep it out of `tools/cli/parity/run.sh`.
+
+Four things are never swept, and each guard exists because of a real way this
+could destroy work: the sweeping agent itself; ids listed in
+`$PARLAY_STATE_HOME/sweep-keep` (one id per line, `#` comments — where
+long-lived dispatchers go); `needs-decision`/`blocked`/`failed`, which are
+*held for the captain* because absorbing them destroys the state he needs to
+read; and any agent whose `identity.md` has **no frontmatter**, held even
+under `--all` (`--force` is the deliberate override).
+
+That last guard is the important one. `--worktree`/`--project` had been
+dropped from `MemValueFlags` and from `--register`'s meta-field loop during
+the Go port, and `args.Parse` dies with `EXIT_USAGE` on an unknown flag — so
+every `parlay identity --register … --worktree <path> --project <path>` that
+`parlay-spawn` issues for a worktree agent exited 2 and wrote no frontmatter
+at all, with `registerIdentity`'s `_ = cmd.Run()` swallowing the code. The
+agent launched looking fine with an empty launch spec, and `parlay teardown`
+then read no worktree, deleted the store, and orphaned the worktree plus any
+unpushed commits **without ever reaching its git checks** — teardown only
+checks a *recorded* worktree. Both flags are restored and pinned by
+`TestRegisterRecordsWorktreeAndProject`, but stores registered before that
+fix are still empty on disk, which is exactly what the hold protects. When
+adding a flag to a Go-ported command, diff its table against the TS source's
+(`packages/cli/src/commands-identity/store.ts` here); a dropped flag is not a
+degraded flag, it is a hard exit that callers may be discarding.
 
 ## Maintaining this file
 

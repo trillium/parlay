@@ -82,11 +82,26 @@ func Teardown(argv []string) {
 		return
 	}
 
-	force := r.Bool("--force")
+	msg, err := teardownAgent(agentID, r.Bool("--force"))
+	if err != nil {
+		// Every refusal below is a usage error in the TS original's terms —
+		// it exits 2 with the same message on stderr.
+		httpc.Die(err.Error(), config.ExitUsage)
+		return
+	}
+	fmt.Println(msg)
+}
+
+// teardownAgent is the safe-destroy chain itself, factored out of Teardown so
+// `parlay sweep` can drive the SAME path per agent instead of duplicating the
+// git safety checks (robots-6xq7). It returns the success line the caller
+// prints, or the refusal as an error — it never calls os.Exit, so a sweep can
+// refuse one agent and keep going. Warnings still go straight to stderr,
+// matching the TS original's byte-for-byte output when driven by `teardown`.
+func teardownAgent(agentID string, force bool) (string, error) {
 	idHome := filepath.Join(parlayAgentsDir(), agentID)
 	if _, err := os.Stat(idHome); err != nil {
-		httpc.Die(fmt.Sprintf("parlay teardown: agent '%s' not found in %s", agentID, idHome), config.ExitUsage)
-		return
+		return "", fmt.Errorf("parlay teardown: agent '%s' not found in %s", agentID, idHome)
 	}
 
 	fm := readLocalFrontmatter(filepath.Join(idHome, "identity.md"))
@@ -97,23 +112,24 @@ func Teardown(argv []string) {
 	if worktree == "" {
 		bestEffortUnregister(agentID)
 		os.RemoveAll(idHome)
-		fmt.Printf("agent %s torn down (no worktree)\n", agentID)
-		return
+		return fmt.Sprintf("agent %s torn down (no worktree)", agentID), nil
 	}
 
 	// Worktree already gone (stale reference).
 	if _, err := os.Stat(worktree); err != nil {
 		bestEffortUnregister(agentID)
 		os.RemoveAll(idHome)
-		fmt.Printf("agent %s torn down (worktree already gone)\n", agentID)
-		return
+		return fmt.Sprintf("agent %s torn down (worktree already gone)", agentID), nil
 	}
 
 	// Check for uncommitted changes.
 	if hasUncommitted(worktree) {
 		if !force {
-			httpc.Die(fmt.Sprintf("parlay teardown: %s has uncommitted changes. Run 'git diff' or --force to discard.", agentID), config.ExitUsage)
-			return
+			// The refusals below are user-facing CLI messages printed verbatim to
+			// stderr, not Go errors meant for wrapping — the trailing period and
+			// second sentence are part of the TS original's byte-for-byte output,
+			// so they must not be reworded to satisfy ST1005.
+			return "", fmt.Errorf("parlay teardown: %s has uncommitted changes. Run 'git diff' or --force to discard.", agentID) //nolint:staticcheck
 		}
 		fmt.Fprintf(os.Stderr, "warn: --force: discarding uncommitted changes in %s\n", worktree)
 	}
@@ -123,8 +139,7 @@ func Teardown(argv []string) {
 		if !force {
 			head := sh("git", "-C", worktree, "rev-parse", "HEAD")
 			if !head.ok || !isContentLanded(worktree, head.out) {
-				httpc.Die(fmt.Sprintf("parlay teardown: %s has unpushed commits not yet landed. Push or --force.", agentID), config.ExitUsage)
-				return
+				return "", fmt.Errorf("parlay teardown: %s has unpushed commits not yet landed. Push or --force.", agentID) //nolint:staticcheck
 			}
 			fmt.Fprintf(os.Stderr, "teardown %s: unpushed commits but content is landed.\n", agentID)
 		} else {
@@ -147,5 +162,5 @@ func Teardown(argv []string) {
 	// default (firstmate keeps permanent agents' stores separately).
 	os.RemoveAll(idHome)
 
-	fmt.Printf("agent %s torn down\n", agentID)
+	return fmt.Sprintf("agent %s torn down", agentID), nil
 }

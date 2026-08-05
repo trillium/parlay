@@ -155,3 +155,31 @@ func TestRegisterWithoutEphemeralOmitsMarker(t *testing.T) {
 		t.Errorf("expected context.json to exist: %v", err)
 	}
 }
+
+// Regression (robots-6xq7): --worktree/--project were dropped from
+// MemValueFlags and from --register's meta-field loop during the port, so
+// every worktree spawn's `parlay identity --register … --worktree <path>
+// --project <path>` died with EXIT_USAGE ("unknown flag") and wrote no
+// frontmatter at all. parlay-spawn swallows that exit code, so the agent
+// launched with an empty launch spec — and `parlay teardown` then read no
+// worktree, deleted the store, and orphaned the worktree (plus any unpushed
+// commits in it) without ever running its git safety checks.
+func TestRegisterRecordsWorktreeAndProject(t *testing.T) {
+	startHarness(t)
+	home := freshHome(t)
+
+	captureStdout(t, func() {
+		CmdIdentity([]string{
+			"--register", "--agent", "wt-worker", "--name", "WT Worker", "--color", "#010203",
+			"--cwd", "/tmp/repo", "--worktree", "/tmp/wt/wt-worker", "--project", "/tmp/repo",
+		})
+	})
+
+	fm := ReadFrontmatter(filepath.Join(home, "wt-worker", "identity.md"))
+	if got := fm.Get("worktree"); got != "/tmp/wt/wt-worker" {
+		t.Errorf("fm.worktree = %q, want /tmp/wt/wt-worker", got)
+	}
+	if got := fm.Get("project"); got != "/tmp/repo" {
+		t.Errorf("fm.project = %q, want /tmp/repo", got)
+	}
+}

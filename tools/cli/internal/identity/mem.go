@@ -173,8 +173,10 @@ func cmdMem(kind MemKind, argv []string) {
 		}
 		// Fold §3.2 lifecycle meta fields — written by parlay-spawn at
 		// launch time, read back by identity --launch and parlay teardown.
-		// Only set when provided.
-		for _, k := range []string{"mode", "effort", "kind", "yolo"} {
+		// Only set when provided. worktree/project are what make teardown's
+		// git safety reachable at all; the port had dropped them (see
+		// store.go's MemValueFlags note, robots-6xq7).
+		for _, k := range []string{"mode", "effort", "kind", "yolo", "worktree", "project"} {
 			if v := strings.TrimSpace(optString(res, "--"+k)); v != "" {
 				fm.Set(k, v)
 			}

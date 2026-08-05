@@ -98,6 +98,8 @@ func main() {
 		commands.Guard(args)
 	case "teardown":
 		commands.Teardown(args)
+	case "sweep":
+		commands.Sweep(args)
 	case "variant":
 		commands.Variant(args)
 	case "doctor":
