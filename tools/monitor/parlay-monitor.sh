@@ -71,6 +71,27 @@ done
 
 [ -n "$AGENT" ] || { echo "parlay-monitor: --agent <id> is required" >&2; usage; }
 
+# ── Never die quietly before streaming starts (robots-dcag) ───────────────────
+# By the time this script runs, `parlay listen` has already registered and
+# announced the agent with Pulse. If we then exit without reaching the stream,
+# the panel shows a healthy agent whose event stream does not exist — it takes
+# no directives for the rest of the session and nothing says so. Any exit from
+# the setup phase therefore names itself, its code, and the consequence. `set
+# -e` deaths land here too, which is exactly the case that went unreported.
+# Cleared once `tail` is reached, since a stream ending later is a different
+# (and visible) event.
+STREAMING=0
+on_setup_exit() {
+  local code=$?
+  [ "$code" = 0 ] && return 0
+  [ "$STREAMING" = 1 ] && return 0
+  echo "parlay-monitor: FAILED during setup (exit $code) — '$AGENT' is NOT streaming." >&2
+  echo "parlay-monitor:   If 'parlay listen' already registered it, this agent is now" >&2
+  echo "parlay-monitor:   registered-but-deaf: visible in the panel, receiving nothing." >&2
+  echo "parlay-monitor:   Re-run the listen/Monitor command to re-arm it (robots-dcag)." >&2
+}
+trap on_setup_exit EXIT
+
 # Validate the kebab-slug shape so the spool path can never escape the runtime dir.
 if ! printf '%s' "$AGENT" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
   echo "parlay-monitor: --agent must be a kebab-slug (got: '$AGENT')" >&2
@@ -171,11 +192,51 @@ fi
 # read-only, so this runs BEFORE /register — a mismatch must abort without ever
 # touching the wrong registry. An unreachable/older relay reports nothing; that
 # is not a mismatch, so we proceed rather than hard-fail on unknown.
+#
+# THE PROBE MUST NEVER ABORT THE MONITOR (robots-dcag). This was written as a
+# bare `VAR=$(curl … | sed …)`, and under this script's `set -euo pipefail` a
+# failing command substitution in a plain assignment takes its own exit status
+# and kills the script — so a curl timeout (exit 28) ended the monitor HERE,
+# silently, three lines before the first "enrolling" message. `parlay listen`
+# registers and announces with Pulse before shelling out to this script, so the
+# panel showed the agent present and healthy while its event stream was dead:
+# registered-but-deaf for the rest of the session, receiving no directives.
+# `2>/dev/null` hid curl's own complaint; nothing else printed. Every probe
+# failure is now caught and reported, and an unknown answer only ever means
+# "could not verify", never "abort".
 if [ -n "${PARLAY_SERVER:-}" ]; then
   WANT_SERVER="${PARLAY_SERVER%/}"
-  RELAY_SERVER=$(curl -fsS --max-time 2 --unix-socket "$SOCK" http://relay/agents 2>/dev/null \
-    | sed -n 's/.*"server":"\([^"]*\)".*/\1/p')
+  # 2s was also simply too tight: /agents serializes the whole registry, and on
+  # the captain's box (269 agents) it routinely answers in >2s, so the timeout
+  # was reached on a perfectly healthy relay. This is a one-shot startup probe,
+  # not a hot path — give it room, and let a caller tune it.
+  PROBE_TIMEOUT="${PARLAY_RELAY_PROBE_TIMEOUT:-15}"
+  RELAY_SERVER=""
+  PROBE_ERR=""
+  if command -v parlay_relay_reported_server >/dev/null 2>&1; then
+    # lib.sh's helper is already internally guarded (`|| return 0`), but keep the
+    # `|| true` anyway: this assignment must not be able to abort under set -e
+    # regardless of what a future/older lib.sh does inside.
+    RELAY_SERVER="$(parlay_relay_reported_server "$SOCK" 2>/dev/null || true)"
+  else
+    # lib.sh missing or stale: same probe inline, guarded the same way. The
+    # substitution's status is consumed by `||` so `set -e` never sees it.
+    PROBE_BODY="$(curl -fsS --max-time "$PROBE_TIMEOUT" --unix-socket "$SOCK" \
+      http://relay/agents 2>/dev/null)" || { PROBE_ERR=$?; PROBE_BODY=""; }
+    RELAY_SERVER="$(printf '%s' "$PROBE_BODY" \
+      | sed -n 's/.*"server":"\([^"]*\)".*/\1/p')"
+  fi
   RELAY_SERVER="${RELAY_SERVER%/}"
+  # Say when the check could not be made. Proceeding unverified is the correct
+  # behaviour (an older relay does not report a server at all), but it must be
+  # visible — a silent skip is how a real mismatch would slip through later.
+  if [ -z "$RELAY_SERVER" ]; then
+    echo "parlay-monitor: relay at $SOCK did not report its upstream server" >&2
+    if [ -n "$PROBE_ERR" ]; then
+      echo "parlay-monitor:   (probe failed, curl exit $PROBE_ERR, ${PROBE_TIMEOUT}s timeout)" >&2
+    fi
+    echo "parlay-monitor:   proceeding unverified — cannot confirm it serves $WANT_SERVER" >&2
+  fi
   if [ -n "$RELAY_SERVER" ] && [ "$RELAY_SERVER" != "$WANT_SERVER" ]; then
     echo "parlay-monitor: refusing to enroll '$AGENT' — relay at $SOCK is bound to" >&2
     echo "parlay-monitor:   $RELAY_SERVER but PARLAY_SERVER is $WANT_SERVER." >&2
@@ -220,6 +281,9 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 echo "parlay-monitor: streaming '$AGENT' from $SPOOL" >&2
+# Setup is over: past here, an exit is the stream ending (usually the harness
+# killing us), not the silent registered-but-deaf failure the trap warns about.
+STREAMING=1
 
 # 2. Stream. Flags:
 #      -n0  start at end-of-file — no replay of already-consumed spool lines
