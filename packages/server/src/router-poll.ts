@@ -1,6 +1,7 @@
 import { history, historyIndex } from "./storage"
 import { agents, pollWaiters, setAgentPresence, CORS, broadcastToClients, lastPollByChannel, broadcastPresenceMap, persistAgents } from "./sse"
 import { markReceived } from "./messages"
+import { isTombstoned } from "./prune"
 import type { PollWaiter } from "./types"
 
 export function handlePollRequest(req: Request, pathname: string): Response | null {
@@ -9,6 +10,18 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
   const params  = new URL(req.url).searchParams
   const afterId = params.get("after") ?? ""
   const channel = params.get("channel") ?? undefined
+  // A channel that was deliberately removed (prune sweep or explicit
+  // unregister) must not be able to re-create itself by polling. Answer 410
+  // Gone — a terminal status the relay treats as "stop polling this channel"
+  // — instead of the auto-register below, which is how leaked test listeners
+  // survived every sweep and accumulated 82 deep (robots-ycfa). Deliberately
+  // BEFORE the lastPoll bookkeeping: a refused poll is not presence.
+  if (channel && isTombstoned(channel)) {
+    return new Response(JSON.stringify({
+      error: `channel ${channel} was unregistered; stop polling`,
+      gone: true,
+    }), { status: 410, headers: { "Content-Type": "application/json", ...CORS } })
+  }
   if (channel) {
     lastPollByChannel.set(channel, Date.now())
     if (!agents.has(channel)) {
