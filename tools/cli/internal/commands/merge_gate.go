@@ -30,11 +30,12 @@
 //  6. no review thread is left unresolved (the findings-count lie).
 //
 // Exit codes are deliberately fail-closed in every direction: 0 only when
-// the PR is genuinely ready (or already merged), 3 when a real blocker is
-// found, 4 when the only thing missing is a reviewer that is unavailable,
-// 1 when gh/network could not answer, 2 on usage. A caller that just
-// branches on non-zero refuses the merge in all four failure modes, which
-// is the correct default for a gate.
+// the PR is genuinely ready (or already merged), 3 when a real blocker in the
+// code is found, 5 when the reviewer simply has not finished yet, 4 when the
+// only thing missing is a reviewer that is unavailable, 1 when gh/network
+// could not answer, 2 on usage. A caller that just branches on non-zero
+// refuses the merge in all five failure modes, which is the correct default
+// for a gate.
 //
 // 4 exists because 3 alone gave the fleet no bounded answer (robots-8kkq).
 // "CodeRabbit is rate limited" and "a test is failing" are both non-zero, but
@@ -46,6 +47,19 @@
 // the exit code lets the caller stop and hand the captain the two honest
 // options — merge-and-disclose, or park — instead of burning the night on a
 // wait with no terminating condition.
+//
+// 5 exists for the same reason in the opposite direction (robots-rwf8). A
+// check that is STILL RUNNING was landing in 3 — the code the mechanic
+// contract documents as "blocked on the CODE, fix it on the branch" — even
+// though nothing was wrong with the diff and the reviewer had simply not
+// finished. Observed on trillium/no-mistakes#11: `check-pending` plus
+// `no-review-evidence`, exit 3, and minutes later the SAME unchanged PR
+// exited 0. An agent obeying the documented contract goes editing a branch
+// that has no defect. "Not yet" is neither "the code is wrong" (3) nor "the
+// reviewer will never come" (4); it is its own answer, and the only one of
+// the three that is genuinely transient. Re-run the gate; do not edit, do not
+// escalate, do not merge.
+
 package commands
 
 import (
@@ -72,13 +86,23 @@ const ExitMergeBlocked = 3
 // between "wait, this will resolve" and "this needs a human to choose".
 const ExitMergeNeedsDecision = 4
 
+// ExitMergePending is the gate's answer when every blocker it found is the
+// review still being IN FLIGHT. Non-zero, so the naive "non-zero = do not
+// merge" caller is unchanged and still fails closed — but unlike 3 it is not
+// a statement about the code, and unlike 4 it is not terminal. The only
+// correct response is to re-run the gate later (robots-rwf8).
+const ExitMergePending = 5
+
 // Blocker classes. ClassCode is the default and means the finding is about
 // this PR — fix it here. ClassReviewerUnavailable means the PR may be
 // perfectly fine and the reviewing service simply did not participate; no
-// amount of work on the branch changes it.
+// amount of work on the branch changes it. ClassPending means the review has
+// not finished yet: nothing is known to be wrong, no action on the branch
+// helps, and the answer will change on its own.
 const (
 	ClassCode                = "code"
 	ClassReviewerUnavailable = "reviewer-unavailable"
+	ClassPending             = "pending"
 )
 
 // vacuousCheckDesc matches a status-check description that ADMITS the check
@@ -191,10 +215,14 @@ type MergeGateVerdict struct {
 	// reviewer-unavailability. The PR is not ready and must not be
 	// auto-merged, but nothing here is fixable on the branch — the captain
 	// has to choose merge-and-disclose or park.
-	NeedsDecision bool           `json:"needsDecision"`
-	Blockers      []MergeBlocker `json:"blockers"`
-	Notes         []string       `json:"notes"`
-	ExitCode      int            `json:"exitCode"`
+	NeedsDecision bool `json:"needsDecision"`
+	// Pending is true when there ARE blockers but every one of them is the
+	// review still running. Nothing is known to be wrong with the code and
+	// nothing needs deciding — the caller re-runs the gate later.
+	Pending  bool           `json:"pending"`
+	Blockers []MergeBlocker `json:"blockers"`
+	Notes    []string       `json:"notes"`
+	ExitCode int            `json:"exitCode"`
 }
 
 func block(v *MergeGateVerdict, code, format string, a ...any) {
@@ -250,6 +278,7 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 	if len(s.Checks) == 0 {
 		block(&v, "no-checks", "PR has no status checks at all — nothing gated this code.")
 	}
+	checkPending := false
 	for _, c := range s.Checks {
 		name := c.Name
 		if name == "" {
@@ -259,7 +288,13 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		case "fail", "cancel":
 			block(&v, "check-failed", "check %q is %s (%s).", name, c.Bucket, describeOrState(c))
 		case "pending":
-			block(&v, "check-pending", "check %q has not finished (%s).", name, describeOrState(c))
+			// Classed pending, not code (robots-rwf8): a check that has not
+			// finished has said NOTHING about the diff yet. Editing the branch
+			// to "fix" it is editing code no one has objected to, and it also
+			// invalidates whatever review was in flight.
+			checkPending = true
+			blockAs(&v, "check-pending", ClassPending,
+				"check %q has not finished (%s).", name, describeOrState(c))
 		default:
 			// Green — but only if the check's own description does not admit
 			// it never ran. This is the robots-jap6 defect: bucket=pass with
@@ -316,9 +351,17 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			// is being refused — that is the trillium/no-mistakes#7 shape,
 			// where one `@coderabbitai review` recovered the first push and
 			// the follow-up commit then never got reviewed at all.
+			//
+			// And it is neither of those while a check is still running: the
+			// re-review of the new head is in flight, so this is "not yet",
+			// not "fix it" (robots-rwf8). Rate limit still wins — a live
+			// refusal outranks an unfinished check.
 			class := ClassCode
-			if rateLimited {
+			switch {
+			case rateLimited:
 				class = ClassReviewerUnavailable
+			case checkPending:
+				class = ClassPending
 			}
 			blockAs(&v, "stale-review", class,
 				"the automated review covered an earlier commit, not the current head %s — the code that would merge is unreviewed.",
@@ -331,7 +374,20 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		v.Notes = append(v.Notes,
 			fmt.Sprintf("No automated review found, but %s reviewed this PR — treating that as the review of record.", humanReviewer))
 	default:
-		block(&v, "no-review-evidence",
+		// "Nothing reviewed this PR" normally stays code-class: the gate
+		// cannot tell WHY nothing reviewed it, and unexplained gets the
+		// harsher code. But a check that is still running IS the explanation
+		// — the review is running right now and has not posted yet
+		// (robots-rwf8). This pairing, `check-pending` + `no-review-evidence`,
+		// is the exact shape that exited 3 on trillium/no-mistakes#11 and then
+		// exited 0 minutes later, unchanged. Downgrading to pending never
+		// reaches 0, so the gate still fails closed; it only stops telling the
+		// mechanic to go edit a branch nobody has objected to.
+		class := ClassCode
+		if checkPending {
+			class = ClassPending
+		}
+		blockAs(&v, "no-review-evidence", class,
 			"nothing reviewed this PR: no human review, and no automated-review comment (only a check conclusion, which is not evidence).")
 	}
 
@@ -344,10 +400,32 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			s.UnresolvedThreads)
 	}
 
+	// Class precedence, harshest first: code (3) > pending (5) > reviewer
+	// unavailable (4). Each arm only runs when no harsher class is present.
+	//
+	// Code first for the reason it always was: a failing test is still a
+	// failing test whatever else is also wrong, and no downgrade may ever
+	// launder it into somebody else's problem.
+	//
+	// Pending outranks reviewer-unavailable because a running check means the
+	// picture is still incomplete — asking the captain to choose
+	// merge-and-disclose while a review is mid-flight is a decision made on
+	// information that is about to arrive. Wait, re-run, and the verdict
+	// resolves into a real 0/3/4.
 	switch {
 	case len(v.Blockers) == 0:
 		v.Ready, v.ExitCode = true, config.ExitOK
-	case allReviewerUnavailable(v.Blockers):
+	case hasUnclassifiedOrCode(v.Blockers):
+		v.ExitCode = ExitMergeBlocked
+	case hasClass(v.Blockers, ClassPending):
+		// Nothing here says anything is wrong with the code — the reviewer is
+		// mid-sentence. Do not edit, do not decide, do not merge; re-run.
+		v.Pending, v.ExitCode = true, ExitMergePending
+		v.Notes = append(v.Notes,
+			"Every blocker above is the review still RUNNING, not a finding about this code — exit 5, not 3.",
+			"Do NOT edit the branch to clear this: there is no defect to fix yet, and a new push restarts whatever review is in flight.",
+			"Re-run `parlay merge-gate` after the check reports. Bound the wait — if it never finishes, that is reviewer unavailability, so signal `parlay status needs-decision` rather than polling forever (robots-8kkq).")
+	default:
 		// Nothing here is about the diff, and nothing on the branch will
 		// change it. Say so, and say what the two honest answers are, so the
 		// caller has a terminating condition instead of a poll loop.
@@ -356,23 +434,32 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			"Every blocker above is the reviewer being unavailable, not a finding about this code.",
 			"Do NOT wait on this unbounded — the stated rate-limit window has expired without a review before.",
 			"Signal `parlay status needs-decision` and let the captain pick: merge-and-disclose (land it, and state plainly in the merge/close note that no review ran) or park (leave it open until the reviewer returns). Do not pick for them.")
-	default:
-		v.ExitCode = ExitMergeBlocked
 	}
 	return v
 }
 
-// allReviewerUnavailable reports whether every blocker is reviewer
-// unavailability. One code-class blocker among them makes the whole verdict
-// a hard block: a failing test is still a failing test, whatever else is
-// also wrong.
-func allReviewerUnavailable(bs []MergeBlocker) bool {
+// hasClass reports whether any blocker carries exactly this class.
+func hasClass(bs []MergeBlocker, class string) bool {
 	for _, b := range bs {
-		if b.Class != ClassReviewerUnavailable {
-			return false
+		if b.Class == class {
+			return true
 		}
 	}
-	return len(bs) > 0
+	return false
+}
+
+// hasUnclassifiedOrCode reports whether any blocker is a hard block on the
+// code. Anything not positively identified as pending or reviewer
+// unavailability counts — an unrecognized or empty class keeps the harshest
+// exit code, which is the conservative direction for a gate. A downgrade must
+// be something the code deliberately decided, never something it forgot.
+func hasUnclassifiedOrCode(bs []MergeBlocker) bool {
+	for _, b := range bs {
+		if b.Class != ClassPending && b.Class != ClassReviewerUnavailable {
+			return true
+		}
+	}
+	return false
 }
 
 // botBodies returns every automated-review body on the PR — CodeRabbit posts
@@ -445,6 +532,8 @@ func FormatMergeGate(pr ghPRView, v MergeGateVerdict) string {
 		fmt.Fprintf(&b, "READY — %s\n", head)
 	case v.NeedsDecision:
 		fmt.Fprintf(&b, "NEEDS-DECISION (%d) — %s\n", len(v.Blockers), head)
+	case v.Pending:
+		fmt.Fprintf(&b, "PENDING (%d) — %s\n", len(v.Blockers), head)
 	default:
 		fmt.Fprintf(&b, "BLOCKED (%d) — %s\n", len(v.Blockers), head)
 	}

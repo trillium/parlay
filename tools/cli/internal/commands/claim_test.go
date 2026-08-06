@@ -354,6 +354,16 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if !strings.Contains(out, "needs-decision") || !strings.Contains(out, "merge-and-disclose") {
 		t.Errorf("robots DoD should give a bounded answer for an unavailable reviewer; got:\n%s", out)
 	}
+	// robots-rwf8: the contract used to describe only 3 and 4, so a mechanic
+	// meeting the gate's PENDING exit read it as "blocked on the CODE" and
+	// went editing a branch with no defect. It has to name 5 and say the one
+	// correct response — re-run, do not edit, do not merge.
+	if !strings.Contains(out, "5 = PENDING") {
+		t.Errorf("robots DoD should name exit 5 so a running review is not read as a code rejection; got:\n%s", out)
+	}
+	if !strings.Contains(out, "re-run the gate") {
+		t.Errorf("robots DoD should tell the mechanic to re-run rather than edit on exit 5; got:\n%s", out)
+	}
 }
 
 func TestClaimStoreForID(t *testing.T) {
