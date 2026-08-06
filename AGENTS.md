@@ -985,10 +985,10 @@ CodeRabbit edits one comment in place, so `createdAt` can never detect a
 stale review, but the body always prints the exact `base..head` range it
 processed — and counts unresolved review threads via GraphQL, since
 `gh pr view` has no field for thread resolution. Exit codes are fail-closed
-in every direction: `0` ready/already-merged, `3` blocked on the code, `5`
-review still pending, `4` needs-decision, `1` gh could not answer, `2` usage.
-The mechanic contract in `claim.go`'s robots DoD now sends every merge
-decision through it.
+in every direction: `0` ready/already-merged, `3` blocked on the code, `6`
+infra-side failure, `5` review still pending, `4` needs-decision, `1` gh could
+not answer, `2` usage. The mechanic contract in `claim.go`'s robots DoD now
+sends every merge decision through it.
 
 **Exit 4 is the bounded answer for "the reviewer is unavailable"
 (robots-8kkq).** Non-zero alone was not enough: "a test is failing" and
@@ -1015,11 +1015,11 @@ neither "the code is wrong" (3) nor "the reviewer will never come" (4).
 `check-pending` is `pending`-class, and while a check is pending so are
 `no-review-evidence` and `stale-review` — a running check *is* the explanation
 for both, which is the one thing the gate normally cannot infer. Class
-precedence is **code > pending > reviewer-unavailable**: a real finding always
-wins, and pending outranks needs-decision because escalating to the captain
-while a review is mid-flight asks for a decision on information that is about
-to arrive. Anything whose class is unset counts as code, so a forgotten class
-can never become a downgrade.
+precedence is **code > pending > infra > reviewer-unavailable**: a real finding
+always wins, and pending outranks both infra and needs-decision because
+escalating to the captain while a review is mid-flight asks for a decision on
+information that is about to arrive. Anything whose class is unset counts as
+code, so a forgotten class can never become a downgrade.
 
 A stale review is normally code-class (push again, the reviewer catches up) —
 but a stale review sitting next to a *live* rate-limit template is
