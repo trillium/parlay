@@ -1049,6 +1049,28 @@ merge-and-disclose / park) instead of two. The gate deliberately does not post
 that comment itself: it is a read-only verb, and a gate called in a poll loop
 would spam the reviewer and re-consume the very limit at issue.
 
+**Exit 6 is "a check failed without ever running the code" (robots-6mw2).** A
+GitHub Actions job that dies during action setup — `Failed to resolve action
+download info` / `Service Unavailable` — reports `bucket=fail` with an **empty
+description**, indistinguishable by status alone from a failing test. Three
+`trillium/firstmate` runs failed that way in one afternoon and every open PR
+showed unrelated red. Landing that in `3` sends a mechanic hunting a defect in
+code that never executed; it is the exact sibling of the vacuous pass, since a
+check that failed without running says as little about the diff as one that
+passed without running. The discriminator is the check run's **annotations**
+(`gh api repos/<repo>/check-runs/<id>/annotations`, id = the job id in the
+check's link), not its description: a job that ran the code always annotates
+`Process completed with exit code N`. The downgrade needs at least one
+infra-shaped annotation **and** none that looks like the code failing;
+unreadable annotations, an empty list, a non-Actions check, or unknown failure
+text all stay `code`-class. A cancelled job is `infra` (an ending without a
+verdict), but `The job has exceeded the maximum execution time of …` is
+deliberately not — a hung test in the diff annotates exactly that. Precedence
+is **code > pending > infra > reviewer-unavailable**: pending outranks infra
+because `gh run rerun` refuses a run with jobs still in flight, and infra
+outranks needs-decision because re-running the failed jobs is a bounded step
+the mechanic can take alone.
+
 **A green check only speaks about the base it ran against (robots-1hs5).**
 GitHub runs `pull_request` workflows on `refs/pull/N/merge` — the merge
 *result*, not the branch head — and it recomputes that ref when the base moves

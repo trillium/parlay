@@ -570,9 +570,275 @@ func TestMergeGateExitCodesAreDistinct(t *testing.T) {
 		ExitMergeBlocked:       "blocked",
 		ExitMergeNeedsDecision: "needs-decision",
 		ExitMergePending:       "pending",
+		ExitMergeInfra:         "infra",
 	}
-	if len(seen) != 6 {
+	if len(seen) != 7 {
 		t.Errorf("exit codes collide: %v", seen)
+	}
+}
+
+// --- infra-failed checks (robots-6mw2) -------------------------------------
+//
+// The observed shape, from three trillium/firstmate runs in one afternoon: a
+// GitHub Actions job dies during action setup, so the check is bucket=fail
+// with an EMPTY description and annotations carrying only GitHub's own errors.
+// No repo code ran at all.
+
+// actionsLink is the check link shape gh reports for a GitHub Actions job —
+// the only place the check-run id (and the run id for a re-run) is available.
+const actionsLink = "https://github.com/trillium/firstmate/actions/runs/31119180717/job/92675866030"
+
+// infraFailedCheck is a job that never got past action setup. Verbatim
+// annotation text from check-run 92675866030.
+func infraFailedCheck(name string) ghCheck {
+	return ghCheck{
+		Name: name, State: "FAILURE", Bucket: "fail", Link: actionsLink,
+		AnnotationsKnown: true,
+		Annotations: []ghAnnotation{
+			{Level: "failure", Message: "Failed to resolve action download info."},
+			{Level: "failure", Message: "Service Unavailable"},
+		},
+	}
+}
+
+// realFailedCheck is what a job that actually ran the repo's code and failed
+// annotates — verbatim from check-run 92660828287, the genuine
+// duplicate-doc-audience failure that shared a run with the infra ones.
+func realFailedCheck(name string) ghCheck {
+	return ghCheck{
+		Name: name, State: "FAILURE", Bucket: "fail", Link: actionsLink,
+		AnnotationsKnown: true,
+		Annotations: []ghAnnotation{
+			{Level: "warning", Message: "Node.js 20 is deprecated."},
+			{Level: "failure", Message: "Process completed with exit code 1."},
+		},
+	}
+}
+
+// The whole point: red that never touched the diff must not read as "fix it on
+// the branch". A mechanic given exit 3 here goes hunting a defect in code that
+// never executed.
+func TestInfraFailedCheckIsNotABlockOnTheCode(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		infraFailedCheck("Behavior tests (Herdr)"),
+	}
+	v := ComputeMergeGate(s)
+	if v.ExitCode != ExitMergeInfra {
+		t.Fatalf("want exit %d (infra), got %d — blockers %v", ExitMergeInfra, v.ExitCode, blockerCodes(v))
+	}
+	if !v.Infra || v.Ready {
+		t.Errorf("want Infra and not ready, got infra=%v ready=%v", v.Infra, v.Ready)
+	}
+	if !hasBlocker(v, "check-did-not-run") {
+		t.Errorf("want check-did-not-run, got %v", blockerCodes(v))
+	}
+	// Still a blocker: the code is unverified, just not accused.
+	if len(v.Blockers) == 0 {
+		t.Error("an infra failure must still block the merge")
+	}
+}
+
+// A failure that DID run the code stays code-class, however GitHub-ish the
+// job's other output looks.
+func TestRealTestFailureStaysCodeClass(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		realFailedCheck("Behavior portable serial 3"),
+	}
+	v := ComputeMergeGate(s)
+	if v.ExitCode != ExitMergeBlocked {
+		t.Fatalf("want exit %d (blocked), got %d — blockers %v", ExitMergeBlocked, v.ExitCode, blockerCodes(v))
+	}
+	if !hasBlocker(v, "check-failed") {
+		t.Errorf("want check-failed, got %v", blockerCodes(v))
+	}
+}
+
+// The mixed run from the ticket: one job died in setup, another genuinely
+// failed. A real finding must never be laundered into "GitHub's problem".
+func TestOneRealFailureOutranksInfraFailures(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		infraFailedCheck("Test coverage guard"),
+		realFailedCheck("Behavior portable serial 3"),
+	}
+	if v := ComputeMergeGate(s); v.ExitCode != ExitMergeBlocked {
+		t.Fatalf("want exit %d (blocked), got %d — blockers %v", ExitMergeBlocked, v.ExitCode, blockerCodes(v))
+	}
+}
+
+// A step that fails while asserting on a 503 prints "Service Unavailable" all
+// over its log — but it still annotates the step's exit, which is the evidence
+// that decides. The downgrade requires NO code-shaped annotation, not merely
+// SOME infra-shaped one.
+func TestInfraTextAlongsideARealFailureStaysCodeClass(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		{
+			Name: "api tests", Bucket: "fail", Link: actionsLink, AnnotationsKnown: true,
+			Annotations: []ghAnnotation{
+				{Level: "failure", Message: "not ok 4 - retries on Service Unavailable"},
+				{Level: "failure", Message: "Process completed with exit code 1."},
+			},
+		},
+	}
+	if v := ComputeMergeGate(s); v.ExitCode != ExitMergeBlocked {
+		t.Fatalf("want exit %d (blocked), got %d — blockers %v", ExitMergeBlocked, v.ExitCode, blockerCodes(v))
+	}
+}
+
+// Unreadable annotations are not evidence of innocence. Anything the gate
+// could not positively identify as infra keeps the harsher code — the same
+// fail-closed rule the rest of this file follows.
+func TestUnreadableAnnotationsKeepAFailureCodeClass(t *testing.T) {
+	s := reviewedPR()
+	// AnnotationsKnown false: gh could not answer, or this is not an Actions
+	// check at all (CodeRabbit's link is empty).
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		{Name: "Behavior tests (Herdr)", Bucket: "fail", Link: actionsLink},
+	}
+	if v := ComputeMergeGate(s); v.ExitCode != ExitMergeBlocked {
+		t.Fatalf("want exit %d (blocked), got %d — blockers %v", ExitMergeBlocked, v.ExitCode, blockerCodes(v))
+	}
+	// Same for a failed job that reported no annotations at all.
+	s.Checks[1] = ghCheck{Name: "Behavior tests (Herdr)", Bucket: "fail", Link: actionsLink, AnnotationsKnown: true}
+	if v := ComputeMergeGate(s); v.ExitCode != ExitMergeBlocked {
+		t.Fatalf("empty annotations: want exit %d, got %d", ExitMergeBlocked, v.ExitCode)
+	}
+}
+
+// A cancelled job is an ending without a verdict — in the observed runs, the
+// cascade half of the same incident (GitHub cancels the rest of a run whose
+// siblings died in setup). It never reported on the code, so it is not a
+// finding about it.
+func TestCancelledCheckIsInfraNotACodeFinding(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		{Name: "Behavior portable parallel 2", State: "CANCELLED", Bucket: "cancel", Link: actionsLink},
+	}
+	v := ComputeMergeGate(s)
+	if v.ExitCode != ExitMergeInfra {
+		t.Fatalf("want exit %d (infra), got %d — blockers %v", ExitMergeInfra, v.ExitCode, blockerCodes(v))
+	}
+	if !hasBlocker(v, "check-did-not-run") {
+		t.Errorf("want check-did-not-run, got %v", blockerCodes(v))
+	}
+}
+
+// A cancelled job that DID manage to report a real failure first is a finding.
+func TestCancelledCheckWithARealFailureStaysCodeClass(t *testing.T) {
+	s := reviewedPR()
+	c := realFailedCheck("Behavior portable parallel 2")
+	c.Bucket, c.State = "cancel", "CANCELLED"
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		c,
+	}
+	if v := ComputeMergeGate(s); v.ExitCode != ExitMergeBlocked {
+		t.Fatalf("want exit %d (blocked), got %d — blockers %v", ExitMergeBlocked, v.ExitCode, blockerCodes(v))
+	}
+}
+
+// Pending outranks infra: `gh run rerun` refuses a run with jobs still in
+// flight, so advising a re-run before the run finishes is advice that cannot
+// be followed. Wait, re-run the gate, then act.
+func TestPendingOutranksInfra(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = nil // no review evidence yet either
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pending", Description: "Review in progress"},
+		infraFailedCheck("Behavior tests (Herdr)"),
+	}
+	if v := ComputeMergeGate(s); v.ExitCode != ExitMergePending {
+		t.Fatalf("want exit %d (pending), got %d — blockers %v", ExitMergePending, v.ExitCode, blockerCodes(v))
+	}
+}
+
+// Infra outranks reviewer-unavailable: re-running the jobs is a bounded step
+// the mechanic can take alone, where needs-decision is terminal until the
+// captain picks.
+func TestInfraOutranksReviewerUnavailable(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"},
+		infraFailedCheck("Behavior tests (Herdr)"),
+	}
+	v := ComputeMergeGate(s)
+	if v.ExitCode != ExitMergeInfra {
+		t.Fatalf("want exit %d (infra), got %d — blockers %v", ExitMergeInfra, v.ExitCode, blockerCodes(v))
+	}
+	if v.NeedsDecision {
+		t.Error("infra must not also claim needs-decision")
+	}
+}
+
+// The verdict has to say what to do next, with the real run id, or the caller
+// is left guessing which of two red-looking states it is in.
+func TestInfraVerdictLeadsWithItsOwnHeaderAndNamesTheRerun(t *testing.T) {
+	s := reviewedPR()
+	s.Repo = "trillium/firstmate"
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review completed"},
+		infraFailedCheck("Behavior tests (Herdr)"),
+	}
+	v := ComputeMergeGate(s)
+	out := FormatMergeGate(s.PR, v)
+	if !strings.HasPrefix(out, "INFRA (") {
+		t.Errorf("want an INFRA header, got:\n%s", out)
+	}
+	for _, want := range []string{"gh run rerun 31119180717 --failed --repo trillium/firstmate", "WITHOUT EVALUATING THIS DIFF", "robots-8kkq"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("infra notes must mention %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// Unit-level coverage of the classifier's own contract, independent of how a
+// whole verdict composes.
+func TestClassifyFailedCheck(t *testing.T) {
+	ann := func(level, msg string) ghAnnotation { return ghAnnotation{Level: level, Message: msg} }
+	cases := []struct {
+		name  string
+		check ghCheck
+		want  string
+	}{
+		{"infra only", infraFailedCheck("x"), ClassInfra},
+		{"real failure", realFailedCheck("x"), ClassCode},
+		{"warnings never decide", ghCheck{Bucket: "fail", AnnotationsKnown: true, Annotations: []ghAnnotation{
+			ann("warning", "Failed to resolve action download info."),
+			ann("failure", "Process completed with exit code 1."),
+		}}, ClassCode},
+		{"runner lost", ghCheck{Bucket: "fail", AnnotationsKnown: true, Annotations: []ghAnnotation{
+			ann("failure", "The runner has received a shutdown signal."),
+		}}, ClassInfra},
+		{"unknown failure text", ghCheck{Bucket: "fail", AnnotationsKnown: true, Annotations: []ghAnnotation{
+			ann("failure", "something nobody has seen before"),
+		}}, ClassCode},
+		{"cancelled, nothing known", ghCheck{Bucket: "cancel"}, ClassInfra},
+		{"failed, nothing known", ghCheck{Bucket: "fail"}, ClassCode},
+		// Verbatim from check-run 92675865968 during the incident: GitHub
+		// never handed the job to a runner at all.
+		{"runner never acquired", ghCheck{Bucket: "cancel", AnnotationsKnown: true, Annotations: []ghAnnotation{
+			ann("failure", "The job was not acquired by Runner of type hosted even after multiple attempts"),
+		}}, ClassInfra},
+		// Verbatim from check-run 92675865937 in the same run — and
+		// deliberately code-class: a hung test in the diff annotates exactly
+		// this, so the gate must keep pointing at the branch.
+		{"job timeout stays the branch's problem", ghCheck{Bucket: "cancel", AnnotationsKnown: true, Annotations: []ghAnnotation{
+			ann("failure", "The job has exceeded the maximum execution time of 10m0s"),
+		}}, ClassCode},
+	}
+	for _, tc := range cases {
+		if got, _ := classifyFailedCheck(tc.check); got != tc.want {
+			t.Errorf("%s: want class %q, got %q", tc.name, tc.want, got)
+		}
 	}
 }
 
