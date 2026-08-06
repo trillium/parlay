@@ -392,3 +392,140 @@ func TestUpstreamMessageJSON(t *testing.T) {
 		t.Errorf("message decode = %+v", m)
 	}
 }
+
+// ── Terminal 410: a channel the server has unregistered ──────────────────────
+//
+// robots-ycfa. Every non-200 used to be retryable, on the sound principle that a
+// relay must survive a server restart. But 410 Gone is the server saying the
+// channel was deliberately removed, and retrying it forever is exactly how 82
+// leaked test channels kept live poll loops against a registry that had already
+// dropped them. 410 — and ONLY 410 — is terminal for that agent's loop.
+
+// goneUpstream answers 410 for the named channel and idles for every other one.
+type goneUpstream struct {
+	gone  string
+	mu    sync.Mutex
+	polls map[string]int
+}
+
+func (g *goneUpstream) handler(w http.ResponseWriter, req *http.Request) {
+	channel := req.URL.Query().Get("channel")
+	g.mu.Lock()
+	g.polls[channel]++
+	g.mu.Unlock()
+	if channel == g.gone {
+		writeJSON(w, http.StatusGone, map[string]any{"error": "channel gone", "gone": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"timeout": true})
+}
+
+func (g *goneUpstream) pollCount(channel string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.polls[channel]
+}
+
+// waitForLoopGone waits until the relay has dropped an agent from its registry.
+func waitForLoopGone(t *testing.T, r *relay, agent string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		_, still := r.loops[agent]
+		r.mu.Unlock()
+		if !still {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("relay still holds a poll loop for %q after 410 Gone", agent)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestUpstream410DropsTheLoop(t *testing.T) {
+	up := &goneUpstream{gone: "leaked-fixture-z1", polls: make(map[string]int)}
+	srv := httptest.NewServer(http.HandlerFunc(up.handler))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	if _, err := r.register("leaked-fixture-z1"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// The loop must remove itself from the registry — not merely stop logging.
+	waitForLoopGone(t, r, "leaked-fixture-z1")
+
+	// And it must STAY stopped: no retry loop quietly continuing behind the map
+	// removal. Sample the poll count, wait well past the poll cadence, re-sample.
+	before := up.pollCount("leaked-fixture-z1")
+	time.Sleep(300 * time.Millisecond)
+	if after := up.pollCount("leaked-fixture-z1"); after != before {
+		t.Errorf("relay kept polling a 410 channel: %d → %d polls", before, after)
+	}
+}
+
+func TestUpstream410DoesNotAffectOtherChannels(t *testing.T) {
+	up := &goneUpstream{gone: "leaked-fixture-z1", polls: make(map[string]int)}
+	srv := httptest.NewServer(http.HandlerFunc(up.handler))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	if _, err := r.register("leaked-fixture-z1"); err != nil {
+		t.Fatalf("register leaked: %v", err)
+	}
+	if _, err := r.register("real-agent"); err != nil {
+		t.Fatalf("register real: %v", err)
+	}
+	defer r.unregister("real-agent")
+
+	waitForLoopGone(t, r, "leaked-fixture-z1")
+
+	r.mu.Lock()
+	_, realStillThere := r.loops["real-agent"]
+	r.mu.Unlock()
+	if !realStillThere {
+		t.Fatal("a 410 on one channel dropped an unrelated channel's loop")
+	}
+
+	// The healthy channel must still be actively polling.
+	before := up.pollCount("real-agent")
+	time.Sleep(300 * time.Millisecond)
+	if after := up.pollCount("real-agent"); after <= before {
+		t.Errorf("healthy channel stopped polling after a sibling's 410: %d → %d", before, after)
+	}
+}
+
+// A 500 is the server being broken, not the channel being gone: the relay must
+// keep retrying, because surviving a server restart is the whole point.
+func TestUpstream500KeepsRetrying(t *testing.T) {
+	var polls int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		polls++
+		mu.Unlock()
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "boom"})
+	}))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	if _, err := r.register("real-agent"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	defer r.unregister("real-agent")
+
+	time.Sleep(200 * time.Millisecond)
+	r.mu.Lock()
+	_, still := r.loops["real-agent"]
+	r.mu.Unlock()
+	if !still {
+		t.Fatal("relay dropped a channel on HTTP 500 — only 410 is terminal")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if polls == 0 {
+		t.Fatal("relay never polled")
+	}
+}
