@@ -610,9 +610,10 @@ CodeRabbit edits one comment in place, so `createdAt` can never detect a
 stale review, but the body always prints the exact `base..head` range it
 processed — and counts unresolved review threads via GraphQL, since
 `gh pr view` has no field for thread resolution. Exit codes are fail-closed
-in every direction: `0` ready/already-merged, `3` blocked on the code, `4`
-needs-decision, `1` gh could not answer, `2` usage. The mechanic contract in
-`claim.go`'s robots DoD now sends every merge decision through it.
+in every direction: `0` ready/already-merged, `3` blocked on the code, `5`
+review still pending, `4` needs-decision, `1` gh could not answer, `2` usage.
+The mechanic contract in `claim.go`'s robots DoD now sends every merge
+decision through it.
 
 **Exit 4 is the bounded answer for "the reviewer is unavailable"
 (robots-8kkq).** Non-zero alone was not enough: "a test is failing" and
@@ -621,19 +622,35 @@ on the branch, so a mechanic told just "blocked" polls a rate limit forever —
 `@coderabbitai review` recovered one PR once and then stayed limited across
 three further attempts over ~40 minutes, and trillium/no-mistakes#7's
 follow-up commit merged unreviewed as a result. Every blocker now carries a
-`Class` (`code` / `reviewer-unavailable`); when *every* blocker is
+`Class` (`code` / `pending` / `reviewer-unavailable`); when *every* blocker is
 reviewer-unavailability the verdict is `NeedsDecision` and exit `4`, and the
 notes name the only two honest options — merge-and-disclose or park — for the
 captain to pick. One code-class blocker among them keeps the whole verdict at
 `3`, so the downgrade can never launder a failing test into "the captain's
-call". `no-review-evidence` deliberately stays code-class: the gate cannot
-tell *why* nothing reviewed the PR, and unexplained gets the harsher code.
+call".
+
+**Exit 5 is "the review has not finished yet" (robots-rwf8).** A *pending*
+check was landing in `3` — the code the mechanic contract documents as
+"blocked on the CODE, fix it on the branch" — even though the check had said
+nothing about the diff. Observed on trillium/no-mistakes#11: `check-pending` +
+`no-review-evidence`, exit 3, and the same unchanged PR exited 0 minutes
+later. An agent obeying the documented contract goes editing a branch with no
+defect, and the new push restarts the review it was waiting on. "Not yet" is
+neither "the code is wrong" (3) nor "the reviewer will never come" (4).
+`check-pending` is `pending`-class, and while a check is pending so are
+`no-review-evidence` and `stale-review` — a running check *is* the explanation
+for both, which is the one thing the gate normally cannot infer. Class
+precedence is **code > pending > reviewer-unavailable**: a real finding always
+wins, and pending outranks needs-decision because escalating to the captain
+while a review is mid-flight asks for a decision on information that is about
+to arrive. Anything whose class is unset counts as code, so a forgotten class
+can never become a downgrade.
 
 A stale review is normally code-class (push again, the reviewer catches up) —
 but a stale review sitting next to a *live* rate-limit template is
 reviewer-unavailability, because the re-review is exactly what is being
-refused. That pairing is the no-mistakes#7 shape and is the one case where
-`stale-review` reclassifies.
+refused. That pairing is the no-mistakes#7 shape. A live refusal outranks an
+unfinished check: that reviewer has already answered, and the answer was no.
 
 **Never let `gh` pick the repository implicitly (robots-g4qz).** gh's
 base-repo resolution prefers a remote named `upstream` over `origin`, so in a

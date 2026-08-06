@@ -318,6 +318,169 @@ func TestFailingAndPendingChecksBlock(t *testing.T) {
 // In this repo CodeRabbit is the ONLY check — there are no .github/workflows
 // at all — so "zero checks" is a real, reachable state that must not read as
 // "nothing failed, therefore fine".
+// The robots-rwf8 regression, reproduced exactly as observed on
+// trillium/no-mistakes#11: CodeRabbit's check is still running, so it has
+// posted no review comment yet — `check-pending` PLUS `no-review-evidence`.
+// That pairing exited 3, the code the mechanic contract documents as "blocked
+// on the CODE, fix it on the branch". Nothing was wrong with the branch; the
+// same unchanged PR exited 0 minutes later. It must be exit 5.
+func TestReviewStillRunningIsPendingNotBlockedOnTheCode(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pending", Description: "Review in progress"}}
+	s.PR.Comments = nil // the review has not posted anything yet
+
+	v := ComputeMergeGate(s)
+	if !hasBlocker(v, "check-pending") || !hasBlocker(v, "no-review-evidence") {
+		t.Fatalf("want the observed pair, got %v", blockerCodes(v))
+	}
+	if v.ExitCode == ExitMergeBlocked {
+		t.Fatalf("a review that has not finished is not a defect in the code; exit 3 sends the mechanic to edit a clean branch")
+	}
+	if !v.Pending || v.ExitCode != ExitMergePending {
+		t.Errorf("ExitCode = %d (pending=%v), want %d", v.ExitCode, v.Pending, ExitMergePending)
+	}
+	if v.Ready {
+		t.Error("pending must stay non-zero so a naive caller still fails closed")
+	}
+	if v.NeedsDecision {
+		t.Error("nothing needs deciding while the answer is still arriving")
+	}
+	for _, b := range v.Blockers {
+		if b.Class != ClassPending {
+			t.Errorf("blocker %q classed %q, want %q", b.Code, b.Class, ClassPending)
+		}
+	}
+	notes := strings.Join(v.Notes, " ")
+	for _, want := range []string{"Re-run", "not a finding about this code", "Do NOT edit"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes should say %q so the caller waits instead of editing, got %v", want, v.Notes)
+		}
+	}
+}
+
+func TestPendingVerdictLeadsWithItsOwnHeader(t *testing.T) {
+	s := reviewedPR()
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pending", Description: "Review in progress"}}
+	s.PR.Comments = nil
+
+	out := FormatMergeGate(s.PR, ComputeMergeGate(s))
+	if !strings.HasPrefix(out, "PENDING") {
+		t.Errorf("report should lead with PENDING, not BLOCKED, got:\n%s", out)
+	}
+}
+
+// The pending downgrade must never launder a real finding. A failing check
+// alongside a running one is still exit 3 — the same guarantee that already
+// protects the needs-decision downgrade.
+func TestOneCodeBlockerOutranksPending(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = nil
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pending", Description: "Review in progress"},
+		{Name: "build", Bucket: "fail", Description: "2 tests failed"},
+	}
+
+	v := ComputeMergeGate(s)
+	if v.Pending || v.ExitCode != ExitMergeBlocked {
+		t.Errorf("a failing check must not be downgraded to pending, got exit %d over %v", v.ExitCode, blockerCodes(v))
+	}
+}
+
+// An unresolved review thread is a finding somebody wrote about this code; a
+// second check still running does not make it go away.
+func TestUnresolvedThreadsOutrankPending(t *testing.T) {
+	s := reviewedPR()
+	s.UnresolvedThreads = 2
+	s.Checks = append(s.Checks, ghCheck{Name: "build", Bucket: "pending", Description: "Running"})
+
+	v := ComputeMergeGate(s)
+	if v.Pending || v.ExitCode != ExitMergeBlocked {
+		t.Errorf("unresolved threads must stay a hard block, got exit %d over %v", v.ExitCode, blockerCodes(v))
+	}
+}
+
+// Pending outranks reviewer-unavailable: asking the captain to choose
+// merge-and-disclose while another check is mid-flight is a decision made on
+// information that is about to arrive. Re-run instead; it will resolve into a
+// real 0/3/4.
+func TestPendingOutranksReviewerUnavailable(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = nil
+	s.Checks = []ghCheck{
+		{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"},
+		{Name: "build", Bucket: "pending", Description: "Running"},
+	}
+
+	v := ComputeMergeGate(s)
+	if v.NeedsDecision {
+		t.Fatalf("do not escalate to the captain while a check is still running, got %v", blockerCodes(v))
+	}
+	if !v.Pending || v.ExitCode != ExitMergePending {
+		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergePending)
+	}
+}
+
+// A stale review while a check is running is the re-review in flight — "not
+// yet", not "push again to fix it".
+func TestStaleReviewWhileAReviewIsRunningIsPending(t *testing.T) {
+	s := reviewedPR()
+	s.PR.HeadRefOid = "0000000000000000000000000000000000000000"
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pending", Description: "Review in progress"}}
+
+	v := ComputeMergeGate(s)
+	if !hasBlocker(v, "stale-review") {
+		t.Fatalf("want stale-review, got %v", blockerCodes(v))
+	}
+	if !v.Pending || v.ExitCode != ExitMergePending {
+		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergePending)
+	}
+}
+
+// A live rate-limit refusal outranks an unfinished check: that reviewer has
+// already answered, and the answer was "no".
+func TestRateLimitedStaleReviewStaysNeedsDecisionEvenWithAPendingCheck(t *testing.T) {
+	s := reviewedPR()
+	s.PR.HeadRefOid = "0000000000000000000000000000000000000000"
+	s.PR.Comments = append(s.PR.Comments,
+		ghComment{Author: ghAuthor{Login: "coderabbitai"}, Body: rateLimitedBody})
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pending", Description: "Review in progress"}}
+
+	v := ComputeMergeGate(s)
+	for _, b := range v.Blockers {
+		if b.Code == "stale-review" && b.Class != ClassReviewerUnavailable {
+			t.Errorf("stale-review classed %q, want %q — a live refusal outranks a running check", b.Class, ClassReviewerUnavailable)
+		}
+	}
+}
+
+// The conservative direction: a blocker whose class nobody set must keep the
+// harshest exit code. A forgotten class is not a downgrade.
+func TestUnclassifiedBlockerKeepsTheHarshestExitCode(t *testing.T) {
+	v := MergeGateVerdict{Blockers: []MergeBlocker{{Code: "mystery", Class: ""}}}
+	if !hasUnclassifiedOrCode(v.Blockers) {
+		t.Error("an unclassified blocker must be treated as a hard block on the code")
+	}
+}
+
+// Every exit code the gate can return must be distinct and non-zero except
+// ready — a caller that switches on them cannot tolerate a collision.
+func TestMergeGateExitCodesAreDistinct(t *testing.T) {
+	seen := map[int]string{
+		config.ExitOK:          "ready",
+		config.ExitRuntime:     "gh could not answer",
+		config.ExitUsage:       "usage",
+		ExitMergeBlocked:       "blocked",
+		ExitMergeNeedsDecision: "needs-decision",
+		ExitMergePending:       "pending",
+	}
+	if len(seen) != 6 {
+		t.Errorf("exit codes collide: %v", seen)
+	}
+}
+
+// In this repo CodeRabbit is the ONLY check — there are no .github/workflows
+// at all — so "zero checks" is a real, reachable state that must not read as
+// "nothing failed, therefore fine".
 func TestNoChecksAtAllBlocks(t *testing.T) {
 	s := reviewedPR()
 	s.Checks = nil
