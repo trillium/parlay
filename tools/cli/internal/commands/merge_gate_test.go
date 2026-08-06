@@ -1002,6 +1002,23 @@ func TestUnverifiableHeadFreshnessIsSaidOutLoud(t *testing.T) {
 	}
 }
 
+// On a MERGED PR there is no "before merging" left, so the same unverifiable
+// freshness has to be phrased as doubt about what already landed.
+func TestUnverifiableHeadFreshnessOnAMergedPRTalksAboutWhatLanded(t *testing.T) {
+	s := reviewedPR()
+	s.PR.State = "MERGED"
+	v := ComputeMergeGate(s)
+	joined := strings.Join(v.Notes, "\n")
+	if strings.Contains(joined, "before merging") {
+		t.Errorf("a merged PR must not be told to check something before merging, got:\n%s", joined)
+	}
+	for _, want := range []string{"NOT verified", "that MERGED", "branch -r --contains"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("notes must contain %q, got:\n%s", want, joined)
+		}
+	}
+}
+
 // The ticket's minimum ask: origin's head sha is visible on the READY line
 // itself, because that is the line a mechanic acts on.
 func TestReadyLineNamesTheCommitThatWouldMerge(t *testing.T) {

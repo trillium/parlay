@@ -613,9 +613,17 @@ func assessHeadFreshness(v *MergeGateVerdict, s MergeGateSnapshot) {
 		}
 		// "Could not tell" is not "they agree". Say which commit the verdict is
 		// about and hand the caller the one-line check the gate could not run.
+		// On a MERGED PR there is nothing left to do "before merging" — the
+		// same doubt is about what already landed, so say that instead.
+		advice := fmt.Sprintf(
+			"If you just pushed a fix for this PR, check it yourself before merging: `gh pr view %d --json headRefOid` must match your local HEAD. A push that has not reached origin yet leaves every verdict above describing the PRE-fix commit (robots-bn5d).",
+			s.PR.Number)
+		if merged {
+			advice = "That is the commit that MERGED. If you had a fix in flight for this PR, confirm it is in there — `git branch -r --contains <your sha>` must list origin's default branch. A push that never reached origin means the merge landed the PRE-fix commit and dropped your work (robots-bn5d)."
+		}
 		v.Notes = append(v.Notes, fmt.Sprintf(
-			"origin head: %s — NOT verified against a local branch (%s). If you just pushed a fix for this PR, check it yourself before merging: `gh pr view %d --json headRefOid` must match your local HEAD. A push that has not reached origin yet leaves every verdict above describing the PRE-fix commit (robots-bn5d).",
-			label, reason, s.PR.Number))
+			"origin head: %s — NOT verified against a local branch (%s). %s",
+			label, reason, advice))
 		return
 	}
 
