@@ -64,7 +64,7 @@ func CmdMonitor(argv []string) {
 // shorter is thrash, and monitorMaxRestarts consecutive thrashes end the
 // supervision rather than spinning forever.
 const (
-	monitorMinUptime     = 5 * time.Second
+	monitorMinUptime     = 2 * time.Second
 	monitorMaxRestarts   = 5
 	monitorRestartDelay  = time.Second
 	monitorRelayReplyURL = "/api/chat/reply"
@@ -204,8 +204,8 @@ func shouldRestartMonitor(code int) bool {
 // distinct from the relay's CHAT_MSG| lines so programmatic consumers can
 // filter it — see parlay-monitor.sh's own notice().
 func emitMonitorNotice(kind, text string) {
-	fmt.Fprintf(os.Stdout, "MONITOR|%s|%s\n", kind, text)
-	fmt.Fprintf(os.Stderr, "parlay monitor: %s — %s\n", kind, text)
+	_, _ = fmt.Fprintf(os.Stdout, "MONITOR|%s|%s\n", kind, text)
+	_, _ = fmt.Fprintf(os.Stderr, "parlay monitor: %s — %s\n", kind, text)
 }
 
 // announceStreamDown retracts `parlay listen`'s "listening — monitor armed"
@@ -220,7 +220,7 @@ func announceStreamDown(agent, cause string) {
 			cause, agent),
 	})
 	if !ok {
-		fmt.Fprintf(os.Stderr, "parlay monitor: could not post the stream-down notice for '%s' — %s\n", agent, reason)
+		_, _ = fmt.Fprintf(os.Stderr, "parlay monitor: could not post the stream-down notice for '%s' — %s\n", agent, reason)
 	}
 }
 
@@ -292,7 +292,7 @@ func pollOnce(server, channelParam string, lastID *string, notifySafe bool, noti
 	if err != nil {
 		return 3 * time.Second
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return 2 * time.Second
@@ -319,7 +319,7 @@ func pollOnce(server, channelParam string, lastID *string, notifySafe bool, noti
 		line = fmt.Sprintf("%s ⟪+%d chars truncated for notification — run: parlay history 30 --full⟫",
 			line[:notifyBudget], len(line)-notifyBudget)
 	}
-	fmt.Fprintln(out, line)
+	_, _ = fmt.Fprintln(out, line)
 	return 0
 }
 
