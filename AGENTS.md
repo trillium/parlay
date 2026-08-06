@@ -229,8 +229,10 @@ rationale as historical/aspirational: verify against the actual TS source
 (`packages/cli/src/*.ts`, not symlinked, safe to read directly) and the
 landed Go code's own tests instead of trying to open those paths.
 `tools/cli/internal/monitor` (ticket B2: `monitor`/`listen`) is
-a straight shell-out port — the relay path execs
-`tools/monitor/parlay-monitor.sh`, resolved via `exec.LookPath` first (so a
+a straight shell-out port — the relay path runs
+`tools/monitor/parlay-monitor.sh` as a supervised child (its own process group,
+torn down when this process is signalled or orphaned — see robots-3pvi below),
+resolved via `exec.LookPath` first (so a
 future PATH install is picked up) and falling back to a repo-relative path
 computed from the Go source file's own location, the closest Go equivalent
 of the TS original's `import.meta.url`-relative resolution.
@@ -868,6 +870,42 @@ Three rules this leaves behind for anything supervising a stream here:
 Regression coverage: section D of `tools/monitor/parlay-monitor.test.sh` (kills
 `tail` mid-stream, then asserts recovery, gap delivery, no duplicates, and a
 bounded loud give-up) and `tools/cli/internal/monitor/supervise_test.go`.
+
+## A spawned process outlives its spawner unless something ENDS it (robots-3pvi)
+
+Killing a shell does not kill what it started. The harness kills the shell it
+spawned; every descendant reparents to init and keeps running. `parlay listen`
+therefore leaked one `tail -F` per death — and a reader on a *quiet* channel
+never writes, so it never even earns a `SIGPIPE` to notice nobody is listening.
+Measured on the captain's box: **168 live readers, 142 orphaned**, oldest 3 days,
+one channel with 20 of them. Because the spool is append-only and never
+truncated, each extra reader re-delivers every directive to a dead session.
+
+Rules this leaves behind, for anything here that spawns a long-lived child:
+
+- **Own the child's death, not just its birth.** `exec`ing into a follower is
+  the leak: nothing is left to notice the launcher is gone. Keep a supervisor,
+  and end the child when your own `PPID` changes (reparenting = launcher gone).
+  Both layers do this — `parlay-monitor.sh` watches its launcher, and
+  `internal/monitor` watches *its* own, because 73 of the 168 stranded chains
+  were rooted at an orphaned `parlay-cli` that the script below it could not see.
+- **A trap can't fire during a foreground command.** Bash defers signal handlers
+  until the running foreground command returns, and `tail -F` never returns — so
+  `trap … TERM` above a foreground pipeline is dead code. Background the pipeline
+  and `wait` on it; that is the construct bash interrupts.
+- **`$!` after a pipeline is the LAST process, not the first.** Killing the `awk`
+  in `tail | awk` leaves `tail` alive until its next write. Find the real child
+  by exact command match scoped to your own children (`ppid == $$`).
+- **Match processes as whole command lines, never a `pgrep -f` regex.** A
+  metacharacter in a spool path must not be able to widen a kill.
+- **A destructive sweep is scoped or it is a weapon.** `parlay monitor --reap`
+  only considers readers under its own runtime dir, so a test (or a second
+  server's relay) can never reach the captain's live readers. It is a dry run
+  until `--apply`.
+
+Cleanup for what already leaked: `parlay monitor --reap [--apply]`. Details in
+`tools/monitor/NOTES.md` § Reader lifetime; regression coverage in section D of
+`tools/monitor/parlay-monitor.test.sh` and `internal/monitor/monitor_test.go`.
 
 ## "Not answering /health" ≠ "not running" — never force-restart a relay (robots-mpr3)
 
