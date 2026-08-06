@@ -453,6 +453,99 @@ func TestRateLimitedStaleReviewStaysNeedsDecisionEvenWithAPendingCheck(t *testin
 	}
 }
 
+// The robots-eowy regression, exactly as observed on trillium/no-mistakes#13:
+// CodeRabbit reviewed the FIRST push, the branch moved, and the re-review was
+// refused. Because CodeRabbit edits its one comment in place, the walkthrough
+// body from that first review is still sitting on the PR and the refusal
+// exists ONLY in the check description — so the comment-only rate-limit signal
+// never fires, `stale-review` stayed code-class, and the gate printed
+// `vacuous-pass` + `stale-review` and exited 3. Exit 3 means "fix it on the
+// branch": the mechanic goes hunting a defect that does not exist, and each
+// edit it pushes restarts the review and re-consumes the limit.
+func TestVacuousCheckAloneMakesAStaleReviewReviewerUnavailable(t *testing.T) {
+	s := reviewedPR()
+	s.PR.HeadRefOid = "685efaf2fe6d6c1a4b7e1c9d5d2e3f4a5b6c7d8e"
+	// No rate-limit COMMENT anywhere — the in-place-edited body is still the
+	// real review of the earlier push.
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
+
+	v := ComputeMergeGate(s)
+	if got := blockerCodes(v); len(got) != 2 || !hasBlocker(v, "vacuous-pass") || !hasBlocker(v, "stale-review") {
+		t.Fatalf("expected the no-mistakes#13 shape (vacuous-pass + stale-review), got %v", got)
+	}
+	for _, b := range v.Blockers {
+		if b.Class != ClassReviewerUnavailable {
+			t.Errorf("blocker %q classed %q, want %q — nothing here is about the diff", b.Code, b.Class, ClassReviewerUnavailable)
+		}
+	}
+	if !v.NeedsDecision || v.ExitCode != ExitMergeNeedsDecision {
+		t.Errorf("ExitCode = %d, want %d — a refused re-review is not a defect in the branch", v.ExitCode, ExitMergeNeedsDecision)
+	}
+}
+
+// The same signal on the other arm: "nothing reviewed this PR" was kept
+// code-class only because the gate could not tell WHY. A check that says it
+// did not run IS the why, so the reason governs and this reaches the captain
+// instead of sending a mechanic to edit unobjected-to code.
+func TestVacuousCheckExplainsAnAbsentReview(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = nil
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
+
+	v := ComputeMergeGate(s)
+	if !hasBlocker(v, "no-review-evidence") {
+		t.Fatalf("want no-review-evidence, got %v", blockerCodes(v))
+	}
+	if !v.NeedsDecision || v.ExitCode != ExitMergeNeedsDecision {
+		t.Errorf("ExitCode = %d, want %d", v.ExitCode, ExitMergeNeedsDecision)
+	}
+}
+
+// A missing review with a GREEN check is still unexplained — the reason has to
+// be stated, not merely absent. This is the guard that keeps the reclassify
+// narrow.
+func TestGreenCheckDoesNotExplainAnAbsentReview(t *testing.T) {
+	s := reviewedPR()
+	s.PR.Comments = nil
+
+	v := ComputeMergeGate(s)
+	if v.NeedsDecision || v.ExitCode != ExitMergeBlocked {
+		t.Errorf("ExitCode = %d, want %d — an unexplained missing review keeps the harsher code", v.ExitCode, ExitMergeBlocked)
+	}
+}
+
+// The downgrade must not launder a real finding. A vacuous check next to
+// unresolved review threads is still exit 3.
+func TestVacuousCheckDoesNotLaunderACodeBlocker(t *testing.T) {
+	s := reviewedPR()
+	s.PR.HeadRefOid = "685efaf2fe6d6c1a4b7e1c9d5d2e3f4a5b6c7d8e"
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
+	s.UnresolvedThreads = 2
+
+	v := ComputeMergeGate(s)
+	if v.NeedsDecision || v.ExitCode != ExitMergeBlocked {
+		t.Errorf("ExitCode = %d, want %d — an unresolved finding is still work on the branch", v.ExitCode, ExitMergeBlocked)
+	}
+}
+
+// The second half of robots-eowy: exit 4 told the caller to stop but not that
+// stopping is permanent. CodeRabbit never re-reviews on its own when the
+// window lapses — it needs a new push or an explicit `@coderabbitai review` —
+// so "wait and re-run the gate" deadlocks forever. The verdict has to name the
+// only action that can change it.
+func TestNeedsDecisionNamesTheRecoveryAction(t *testing.T) {
+	s := reviewedPR()
+	s.PR.HeadRefOid = "685efaf2fe6d6c1a4b7e1c9d5d2e3f4a5b6c7d8e"
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
+
+	notes := strings.Join(ComputeMergeGate(s).Notes, " ")
+	for _, want := range []string{"@coderabbitai review", "does not re-review on its own", "Do NOT edit the branch"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes should contain %q so waiting does not read as the answer, got:\n%s", want, notes)
+		}
+	}
+}
+
 // The conservative direction: a blocker whose class nobody set must keep the
 // harshest exit code. A forgotten class is not a downgrade.
 func TestUnclassifiedBlockerKeepsTheHarshestExitCode(t *testing.T) {
