@@ -559,7 +559,7 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 				"Do NOT merge: merging lands origin's head and silently drops the local commits. Get them to origin first (let the pipeline run finish pushing, or push directly), then re-run `parlay merge-gate`.",
 				"Expect the answer to CHANGE once the push lands — a new head restarts the review, so a 0 here can legitimately become 3, 4 or 5 afterwards. Bound the wait: if the push never arrives, that is a stuck pipeline, so signal `parlay status blocked` rather than polling forever.")
 		}
-		if hasCode(v.Blockers, "check-pending") || hasCode(v.Blockers, "stale-review") || hasCode(v.Blockers, "no-review-evidence") {
+		if hasPendingCode(v.Blockers, "check-pending", "stale-review", "no-review-evidence") {
 			v.Notes = append(v.Notes,
 				"Every review blocker above is the review still RUNNING, not a finding about this code — exit 5, not 3.",
 				"Do NOT edit the branch to clear this: there is no defect to fix yet, and a new push restarts whatever review is in flight.",
@@ -655,6 +655,25 @@ func hasCode(bs []MergeBlocker, code string) bool {
 	for _, b := range bs {
 		if b.Code == code {
 			return true
+		}
+	}
+	return false
+}
+
+// hasPendingCode reports whether any pending-class blocker carries one of these
+// codes. `stale-review`/`no-review-evidence` can also be reviewer-unavailable
+// (a refused check), so the review-in-flight note must key on class, not code
+// alone, or it prints "the review is still RUNNING" over a review that already
+// answered no.
+func hasPendingCode(bs []MergeBlocker, codes ...string) bool {
+	for _, b := range bs {
+		if b.Class != ClassPending {
+			continue
+		}
+		for _, c := range codes {
+			if b.Code == c {
+				return true
+			}
 		}
 	}
 	return false
