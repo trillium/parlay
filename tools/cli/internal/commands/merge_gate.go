@@ -48,6 +48,20 @@
 // options — merge-and-disclose, or park — instead of burning the night on a
 // wait with no terminating condition.
 //
+// A refusal counts wherever it is written down (robots-eowy). CodeRabbit
+// edits its ONE comment in place, so a PR whose first push got a real review
+// keeps that walkthrough body forever; when a later push is refused, the only
+// place the refusal appears is the check DESCRIPTION. Classifying off the
+// comment alone made that shape exit 3 — `vacuous-pass` + `stale-review` on
+// trillium/no-mistakes#13 — which is the worst possible answer: it sends a
+// mechanic hunting a defect in code no reviewer ever objected to, and every
+// edit it makes pushes a new head, restarting the review and re-consuming the
+// limit that is blocking it. A vacuous check therefore reclassifies
+// `stale-review` and `no-review-evidence` exactly as a rate-limit comment
+// does. `no-review-evidence` keeping the harsher code was only ever justified
+// by the gate not knowing WHY nothing reviewed the PR; a check that states the
+// reason is that knowledge.
+//
 // 5 exists for the same reason in the opposite direction (robots-rwf8). A
 // check that is STILL RUNNING was landing in 3 — the code the mechanic
 // contract documents as "blocked on the CODE, fix it on the branch" — even
@@ -279,6 +293,7 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		block(&v, "no-checks", "PR has no status checks at all — nothing gated this code.")
 	}
 	checkPending := false
+	checkVacuous := false
 	for _, c := range s.Checks {
 		name := c.Name
 		if name == "" {
@@ -304,6 +319,15 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 				// it did no work says nothing bad about the diff. It is still
 				// a blocker — absence of evidence is not evidence — but it is
 				// not something the branch can be edited into passing.
+				//
+				// This is ALSO a live refusal of the current head, exactly like
+				// a rate-limit comment body, and the rest of the gate treats it
+				// as one (robots-eowy). It is often the ONLY place the refusal
+				// is visible: CodeRabbit edits its one comment in place, so a
+				// PR whose earlier push got a real review keeps that walkthrough
+				// body forever while the check description flips to "Review rate
+				// limited" for the new head.
+				checkVacuous = true
 				blockAs(&v, "vacuous-pass", ClassReviewerUnavailable,
 					"check %q reports %s but its description says it did not run: %q. A green conclusion here is not evidence of anything.",
 					name, c.Bucket, c.Description)
@@ -342,6 +366,19 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		}
 	}
 
+	// A refusal is a refusal wherever it is written down (robots-eowy). The
+	// rate-limit COMMENT and a vacuous check DESCRIPTION are the same fact —
+	// "the reviewer declined to look at this head" — and only one of the two
+	// is present in the common case, because CodeRabbit edits its single
+	// comment in place: a PR whose first push got a real review still shows
+	// that walkthrough body after a later push is refused, and the refusal
+	// exists only in the check description. Reading just the comment made
+	// trillium/no-mistakes#13 exit 3 (`vacuous-pass` + `stale-review`), which
+	// tells a mechanic to go find a defect in code no reviewer ever objected
+	// to — and every edit it makes pushes a new head, restarting the review
+	// and re-consuming the very limit that is blocking it.
+	reviewerRefused := rateLimited || checkVacuous
+
 	switch {
 	case len(reviewedBodies) > 0:
 		if s.PR.HeadRefOid != "" && !bodiesCoverHead(reviewedBodies, s.PR.HeadRefOid) {
@@ -358,7 +395,7 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			// refusal outranks an unfinished check.
 			class := ClassCode
 			switch {
-			case rateLimited:
+			case reviewerRefused:
 				class = ClassReviewerUnavailable
 			case checkPending:
 				class = ClassPending
@@ -383,8 +420,18 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		// exited 0 minutes later, unchanged. Downgrading to pending never
 		// reaches 0, so the gate still fails closed; it only stops telling the
 		// mechanic to go edit a branch nobody has objected to.
+		//
+		// A vacuous check is the other explanation, and it is an explicit one:
+		// the check itself says it did not run (robots-eowy). "Unexplained"
+		// was always the whole justification for keeping this code-class, so
+		// once the reviewer has stated the reason, the reason is what governs.
+		// Refusal outranks pending for the same reason it does above — that
+		// reviewer has already answered, and the answer was no.
 		class := ClassCode
-		if checkPending {
+		switch {
+		case reviewerRefused:
+			class = ClassReviewerUnavailable
+		case checkPending:
 			class = ClassPending
 		}
 		blockAs(&v, "no-review-evidence", class,
@@ -431,9 +478,9 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		// caller has a terminating condition instead of a poll loop.
 		v.NeedsDecision, v.ExitCode = true, ExitMergeNeedsDecision
 		v.Notes = append(v.Notes,
-			"Every blocker above is the reviewer being unavailable, not a finding about this code.",
-			"Do NOT wait on this unbounded — the stated rate-limit window has expired without a review before.",
-			"Signal `parlay status needs-decision` and let the captain pick: merge-and-disclose (land it, and state plainly in the merge/close note that no review ran) or park (leave it open until the reviewer returns). Do not pick for them.")
+			"Every blocker above is the reviewer being unavailable, not a finding about this code. Do NOT edit the branch: there is no finding to fix, and a new push restarts the review and re-consumes the limit that is blocking you.",
+			"Do NOT wait on this unbounded, and do not expect waiting to work at all: CodeRabbit does not re-review on its own when the window lapses — it only reviews on a new push or an explicit `@coderabbitai review` comment, so a gate re-run alone will return this same answer forever.",
+			"Signal `parlay status needs-decision` and let the captain pick one of three: re-request (post `@coderabbitai review` on the PR once — the only action that can change this answer, and it has stayed limited across repeated attempts before), merge-and-disclose (land it, and state plainly in the merge/close note that no review ran), or park (leave it open until the reviewer returns). Do not pick for them.")
 	}
 	return v
 }
