@@ -5,6 +5,7 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -363,6 +364,218 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	}
 	if !strings.Contains(out, "re-run the gate") {
 		t.Errorf("robots DoD should tell the mechanic to re-run rather than edit on exit 5; got:\n%s", out)
+	}
+}
+
+// --- no-work claims (robots-4ek1) -------------------------------------------
+//
+// A claim with nothing behind it must END the agent, not leave it idling on an
+// empty pane. `parlay-spawn --claim` tells a fresh agent to follow claim's
+// printed output exactly, so the brief has to carry the whole exit procedure.
+
+// noWorkAgent points the status sink at a temp dir and returns the file
+// claimRecordFailure should write to.
+func noWorkAgent(t *testing.T, agent string) string {
+	t.Helper()
+	t.Setenv("PARLAY_AGENT_ID", agent)
+	t.Setenv("PARLAY_STATUS_FILE", "")
+	return filepath.Join(os.Getenv("PARLAY_AGENT_HOME"), agent, "status")
+}
+
+// runNoWorkClaim runs Claim with stdout captured OUTSIDE the exit trap.
+// Ordering matters: httpc.Exit panics, and captureStdout only closes its pipe
+// on the normal return path — nesting them the other way round loses the very
+// output these tests assert on.
+func runNoWorkClaim(t *testing.T, argv ...string) (out string, code int, exited bool) {
+	t.Helper()
+	out = captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { Claim(argv) })
+	})
+	return out, code, exited
+}
+
+func TestClaimUnresolvableTicketPrintsExitProcedure(t *testing.T) {
+	cs := newClaimServer(t)
+	stubTask(t, claimTask{}, errors.New(`Error fetching robots-aaa: no issue found matching "robots-aaa"`))
+	statusFile := noWorkAgent(t, "stranded")
+
+	out, code, exited := runNoWorkClaim(t, "robots-aaa")
+	if !exited {
+		t.Fatal("expected a non-zero exit when the ticket does not resolve")
+	}
+	if code != config.ExitRuntime {
+		t.Errorf("exit code = %d, want %d", code, config.ExitRuntime)
+	}
+
+	// The brief is the agent's whole instruction set — it must say don't work,
+	// and give both exit commands.
+	for _, want := range []string{
+		"## NO TASK — DO NOT START WORK",
+		"the ticket does not resolve",
+		`no issue found matching "robots-aaa"`,
+		"handoff create",
+		"identity --park",
+		"WITHOUT a\nrestart",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no-work brief missing %q\n---\n%s", want, out)
+		}
+	}
+	// The two wrong exits must be named as wrong: --submit reboots straight back
+	// into the same dead claim, --complete has no work item to close.
+	if !strings.Contains(out, "identity --submit") || !strings.Contains(out, "identity --complete") {
+		t.Errorf("no-work brief should warn off --submit and --complete; got:\n%s", out)
+	}
+	// It must NOT hand out the work brief: no monitor to arm, no task, no DoD.
+	for _, unwanted := range []string{"Arm your monitor", "## Definition of done", "## Task —"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("no-work brief must not include %q; got:\n%s", unwanted, out)
+		}
+	}
+
+	// The failure is recorded on the agent's own behalf, so an agent that
+	// ignores the brief still leaves a truthful status behind.
+	data, err := os.ReadFile(statusFile)
+	if err != nil {
+		t.Fatalf("expected a status line at %s: %v", statusFile, err)
+	}
+	if !strings.HasPrefix(string(data), "failed:") || !strings.Contains(string(data), "robots-aaa") {
+		t.Errorf("status file = %q, want a failed: line naming the ticket", string(data))
+	}
+
+	// …and announced on its own channel, so the captain gets the report.
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if len(cs.calls) != 2 {
+		t.Fatalf("server calls = %d, want 2 (register + failure announce)", len(cs.calls))
+	}
+	txt, _ := cs.calls[1].body["text"].(string)
+	if !strings.Contains(txt, "claim FAILED") || !strings.Contains(txt, "robots-aaa") {
+		t.Errorf("announce = %q, want it to report the failed claim", txt)
+	}
+}
+
+func TestClaimClosedTicketIsANoOp(t *testing.T) {
+	newClaimServer(t)
+	stubTask(t, claimTask{ID: "robots-done", Title: "Already fixed", Status: "closed"}, nil)
+	statusFile := noWorkAgent(t, "latecomer")
+
+	out, code, exited := runNoWorkClaim(t, "robots-done")
+	if !exited || code != config.ExitRuntime {
+		t.Fatalf("closed ticket: exited=%v code=%d, want a %d exit", exited, code, config.ExitRuntime)
+	}
+	for _, want := range []string{
+		"## NO TASK — DO NOT START WORK",
+		"already closed",
+		"Already fixed",
+		"identity --park",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("closed-ticket brief missing %q\n---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "## Definition of done") {
+		t.Errorf("a closed ticket must not hand out a work brief; got:\n%s", out)
+	}
+	data, _ := os.ReadFile(statusFile)
+	if !strings.Contains(string(data), "failed:") {
+		t.Errorf("closed ticket should record a failed status; got %q", string(data))
+	}
+
+	// The closed item is bound to the identity anyway, so an agent that reaches
+	// for `identity --submit` regardless gets its reboot downgraded by
+	// BoundWorkItemClosed instead of respawning into the same no-op.
+	idFile := filepath.Join(os.Getenv("PARLAY_AGENT_HOME"), "latecomer", "identity.md")
+	body, err := os.ReadFile(idFile)
+	if err != nil {
+		t.Fatalf("expected an identity file at %s: %v", idFile, err)
+	}
+	if !strings.Contains(string(body), "robots-done") {
+		t.Errorf("identity frontmatter should bind the closed work item; got:\n%s", string(body))
+	}
+}
+
+func TestClaimAllowClosedOverridesTheNoOp(t *testing.T) {
+	newClaimServer(t)
+	stubTask(t, claimTask{ID: "robots-reopen", Title: "Back from the dead", Status: "closed"}, nil)
+	noWorkAgent(t, "reopener")
+
+	out := captureStdout(t, func() { Claim([]string{"robots-reopen", "--allow-closed"}) })
+	if !strings.Contains(out, "## Task — robots-reopen") || !strings.Contains(out, "Arm your monitor") {
+		t.Errorf("--allow-closed should hand out the normal work brief; got:\n%s", out)
+	}
+	if strings.Contains(out, "NO TASK") {
+		t.Errorf("--allow-closed should suppress the no-work exit; got:\n%s", out)
+	}
+}
+
+func TestClaimNoWorkHonorsNoRegister(t *testing.T) {
+	cs := newClaimServer(t)
+	stubTask(t, claimTask{}, errors.New("nope"))
+	noWorkAgent(t, "quiet-failure")
+
+	out, _, _ := runNoWorkClaim(t, "task-ghost", "--no-register")
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if len(cs.calls) != 0 {
+		t.Errorf("--no-register should make no server calls on the no-work path, got %d", len(cs.calls))
+	}
+	if !strings.Contains(out, "identity --park") {
+		t.Errorf("--no-register must still print the exit procedure; got:\n%s", out)
+	}
+}
+
+// An unreachable chat server must not swallow the exit procedure: the printed
+// brief is the only thing standing between a dead claim and a lingering agent.
+func TestClaimNoWorkPrintsBriefWhenServerIsDown(t *testing.T) {
+	newClaimServer(t)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1") // nothing listening
+	stubTask(t, claimTask{}, errors.New("nope"))
+	noWorkAgent(t, "offline")
+
+	out, code, exited := runNoWorkClaim(t, "task-ghost")
+	if !exited || code != config.ExitRuntime {
+		t.Fatalf("exited=%v code=%d, want a %d exit", exited, code, config.ExitRuntime)
+	}
+	if !strings.Contains(out, "identity --park") {
+		t.Errorf("a dead server must not suppress the exit procedure; got:\n%s", out)
+	}
+	// …and it must not claim credit for a report that never landed.
+	if !strings.Contains(out, "NOT announced") {
+		t.Errorf("brief should admit the announce failed; got:\n%s", out)
+	}
+	if strings.Contains(out, "the captain has the report") {
+		t.Errorf("brief must not claim the captain got a report the server refused; got:\n%s", out)
+	}
+}
+
+// With no resolvable agent id there is nobody to attribute the status line or
+// the announce to — the brief must say so rather than imply both happened.
+func TestClaimNoWorkWithoutAgentIDSaysNothingWasRecorded(t *testing.T) {
+	newClaimServer(t)
+	stubTask(t, claimTask{}, errors.New("nope"))
+	t.Setenv("PARLAY_AGENT_ID", "")
+	t.Setenv("PARLAY_STATUS_FILE", "")
+
+	out, _, _ := runNoWorkClaim(t, "task-ghost")
+	if !strings.Contains(out, "no agent id was resolvable") {
+		t.Errorf("brief should admit nothing could be attributed; got:\n%s", out)
+	}
+	if !strings.Contains(out, "identity --park") {
+		t.Errorf("brief should still print the exit procedure; got:\n%s", out)
+	}
+}
+
+func TestClaimStatusClosed(t *testing.T) {
+	for _, s := range []string{"closed", "CLOSED", " done ", "completed", "resolved"} {
+		if !claimStatusClosed(s) {
+			t.Errorf("claimStatusClosed(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "open", "in_progress", "blocked", "ready"} {
+		if claimStatusClosed(s) {
+			t.Errorf("claimStatusClosed(%q) = true, want false", s)
+		}
 	}
 }
 

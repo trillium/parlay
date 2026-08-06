@@ -552,6 +552,9 @@ Run this now and follow its printed output exactly:
 It sets your identity ($AGENT_ID), enrolls you (arm the Monitor it prints), and gives you your task.
 $SETUP_BLOCK
 When done or your context is full: run the 'handoff' skill, then immediately 'identity --submit' (nothing between).
+EXCEPT if claim prints "NO TASK" — there is no work behind this pane. Follow claim's own
+exit procedure instead ('identity --park'), which ends you WITHOUT relaunching; do not
+'identity --submit', which would reboot you into the same dead claim (robots-4ek1).
 EOF
 )
 else
