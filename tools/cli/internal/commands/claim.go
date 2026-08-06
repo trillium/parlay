@@ -20,6 +20,10 @@
 //     task item instead (idea-tm0's core win): the spawn prompt shrinks to
 //     "run parlay claim <task-id> and follow its output".
 //
+// A claim with NO WORK behind it — the ticket does not resolve, or it resolves
+// already closed — takes none of those three steps. It reports the failure and
+// prints the exit procedure instead; see claimNoWork (robots-4ek1).
+//
 // Task-id resolution shells out to the store's own wrapper (task/robots/idea/…,
 // each pins its BEADS_DIR), derived from the id's leading token, falling back to
 // a bare `bd` on PATH. Both are the same shell-out convention already used by
@@ -31,6 +35,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/trillium/parlay/tools/cli/internal/args"
@@ -61,7 +66,7 @@ func Claim(argv []string) {
 		return
 	}
 	res := args.Parse("claim", argv,
-		[]string{"--no-register"},
+		[]string{"--no-register", "--allow-closed"},
 		[]string{"--agent", "--name", "--color", "--model"})
 
 	if len(res.Positionals) < 1 {
@@ -74,18 +79,35 @@ func Claim(argv []string) {
 		return
 	}
 
-	task, err := resolveClaimTask(taskID)
-	if err != nil {
-		httpc.Die(fmt.Sprintf("parlay claim: %v", err), config.ExitRuntime)
-		return
-	}
-
 	// Profile resolution (precedence, highest first): explicit flag > env
 	// (parlay-spawn seeds these into the tab) > ticket metadata > derived.
+	// Flags and env are read BEFORE the ticket resolves so the no-work exit
+	// below still knows who it is talking to when there is no ticket at all.
 	flagAgent, _ := res.String("--agent")
 	flagName, _ := res.String("--name")
 	flagColor, _ := res.String("--color")
 	flagModel, _ := res.String("--model")
+
+	task, err := resolveClaimTask(taskID)
+	if err != nil {
+		// NO TICKET. The pane exists, the agent is awake, and there is nothing
+		// for it to do — the robots-4ek1 shape. Dying with a bare resolver error
+		// left the agent with no instruction (parlay-spawn's --claim prompt says
+		// "follow its printed output exactly", and a one-line stderr complaint is
+		// not an instruction), so it lingered: registered, idle, holding a pane,
+		// waiting for a directive that never comes. Hand back the exit procedure
+		// instead of a stack-trace-shaped complaint.
+		agent := claimCoalesce(flagAgent, os.Getenv("PARLAY_AGENT_ID"))
+		name := claimCoalesce(flagName, os.Getenv("PARLAY_AGENT_NAME"), agent)
+		color := claimCoalesce(flagColor, os.Getenv("PARLAY_AGENT_COLOR"))
+		if color == "" && agent != "" {
+			color = identity.ColorFromID(agent)
+		}
+		claimNoWork(agent, name, color, taskID, "",
+			"the ticket does not resolve",
+			fmt.Sprintf("Store said: %v", err), !res.Bool("--no-register"))
+		return
+	}
 
 	agent := claimCoalesce(
 		flagAgent,
@@ -103,6 +125,25 @@ func Claim(argv []string) {
 		color = identity.ColorFromID(agent)
 	}
 	model := claimCoalesce(flagModel, os.Getenv("PARLAY_AGENT_MODEL"), claimMeta(task.Metadata, "parlay_model"))
+
+	// A ticket that resolves but is already CLOSED is the other half of
+	// robots-4ek1: a no-op claim. Handing out the full work brief there sends an
+	// agent to redo finished work (or, more often, to mill around a ticket whose
+	// fix already landed). Same exit as a missing ticket. `--allow-closed` is the
+	// deliberate override for re-opening a closed item on purpose.
+	if claimStatusClosed(task.Status) && !res.Bool("--allow-closed") {
+		// Bind the closed item anyway: BoundWorkItemClosed then sees an
+		// affirmatively-closed binding, so even an agent that ignores the brief
+		// and reaches for `identity --submit` gets its reboot downgraded to a
+		// clean shutdown. Belt and suspenders on top of the printed procedure.
+		if err := identity.BindWorkItem(agent, task.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "parlay claim: note — could not bind closed work item %s to %s: %v\n", task.ID, agent, err)
+		}
+		claimNoWork(agent, name, color, task.ID, task.Title,
+			fmt.Sprintf("the ticket is already %s", strings.ToLower(strings.TrimSpace(task.Status))),
+			"This claim is a no-op: the work item is already finished.", !res.Bool("--no-register"))
+		return
+	}
 
 	// 2. Enrollment (synchronous half): register + announce so the tab is live
 	// immediately, before the agent even arms its Monitor. Idempotent — the
@@ -147,6 +188,170 @@ func claimEnroll(agent, name, color string, task claimTask) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "parlay claim: registered + announced.\n")
+}
+
+// claimNoWork ends a claim that has no work behind it — either the ticket did
+// not resolve at all, or it resolved to an already-closed item — and exits
+// non-zero (robots-4ek1).
+//
+// The failure this exists to prevent is NOT the CLI's exit status, which was
+// already correct: it is the AGENT lingering afterwards. `parlay-spawn --claim`
+// tells a fresh agent to "follow its printed output exactly", so whatever claim
+// prints IS the agent's whole instruction set — and a bare
+// `resolving "robots-aaa" … failed` is a complaint, not an instruction. The
+// agent stayed enrolled, idle, holding a pane, waiting for a directive that was
+// never coming. Everything below exists so the no-work case ends the same way a
+// finished one does: reported, recorded, and shut down.
+//
+// Three things happen, in the order a well-behaved agent would do them, and the
+// first two happen HERE rather than being merely recommended — an agent that
+// ignores the brief entirely still leaves a truthful record:
+//
+//  1. `failed` is appended to the agent's own status file, so `crew-state`,
+//     `supervise`, and the captain's panel all read the real outcome. This also
+//     means `parlay sweep` HOLDS the store instead of collecting it — a failed
+//     claim is exactly the kind of thing the captain should see rather than have
+//     silently absorbed.
+//  2. The failure is announced on the agent's own channel (skipped by
+//     --no-register), so the report lands where the captain is already looking.
+//     Best effort: an unreachable server must never swallow the printed exit
+//     procedure, which is the one thing this function cannot afford to lose.
+//  3. The exit procedure is printed: handoff → `identity --park`. --park is the
+//     middle of the three-exit model (decision-q3x) and the only correct one
+//     here — `--submit` reboots the agent straight back into the same dead
+//     claim, which is the respawn loop this whole path is meant to avoid, and
+//     `--complete` wants an open work item to close, which by definition there
+//     is not.
+//
+// title/detail are optional colour for the brief, printed verbatim: the
+// ticket's title when one resolved, and one line of context (the resolver's own
+// error text, or why a closed claim is a no-op).
+func claimNoWork(agent, name, color, taskID, title, reason, detail string, register bool) {
+	recorded := claimRecordFailure(agent, taskID, reason)
+	announced := false
+	if register && agent != "" {
+		announced = claimAnnounceNoWork(agent, name, color, taskID, reason)
+	}
+	fmt.Print(claimNoWorkBrief(agent, taskID, title, reason, detail, recorded, announced))
+	httpc.Die(fmt.Sprintf("parlay claim: %s — %s (no work claimed; see the exit procedure above)", taskID, reason), config.ExitRuntime)
+}
+
+// claimRecordFailure appends a `failed:` line to the agent's own status file,
+// the same sink `parlay status` writes to: $PARLAY_STATUS_FILE when firstmate
+// injected one, else ~/.parlay/agents/<id>/status. Deliberately best effort — a
+// status file that cannot be written is not a reason to withhold the exit
+// procedure — so it reports whether it landed rather than dying, and the brief
+// only claims credit for what actually happened.
+func claimRecordFailure(agent, taskID, reason string) bool {
+	file := strings.TrimSpace(os.Getenv("PARLAY_STATUS_FILE"))
+	if file == "" {
+		if agent == "" {
+			return false
+		}
+		file = statusFileForAgent(agent)
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			return false
+		}
+	}
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false
+	}
+	_, writeErr := f.WriteString(buildStatusLine("failed", "", fmt.Sprintf("claim %s: %s", taskID, reason)))
+	closeErr := f.Close()
+	return writeErr == nil && closeErr == nil
+}
+
+// claimAnnounceNoWork registers the agent and announces the failed claim on its
+// own channel. Unlike claimEnroll it uses httpc.TryPostJSON and never dies: on
+// the no-work path the printed exit procedure matters more than the announce, so
+// an unreachable or unhappy server is reported to stderr and stepped over. (A
+// plain PostJSON here would die on a refused connection before the brief was
+// ever printed — leaving exactly the instruction-less agent this path exists to
+// fix, only now with the server as the trigger.)
+func claimAnnounceNoWork(agent, name, color, taskID, reason string) bool {
+	if ok, why := httpc.TryPostJSON("/api/chat/register-agent", map[string]any{"id": agent, "name": name, "color": color}); !ok {
+		fmt.Fprintf(os.Stderr, "parlay claim: note — could not register '%s' to report the failed claim: %s\n", agent, why)
+		return false
+	}
+	announce := fmt.Sprintf("claim FAILED: %s — %s. No work to do; reporting and exiting WITHOUT restart.", taskID, reason)
+	ok, why := httpc.TryPostJSON("/api/chat/reply", map[string]string{"text": announce, "agent": agent})
+	if !ok {
+		fmt.Fprintf(os.Stderr, "parlay claim: note — could not announce the failed claim: %s\n", why)
+	}
+	return ok
+}
+
+// claimNoWorkBrief renders the agent-facing no-work brief: what went wrong, what
+// has already been recorded on the agent's behalf, and the two commands that end
+// the session without relaunching it.
+func claimNoWorkBrief(agent, taskID, title, reason, detail string, recorded, announced bool) string {
+	var b strings.Builder
+
+	b.WriteString("## NO TASK — DO NOT START WORK\n\n")
+	fmt.Fprintf(&b, "parlay claim %s: %s.\n", taskID, reason)
+	if t := claimFirstLine(title); t != "" {
+		fmt.Fprintf(&b, "Ticket title: %s\n", t)
+	}
+	if d := strings.TrimSpace(detail); d != "" {
+		fmt.Fprintf(&b, "%s\n", d)
+	}
+	b.WriteString("\nThere is no work behind this pane and nothing you do here can create any.\n")
+	b.WriteString("Do NOT go looking for the ticket, do NOT pick a different one, do NOT sit\n")
+	b.WriteString("waiting for a message, and do NOT arm a monitor. Close yourself out now.\n\n")
+
+	// Only claim credit for what actually landed — a brief that says the panel
+	// has the report when the POST failed is how a silent failure gets treated
+	// as a delivered one.
+	if agent == "" {
+		b.WriteString("Nothing could be recorded for you: no agent id was resolvable (set\n")
+		b.WriteString("PARLAY_AGENT_ID or pass --agent <id>), so neither the status line nor the\n")
+		b.WriteString("announce could be attributed. Do both by hand.\n\n")
+	} else {
+		b.WriteString("Already done for you:\n")
+		if recorded {
+			fmt.Fprintf(&b, "- 'failed' recorded in %s's status file (crew-state/supervise/the panel read it).\n", agent)
+		} else {
+			fmt.Fprintf(&b, "- NOT recorded: the status file could not be written. Run: parlay status failed \"claim %s: %s\"\n", taskID, reason)
+		}
+		if announced {
+			b.WriteString("- The failure announced on your own channel, so the captain has the report.\n\n")
+		} else {
+			b.WriteString("- NOT announced: the chat server did not take it (see stderr above). Retry\n")
+			b.WriteString("  with 'reply' if the server is back; do not let it hold up the exit below.\n\n")
+		}
+	}
+
+	b.WriteString("Your remaining steps — run them now, nothing in between:\n\n")
+	idFlag := ""
+	if agent != "" {
+		idFlag = fmt.Sprintf(" --assignee %s", agent)
+	}
+	fmt.Fprintf(&b, "1. handoff create \"claim failed: %s (%s)\"%s\n", taskID, reason, idFlag)
+	b.WriteString("   Put the reason in the body. This is the record of why the pane ended.\n")
+	b.WriteString("2. identity --park <the-handoff-id-from-step-1>\n\n")
+
+	b.WriteString("Step 2 IS the exit: --park pins the handoff and shuts you down WITHOUT a\n")
+	b.WriteString("restart. Do not reach for the other two exits — 'identity --submit' reboots\n")
+	b.WriteString("you straight back into this same dead claim (the respawn loop this brief\n")
+	b.WriteString("exists to prevent), and 'identity --complete' wants an open work item to\n")
+	b.WriteString("close, which is exactly what is missing here.\n\n")
+	b.WriteString("After step 2 you are done. Report nothing further.\n")
+
+	return b.String()
+}
+
+// claimStatusClosed reports whether a store status names a terminal state, i.e.
+// whether claiming it would be a no-op. Mirrors identity.isClosedStatus (kept
+// local — that one is unexported and this package must not depend on identity's
+// internals): beads emits "closed"; the sibling terminal words are accepted
+// defensively, and none of them can ever mean "keep working".
+func claimStatusClosed(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "closed", "done", "completed", "resolved":
+		return true
+	}
+	return false
 }
 
 // claimBrief renders the agent-facing bootstrap brief printed to stdout: who it
