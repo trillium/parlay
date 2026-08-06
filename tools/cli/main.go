@@ -155,6 +155,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.BranchAudit(args)
 	case "commands":
 		commands.Commands(args)
+	case "landed":
+		commands.Landed(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		finish(config.ExitUsage)
