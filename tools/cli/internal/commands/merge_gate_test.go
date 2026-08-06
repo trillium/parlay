@@ -63,6 +63,7 @@ func reviewedPR() MergeGateSnapshot {
 			State:            "OPEN",
 			Mergeable:        "MERGEABLE",
 			MergeStateStatus: "CLEAN",
+			BaseRefName:      "main",
 			HeadRefOid:       headSHA,
 			Author:           ghAuthor{Login: "trillium"},
 			Comments: []ghComment{
@@ -71,6 +72,10 @@ func reviewedPR() MergeGateSnapshot {
 		},
 		Checks:       []ghCheck{{Name: "CodeRabbit", State: "SUCCESS", Bucket: "pass", Description: "1 file reviewed"}},
 		ThreadsKnown: true,
+		// Up to date with main, and known to be — so the checks above are
+		// statements about the merge that would actually happen.
+		BehindKnown: true,
+		BehindBy:    0,
 	}
 }
 
@@ -655,6 +660,124 @@ func TestUnknownThreadCountIsNotedNotAssumedZero(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(v.Notes, " "), "UNKNOWN") {
 		t.Errorf("want an UNKNOWN note, got %v", v.Notes)
+	}
+}
+
+// The robots-1hs5 regression: three PRs on trillium/firstmate (#76/#77/#79)
+// each held a green check earned against an older main and, merged in turn,
+// collectively broke main. GitHub recomputes refs/pull/N/merge when the base
+// moves but never re-runs the check, so the green survives a base it no longer
+// describes. Being behind is fixable on the branch, so it is code-class.
+func TestBehindTheBaseBlocksEvenWithEverythingElseGreen(t *testing.T) {
+	s := reviewedPR()
+	s.BehindBy = 3
+	v := ComputeMergeGate(s)
+	if v.Ready {
+		t.Fatalf("a PR behind its base must not be READY")
+	}
+	if !hasBlocker(v, "behind-base") {
+		t.Fatalf("want behind-base, got %v", blockerCodes(v))
+	}
+	if v.ExitCode != ExitMergeBlocked {
+		t.Errorf("ExitCode = %d, want %d (code-class: rebase fixes it)", v.ExitCode, ExitMergeBlocked)
+	}
+	if !strings.Contains(FormatMergeGate(s.PR, v), "main") {
+		t.Errorf("the blocker should name the base branch, got %q", FormatMergeGate(s.PR, v))
+	}
+}
+
+// mergeStateStatus=BEHIND is authoritative when GitHub bothers to report it,
+// and it is the only signal left if the compare call failed. It is NOT
+// sufficient on its own — see the next test for why.
+func TestMergeStateStatusBehindBlocksWhenTheCompareCallFailed(t *testing.T) {
+	s := reviewedPR()
+	s.BehindKnown, s.BehindBy = false, 0
+	s.PR.MergeStateStatus = "BEHIND"
+	v := ComputeMergeGate(s)
+	if !hasBlocker(v, "behind-base") || v.ExitCode != ExitMergeBlocked {
+		t.Fatalf("want a code-class behind-base, got %v exit %d", blockerCodes(v), v.ExitCode)
+	}
+}
+
+// Why the gate cannot rely on mergeStateStatus alone: GitHub only reports
+// BEHIND when the base branch has protection requiring up-to-date branches.
+// trillium/firstmate's main has no protection at all, so every behind PR there
+// reports CLEAN (or UNSTABLE) — the exact repo this blocker was written for.
+// The compare API's behind_by is true regardless of repo settings.
+func TestBehindIsCaughtEvenWhenGitHubReportsCleanOnAnUnprotectedBase(t *testing.T) {
+	s := reviewedPR()
+	s.PR.MergeStateStatus = "CLEAN"
+	s.BehindBy = 10
+	if v := ComputeMergeGate(s); !hasBlocker(v, "behind-base") {
+		t.Errorf("CLEAN must not launder a behind branch, got %v", blockerCodes(v))
+	}
+}
+
+// One blocker, not two, when both signals agree.
+func TestBehindIsReportedOnceWhenBothSignalsAgree(t *testing.T) {
+	s := reviewedPR()
+	s.BehindBy = 2
+	s.PR.MergeStateStatus = "BEHIND"
+	v := ComputeMergeGate(s)
+	n := 0
+	for _, c := range blockerCodes(v) {
+		if c == "behind-base" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("behind-base reported %d times, want 1: %v", n, blockerCodes(v))
+	}
+}
+
+// An unknown comparison is disclosed, not assumed current — same shape as an
+// unreadable thread count. It must not block on its own: the compare call is
+// best-effort and a network hiccup should not make the gate unusable.
+func TestUnknownBaseComparisonIsNotedNotAssumedCurrent(t *testing.T) {
+	s := reviewedPR()
+	s.BehindKnown, s.BehindBy = false, 0
+	v := ComputeMergeGate(s)
+	if !v.Ready {
+		t.Fatalf("an unknown comparison should not itself block, got %v", blockerCodes(v))
+	}
+	if !strings.Contains(strings.Join(v.Notes, " "), "UNKNOWN") {
+		t.Errorf("want an UNKNOWN note, got %v", v.Notes)
+	}
+}
+
+// A merged PR is past gating entirely — do not tell the captain to rebase
+// something that already landed.
+func TestBehindDoesNotFireOnAnAlreadyMergedPR(t *testing.T) {
+	s := reviewedPR()
+	s.PR.State = "MERGED"
+	s.BehindBy = 5
+	if v := ComputeMergeGate(s); !v.Ready || len(v.Blockers) != 0 {
+		t.Errorf("a merged PR should short-circuit clean, got %v", blockerCodes(v))
+	}
+}
+
+// behind-base is code-class, so it must survive the reviewer-unavailable
+// downgrade exactly like a failing test does — a stale base is still a stale
+// base while CodeRabbit is rate limited.
+func TestBehindBaseOutranksReviewerUnavailability(t *testing.T) {
+	s := reviewedPR()
+	s.BehindBy = 1
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
+	v := ComputeMergeGate(s)
+	if v.NeedsDecision || v.ExitCode != ExitMergeBlocked {
+		t.Errorf("want exit %d, got %d (needsDecision=%v) — a behind base is fixable on the branch",
+			ExitMergeBlocked, v.ExitCode, v.NeedsDecision)
+	}
+}
+
+func TestBehindByJSONDistinguishesUnknownFromZero(t *testing.T) {
+	s := reviewedPR()
+	if got := behindByJSON(s); got == nil || *got != 0 {
+		t.Errorf("known-and-current should marshal as 0, got %v", got)
+	}
+	s.BehindKnown = false
+	if got := behindByJSON(s); got != nil {
+		t.Errorf("unknown should marshal as null, got %v", *got)
 	}
 }
 

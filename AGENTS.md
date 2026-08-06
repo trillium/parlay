@@ -1049,6 +1049,34 @@ merge-and-disclose / park) instead of two. The gate deliberately does not post
 that comment itself: it is a read-only verb, and a gate called in a poll loop
 would spam the reviewer and re-consume the very limit at issue.
 
+**A green check only speaks about the base it ran against (robots-1hs5).**
+GitHub runs `pull_request` workflows on `refs/pull/N/merge` — the merge
+*result*, not the branch head — and it recomputes that ref when the base moves
+but never re-triggers the check. So a PR that went green hours ago keeps that
+green while describing a merge with a main that no longer exists, and merging it
+lands a combination no CI ever evaluated. trillium/firstmate #76/#77/#79 each
+held such a green and, merged in turn, collectively broke main with duplicate
+entries in one shared JSON file (robots-ot20) — three individually correct PRs
+that were jointly wrong. The gate now blocks `behind-base`, code-class (exit
+`3`, fixed by merging the base in or rebasing, which re-triggers CI against the
+current base).
+
+The obvious field does not work: `mergeStateStatus=BEHIND` is only reported when
+the base branch has protection requiring up-to-date branches, and firstmate's
+main has **no protection at all** — `gh api …/branches/main/protection` is a
+404, and every behind PR there reports `CLEAN` or `UNSTABLE`. Reading that field
+alone would be a blocker that never fires in the exact case it was written for.
+`fetchMergeGateSnapshot` asks the compare API instead
+(`repos/O/R/compare/<base>...<headSha>` → `behind_by`), which is true on any
+repo, and `BEHIND` is kept as corroboration and as the fallback if that call
+fails. When neither is available the verdict says base freshness is UNKNOWN
+rather than assuming current, and `--json` reports `behindBy: null` so a scripted
+caller can tell "never asked" from "0 commits behind". The gate does **not** try
+to exempt "behind, but CI ran after the base moved" by comparing check
+completion against the base tip's commit date: commit dates are not push times
+and can predate the push arbitrarily, so that refinement fails OPEN on exactly
+the rebased and force-pushed branches where it would matter.
+
 **Never let `gh` pick the repository implicitly (robots-g4qz).** gh's
 base-repo resolution prefers a remote named `upstream` over `origin`, so in a
 fork clone — origin=`trillium/<repo>` plus an `upstream` remote, which is every
