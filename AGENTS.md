@@ -652,6 +652,28 @@ reviewer-unavailability, because the re-review is exactly what is being
 refused. That pairing is the no-mistakes#7 shape. A live refusal outranks an
 unfinished check: that reviewer has already answered, and the answer was no.
 
+**A refusal counts wherever it is written down, and waiting never clears one
+(robots-eowy).** CodeRabbit edits its ONE comment in place, so a PR whose first
+push got a real review keeps that walkthrough body forever — and when a later
+push is refused, the refusal exists only in the check *description*.
+Classifying off the comment alone made that shape (`vacuous-pass` +
+`stale-review`, trillium/no-mistakes#13) exit `3`, which sends a mechanic
+hunting a defect in code no reviewer ever objected to, and every edit it pushes
+restarts the review and re-consumes the limit that is blocking it. A vacuous
+check now reclassifies `stale-review` **and** `no-review-evidence` exactly as a
+rate-limit comment does; `no-review-evidence` was only kept code-class because
+the gate could not tell WHY nothing reviewed the PR, and a check that states
+the reason is that knowledge. A *green* check still explains nothing, so an
+unexplained missing review keeps the harsher code.
+
+And exit 4 now names the way out: CodeRabbit does **not** re-review when the
+rate-limit window lapses — it reviews only on a new push or an explicit
+`@coderabbitai review` comment — so "wait and re-run the gate" deadlocks
+forever. The notes give the captain three options (re-request /
+merge-and-disclose / park) instead of two. The gate deliberately does not post
+that comment itself: it is a read-only verb, and a gate called in a poll loop
+would spam the reviewer and re-consume the very limit at issue.
+
 **Never let `gh` pick the repository implicitly (robots-g4qz).** gh's
 base-repo resolution prefers a remote named `upstream` over `origin`, so in a
 fork clone — origin=`trillium/<repo>` plus an `upstream` remote, which is every
