@@ -73,6 +73,23 @@
 // reviewer will never come" (4); it is its own answer, and the only one of
 // the three that is genuinely transient. Re-run the gate; do not edit, do not
 // escalate, do not merge.
+//
+// The same skepticism the gate applies to a check CONCLUSION it now applies to
+// head FRESHNESS (robots-bn5d). Every assertion above is evaluated against
+// origin's `headRefOid` — which is correct, since that is the commit a merge
+// would land — but the caller is a mechanic who has just authored a fix and
+// pushed it, and for whom READY reads as "my fix is cleared to merge". On
+// trillium/firstmate#91 the fix had gone to the no-mistakes MIRROR and the
+// pipeline had not yet pushed it to origin, so origin's head was still the
+// pre-fix commit: the gate said READY, and merging there would have landed the
+// old head and silently DROPPED the just-authored fix for the reviewer's
+// finding. Minutes later, once the pipeline did push, the same PR went 0 -> 4.
+// So the READY was not merely early, it was the opposite of the eventual
+// truthful answer. The gate cannot see a mirror, but it can see that the local
+// branch holds commits origin's PR head does not — which is the same fact from
+// the only side it has access to — so an unpushed local head is a PENDING
+// blocker, and origin's head sha is printed on every verdict so the
+// discrepancy is visible even where the gate cannot check.
 
 package commands
 
@@ -187,9 +204,57 @@ type ghPRView struct {
 	Mergeable        string      `json:"mergeable"`
 	MergeStateStatus string      `json:"mergeStateStatus"`
 	HeadRefOid       string      `json:"headRefOid"`
+	HeadRefName      string      `json:"headRefName"`
 	Author           ghAuthor    `json:"author"`
 	Reviews          []ghReview  `json:"reviews"`
 	Comments         []ghComment `json:"comments"`
+}
+
+// Relation names how a local branch sits against origin's PR head.
+const (
+	RelationUnknown  = "unknown"
+	RelationSame     = "same"
+	RelationAhead    = "ahead"
+	RelationBehind   = "behind"
+	RelationDiverged = "diverged"
+)
+
+// HeadFreshness compares the LOCAL copy of the PR's head branch against the
+// `headRefOid` GitHub reports — the difference between "the fix I just wrote"
+// and "the commit a merge would actually land" (robots-bn5d).
+//
+// Everything else this gate asserts is about origin's head, and correctly so.
+// But the caller has just authored a fix and pushed it, and reads READY as a
+// verdict on THAT. When the push went somewhere origin has not caught up with
+// yet — the no-mistakes mirror, whose pipeline pushes to origin asynchronously
+// — origin's head is still the pre-fix commit. Merging then lands the old head
+// and silently drops the fix, which is the exact premature-FIXED failure the
+// mechanic guardrails exist to prevent.
+//
+// The gate has no way to see a mirror or a pipeline run. What it CAN see, from
+// any checkout or linked worktree of the repo, is that the local branch
+// contains commits origin's PR head does not — the same fact observed from the
+// side the gate has access to, and true for a plain forgotten `git push` as
+// well. That is the signal; the pipeline is only one way to produce it.
+type HeadFreshness struct {
+	// Known is false when the comparison could not be made at all (not in a
+	// git work tree, origin points somewhere else, no local branch of that
+	// name, or origin's head sha is not in the local object store). The gate
+	// then says so explicitly rather than implying agreement — "could not
+	// tell" and "they agree" are different answers.
+	Known bool `json:"known"`
+	// Branch is the PR's head branch, e.g. "fix/robots-u7gu".
+	Branch string `json:"branch"`
+	// LocalHead is the sha the local branch points at.
+	LocalHead string `json:"localHead"`
+	// Relation is how LocalHead sits against origin's headRefOid: same, ahead,
+	// behind, diverged, or unknown.
+	Relation string `json:"relation"`
+	// Ahead counts commits on the local branch that origin's PR head does not
+	// have — i.e. how much of the local work a merge would drop.
+	Ahead int `json:"ahead"`
+	// Reason explains a Known=false answer, so the gap is legible.
+	Reason string `json:"reason,omitempty"`
 }
 
 // MergeGateSnapshot is everything the gate needs about a PR, already fetched.
@@ -205,6 +270,10 @@ type MergeGateSnapshot struct {
 	// Checks is empty when the PR has no checks reported at all — which is
 	// itself a blocker, not a pass.
 	Checks []ghCheck
+	// Head is the local-vs-origin head comparison. Zero value (Known=false)
+	// means it could not be measured, which the gate reports rather than
+	// treating as agreement.
+	Head HeadFreshness
 	// UnresolvedThreads counts review threads still marked unresolved.
 	UnresolvedThreads int
 	// ThreadsKnown is false when the review-thread query could not be run;
@@ -271,12 +340,25 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			s.Repo, got))
 	}
 
+	// Head freshness runs BEFORE the MERGED short-circuit, because a PR merged
+	// at a head the local branch is ahead of is not a resolved question — it is
+	// this defect already realized, with the fix dropped and the merge sitting
+	// there looking like proof it landed (robots-bn5d).
+	assessHeadFreshness(&v, s)
+
 	switch strings.ToUpper(s.PR.State) {
 	case "MERGED":
 		// Already landed. Nothing left to gate — say so plainly rather than
-		// running checks that no longer mean anything.
-		v.Ready, v.Merged, v.ExitCode = true, true, config.ExitOK
+		// running checks that no longer mean anything. The one exception is a
+		// head-freshness blocker: that one is about whether WHAT landed is what
+		// the caller thinks landed, which merging does not answer.
+		v.Merged = true
 		v.Notes = append(v.Notes, "PR is already MERGED — nothing left to gate.")
+		if len(v.Blockers) == 0 {
+			v.Ready, v.ExitCode = true, config.ExitOK
+		} else {
+			v.ExitCode = ExitMergeBlocked
+		}
 		return v
 	case "CLOSED":
 		block(&v, "pr-closed", "PR is CLOSED without being merged.")
@@ -468,10 +550,21 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		// Nothing here says anything is wrong with the code — the reviewer is
 		// mid-sentence. Do not edit, do not decide, do not merge; re-run.
 		v.Pending, v.ExitCode = true, ExitMergePending
-		v.Notes = append(v.Notes,
-			"Every blocker above is the review still RUNNING, not a finding about this code — exit 5, not 3.",
-			"Do NOT edit the branch to clear this: there is no defect to fix yet, and a new push restarts whatever review is in flight.",
-			"Re-run `parlay merge-gate` after the check reports. Bound the wait — if it never finishes, that is reviewer unavailability, so signal `parlay status needs-decision` rather than polling forever (robots-8kkq).")
+		// The two pending shapes need opposite instructions, so name whichever
+		// one is actually present rather than printing the review-in-flight
+		// script over an unpushed head (robots-bn5d).
+		if hasCode(v.Blockers, "head-not-pushed") {
+			v.Notes = append(v.Notes,
+				"Your local work is not at origin yet, so the verdict above is about an OLDER commit than the one you wrote — exit 5, not 3.",
+				"Do NOT merge: merging lands origin's head and silently drops the local commits. Get them to origin first (let the pipeline run finish pushing, or push directly), then re-run `parlay merge-gate`.",
+				"Expect the answer to CHANGE once the push lands — a new head restarts the review, so a 0 here can legitimately become 3, 4 or 5 afterwards. Bound the wait: if the push never arrives, that is a stuck pipeline, so signal `parlay status blocked` rather than polling forever.")
+		}
+		if hasCode(v.Blockers, "check-pending") || hasCode(v.Blockers, "stale-review") || hasCode(v.Blockers, "no-review-evidence") {
+			v.Notes = append(v.Notes,
+				"Every review blocker above is the review still RUNNING, not a finding about this code — exit 5, not 3.",
+				"Do NOT edit the branch to clear this: there is no defect to fix yet, and a new push restarts whatever review is in flight.",
+				"Re-run `parlay merge-gate` after the check reports. Bound the wait — if it never finishes, that is reviewer unavailability, so signal `parlay status needs-decision` rather than polling forever (robots-8kkq).")
+		}
 	default:
 		// Nothing here is about the diff, and nothing on the branch will
 		// change it. Say so, and say what the two honest answers are, so the
@@ -483,6 +576,88 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			"Signal `parlay status needs-decision` and let the captain pick one of three: re-request (post `@coderabbitai review` on the PR once — the only action that can change this answer, and it has stayed limited across repeated attempts before), merge-and-disclose (land it, and state plainly in the merge/close note that no review ran), or park (leave it open until the reviewer returns). Do not pick for them.")
 	}
 	return v
+}
+
+// assessHeadFreshness reports what the local checkout knows about the commit a
+// merge would actually land, and blocks when that commit is missing work the
+// local branch already has (robots-bn5d).
+//
+// Origin's `headRefOid` is printed on every verdict, unconditionally. That is
+// the minimum the caller needs: the whole failure was a mechanic reading READY
+// as a verdict on the fix they had just written, when the gate had in fact
+// answered about the commit before it, and nothing in the output named which
+// commit that was.
+//
+// The blocker is deliberately PENDING-class while the PR is open. Nothing is
+// wrong with the diff; the commits simply have not arrived at origin yet, and
+// the answer changes on its own once they do — exactly the "not yet" that exit
+// 5 exists for. On a MERGED PR it is code-class instead: the merge already
+// happened at the stale head, so no amount of waiting fixes it and the work has
+// to be pushed and re-landed.
+func assessHeadFreshness(v *MergeGateVerdict, s MergeGateSnapshot) {
+	head := strings.TrimSpace(s.PR.HeadRefOid)
+	if head == "" {
+		return
+	}
+	label := shortSHA(head)
+	if b := strings.TrimSpace(s.PR.HeadRefName); b != "" {
+		label = fmt.Sprintf("%s on %s", shortSHA(head), b)
+	}
+	h := s.Head
+	merged := strings.EqualFold(s.PR.State, "MERGED")
+
+	if !h.Known {
+		reason := h.Reason
+		if reason == "" {
+			reason = "no local copy of this branch to compare against"
+		}
+		// "Could not tell" is not "they agree". Say which commit the verdict is
+		// about and hand the caller the one-line check the gate could not run.
+		v.Notes = append(v.Notes, fmt.Sprintf(
+			"origin head: %s — NOT verified against a local branch (%s). If you just pushed a fix for this PR, check it yourself before merging: `gh pr view %d --json headRefOid` must match your local HEAD. A push that has not reached origin yet leaves every verdict above describing the PRE-fix commit (robots-bn5d).",
+			label, reason, s.PR.Number))
+		return
+	}
+
+	switch {
+	case h.Ahead > 0:
+		what := "would merge"
+		if merged {
+			what = "merged"
+		}
+		detail := fmt.Sprintf(
+			"local %s is %d commit(s) ahead of origin's PR head %s — those commits are NOT in what %s. If you just pushed through a pipeline (`git push no-mistakes`), the run has not reached origin yet; if you pushed nowhere, they are only on this machine.",
+			h.Branch, h.Ahead, shortSHA(head), what)
+		if h.Relation == RelationDiverged {
+			detail += " The two have also DIVERGED — origin's head is not an ancestor of the local branch, so this is not a plain pending push."
+		}
+		if merged {
+			// Past tense: the stale merge already happened, and the mechanic
+			// contract's `git branch -r --contains <sha>` proof will pass for
+			// the wrong commit. Nothing transient about it.
+			block(v, "head-not-pushed", "%s", detail)
+			return
+		}
+		blockAs(v, "head-not-pushed", ClassPending, "%s", detail)
+	case h.Relation == RelationBehind:
+		// Harmless for merging — origin simply has commits this checkout has
+		// not fetched. Worth naming so it is not mistaken for the case above.
+		v.Notes = append(v.Notes, fmt.Sprintf(
+			"origin head: %s — local %s is BEHIND it (nothing local is at risk; this checkout is just stale).", label, h.Branch))
+	default:
+		v.Notes = append(v.Notes, fmt.Sprintf(
+			"origin head: %s — local %s agrees, so this verdict is about the commit you have.", label, h.Branch))
+	}
+}
+
+// hasCode reports whether any blocker carries exactly this code.
+func hasCode(bs []MergeBlocker, code string) bool {
+	for _, b := range bs {
+		if b.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 // hasClass reports whether any blocker carries exactly this class.
@@ -591,7 +766,13 @@ func FormatMergeGate(pr ghPRView, v MergeGateVerdict) string {
 		fmt.Fprintf(&b, "  · %s\n", n)
 	}
 	if v.Ready && !v.Merged {
-		b.WriteString("  · Checks green, a real review covered the current head, no unresolved threads.\n")
+		// Name the commit. READY is a verdict about origin's head and nothing
+		// else, and the whole robots-bn5d failure was a mechanic reading it as
+		// a verdict on the fix they had just pushed somewhere origin had not
+		// caught up with. The sha is the one thing that makes the two
+		// distinguishable at a glance.
+		fmt.Fprintf(&b, "  · Checks green, a real review covered origin's head %s, no unresolved threads. Merging lands THAT commit — confirm it is the one you mean.\n",
+			shortSHA(pr.HeadRefOid))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -637,8 +818,10 @@ func MergeGate(argv []string) {
 			RepoSource string           `json:"repoSource"`
 			Verdict    MergeGateVerdict `json:"verdict"`
 			Checks     []ghCheck        `json:"checks"`
+			HeadOid    string           `json:"headRefOid"`
+			Head       HeadFreshness    `json:"headFreshness"`
 			Unresolv   int              `json:"unresolvedThreads"`
-		}{snap.PR.Number, snap.PR.URL, snap.Repo, snap.RepoSource, v, snap.Checks, snap.UnresolvedThreads}, "", "  ")
+		}{snap.PR.Number, snap.PR.URL, snap.Repo, snap.RepoSource, v, snap.Checks, snap.PR.HeadRefOid, snap.Head, snap.UnresolvedThreads}, "", "  ")
 		fmt.Println(string(out))
 	} else {
 		fmt.Println(FormatMergeGate(snap.PR, v))
@@ -650,7 +833,7 @@ func MergeGate(argv []string) {
 }
 
 // prViewFields is the exact --json field set fetchMergeGateSnapshot requests.
-const prViewFields = "number,url,state,mergeable,mergeStateStatus,headRefOid,author,reviews,comments"
+const prViewFields = "number,url,state,mergeable,mergeStateStatus,headRefOid,headRefName,author,reviews,comments"
 
 // reviewThreadsQuery counts unresolved review threads. `gh pr view` has no
 // field for thread resolution, so this is the one place GraphQL is needed.
@@ -692,6 +875,11 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 	// No stdout means gh reported "no checks reported" — leave Checks empty
 	// so the no-checks blocker fires, rather than erroring out.
 
+	// Local, read-only, and never fatal: a checkout that cannot answer this
+	// leaves Head.Known false, and the gate says so instead of implying the
+	// local branch agrees.
+	s.Head = detectHeadFreshness(repo, s.PR.HeadRefName, s.PR.HeadRefOid)
+
 	if owner, name, ok := splitRepo(repo); ok {
 		q := sh("gh", "api", "graphql", "-f", "query="+reviewThreadsQuery,
 			"-F", "o="+owner, "-F", "r="+name, "-F", "n="+strconv.Itoa(pr),
@@ -703,6 +891,97 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 		}
 	}
 	return s, nil
+}
+
+// detectHeadFreshness measures the local copy of the PR's head branch against
+// origin's `headRefOid` (robots-bn5d).
+//
+// Every failure path returns Known=false with a Reason rather than a zero
+// count: "could not tell" and "they agree" are different answers, and only one
+// of them licenses reading READY as a verdict on the fix you just wrote.
+//
+// It is pinned to the repo the gate already resolved (robots-g4qz): a checkout
+// whose `origin` is a different repository can hold a same-named branch, and
+// comparing against that would invent a blocker out of an unrelated project.
+// Refs are shared across every linked worktree of a repo, so this reads the
+// same answer from a mechanic's isolated worktree as from the primary
+// checkout — which matters, because the contract sends every mechanic into a
+// worktree. It never checks anything out, never fetches, and never writes.
+func detectHeadFreshness(repo, branch, originHead string) HeadFreshness {
+	st := HeadFreshness{Branch: strings.TrimSpace(branch), Relation: RelationUnknown}
+	unknown := func(format string, a ...any) HeadFreshness {
+		st.Reason = fmt.Sprintf(format, a...)
+		return st
+	}
+
+	if st.Branch == "" {
+		return unknown("GitHub did not report a head branch name")
+	}
+	originHead = strings.ToLower(strings.TrimSpace(originHead))
+	if originHead == "" {
+		return unknown("GitHub did not report a head sha")
+	}
+	if res := sh("git", "rev-parse", "--git-dir"); !res.ok {
+		return unknown("not inside a git work tree")
+	}
+
+	// Pin to the same repository every gh call was pinned to.
+	local, ok := "", false
+	if res := sh("git", "remote", "get-url", "origin"); res.ok {
+		local, ok = repoFromRemoteURL(res.out)
+	}
+	switch {
+	case !ok:
+		return unknown("this checkout has no usable `origin` remote")
+	case repo != "" && !strings.EqualFold(local, repo):
+		return unknown("this checkout's origin is %s, not %s", local, repo)
+	}
+
+	res := sh("git", "rev-parse", "--verify", "--quiet", "refs/heads/"+st.Branch)
+	if !res.ok || strings.TrimSpace(res.out) == "" {
+		return unknown("no local branch %q in this checkout", st.Branch)
+	}
+	st.LocalHead = strings.ToLower(strings.TrimSpace(res.out))
+
+	if st.LocalHead == originHead {
+		st.Known, st.Relation = true, RelationSame
+		return st
+	}
+	// Counting needs origin's head in this object store. A branch that has
+	// never been fetched cannot be compared — and saying so names the fix.
+	if res := sh("git", "cat-file", "-e", originHead+"^{commit}"); !res.ok {
+		return unknown("origin's head %s is not in this checkout's object store (run `git fetch origin`)", shortSHA(originHead))
+	}
+
+	// --left-right against origin's head: left = commits only origin has
+	// (this checkout is behind), right = commits only the local branch has
+	// (what a merge at origin's head would drop).
+	counts := sh("git", "rev-list", "--count", "--left-right", originHead+"..."+st.LocalHead)
+	if !counts.ok {
+		return unknown("could not compare local %s against origin's head", st.Branch)
+	}
+	fields := strings.Fields(counts.out)
+	if len(fields) != 2 {
+		return unknown("could not parse the local/origin commit counts")
+	}
+	behind, err1 := strconv.Atoi(fields[0])
+	ahead, err2 := strconv.Atoi(fields[1])
+	if err1 != nil || err2 != nil {
+		return unknown("could not parse the local/origin commit counts")
+	}
+
+	st.Known, st.Ahead = true, ahead
+	switch {
+	case ahead > 0 && behind > 0:
+		st.Relation = RelationDiverged
+	case ahead > 0:
+		st.Relation = RelationAhead
+	case behind > 0:
+		st.Relation = RelationBehind
+	default:
+		st.Relation = RelationSame
+	}
+	return st
 }
 
 // splitRepo splits "owner/name" (tolerating a trailing .git and any leading

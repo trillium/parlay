@@ -64,6 +64,7 @@ func reviewedPR() MergeGateSnapshot {
 			Mergeable:        "MERGEABLE",
 			MergeStateStatus: "CLEAN",
 			HeadRefOid:       headSHA,
+			HeadRefName:      "fix/robots-jap6-merge-gate",
 			Author:           ghAuthor{Login: "trillium"},
 			Comments: []ghComment{
 				{Author: ghAuthor{Login: "coderabbitai"}, Body: realReviewBody(baseSHA, headSHA)},
@@ -850,5 +851,306 @@ func TestResolveMergeGateRepoPicksOriginOverUpstream(t *testing.T) {
 	}
 	if src != "origin remote" {
 		t.Errorf("source = %q, want %q", src, "origin remote")
+	}
+}
+
+// --- head freshness (robots-bn5d) -----------------------------------------
+//
+// Every rule above is evaluated against ORIGIN's head, which is the commit a
+// merge lands. The caller, though, has just authored a fix and pushed it, and
+// reads READY as a verdict on that. On trillium/firstmate#91 the push had gone
+// to the no-mistakes mirror and the pipeline had not yet reached origin, so
+// READY meant "the PRE-fix commit is clean to merge" — and merging there would
+// have dropped the fix for the very finding that had blocked the PR.
+
+// localAhead returns a snapshot whose local branch holds `n` commits origin's
+// PR head does not: the exact mid-push shape.
+func localAhead(n int) MergeGateSnapshot {
+	s := reviewedPR()
+	s.Head = HeadFreshness{
+		Known:     true,
+		Branch:    s.PR.HeadRefName,
+		LocalHead: "c2b8672a1f5f4b6b3c2a4f9d0e1a2b3c4d5e6f70",
+		Relation:  RelationAhead,
+		Ahead:     n,
+	}
+	return s
+}
+
+// The regression itself. Everything else about this PR is clean, so without
+// the freshness check it is exit 0 READY.
+func TestUnpushedLocalHeadIsPendingNotReady(t *testing.T) {
+	v := ComputeMergeGate(localAhead(1))
+	if v.Ready {
+		t.Fatal("a PR whose fix has not reached origin must never be READY")
+	}
+	if !hasBlocker(v, "head-not-pushed") {
+		t.Fatalf("want head-not-pushed, got %v", blockerCodes(v))
+	}
+	if !v.Pending || v.ExitCode != ExitMergePending {
+		t.Errorf("want PENDING/exit %d, got pending=%v exit=%d", ExitMergePending, v.Pending, v.ExitCode)
+	}
+}
+
+// The one-line reason has to name the commit count and the branch; a mechanic
+// who reads only the blocker line still has to be able to act on it.
+func TestUnpushedHeadBlockerNamesWhatWouldBeDropped(t *testing.T) {
+	v := ComputeMergeGate(localAhead(2))
+	out := FormatMergeGate(localAhead(2).PR, v)
+	for _, want := range []string{"2 commit(s) ahead", "fix/robots-jap6-merge-gate", shortSHA(headSHA)} {
+		if !strings.Contains(out, want) {
+			t.Errorf("blocker must mention %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// PENDING previously meant exactly one thing — the review is still running —
+// and its notes say so. Printing that script over an unpushed head sends the
+// mechanic to wait on a reviewer that has already answered.
+func TestUnpushedHeadPendingNotesDoNotClaimAReviewIsRunning(t *testing.T) {
+	v := ComputeMergeGate(localAhead(1))
+	joined := strings.Join(v.Notes, "\n")
+	if strings.Contains(joined, "still RUNNING") {
+		t.Errorf("an unpushed head is not a running review, got notes:\n%s", joined)
+	}
+	if !strings.Contains(joined, "Do NOT merge") {
+		t.Errorf("notes must forbid merging outright, got:\n%s", joined)
+	}
+}
+
+// A running review and an unpushed head can be true at once, and each needs
+// its own instruction — the review notes must not be suppressed by the head
+// notes or vice versa.
+func TestBothPendingShapesGetTheirOwnInstructions(t *testing.T) {
+	s := localAhead(1)
+	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pending", Description: "Review in progress"}}
+	v := ComputeMergeGate(s)
+	joined := strings.Join(v.Notes, "\n")
+	if !strings.Contains(joined, "Do NOT merge") || !strings.Contains(joined, "still RUNNING") {
+		t.Errorf("both pending shapes must be explained, got:\n%s", joined)
+	}
+	if v.ExitCode != ExitMergePending {
+		t.Errorf("exit = %d, want %d", v.ExitCode, ExitMergePending)
+	}
+}
+
+// The downgrade must never launder a real finding: a failing check plus an
+// unpushed head is still exit 3.
+func TestOneCodeBlockerOutranksAnUnpushedHead(t *testing.T) {
+	s := localAhead(1)
+	s.Checks = []ghCheck{{Name: "build", Bucket: "fail", Description: "2 tests failed"}}
+	v := ComputeMergeGate(s)
+	if v.Pending || v.ExitCode != ExitMergeBlocked {
+		t.Errorf("a failing check must keep exit %d, got pending=%v exit=%d", ExitMergeBlocked, v.Pending, v.ExitCode)
+	}
+}
+
+// Diverged is worse than ahead — origin's head is not even an ancestor — so it
+// blocks too, and says which shape it is.
+func TestDivergedLocalHeadBlocksAndSaysSo(t *testing.T) {
+	s := localAhead(1)
+	s.Head.Relation = RelationDiverged
+	v := ComputeMergeGate(s)
+	if !hasBlocker(v, "head-not-pushed") {
+		t.Fatalf("want head-not-pushed, got %v", blockerCodes(v))
+	}
+	if !strings.Contains(FormatMergeGate(s.PR, v), "DIVERGED") {
+		t.Error("a divergence must be distinguished from a plain pending push")
+	}
+}
+
+// A stale local checkout is normal and harmless: origin has commits this
+// working copy has not fetched, and none of the local work is at risk.
+func TestLocalBranchBehindOriginIsNotABlocker(t *testing.T) {
+	s := reviewedPR()
+	s.Head = HeadFreshness{Known: true, Branch: s.PR.HeadRefName, Relation: RelationBehind}
+	v := ComputeMergeGate(s)
+	if !v.Ready {
+		t.Fatalf("being behind origin must not block a merge, got %v", blockerCodes(v))
+	}
+	if !strings.Contains(strings.Join(v.Notes, "\n"), "BEHIND") {
+		t.Error("being behind should still be named, so it is not read as the ahead case")
+	}
+}
+
+func TestLocalHeadMatchingOriginIsReadyAndSaysSo(t *testing.T) {
+	s := reviewedPR()
+	s.Head = HeadFreshness{Known: true, Branch: s.PR.HeadRefName, LocalHead: headSHA, Relation: RelationSame}
+	v := ComputeMergeGate(s)
+	if !v.Ready {
+		t.Fatalf("want READY, got %v", blockerCodes(v))
+	}
+	if !strings.Contains(strings.Join(v.Notes, "\n"), "agrees") {
+		t.Errorf("a verified-fresh head should say so, got notes %v", v.Notes)
+	}
+}
+
+// "Could not tell" is not "they agree". The gate is often run somewhere with
+// no copy of the branch, and there it must hand the caller the check it could
+// not run rather than staying quiet.
+func TestUnverifiableHeadFreshnessIsSaidOutLoud(t *testing.T) {
+	s := reviewedPR() // Head zero value: Known=false
+	v := ComputeMergeGate(s)
+	if !v.Ready {
+		t.Fatalf("an unverifiable head must not invent a blocker, got %v", blockerCodes(v))
+	}
+	joined := strings.Join(v.Notes, "\n")
+	for _, want := range []string{"NOT verified", "headRefOid", shortSHA(headSHA)} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("notes must contain %q, got:\n%s", want, joined)
+		}
+	}
+}
+
+// The ticket's minimum ask: origin's head sha is visible on the READY line
+// itself, because that is the line a mechanic acts on.
+func TestReadyLineNamesTheCommitThatWouldMerge(t *testing.T) {
+	s := reviewedPR()
+	s.Head = HeadFreshness{Known: true, Branch: s.PR.HeadRefName, LocalHead: headSHA, Relation: RelationSame}
+	out := FormatMergeGate(s.PR, ComputeMergeGate(s))
+	if !strings.HasPrefix(out, "READY") || !strings.Contains(out, shortSHA(headSHA)) {
+		t.Errorf("READY must name the commit it is about, got:\n%s", out)
+	}
+}
+
+// Merging at the stale head is this defect already realized: the fix is gone
+// and the merge looks like proof it landed. Waiting cannot fix that, so it is
+// code-class, not pending.
+func TestMergedPRWithUnpushedLocalHeadIsNotDone(t *testing.T) {
+	s := localAhead(1)
+	s.PR.State = "MERGED"
+	s.Checks = nil
+	v := ComputeMergeGate(s)
+	if v.Ready {
+		t.Fatal("a merge that dropped the local fix must not report ready")
+	}
+	if v.ExitCode != ExitMergeBlocked || v.Pending {
+		t.Errorf("want exit %d and not pending, got exit=%d pending=%v", ExitMergeBlocked, v.ExitCode, v.Pending)
+	}
+	if !strings.Contains(FormatMergeGate(s.PR, v), "merged") {
+		t.Error("the blocker should say the commits are not in what MERGED, past tense")
+	}
+}
+
+// A merged PR whose local branch agrees keeps the old exit-0 short circuit.
+func TestMergedPRWithNoLocalDriftStillShortCircuits(t *testing.T) {
+	s := reviewedPR()
+	s.PR.State = "MERGED"
+	s.Checks = nil
+	s.Head = HeadFreshness{Known: true, Branch: s.PR.HeadRefName, LocalHead: headSHA, Relation: RelationSame}
+	v := ComputeMergeGate(s)
+	if !v.Ready || !v.Merged || len(v.Blockers) != 0 {
+		t.Errorf("want a clean merged verdict, got %+v", v)
+	}
+}
+
+// --- detectHeadFreshness against a real git repository ---------------------
+
+// gitRepoAt builds a throwaway repo with the given origin URL and returns a
+// runner for further git commands in it.
+func gitRepoAt(t *testing.T, origin string) (dir string, run func(args ...string) string) {
+	t.Helper()
+	dir = t.TempDir()
+	run = func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q", "-b", "work")
+	run("remote", "add", "origin", origin)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	return dir, run
+}
+
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+}
+
+// The mid-push shape, measured for real: the branch has a commit origin's PR
+// head does not.
+func TestDetectHeadFreshnessSeesAnUnpushedCommit(t *testing.T) {
+	dir, run := gitRepoAt(t, "https://github.com/trillium/parlay.git")
+	originHead := run("rev-parse", "HEAD")
+	run("commit", "-q", "--allow-empty", "-m", "the fix")
+	chdir(t, dir)
+
+	h := detectHeadFreshness("trillium/parlay", "work", originHead)
+	if !h.Known {
+		t.Fatalf("comparison should have been possible: %s", h.Reason)
+	}
+	if h.Relation != RelationAhead || h.Ahead != 1 {
+		t.Errorf("relation=%q ahead=%d, want ahead/1", h.Relation, h.Ahead)
+	}
+}
+
+func TestDetectHeadFreshnessSeesAgreement(t *testing.T) {
+	dir, run := gitRepoAt(t, "git@github.com:trillium/parlay.git")
+	head := run("rev-parse", "HEAD")
+	chdir(t, dir)
+
+	h := detectHeadFreshness("trillium/parlay", "work", head)
+	if !h.Known || h.Relation != RelationSame || h.Ahead != 0 {
+		t.Errorf("want a known/same/0 answer, got %+v", h)
+	}
+}
+
+// A same-named branch in an unrelated checkout must never produce a blocker:
+// the comparison is pinned to the repo the gate already resolved (robots-g4qz).
+func TestDetectHeadFreshnessRefusesAForeignCheckout(t *testing.T) {
+	dir, run := gitRepoAt(t, "https://github.com/trillium/beads.git")
+	originHead := run("rev-parse", "HEAD")
+	run("commit", "-q", "--allow-empty", "-m", "unrelated work")
+	chdir(t, dir)
+
+	h := detectHeadFreshness("trillium/parlay", "work", originHead)
+	if h.Known {
+		t.Fatalf("a different repository must not be compared, got %+v", h)
+	}
+	if !strings.Contains(h.Reason, "trillium/beads") {
+		t.Errorf("the reason should name the mismatch, got %q", h.Reason)
+	}
+}
+
+// Every unknown path carries a reason, so the gap is legible rather than
+// silently reading as agreement.
+func TestDetectHeadFreshnessExplainsEveryUnknown(t *testing.T) {
+	dir, run := gitRepoAt(t, "https://github.com/trillium/parlay.git")
+	head := run("rev-parse", "HEAD")
+	chdir(t, dir)
+
+	cases := []struct {
+		name, repo, branch, sha, want string
+	}{
+		{"no branch name", "trillium/parlay", "", head, "head branch name"},
+		{"no head sha", "trillium/parlay", "work", "", "head sha"},
+		{"branch absent locally", "trillium/parlay", "not-here", head, "no local branch"},
+		{"origin head unfetched", "trillium/parlay", "work", strings.Repeat("a", 40), "object store"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := detectHeadFreshness(tc.repo, tc.branch, tc.sha)
+			if h.Known {
+				t.Fatalf("expected an unknown answer, got %+v", h)
+			}
+			if !strings.Contains(h.Reason, tc.want) {
+				t.Errorf("reason %q should mention %q", h.Reason, tc.want)
+			}
+		})
 	}
 }
