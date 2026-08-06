@@ -1082,6 +1082,29 @@ destruction — route it through `checkWorktreeGitSafety` rather than adding a
 fourth ad hoc check, and put the git gate ahead of any state mutation so a
 refusal is a genuine no-op.
 
+## `mechanic-dispatch` canonical source lives in `tools/mechanic-dispatch/`
+
+The robots-ticket dispatcher — `robots create` → `~/data/robots/events.jsonl`
+→ `parlay robots-tail` (`tools/cli/internal/robotswatch/`) →
+`mechanic-dispatch <id>` → `parlay-spawn` — was for a long time an
+install-only artifact at `~/.local/bin/mechanic-dispatch` with **no in-repo
+source**. Its canonical source is now `tools/mechanic-dispatch/mechanic-dispatch`,
+installed via `tools/mechanic-dispatch/install.sh` (backup-once, `--status`/
+`--uninstall`, mirrors `tools/robots-emit/`). Edit the repo file, then re-run
+the installer; never hand-edit the `~/.local/bin` copy.
+
+Mechanics run in an **isolated git worktree**, never a repo's primary checkout:
+`mechanic-dispatch` passes `--worktree` to `parlay-spawn` whenever the resolved
+zone `--cwd` is inside a git repo (`git -C <cwd> rev-parse --show-toplevel`),
+so a future git-repo zone in `zone_entry()` is isolated automatically.
+`parlay-spawn` resolves `--worktree` against `--cwd` (creating
+`<repo>/.worktrees/parlay-<id>`), so the two compose with no extra plumbing.
+The `default`/`~` zone is deliberately left non-isolated (triage-only — `$HOME`
+is not a repo). Bash 3.2 portable; behavior otherwise unchanged (bad-id guard,
+closed-ticket skip, liveness re-dispatch). Test:
+`tools/mechanic-dispatch/mechanic-dispatch.test.sh`. Phase-1 (isolation) only —
+firstmate state-meta bridging and worktree teardown/landing are follow-ups.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
