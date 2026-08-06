@@ -64,6 +64,11 @@ type upstreamMessage struct {
 	From    string `json:"from"` // sender attribution; empty = captain
 }
 
+// errChannelGone reports that the upstream server answered 410 Gone for a
+// channel's poll: the channel was deliberately unregistered and polling it again
+// is pointless. Terminal for that agent's loop — see pollLoop.
+var errChannelGone = errors.New("channel gone upstream (410)")
+
 // agentLoop owns one agent's upstream poll goroutine and its spool file.
 type agentLoop struct {
 	id     string
@@ -272,6 +277,16 @@ func (r *relay) unregister(agent string) {
 	log.Printf("agent %q unregistered", agent)
 }
 
+// dropLoop removes an agent from the registry WITHOUT waiting for its goroutine
+// to finish. It is the self-removal counterpart to unregister(), safe to call
+// from inside that agent's own poll goroutine (unregister would deadlock there:
+// it blocks on loop.done, which only closes once the goroutine has returned).
+func (r *relay) dropLoop(agent string) {
+	r.mu.Lock()
+	delete(r.loops, agent)
+	r.mu.Unlock()
+}
+
 // agentIDs returns the currently registered agent ids (sorted for stable output).
 func (r *relay) agentIDs() []string {
 	r.mu.Lock()
@@ -335,6 +350,16 @@ func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 			if ctx.Err() != nil {
 				return // cancellation, not a real error
 			}
+			if errors.Is(err, errChannelGone) {
+				// The server unregistered this channel. Stop polling and drop
+				// the loop so the relay does not keep a dead enrollment alive.
+				// Removal is done inline rather than via r.unregister, which
+				// waits on loop.done — a wait this goroutine could never satisfy.
+				log.Printf("agent %q: server reports the channel is gone (410) — dropping the poll loop", loop.id)
+				r.dropLoop(loop.id)
+				loop.cancel()
+				return
+			}
 			log.Printf("agent %q poll error: %v (retry in %s)", loop.id, err, reconnectDelay)
 			if !sleepCtx(ctx, reconnectDelay) {
 				return
@@ -387,6 +412,15 @@ func (r *relay) pollOnce(parent context.Context, agent, after string) (*upstream
 	if resp.StatusCode != http.StatusOK {
 		// Drain a bounded amount of the body so the connection can be reused.
 		_, _ = io.CopyN(io.Discard, resp.Body, 4096)
+		// 410 Gone is the ONE terminal poll status: the server has deliberately
+		// unregistered this channel and is telling us to stop, not to retry.
+		// Everything else stays retryable, because a relay must survive a server
+		// restart. Treating 410 as transient is what let 82 leaked test channels
+		// keep a poll loop alive forever against a registry that had already
+		// removed them (robots-ycfa).
+		if resp.StatusCode == http.StatusGone {
+			return nil, errChannelGone
+		}
 		return nil, fmt.Errorf("HTTP %d %s", resp.StatusCode, resp.Status)
 	}
 	var msg upstreamMessage
