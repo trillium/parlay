@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -254,5 +256,161 @@ func TestSendRequiresTextWhenTargetGiven(t *testing.T) {
 	}
 	if len(bodies) != 0 {
 		t.Errorf("send calls = %d, want 0", len(bodies))
+	}
+}
+
+// --- robots-9d2w: the stale-window pre-flight -------------------------------
+//
+// newSendServerWithAgents deliberately serves no /api/chat/subscribers route,
+// so every test above sees crew-state `unknown` and the stale check fails open
+// — which is itself the guarantee TestSendProceedsWhenTargetStateIsUnknown
+// below pins. The tests here add that route so a target can be *enrolled*,
+// which is the precondition for a terminal status to read as spent.
+
+// enrolledSendServer is newSendServerWithAgents plus a /api/chat/subscribers
+// route reporting the same ids as enrolled, so CrewStateForAgent can get past
+// its "not enrolled with relay → unknown" short-circuit.
+func enrolledSendServer(t *testing.T, bodies *[]map[string]any, agentIDs []string) *httptest.Server {
+	t.Helper()
+	srv := newSendServerWithAgents(t, bodies, agentIDs)
+	mux, ok := srv.Config.Handler.(*http.ServeMux)
+	if !ok {
+		t.Fatalf("send test server handler is %T, want *http.ServeMux", srv.Config.Handler)
+	}
+	mux.HandleFunc("/api/chat/subscribers", func(w http.ResponseWriter, r *http.Request) {
+		agents := make([]map[string]string, 0, len(agentIDs))
+		for _, id := range agentIDs {
+			agents = append(agents, map[string]string{"id": id, "name": id, "color": "#fff"})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"registered": map[string]any{"count": len(agents), "agents": agents},
+		})
+	})
+	return srv
+}
+
+// seedAgentStatus writes one status line into a temp agent home and points
+// both env-scoped roots at it, so the stale pre-flight reads the fixture
+// rather than the machine's live ~/.parlay.
+func seedAgentStatus(t *testing.T, id, line string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	dir := filepath.Join(home, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatalf("write status: %v", err)
+	}
+}
+
+// The defect: a pane that finished its task still accepts messages, so the
+// re-task lands on top of the whole finished session and re-pays for it every
+// turn. The send must not go out.
+func TestSendRefusesStaleWindow(t *testing.T) {
+	var bodies []map[string]any
+	srv := enrolledSendServer(t, &bodies, []string{"mc-robots-g4qz"})
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	seedAgentStatus(t, "mc-robots-g4qz", "done: PR #63 merged")
+
+	// captureStderr must be the OUTER wrapper: withExitTrap unwinds via panic,
+	// so a captureStderr inside it never reaches its return statement.
+	var code int
+	var exited bool
+	stderr := captureStderr(t, func() {
+		code, exited = withExitTrap(t, func() { Send([]string{"--mc-robots-g4qz", "new task"}) })
+	})
+
+	if !exited || code != config.ExitUsage {
+		t.Errorf("send to a done pane exit = (%d, %v), want (%d, true)", code, exited, config.ExitUsage)
+	}
+	if len(bodies) != 0 {
+		t.Errorf("send calls = %d, want 0 (a stale window must not be continued)", len(bodies))
+	}
+	if !strings.Contains(stderr, "STALE WINDOW") {
+		t.Errorf("refusal should name the condition, got %q", stderr)
+	}
+	// A refusal that doesn't say what to do instead just gets --force'd.
+	if !strings.Contains(stderr, "parlay sweep --apply --agent mc-robots-g4qz") {
+		t.Errorf("refusal should print the relaunch commands, got %q", stderr)
+	}
+}
+
+// The escape hatch: asking a finished agent about the work it just finished is
+// exactly the case where the old context is the point.
+func TestSendForceBypassesStaleCheck(t *testing.T) {
+	var bodies []map[string]any
+	srv := enrolledSendServer(t, &bodies, []string{"mc-robots-g4qz"})
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_ID", "")
+	seedAgentStatus(t, "mc-robots-g4qz", "done: PR #63 merged")
+
+	captureStdout(t, func() { Send([]string{"--mc-robots-g4qz", "--force", "what", "was", "the", "sha?"}) })
+
+	if len(bodies) != 1 {
+		t.Fatalf("send calls = %d, want 1 (--force waives the stale check)", len(bodies))
+	}
+	if bodies[0]["text"] != "what was the sha?" {
+		t.Errorf("text = %v, want the follow-up question", bodies[0]["text"])
+	}
+}
+
+// An agent that stopped to ASK something is the fleet's main steering target.
+// Refusing that send would break the unblock path to fix a token leak.
+func TestSendStillReachesAgentsAwaitingAReply(t *testing.T) {
+	for _, line := range []string{"needs-decision: merge or park?", "blocked: gate refused", "working: on it"} {
+		t.Run(line, func(t *testing.T) {
+			var bodies []map[string]any
+			srv := enrolledSendServer(t, &bodies, []string{"mc-x"})
+			t.Setenv("PARLAY_SERVER", srv.URL)
+			t.Setenv("PARLAY_AGENT_ID", "")
+			seedAgentStatus(t, "mc-x", line)
+
+			captureStdout(t, func() { Send([]string{"--mc-x", "merge", "it"}) })
+
+			if len(bodies) != 1 {
+				t.Fatalf("send calls = %d, want 1 — %q must stay reachable", len(bodies), line)
+			}
+		})
+	}
+}
+
+// Fail open, same discipline as the registry check: an unreachable relay leaves
+// crew-state `unknown`, and a transport problem must never become a refused
+// send (that trades a token leak for a lost message, the worse failure).
+func TestSendProceedsWhenTargetStateIsUnknown(t *testing.T) {
+	var bodies []map[string]any
+	srv := newSendServerWithAgents(t, &bodies, []string{"mayor"}) // no /subscribers route
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_ID", "")
+	seedAgentStatus(t, "mayor", "done: finished ages ago")
+
+	captureStdout(t, func() { Send([]string{"--mayor", "hi"}) })
+
+	if len(bodies) != 1 {
+		t.Fatalf("send calls = %d, want 1 (unknown state is not stale)", len(bodies))
+	}
+}
+
+// A long-lived agent that is re-tasked in place sits at `done` between jobs by
+// design — the keep-list is what says so, and it is sweep's list too.
+func TestSendReachesKeepListedAgentAtDone(t *testing.T) {
+	var bodies []map[string]any
+	srv := enrolledSendServer(t, &bodies, []string{"dispatcher"})
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_ID", "")
+	seedAgentStatus(t, "dispatcher", "done: last job closed")
+	keep := filepath.Join(config.StateHome(), "sweep-keep")
+	if err := os.WriteFile(keep, []byte("# long-lived\ndispatcher\n"), 0o644); err != nil {
+		t.Fatalf("write sweep-keep: %v", err)
+	}
+
+	captureStdout(t, func() { Send([]string{"--dispatcher", "next", "job"}) })
+
+	if len(bodies) != 1 {
+		t.Fatalf("send calls = %d, want 1 (keep-listed agents are re-tasked in place)", len(bodies))
 	}
 }
