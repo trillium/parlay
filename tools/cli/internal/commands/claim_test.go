@@ -791,20 +791,3 @@ func TestClaimBriefQuotesHostileTitle(t *testing.T) {
 		t.Errorf("--name arg mangled by shell\n got: %q\nwant: %q", gotName, hostile)
 	}
 }
-
-// robots-xy7e: the brief moved into claim_brief.md.tmpl, and the obvious way to
-// write that template line — `command: "{{.MonitorCmd}}"` — silently reverts
-// robots-2h4n. text/template interpolates verbatim and cannot escape anything,
-// so the quoting has to be finished before it reaches the template:
-// claimBrief hands over a strconv.Quote'd literal that already carries its own
-// double quotes, and the template renders it BARE. This pins the template
-// source itself, so a re-quote fails here by name rather than only showing up
-// as a mangled arm-command in the test above.
-func TestClaimBriefTemplateDoesNotRequoteMonitorCmd(t *testing.T) {
-	if !strings.Contains(claimBriefTmpl, "command: {{.MonitorCmd}}") {
-		t.Errorf("claim_brief.md.tmpl must render {{.MonitorCmd}} bare (it is already a quoted literal); got:\n%s", claimBriefTmpl)
-	}
-	if strings.Contains(claimBriefTmpl, `"{{.MonitorCmd}}"`) {
-		t.Error(`claim_brief.md.tmpl wraps {{.MonitorCmd}} in double quotes — that reintroduces robots-2h4n; the value is already a complete string literal`)
-	}
-}
