@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -132,10 +134,11 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 	// task, DoD, status protocol.
 	for _, want := range []string{
 		`id="widgeteer"`,
-		"parlay listen --agent widgeteer",
+		"parlay listen --agent 'widgeteer'",
 		// The arm-command is notify-safe by default so a claim-enrolled panel
-		// agent gets notification-truncation safety (robots-w9ij).
-		"parlay listen --agent widgeteer --name \\\"Widgeteer\\\" --color \\\"#abcdef\\\" --notify-safe",
+		// agent gets notification-truncation safety (robots-w9ij). Every value
+		// is single-quoted so pasting the line can't run the title (robots-2h4n).
+		"parlay listen --agent 'widgeteer' --name 'Widgeteer' --color '#abcdef' --notify-safe",
 		"## Your memory — recovered",
 		"### Identity",
 		"### Scratchpad",
@@ -591,5 +594,92 @@ func TestClaimStoreForID(t *testing.T) {
 		if got := claimStoreForID(id); got != want {
 			t.Errorf("claimStoreForID(%q) = %q, want %q", id, got, want)
 		}
+	}
+}
+
+func TestClaimShellQuote(t *testing.T) {
+	cases := map[string]string{
+		"":              "''",
+		"Widgeteer":     "'Widgeteer'",
+		"$(rm -rf /)":   "'$(rm -rf /)'",
+		"`id`":          "'`id`'",
+		"$HOME and \\n": "'$HOME and \\n'",
+		"it's":          `'it'\''s'`,
+		`say "hi"`:      `'say "hi"'`,
+		"'":             `''\'''`,
+	}
+	for in, want := range cases {
+		if got := claimShellQuote(in); got != want {
+			t.Errorf("claimShellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// robots-2h4n: the brief tells the agent to paste the printed Monitor line, and
+// the --name it interpolates is the ticket TITLE verbatim. A title containing
+// `$( )`, a backtick, `$VAR` or a double quote must survive as inert text — the
+// literal defect was a title mentioning "$( )" being command-substituted on
+// paste, and a title with a `"` would have broken out of the JS string too.
+func TestClaimBriefQuotesHostileTitle(t *testing.T) {
+	hostile := "$( ) and `id` and $HOME and \"quoted\" and it's"
+	brief := claimBrief("mc-x", hostile, "#f97316", "opus", claimTask{ID: "robots-2h4n", Title: hostile})
+
+	// Pull out just the Monitor line — that is the part an agent pastes.
+	var line string
+	for _, l := range strings.Split(brief, "\n") {
+		if strings.Contains(l, "Monitor({ command:") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("brief has no Monitor arm-command line:\n%s", brief)
+	}
+
+	// The command payload is a JS string literal: it must open and close with a
+	// bare double quote and contain no unescaped one in between, or the paste
+	// re-parses as something else entirely.
+	cmd := line[strings.Index(line, `"`) : strings.LastIndex(line, `"`)+1]
+	unq, err := strconv.Unquote(cmd)
+	if err != nil {
+		t.Fatalf("Monitor command is not a well-formed string literal (%v): %s", err, line)
+	}
+
+	// Inside the shell command, the name must be single-quoted, which makes
+	// every metacharacter in it inert.
+	wantArg := "--name '$( ) and `id` and $HOME and \"quoted\" and it'\\''s'"
+	if !strings.Contains(unq, wantArg) {
+		t.Errorf("arm-command does not single-quote the title\n got: %s\nwant substring: %s", unq, wantArg)
+	}
+
+	// And the smoking gun: the title's metacharacters must never appear inside
+	// a double-quoted shell word, where the shell would evaluate them.
+	if strings.Contains(unq, `--name "`) {
+		t.Errorf("arm-command still double-quotes the name (shell would expand it): %s", unq)
+	}
+
+	// Proof by execution: run the full arm-command that claimBrief actually emitted
+	// through a real shell with a stub parlay that reports its argv one-per-line,
+	// and confirm --name arrives byte-identical — nothing substituted, nothing split.
+	stubDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stubDir, "parlay"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
+		t.Fatalf("could not write stub parlay: %v", err)
+	}
+	shCmd := exec.Command("/bin/sh", "-c", unq)
+	shCmd.Env = append(os.Environ(), "PATH="+stubDir+":"+os.Getenv("PATH"))
+	shOut, shErr := shCmd.Output()
+	if shErr != nil {
+		t.Fatalf("shell rejected the arm-command: %v", shErr)
+	}
+	argv := strings.Split(strings.TrimRight(string(shOut), "\n"), "\n")
+	gotName := ""
+	for i, arg := range argv {
+		if arg == "--name" && i+1 < len(argv) {
+			gotName = argv[i+1]
+			break
+		}
+	}
+	if gotName != hostile {
+		t.Errorf("--name arg mangled by shell\n got: %q\nwant: %q", gotName, hostile)
 	}
 }

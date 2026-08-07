@@ -1,9 +1,12 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // composeDoD mirrors bin/parlay-spawn's per-mode Definition of Done (lines
-// 412–416).
+// 525–527).
 func composeDoD(mode, agentID string) string {
 	switch mode {
 	case "branch":
@@ -16,7 +19,7 @@ func composeDoD(mode, agentID string) string {
 }
 
 // composeSetupBlock mirrors bin/parlay-spawn's worktree isolation block for
-// the brief (lines 418–434) — empty string when no worktree is in play.
+// the brief (lines 531–546) — empty string when no worktree is in play.
 func composeSetupBlock(wantWorktree bool, worktreePath, projectPath string) string {
 	if !wantWorktree {
 		return ""
@@ -39,15 +42,23 @@ Never commit, branch, or push from the primary checkout.
 // composeStartupPrompt builds the full first-turn brief handed to the
 // spawned claude: the enrollment contract (unchanged across every spawn)
 // plus the task-specific setup/task/DoD/status-protocol sections. Mirrors
-// bin/parlay-spawn's STARTUP_PROMPT heredoc verbatim (lines 440–487).
+// bin/parlay-spawn's STARTUP_PROMPT heredoc verbatim (lines 575–621).
 func composeStartupPrompt(server, agentID, name, color, setupBlock, prompt, dod string) string {
+	// Single-quote each value for the shell, then render the whole thing as a
+	// quoted literal for the Monitor({}) call. A display name is arbitrary
+	// prose; inside plain double quotes `$(…)`, backticks and `$VAR` are live,
+	// so a name mentioning `$( )` got command-substituted the moment the agent
+	// pasted the printed line (robots-2h4n).
+	monitorCmd := fmt.Sprintf("PARLAY_SERVER=%s parlay listen --agent %s --name %s --color %s",
+		shellQuote(server), shellQuote(agentID), shellQuote(name), shellQuote(color))
+
 	return fmt.Sprintf(`You are a background agent enrolled in the Pulse/Parlay chat panel at %s.
 Your agent identity: id="%s", name="%s", color="%s".
 
 FIRST, before anything else, enroll so the captain can reach you — ONE call does the
 whole thing (register + announce + arm the poll loop), safe to re-run on every restart:
 1. Arm a persistent Monitor running 'parlay listen':
-   Monitor({ command: "PARLAY_SERVER=%s parlay listen --agent %s --name \"%s\" --color \"%s\"", persistent: true })
+   Monitor({ command: %s, persistent: true })
    This registers you in the agent registry, posts a "listening" announce to your own
    channel so your tab shows ready, then execs the same poll loop as 'parlay monitor' —
    no separate 'reply' or registration step needed. Your identity is already set
@@ -86,5 +97,5 @@ Examples:
   parlay status needs-decision "ambiguous requirement — see reply"
   parlay status done "all tests pass, PR opened at https://..."
   parlay status failed "build error — see reply for details"
-`, server, agentID, name, color, server, agentID, name, color, agentID, setupBlock, prompt, dod)
+`, server, agentID, name, color, strconv.Quote(monitorCmd), agentID, setupBlock, prompt, dod)
 }
