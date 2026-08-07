@@ -6,7 +6,7 @@ import (
 )
 
 // composeDoD mirrors bin/parlay-spawn's per-mode Definition of Done (lines
-// 412–416).
+// 525–527).
 func composeDoD(mode, agentID string) string {
 	switch mode {
 	case "branch":
@@ -19,7 +19,7 @@ func composeDoD(mode, agentID string) string {
 }
 
 // composeSetupBlock mirrors bin/parlay-spawn's worktree isolation block for
-// the brief (lines 418–434) — empty string when no worktree is in play.
+// the brief (lines 531–546) — empty string when no worktree is in play.
 func composeSetupBlock(wantWorktree bool, worktreePath, projectPath string) string {
 	if !wantWorktree {
 		return ""
@@ -42,7 +42,7 @@ Never commit, branch, or push from the primary checkout.
 // composeStartupPrompt builds the full first-turn brief handed to the
 // spawned claude: the enrollment contract (unchanged across every spawn)
 // plus the task-specific setup/task/DoD/status-protocol sections. Mirrors
-// bin/parlay-spawn's STARTUP_PROMPT heredoc verbatim (lines 440–487).
+// bin/parlay-spawn's STARTUP_PROMPT heredoc verbatim (lines 575–621).
 func composeStartupPrompt(server, agentID, name, color, setupBlock, prompt, dod string) string {
 	// Single-quote each value for the shell, then render the whole thing as a
 	// quoted literal for the Monitor({}) call. A display name is arbitrary
