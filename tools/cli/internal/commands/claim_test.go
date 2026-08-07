@@ -658,14 +658,28 @@ func TestClaimBriefQuotesHostileTitle(t *testing.T) {
 		t.Errorf("arm-command still double-quotes the name (shell would expand it): %s", unq)
 	}
 
-	// Proof by execution: run the emitted --name word through a real shell and
-	// confirm it comes back byte-identical instead of being substituted.
-	shellArg := "'" + strings.ReplaceAll(hostile, "'", `'\''`) + "'"
-	out, err := exec.Command("/bin/sh", "-c", "printf %s "+shellArg).Output()
-	if err != nil {
-		t.Fatalf("shell rejected the quoted name: %v", err)
+	// Proof by execution: run the full arm-command that claimBrief actually emitted
+	// through a real shell with a stub parlay that reports its argv one-per-line,
+	// and confirm --name arrives byte-identical — nothing substituted, nothing split.
+	stubDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stubDir, "parlay"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
+		t.Fatalf("could not write stub parlay: %v", err)
 	}
-	if string(out) != hostile {
-		t.Errorf("shell mangled the quoted title\n got: %q\nwant: %q", string(out), hostile)
+	shCmd := exec.Command("/bin/sh", "-c", unq)
+	shCmd.Env = append(os.Environ(), "PATH="+stubDir+":"+os.Getenv("PATH"))
+	shOut, shErr := shCmd.Output()
+	if shErr != nil {
+		t.Fatalf("shell rejected the arm-command: %v", shErr)
+	}
+	argv := strings.Split(strings.TrimRight(string(shOut), "\n"), "\n")
+	gotName := ""
+	for i, arg := range argv {
+		if arg == "--name" && i+1 < len(argv) {
+			gotName = argv[i+1]
+			break
+		}
+	}
+	if gotName != hostile {
+		t.Errorf("--name arg mangled by shell\n got: %q\nwant: %q", gotName, hostile)
 	}
 }

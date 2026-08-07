@@ -358,7 +358,7 @@ func claimStatusClosed(status string) bool {
 // claimShellQuote wraps s in POSIX single quotes so a shell treats every
 // character inside it literally — no command substitution, no variable
 // expansion, no backslash escapes. An embedded single quote is closed, escaped
-// outside the quotes, and reopened ('\”), the one sequence single-quoting
+// outside the quotes, and reopened ('\''), the one sequence single-quoting
 // cannot express directly.
 //
 // This exists because the values the claim brief interpolates into the printed
