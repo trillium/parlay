@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/trillium/parlay/tools/cli/internal/args"
@@ -354,6 +355,19 @@ func claimStatusClosed(status string) bool {
 	return false
 }
 
+// claimShellQuote wraps s in POSIX single quotes so a shell treats every
+// character inside it literally — no command substitution, no variable
+// expansion, no backslash escapes. An embedded single quote is closed, escaped
+// outside the quotes, and reopened ('\''), the one sequence single-quoting
+// cannot express directly.
+//
+// This exists because the values the claim brief interpolates into the printed
+// arm-command (agent name = ticket title, verbatim) are arbitrary prose, and
+// the brief tells the agent to paste that command. Unquoted, prose runs.
+func claimShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // claimBrief renders the agent-facing bootstrap brief printed to stdout: who it
 // is, the one command to arm its persistent monitor, the memory-recovery chain,
 // and the actual task from the ticket.
@@ -378,9 +392,19 @@ func claimBrief(agent, name, color, model string, task claimTask) string {
 	// message can blow the agent's context on delivery — the exact failure
 	// --notify-safe exists to prevent (robots-w9ij). `parlay listen` forwards
 	// the flag to the underlying monitor poll loop.
+	//
+	// Every interpolated value is single-quoted for the shell and the whole
+	// command is then rendered as a quoted string literal for the Monitor({})
+	// call. The name IS the ticket title verbatim, and a title is arbitrary
+	// prose: inside the double quotes this line used to use, `$(…)`, backticks
+	// and `$VAR` are all live, so a title that mentions `$( )` got
+	// command-substituted the moment an agent pasted the printed line as
+	// instructed, and a title containing `"` broke out of the JS string
+	// entirely (robots-2h4n).
 	b.WriteString("Arm your monitor — your one startup command (memory is already recovered below):\n")
-	fmt.Fprintf(&b, "   Monitor({ command: \"PARLAY_SERVER=%s parlay listen --agent %s --name \\\"%s\\\" --color \\\"%s\\\" --notify-safe\", persistent: true })\n\n",
-		server, agent, name, color)
+	monitorCmd := fmt.Sprintf("PARLAY_SERVER=%s parlay listen --agent %s --name %s --color %s --notify-safe",
+		claimShellQuote(server), claimShellQuote(agent), claimShellQuote(name), claimShellQuote(color))
+	fmt.Fprintf(&b, "   Monitor({ command: %s, persistent: true })\n\n", strconv.Quote(monitorCmd))
 
 	// Note the task-ID returned by Monitor{} and keep it. After a context
 	// compaction, TaskList returns 'No tasks found' — that is the harness

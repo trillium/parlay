@@ -381,6 +381,14 @@ fi
 
 json_escape() { printf '%s' "$1" | jq -Rs .; }
 
+# POSIX single-quote a value so a shell treats every character in it literally.
+# The startup prompt hands the agent a `parlay listen` command to paste, and
+# $NAME is arbitrary prose (often a ticket title verbatim); inside double quotes
+# `$(…)`, backticks and `$VAR` are live, so a name mentioning `$( )` used to be
+# command-substituted on paste (robots-2h4n). An embedded quote is closed,
+# escaped, and reopened ('\'') — the one form single-quoting cannot express.
+shell_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
 # Refuse a duplicate: if a herdr agent with this id is already live, creating a
 # second one leaves two identically-labeled "edgar" tabs (one a ghost) and is
 # confusing. Reclaim the name first (kill the old session + close its tab) or use
@@ -561,6 +569,9 @@ else
 # Default path: full enrollment block + inline task contract (fold §3.1/§3.6).
 #    The fresh claude processes this as its first turn, so it arms the Monitor
 #    (making the tab "listening") and posts a ready reply before/while working.
+# Build the arm-command out of band: every value single-quoted for the shell,
+# then the whole command JSON-quoted for the Monitor({}) literal (robots-2h4n).
+MONITOR_CMD_JSON=$(json_escape "PARLAY_SERVER=$(shell_quote "$PARLAY") parlay listen --agent $(shell_quote "$AGENT_ID") --name $(shell_quote "$NAME") --color $(shell_quote "$COLOR")")
 STARTUP_PROMPT=$(cat <<EOF
 You are a background agent enrolled in the Pulse/Parlay chat panel at $PARLAY.
 Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
@@ -568,7 +579,7 @@ Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
 FIRST, before anything else, enroll so the captain can reach you — ONE call does the
 whole thing (register + announce + arm the poll loop), safe to re-run on every restart:
 1. Arm a persistent Monitor running 'parlay listen':
-   Monitor({ command: "PARLAY_SERVER=$PARLAY parlay listen --agent $AGENT_ID --name \"$NAME\" --color \"$COLOR\"", persistent: true })
+   Monitor({ command: $MONITOR_CMD_JSON, persistent: true })
    This registers you in the agent registry, posts a "listening" announce to your own
    channel so your tab shows ready, then execs the same poll loop as 'parlay monitor' —
    no separate 'reply' or registration step needed. Your identity is already set
