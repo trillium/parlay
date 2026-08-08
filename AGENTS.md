@@ -430,6 +430,20 @@ current results). Three real Go-side bugs were caught and fixed this way:
   back correctly. Fixed by also checking `pres.Status != ""` before using it;
   regression test: `TestDoctorReportsUnknownWhenPresenceEntryHasNoStatus`.
 
+**A Go-only verb is not free just because it has no `check` case
+(robots-xaxt).** `parlay help` prints the whole usage block, so every verb the
+Go CLI documents and TS does not shows up as a diff on all four `help` cases —
+`claim`, `merge-gate`, `branch-audit` and `sweep` between them turned a CLI
+with no defect into a 4-FAIL harness. `run.sh`'s `GO_ONLY_VERBS` array is the
+registry: its usage lines are filtered out of the **Go** side of the diff only,
+so a verb that merely got forgotten on the TS side still fails normally.
+`audit_go_only_verbs` keeps the list from rotting into a blanket mute — per
+verb it asserts the line is still in Go's usage (else the entry is stale) and
+still absent from TS's (else the verb gained a TS side and belongs in the
+ordinary check list), reporting each as its own `GO-ONLY`/`FAIL` summary row.
+**Adding a Go-only verb means adding it here too**, in the same change that
+adds the verb.
+
 Any new harness case must first check whether the command under test honors
 `PARLAY_AGENT_HOME`/`PARLAY_STATE_HOME`, or — like `commands-status.ts`'s
 `statusSink()` and its Go port — hardcodes `homedir()/.parlay/agents/<id>`
@@ -691,8 +705,9 @@ Decision logic lives in the pure `ComputeMergeGate(MergeGateSnapshot)` so
 `fetchMergeGateSnapshot` is the only part that shells out. **Go-only, no TS
 port** — `bin/parlay` execs the Go binary for everything except
 `lavish-import`, so the verb is reachable everywhere, and `packages/cli` is
-the retired path. Do not add it to `tools/cli/parity/run.sh`; there is no TS
-side to diff against.
+the retired path. Do not add a `check` case for it to
+`tools/cli/parity/run.sh`; there is no TS side to diff against. Do add it to
+that script's `GO_ONLY_VERBS` list — see the B10 parity-harness section above.
 
 ## `git diff origin/main <branch>` is not a question about the branch — use `parlay branch-audit` (robots-d988)
 
@@ -735,7 +750,8 @@ resolvable ancestor) it fails toward "not a strip": a false "this branch
 reverted merged work" is the defect, so that is the safe direction here.
 Line-level reverts inside a file a merge *modified* rather than deleted are
 deliberately out of scope — that needs semantic review, and claiming to catch it
-here would be the same overreach this verb removes.
+here would be the same overreach this verb removes. It is listed in `run.sh`'s
+`GO_ONLY_VERBS` for the help-diff reason described in the B10 section.
 
 Policy lives in the pure `ComputeBranchAudit(BranchAuditSnapshot)`, but the
 shape tests in `branch_audit_test.go` build **real throwaway git repositories**:
@@ -746,8 +762,8 @@ give every fixture file distinct content, or git's rename detection pairs a
 main-only file with a branch-only one and silently drops it from
 `--diff-filter=D`. The mechanic contract in `claim.go`'s robots DoD now forbids
 reporting a reversion off a tip-vs-tip diff and routes the question here.
-**Go-only, no TS port** — same reasoning as `merge-gate` above; keep it out of
-`tools/cli/parity/run.sh`.
+**Go-only, no TS port** — same reasoning as `merge-gate` above; no `check`
+case in `tools/cli/parity/run.sh`.
 
 ## Finished agents are only collected by `parlay sweep` — firstmate can never see them (robots-6xq7)
 
@@ -767,7 +783,8 @@ for each one, and tears down the provably-finished through
 error the sweep reports and steps over instead of an `os.Exit`. Default is a
 dry run; `--apply` acts. Policy lives in the pure `ClassifySweep`, tested
 with no filesystem in `sweep_test.go`. **Go-only, no TS port** — same
-reasoning as `merge-gate` above; keep it out of `tools/cli/parity/run.sh`.
+reasoning as `merge-gate` above; no `check` case in
+`tools/cli/parity/run.sh`, but it is in that script's `GO_ONLY_VERBS`.
 
 Four things are never swept, and each guard exists because of a real way this
 could destroy work: the sweeping agent itself; ids listed in
