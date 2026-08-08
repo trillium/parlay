@@ -140,6 +140,95 @@ func TestLaunchHintNamesTheInstalledSpawner(t *testing.T) {
 	}
 }
 
+// withListeners swaps the process-table probe for a scripted answer. A unit
+// test cannot arm a real `parlay listen`, and without this every fixture agent
+// would be classified [ghost] — correctly, since no listener exists.
+func withListeners(t *testing.T, ok bool, ids ...string) {
+	t.Helper()
+	orig := liveListeners
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	liveListeners = func() (map[string]bool, bool) { return set, ok }
+	t.Cleanup(func() { liveListeners = orig })
+}
+
+func TestLaunchStatusClassification(t *testing.T) {
+	cases := []struct {
+		name                                 string
+		registered, hasListener, listenersOK bool
+		want                                 string
+	}{
+		{"registered with a listener is live", true, true, true, statusLive},
+		// The robots-jkwc defect itself: 148 rows said [live], 11 had a reader.
+		{"registered with no listener is a ghost", true, false, true, statusGhost},
+		{"unregistered is offline whatever ps says", false, true, true, statusOffline},
+		{"unregistered and no listener is offline", false, false, true, statusOffline},
+		// An unreadable process table is not evidence of a dead listener.
+		{"unknown process table keeps a registered agent live", true, false, false, statusLive},
+		{"unknown process table cannot invent a registration", false, false, false, statusOffline},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := launchStatus(tc.registered, tc.hasListener, tc.listenersOK); got != tc.want {
+				t.Errorf("launchStatus(%v,%v,%v) = %q, want %q", tc.registered, tc.hasListener, tc.listenersOK, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLaunchMarksARegisteredAgentWithNoListenerAsAGhost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIdentityFixture(t, home, "agent-ghost", "Ghost One", "#333333", "", "")
+
+	srv := agentsServer(t, `[{"id":"agent-ghost","name":"Ghost One","color":"#333333"}]`)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	withListeners(t, true) // registry says yes, the process table says no
+
+	out := captureStdout(t, func() { Launch(nil) })
+	if !strings.Contains(out, "[ghost]") {
+		t.Errorf("Launch() output = %q, want agent-ghost marked [ghost], not [live]", out)
+	}
+	if strings.Contains(out, "[live]") {
+		t.Errorf("Launch() output = %q, want NO [live] agent — that is the display lie", out)
+	}
+}
+
+func TestLaunchGhostHintNamesTheRemedy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIdentityFixture(t, home, "agent-ghost", "Ghost One", "#333333", "", "")
+
+	srv := agentsServer(t, `[{"id":"agent-ghost","name":"Ghost One","color":"#333333"}]`)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	withListeners(t, true)
+
+	out := captureStderr(t, func() { Launch(nil) })
+	if !strings.Contains(out, "parlay agent-down agent-ghost") {
+		t.Errorf("Launch() stderr = %q, want the agent-down remedy for the ghost", out)
+	}
+	if strings.Contains(out, "parlay launch agent-ghost") {
+		t.Errorf("Launch() stderr = %q, a ghost is registered — it must not be listed as offline", out)
+	}
+}
+
+func TestLaunchNeverCallsAnAgentAGhostWhenPsIsUnreadable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIdentityFixture(t, home, "agent-live", "Live One", "#111111", "", "")
+
+	srv := agentsServer(t, `[{"id":"agent-live","name":"Live One","color":"#111111"}]`)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	withListeners(t, false) // ps failed: nothing is known either way
+
+	out := captureStdout(t, func() { Launch(nil) })
+	if !strings.Contains(out, "[live]") || strings.Contains(out, "[ghost]") {
+		t.Errorf("Launch() output = %q, want [live] — a failed probe must not libel a working agent", out)
+	}
+}
+
 func TestLaunchListsKnownAgentsWithLiveStatus(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -148,6 +237,7 @@ func TestLaunchListsKnownAgentsWithLiveStatus(t *testing.T) {
 
 	srv := agentsServer(t, `[{"id":"agent-live","name":"Live One","color":"#111111"}]`)
 	t.Setenv("PARLAY_SERVER", srv.URL)
+	withListeners(t, true, "agent-live")
 
 	out := captureStdout(t, func() { Launch(nil) })
 	if !strings.Contains(out, "2 known agent(s):") {

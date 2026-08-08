@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -72,7 +73,7 @@ const (
 
 // runRelayMonitor runs tools/monitor/parlay-monitor.sh under bash with stdio
 // inherited from this process — a harness Monitor tool sees CHAT_MSG lines on
-// stdout exactly as before — and SUPERVISES it.
+// stdout exactly as before — and SUPERVISES it (robots-gv6t).
 //
 // It used to be a single `cmd.Run()` followed by `os.Exit(child's code)`, a
 // faithful port of monitor.ts's `Bun.spawn` + `process.exit(code)`. That made
@@ -90,6 +91,11 @@ const (
 // well as stderr, a signalled death is named, and a give-up posts the outage
 // to the agent's own channel so the announce that said "listening" is
 // retracted where the captain can see it.
+//
+// cmd.Start/Wait rather than cmd.Run so startRegistryWatchdog (watchdog.go)
+// has a pid to signal. monitor.ts pairs its spawn with startRegistryWatchdog
+// the same way; this path had no watchdog at all, leaving pruned channels
+// with an immortal monitor (robots-jkwc).
 //
 // Every terminal path here leaves through httpc.Exit rather than os.Exit: it
 // is the CLI's one exit hook, so it is where commandreport's
@@ -117,12 +123,19 @@ func runRelayMonitor(agent string, notifySafe bool) {
 		cmd.Env = append(os.Environ(), "PARLAY_SERVER="+config.ServerURL())
 
 		start := now()
-		runErr := cmd.Run()
+		if startErr := cmd.Start(); startErr != nil {
+			httpc.Die(fmt.Sprintf("parlay monitor: failed to run %s — %v", script, startErr), config.ExitRuntime)
+			return
+		}
+		childPID := cmd.Process.Pid
+		stopWatchdog := startRegistryWatchdog(agent, func() { terminateProcessTree(childPID) }, registryCheckInterval)
+		runErr := cmd.Wait()
+		stopWatchdog()
 		uptime := now().Sub(start)
 
 		if runErr != nil && !errors.As(runErr, new(*exec.ExitError)) {
-			// Could not spawn bash at all — nothing to supervise, and
-			// retrying would just re-fail. Die loud, as before.
+			// Wait returned a non-exit error — unexpected after a successful
+			// Start, but die rather than looping.
 			httpc.Die(fmt.Sprintf("parlay monitor: failed to run %s — %v", script, runErr), config.ExitRuntime)
 			return
 		}
@@ -273,8 +286,14 @@ func runLegacyPoll(server, agent string, notifySafe bool) {
 
 	lastID := ""
 	for {
-		if sleep := pollOnce(server, channelParam, &lastID, notifySafe, notifyBudget, os.Stdout); sleep > 0 {
-			time.Sleep(sleep)
+		res := pollOnce(server, channelParam, &lastID, notifySafe, notifyBudget, os.Stdout)
+		if res.stop {
+			fmt.Fprintf(os.Stderr, "parlay monitor: channel '%s' was unregistered (410) — stopping.\n", agent)
+			fmt.Fprintf(os.Stderr, "parlay monitor:   Re-arm with 'parlay listen --agent %s' if this was wrong.\n", agent)
+			return
+		}
+		if res.sleep > 0 {
+			time.Sleep(res.sleep)
 		}
 	}
 }
@@ -289,32 +308,49 @@ type pollMessage struct {
 	From    string  `json:"from"`
 }
 
-// pollOnce runs a single poll iteration and returns how long the caller
-// should sleep before the next one — 0 when it's safe to poll again
-// immediately (a message arrived, or the server reported a bare timeout).
-// Mirrors monitor.ts's try/catch (network error -> sleep 3s) and
-// !res.ok (non-2xx -> sleep 2s) branches exactly, plus the
-// `msg.id && msg.role && msg.text != null` guard before emitting a line.
-func pollOnce(server, channelParam string, lastID *string, notifySafe bool, notifyBudget int, out io.Writer) time.Duration {
+// pollResult is one poll iteration's outcome: how long the caller should
+// sleep before the next one — 0 when it's safe to poll again immediately (a
+// message arrived, or the server reported a bare timeout) — and whether the
+// loop must stop for good.
+type pollResult struct {
+	sleep time.Duration
+	stop  bool
+}
+
+// pollOnce runs a single poll iteration. Mirrors monitor.ts's try/catch
+// (network error -> sleep 3s) and !res.ok (non-2xx -> sleep 2s) branches
+// exactly, plus the `msg.id && msg.role && msg.text != null` guard before
+// emitting a line.
+//
+// 410 Gone is terminal (robots-ycfa): the channel was deliberately
+// unregistered and tombstoned, and retrying would re-create it and poll
+// forever — which is how 82 orphan listeners accumulated. monitor.ts stops
+// on 410; this port answered it with the generic non-2xx 2s retry, so the
+// Go path — the one bin/parlay actually execs — kept the leak alive
+// (robots-jkwc). It is the ONLY terminal status: a 500 still retries.
+func pollOnce(server, channelParam string, lastID *string, notifySafe bool, notifyBudget int, out io.Writer) pollResult {
 	resp, err := httpc.Client.Get(fmt.Sprintf("%s/api/chat/poll?after=%s%s", server, *lastID, channelParam))
 	if err != nil {
-		return 3 * time.Second
+		return pollResult{sleep: 3 * time.Second}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusGone {
+		return pollResult{stop: true}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 2 * time.Second
+		return pollResult{sleep: 2 * time.Second}
 	}
 
 	var msg pollMessage
 	if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
-		return 3 * time.Second
+		return pollResult{sleep: 3 * time.Second}
 	}
 	if msg.Timeout {
-		return 0
+		return pollResult{}
 	}
 	if msg.ID == "" || msg.Role == "" || msg.Text == nil {
-		return 0
+		return pollResult{}
 	}
 
 	*lastID = msg.ID
@@ -328,7 +364,7 @@ func pollOnce(server, channelParam string, lastID *string, notifySafe bool, noti
 			line[:notifyBudget], len(line)-notifyBudget)
 	}
 	_, _ = fmt.Fprintln(out, line)
-	return 0
+	return pollResult{}
 }
 
 // notifyBudgetFromEnv mirrors monitor.ts's

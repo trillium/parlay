@@ -16,6 +16,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/format"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/monitor"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
@@ -162,6 +163,11 @@ func Launch(argv []string) {
 	for _, a := range live {
 		liveSet[a.ID] = true
 	}
+	// Registry membership alone is a display LIE (robots-jkwc): a registration
+	// is a row on the server that nothing ever removes when a listener dies,
+	// so `parlay launch` reported 148 agents [live] against 11 real listener
+	// processes. Intersect with the process table for the truthful answer.
+	listeners, listenersKnown := liveListeners()
 	if len(known) == 0 {
 		fmt.Printf("No agent homes found in %s\n", parlayAgentsDir())
 		fmt.Println("Agents are created with: " + spawnUsageHint())
@@ -175,17 +181,23 @@ func Launch(argv []string) {
 		return p
 	}
 	fmt.Printf("%d known agent(s):\n", len(known))
+	var offline, ghosts []knownAgent
 	for _, a := range known {
-		status := "[offline]"
-		if liveSet[a.id] {
-			status = "[live]   "
+		status := launchStatus(liveSet[a.id], listeners[a.id], listenersKnown)
+		switch status {
+		case statusOffline:
+			offline = append(offline, a)
+		case statusGhost:
+			ghosts = append(ghosts, a)
 		}
 		fmt.Printf("  %s %s %s  %s %s\n", format.PadEnd(a.id, 16), format.PadEnd(a.name, 16), a.color, format.PadEnd(short(a.cwd), 32), status)
 	}
-	var offline []knownAgent
-	for _, a := range known {
-		if !liveSet[a.id] {
-			offline = append(offline, a)
+	if len(ghosts) > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d agent(s) are registered with NO listener process on this host —\n", len(ghosts))
+		fmt.Fprintln(os.Stderr, "  nothing reads their channel, so a message sent to one is silently lost.")
+		fmt.Fprintln(os.Stderr, "  Re-arm the agent, or clear the dead registration:")
+		for _, a := range ghosts {
+			fmt.Fprintf(os.Stderr, "  parlay agent-down %s\n", a.id)
 		}
 	}
 	if len(offline) > 0 {
@@ -193,5 +205,39 @@ func Launch(argv []string) {
 		for _, a := range offline {
 			fmt.Fprintf(os.Stderr, "  parlay launch %s\n", a.id)
 		}
+	}
+}
+
+// liveListeners is the process-table probe, injectable so the tests can drive
+// the classification without a real `ps` (a unit test cannot arm a listener).
+var liveListeners = monitor.LiveListenerAgents
+
+// The three states `parlay launch` can report, padded to one column width.
+const (
+	statusLive    = "[live]   "
+	statusGhost   = "[ghost]  "
+	statusOffline = "[offline]"
+)
+
+// launchStatus is the whole liveness classification, pure so the truthful
+// reporting is testable without a server or a process table.
+//
+//	registered + a listener here    -> live
+//	registered + NO listener here   -> ghost   (the registry's stale row)
+//	not registered                  -> offline
+//
+// listenersKnown false means `ps` could not be read, so "no listener" carries
+// no information: every registered agent stays [live] rather than being
+// libelled as a ghost. Same asymmetry the singleton guard already runs on —
+// a wrong [ghost] sends the captain to `agent-down` on a working agent, which
+// costs more than a missed stale row.
+func launchStatus(registered, hasListener, listenersKnown bool) string {
+	switch {
+	case !registered:
+		return statusOffline
+	case !listenersKnown || hasListener:
+		return statusLive
+	default:
+		return statusGhost
 	}
 }
