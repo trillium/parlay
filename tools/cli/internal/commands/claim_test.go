@@ -191,6 +191,114 @@ func TestClaimBriefIncludesTaskListMonitorWarning(t *testing.T) {
 	}
 }
 
+// `--silent` claims exactly like the default minus the monitor half: no
+// arm-command, no Monitor{} instructions, nothing for a harness to act on —
+// for scripted/headless/batch claims that have no Monitor to arm (robots-nfyp).
+// Everything else the brief carries stays put, and enrollment still fires:
+// suppressing the monitor is not the same request as `--no-register`.
+func TestClaimSilentOmitsMonitorArmCommand(t *testing.T) {
+	cs := newClaimServer(t)
+	stubTask(t, claimTask{
+		ID:          "task-55",
+		Title:       "Batch me",
+		Description: "Claimed by a script, not by a harness.",
+	}, nil)
+	t.Setenv("PARLAY_AGENT_ID", "batcher")
+	t.Setenv("PARLAY_AGENT_NAME", "Batcher")
+	t.Setenv("PARLAY_AGENT_COLOR", "#010203")
+
+	out := captureStdout(t, func() { Claim([]string{"task-55", "--silent"}) })
+
+	// Nothing that could arm or describe arming a monitor.
+	for _, unwanted := range []string{
+		"Monitor(",
+		"parlay listen",
+		"Arm your monitor",
+		"--notify-safe",
+		"TaskOutput",
+		"NOT the Monitor registry",
+		"robots-j9n3",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("--silent brief must not mention %q\n---\n%s", unwanted, out)
+		}
+	}
+
+	// …and everything else the default brief carries is still there.
+	for _, want := range []string{
+		`id="batcher"`,
+		"## Your memory — recovered",
+		"### Identity",
+		"### Scratchpad",
+		"## Task — task-55",
+		"Batch me",
+		"Claimed by a script, not by a harness.",
+		"## Definition of done",
+		"## Status protocol",
+		// Silence about the monitor is not the same as hiding the consequence:
+		// an agent that reads as enrolled while nothing streams its channel is
+		// the registered-but-deaf failure (robots-dcag), so the brief says it.
+		"No monitor armed (--silent)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--silent brief missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// --silent is about the printed monitor, not about enrollment.
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if len(cs.calls) != 2 {
+		t.Fatalf("server calls = %d, want 2 (register + reply) — --silent must not imply --no-register", len(cs.calls))
+	}
+}
+
+// --silent composes with --no-register: one drops the printed monitor, the
+// other drops the POSTs, and neither implies the other.
+func TestClaimSilentComposesWithNoRegister(t *testing.T) {
+	cs := newClaimServer(t)
+	stubTask(t, claimTask{ID: "task-56", Title: "Quiet and offline"}, nil)
+	t.Setenv("PARLAY_AGENT_ID", "quiet")
+
+	out := captureStdout(t, func() { Claim([]string{"task-56", "--silent", "--no-register"}) })
+
+	if strings.Contains(out, "Monitor(") || strings.Contains(out, "parlay listen") {
+		t.Errorf("--silent brief must not print an arm-command\n---\n%s", out)
+	}
+	if !strings.Contains(out, "## Task — task-56") {
+		t.Errorf("brief missing the task section\n---\n%s", out)
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if len(cs.calls) != 0 {
+		t.Fatalf("server calls = %d, want 0 with --no-register", len(cs.calls))
+	}
+}
+
+// Without --silent the arm-command is still printed — the default is unchanged.
+func TestClaimWithoutSilentStillPrintsArmCommand(t *testing.T) {
+	newClaimServer(t)
+	stubTask(t, claimTask{ID: "task-57", Title: "Normal claim"}, nil)
+	t.Setenv("PARLAY_AGENT_ID", "loud")
+	t.Setenv("PARLAY_AGENT_NAME", "Loud")
+	t.Setenv("PARLAY_AGENT_COLOR", "#0f0f0f")
+
+	out := captureStdout(t, func() { Claim([]string{"task-57"}) })
+
+	for _, want := range []string{
+		"Arm your monitor",
+		"parlay listen --agent 'loud' --name 'Loud' --color '#0f0f0f' --notify-safe",
+		"persistent: true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("default brief missing %q\n---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "No monitor armed") {
+		t.Errorf("default brief must not claim the monitor was skipped\n---\n%s", out)
+	}
+}
+
 // A recorded identity/scratchpad body is folded into the claim brief verbatim,
 // so a claiming agent recovers its memory without a second step (robots-2x2n).
 func TestClaimFoldsRecordedMemory(t *testing.T) {
@@ -622,7 +730,7 @@ func TestClaimShellQuote(t *testing.T) {
 // paste, and a title with a `"` would have broken out of the JS string too.
 func TestClaimBriefQuotesHostileTitle(t *testing.T) {
 	hostile := "$( ) and `id` and $HOME and \"quoted\" and it's"
-	brief := claimBrief("mc-x", hostile, "#f97316", "opus", claimTask{ID: "robots-2h4n", Title: hostile})
+	brief := claimBrief("mc-x", hostile, "#f97316", "opus", claimTask{ID: "robots-2h4n", Title: hostile}, false)
 
 	// Pull out just the Monitor line — that is the part an agent pastes.
 	var line string

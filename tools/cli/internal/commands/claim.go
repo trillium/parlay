@@ -13,7 +13,11 @@
 //     hands back the exact arm-command for the loop.) It also folds the agent's
 //     identity + scratchpad bodies inline (robots-2x2n), so memory recovery is
 //     not a separate second step — arming the monitor is the only startup
-//     command left for the agent to run by hand.
+//     command left for the agent to run by hand. `--silent` drops this half of
+//     step 2 (robots-nfyp): scripted, headless, and batch claims have no harness
+//     Monitor to arm, so the arm-command is noise there — and a printed
+//     Monitor{} call is an instruction something may act on. Registration and
+//     the announce still happen (that is `--no-register`'s job, not this one).
 //  3. THE TASK — resolves <task-id> against the beads/robots federation and
 //     prints the ticket's title + description as the actual work. This is what
 //     lets the task prompt move OFF the spawn-time startup prompt and live on the
@@ -67,7 +71,7 @@ func Claim(argv []string) {
 		return
 	}
 	res := args.Parse("claim", argv,
-		[]string{"--no-register", "--allow-closed"},
+		[]string{"--no-register", "--allow-closed", "--silent"},
 		[]string{"--agent", "--name", "--color", "--model"})
 
 	if len(res.Positionals) < 1 {
@@ -162,7 +166,7 @@ func Claim(argv []string) {
 		fmt.Fprintf(os.Stderr, "parlay claim: note — could not bind work item %s to %s: %v\n", task.ID, agent, err)
 	}
 
-	fmt.Print(claimBrief(agent, name, color, model, task))
+	fmt.Print(claimBrief(agent, name, color, model, task, res.Bool("--silent")))
 }
 
 // claimEnroll registers the agent and announces the claim on its own channel.
@@ -371,7 +375,14 @@ func claimShellQuote(s string) string {
 // claimBrief renders the agent-facing bootstrap brief printed to stdout: who it
 // is, the one command to arm its persistent monitor, the memory-recovery chain,
 // and the actual task from the ticket.
-func claimBrief(agent, name, color, model string, task claimTask) string {
+//
+// silent drops the monitor half — no arm-command, no Monitor{} instructions —
+// for scripted and batch claims that have no harness to arm one in (robots-nfyp).
+// Everything else (profile, enrollment, memory, task, DoD) is unchanged, and the
+// brief says plainly that nothing is listening, because the one thing this must
+// never produce is an agent that reads as enrolled while no one is delivering to
+// it — the registered-but-deaf shape robots-dcag is named after.
+func claimBrief(agent, name, color, model string, task claimTask, silent bool) string {
 	server := config.ServerURL()
 	var b strings.Builder
 
@@ -401,10 +412,20 @@ func claimBrief(agent, name, color, model string, task claimTask) string {
 	// command-substituted the moment an agent pasted the printed line as
 	// instructed, and a title containing `"` broke out of the JS string
 	// entirely (robots-2h4n).
-	b.WriteString("Arm your monitor — your one startup command (memory is already recovered below):\n")
-	monitorCmd := fmt.Sprintf("PARLAY_SERVER=%s parlay listen --agent %s --name %s --color %s --notify-safe",
-		claimShellQuote(server), claimShellQuote(agent), claimShellQuote(name), claimShellQuote(color))
-	fmt.Fprintf(&b, "   Monitor({ command: %s, persistent: true })\n\n", strconv.Quote(monitorCmd))
+	if silent {
+		// --silent: no arm-command at all. Say so, and say what it costs — a
+		// brief that just omitted the section would read as "nothing to arm"
+		// rather than "nothing is listening".
+		// The consequence is stated in prose and no command is printed: --silent
+		// exists so a scripted claim emits nothing armable, and a "here is the
+		// listen line you skipped" would put one straight back in the output.
+		fmt.Fprintf(&b, "No monitor armed (--silent): nothing is streaming this channel, so %s will not\nreceive captain messages until a listener is armed for it separately.\nMemory is already recovered below.\n\n", agent)
+	} else {
+		b.WriteString("Arm your monitor — your one startup command (memory is already recovered below):\n")
+		monitorCmd := fmt.Sprintf("PARLAY_SERVER=%s parlay listen --agent %s --name %s --color %s --notify-safe",
+			claimShellQuote(server), claimShellQuote(agent), claimShellQuote(name), claimShellQuote(color))
+		fmt.Fprintf(&b, "   Monitor({ command: %s, persistent: true })\n\n", strconv.Quote(monitorCmd))
+	}
 
 	// Note the task-ID returned by Monitor{} and keep it. After a context
 	// compaction, TaskList returns 'No tasks found' — that is the harness
@@ -415,7 +436,11 @@ func claimBrief(agent, name, color, model string, task claimTask) string {
 	// status "running" means it is live — do NOT re-arm. Only arm a fresh
 	// monitor when TaskOutput returns an error or status other than "running".
 	// Re-arming on a false-empty TaskList creates duplicate pollers (robots-j9n3).
-	b.WriteString("Note the task-ID that Monitor{} returns and save it in your scratchpad. After a context compaction, TaskList will return 'No tasks found' — that is the harness todo-board, NOT the Monitor registry. Your monitor is still running. To confirm: TaskOutput({ task_id: \"<your-monitor-id>\", block: false, timeout: 0 }) — status 'running' means live. Only re-arm if TaskOutput errors or shows a non-running status. Re-arming on a false-empty TaskList creates duplicate pollers (robots-j9n3).\n\n")
+	// Under --silent there is no Monitor{} task to note, so the whole paragraph
+	// is instruction about a thing that does not exist.
+	if !silent {
+		b.WriteString("Note the task-ID that Monitor{} returns and save it in your scratchpad. After a context compaction, TaskList will return 'No tasks found' — that is the harness todo-board, NOT the Monitor registry. Your monitor is still running. To confirm: TaskOutput({ task_id: \"<your-monitor-id>\", block: false, timeout: 0 }) — status 'running' means live. Only re-arm if TaskOutput errors or shows a non-running status. Re-arming on a false-empty TaskList creates duplicate pollers (robots-j9n3).\n\n")
+	}
 
 	// Memory recovery, folded in from identity + scratchpad so it arrives with
 	// the claim instead of costing the agent two more commands. A pinned
