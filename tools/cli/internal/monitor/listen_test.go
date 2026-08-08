@@ -24,6 +24,11 @@ type recordedCall struct {
 type listenHarness struct {
 	mu    sync.Mutex
 	calls []recordedCall
+	// reaped records each agent the robots-fgyz singleton guard was asked to
+	// clear, paired with how many HTTP calls had already happened — the guard
+	// must run before register/announce, not after.
+	reaped      []string
+	callsAtReap []int
 }
 
 func startListenHarness(t *testing.T) *listenHarness {
@@ -47,6 +52,18 @@ func startListenHarness(t *testing.T) *listenHarness {
 	t.Cleanup(srv.Close)
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_SERVER", srv.URL)
+
+	// The real singleton guard reads the live process table and sends real
+	// signals; every listen test gets a recording fake instead.
+	origReap := ensureSingleListener
+	ensureSingleListener = func(agent string) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.reaped = append(h.reaped, agent)
+		h.callsAtReap = append(h.callsAtReap, len(h.calls))
+	}
+	t.Cleanup(func() { ensureSingleListener = origReap })
+
 	return h
 }
 
@@ -258,6 +275,42 @@ func TestCmdListenIsIdempotentAcrossReRuns(t *testing.T) {
 	}
 	if len(*monitorCalls) != 2 {
 		t.Errorf("monitor calls = %d, want 2", len(*monitorCalls))
+	}
+}
+
+func TestCmdListenReapsExistingListenersBeforeRegistering(t *testing.T) {
+	// robots-fgyz: arming used to be purely additive, so the Mayor agent
+	// accumulated 12 live `parlay listen --agent mayor` loops and every
+	// captain message was processed up to 12 times. Arming is now a takeover,
+	// and it must happen BEFORE register/announce so a failure on the HTTP
+	// path can never leave a duplicate running.
+	h := startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+
+	CmdListen([]string{"--agent", "mayor"})
+
+	if len(h.reaped) != 1 || h.reaped[0] != "mayor" {
+		t.Fatalf("singleton guard runs = %v, want exactly one for 'mayor'", h.reaped)
+	}
+	if h.callsAtReap[0] != 0 {
+		t.Errorf("guard ran after %d HTTP call(s); it must run before register/announce", h.callsAtReap[0])
+	}
+}
+
+func TestCmdListenDoesNotReapWhenItNeverArms(t *testing.T) {
+	// A usage error or --help must not signal anything: nothing is being
+	// armed, so nothing is a duplicate.
+	h := startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+
+	testsupport.Capture(func() { CmdListen(nil) })
+	CmdListen([]string{"--help"})
+	testsupport.Capture(func() { CmdListen([]string{"--agent", "mayor", "--caps", "{not json"}) })
+
+	if len(h.reaped) != 0 {
+		t.Errorf("singleton guard ran %v on paths that never arm a monitor", h.reaped)
 	}
 }
 
