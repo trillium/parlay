@@ -30,6 +30,11 @@ import (
 // the Go analogue of listen.ts's injectable MonitorDeps.runMonitor.
 var runMonitor = CmdMonitor
 
+// ensureSingleListener is the robots-fgyz singleton guard, injectable for the
+// same reason as runMonitor: the real one reads the live process table and
+// signals real pids, which no unit test may do.
+var ensureSingleListener = reapDuplicateListeners
+
 type registerAgentResponse struct {
 	OK    bool   `json:"ok,omitempty"`
 	Error string `json:"error,omitempty"`
@@ -80,6 +85,12 @@ func CmdListen(argv []string) {
 		}
 		body["caps"] = caps
 	}
+
+	// 0. Singleton guard (robots-fgyz). Arming is a takeover, not an addition:
+	// any other live poll loop on this agent's channel is ended first, so the
+	// channel keeps exactly one reader. Runs before register/announce so a
+	// duplicate is never left alive by a later failure on the HTTP path.
+	ensureSingleListener(agent)
 
 	// 1. add-self-to-agent-registry — identity + capabilities.
 	fmt.Fprintf(os.Stderr, "parlay listen: registering '%s' …\n", agent)
