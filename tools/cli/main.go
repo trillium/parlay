@@ -120,6 +120,8 @@ func main() {
 		commands.Idle(args)
 	case "merge-gate":
 		commands.MergeGate(args)
+	case "branch-audit":
+		commands.BranchAudit(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		os.Exit(config.ExitUsage)
