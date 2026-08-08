@@ -358,8 +358,15 @@ func claimStatusClosed(status string) bool {
 // claimShellQuote wraps s in POSIX single quotes so a shell treats every
 // character inside it literally — no command substitution, no variable
 // expansion, no backslash escapes. An embedded single quote is closed, escaped
-// outside the quotes, and reopened ('\''), the one sequence single-quoting
-// cannot express directly.
+// outside the quotes, and reopened — the one sequence single-quoting cannot
+// express directly:
+//
+//	'\''
+//
+// That sequence lives in an indented block on purpose. gofmt reformats doc
+// comment prose through go/doc/comment, which rewrites a doubled apostrophe in
+// running text into a curly quote — corrupting the very escape this comment
+// exists to explain. Indented blocks are left verbatim, so keep it there.
 //
 // This exists because the values the claim brief interpolates into the printed
 // arm-command (agent name = ticket title, verbatim) are arbitrary prose, and

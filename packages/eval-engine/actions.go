@@ -93,8 +93,8 @@ type actionList struct {
 
 func (l *actionList) add(a Action) { l.items = append(l.items, a) }
 
-func intp(v int) *int          { return &v }
-func strp(v string) *string    { return &v }
+func intp(v int) *int       { return &v }
+func strp(v string) *string { return &v }
 
 // ── Verb constructors ─────────────────────────────────────────────────────────
 
@@ -140,13 +140,17 @@ func actNoop(reason string) Action {
 }
 
 // Tab / navigation / speech verbs — the stateless command effects.
-func actSwitchTab(channel string) Action  { return Action{Verb: "switchTab", Args: ActionArg{Channel: channel}} }
-func actArchiveTab(channel string) Action { return Action{Verb: "archiveTab", Args: ActionArg{Channel: channel}} }
-func actNextTab() Action                  { return Action{Verb: "nextTab"} }
-func actPrevTab() Action                  { return Action{Verb: "prevTab"} }
-func actNavigate(url string) Action       { return Action{Verb: "navigate", Args: ActionArg{URL: url}} }
-func actStopSpeech() Action               { return Action{Verb: "stopSpeech"} }
-func actFlagSpeech() Action               { return Action{Verb: "flagSpeech"} }
+func actSwitchTab(channel string) Action {
+	return Action{Verb: "switchTab", Args: ActionArg{Channel: channel}}
+}
+func actArchiveTab(channel string) Action {
+	return Action{Verb: "archiveTab", Args: ActionArg{Channel: channel}}
+}
+func actNextTab() Action            { return Action{Verb: "nextTab"} }
+func actPrevTab() Action            { return Action{Verb: "prevTab"} }
+func actNavigate(url string) Action { return Action{Verb: "navigate", Args: ActionArg{URL: url}} }
+func actStopSpeech() Action         { return Action{Verb: "stopSpeech"} }
+func actFlagSpeech() Action         { return Action{Verb: "flagSpeech"} }
 
 // ── Channel picker verbs (CHANNEL_PICKER_CONTRACT §Actions) ────────────────────
 
