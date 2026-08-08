@@ -28,7 +28,6 @@ string literal (`strconv.Quote` around a command whose every value is POSIX
 single-quoted), and the template renders it **bare**.
 
 `TestClaimBriefQuotesHostileTitle` — which round-trips a hostile title through a
-real `/bin/sh` — was kept as-is and catches the re-quote at the behavior level.
-`TestClaimBriefTemplateDoesNotRequoteMonitorCmd` is new and pins the template
-source itself, so the next person to edit that line fails by name rather than by
-symptom.
+real `/bin/sh` — was kept as-is and catches the re-quote at the behavior level:
+temporarily restoring the double-quoted template line caused it to fail, confirming
+the test still has teeth against this exact regression.
