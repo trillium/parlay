@@ -841,9 +841,11 @@ Three decisions worth knowing before touching it:
   the harness arms through a shell whose command string is the whole
   invocation, so reaping an ancestor kills the reaper.
 
-`PARLAY_LISTEN_NO_SINGLETON=1` opts out (announced on stderr). **Go-only, no
-TS port** — same reasoning as `merge-gate`; keep it out of
-`tools/cli/parity/run.sh`.
+`PARLAY_LISTEN_NO_SINGLETON=1` opts out (announced on stderr). The singleton
+enforcement is Go-only, no TS port — but `listen` itself exists in both CLIs,
+so do **not** add it to `GO_ONLY_VERBS`. No `check` case in
+`tools/cli/parity/run.sh` either: the singleton behavior causes a deliberate
+divergence the harness can't reconcile.
 
 ## Maintaining this file
 
