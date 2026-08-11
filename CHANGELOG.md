@@ -7,7 +7,8 @@
 **Files added:**
 - `launch-templates/default.txt` — default agent launch prompt with enrollment block, task, and status protocol
 - `launch-templates/claim.txt` — agent launch prompt for `--claim` variant (shorter, defers task to ticket)
-- `bin/parlay-spawn.templates.test.sh` — comprehensive tests for template loading and variable interpolation
+- `bin/parlay-spawn.templates.test.sh` — unit tests for template loading and variable interpolation
+- `bin/parlay-spawn.integration.test.sh` — integration tests verifying templates load and interpolate in spawn context
 
 **Files modified:**
 - `bin/parlay-spawn` — refactored to use `load_template()` function; no behavior change, only text sourcing

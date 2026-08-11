@@ -790,10 +790,10 @@ reviewable, and grep-proof. It scans:
 - **`skills/pulse-agent/*.md`** — the canonical pulse-agent skill, now living IN
   this repo (see 8.6). This is the primary target and the one robots-5cz/-0w9 are
   about.
-- `bin/parlay-spawn` **startup-prompt heredoc only** (the `STARTUP_PROMPT` block is
-  an agent-facing doc *embedded in* a script that legitimately uses curl elsewhere
-  — so the manifest points at the file but the extractor slices out the heredoc;
-  see 8.4).
+- `launch-templates/default.txt` and `launch-templates/claim.txt` — the startup prompts
+  that agent tabs receive (externalized from `bin/parlay-spawn`; loaded via `load_template()`).
+  These are agent-facing docs describing enrollment, durable memory, shutdown protocol, and task
+  context (see 8.4).
 - the **brief template** introduced in slice 1 (§3.1).
 - any repo `AGENTS.md` / `CLAUDE.md` (none today — future-proofing).
 

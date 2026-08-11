@@ -91,6 +91,7 @@ result=$(load_template "$tmpdir/test.txt" \
   "PARLAY=http://localhost" \
   "PROMPT=task")
 
+# shellcheck disable=SC2016
 if printf '%s' "$result" | grep -qF 'Name: Agent with $VAR and "quotes"'; then
   pass "load_template preserves special characters in values"
 else
