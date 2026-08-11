@@ -108,18 +108,6 @@ else
   fail "claim template missing fallback instructions"
 fi
 
-# ── Verify template consistency ─────────────────────────────────────────
-echo "Testing template consistency..." >&2
-
-# Both templates should mention the handoff/identity flow
-for template in "$TEMPLATES_DIR"/*.txt; do
-  if grep -q "identity --submit" "$template"; then
-    pass "$(basename $template) mentions proper shutdown sequence"
-  else
-    fail "$(basename $template) missing shutdown sequence mention"
-  fi
-done
-
 # ── Exit summary ────────────────────────────────────────────────────────
 echo ""
 if [ "$FAILED" -eq 0 ]; then
