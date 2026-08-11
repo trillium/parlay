@@ -111,6 +111,34 @@ resolve_account_token() {
   return 1
 }
 
+# Load a launch template file and interpolate variables.
+# Variables are passed as VAR_NAME=value pairs and replaced as {{VAR_NAME}}.
+# Exits non-zero if template file not found.
+load_template() {
+  local template_path="$1"
+  shift  # remaining args are VAR_NAME=value pairs
+
+  if [ ! -f "$template_path" ]; then
+    echo "parlay-spawn: template not found: $template_path" >&2
+    return 1
+  fi
+
+  local content
+  content=$(cat "$template_path")
+
+  # Interpolate each VAR_NAME=value pair
+  while [ $# -gt 0 ]; do
+    local var_pair="$1"
+    local var_name="${var_pair%%=*}"
+    local var_value="${var_pair#*=}"
+    # Replace {{VAR_NAME}} with the value (preserving special chars via variable expansion)
+    content="${content//"{{$var_name}}"/$var_value}"
+    shift
+  done
+
+  printf '%s' "$content"
+}
+
 usage() {
   cat >&2 <<EOF
 Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus]
@@ -552,74 +580,29 @@ fi
 #    off this prompt. The profile env injected on the tab lets claim resolve
 #    id/name/color/model without positional prose.
 if [ -n "${CLAIM:-}" ]; then
-STARTUP_PROMPT=$(cat <<EOF
-Run this now and follow its printed output exactly:
-
-  parlay claim $CLAIM
-
-It sets your identity ($AGENT_ID), enrolls you (arm the Monitor it prints), and gives you your task.
-$SETUP_BLOCK
-When done or your context is full: run the 'handoff' skill, then immediately 'identity --submit' (nothing between).
-EXCEPT if claim prints "NO TASK" — there is no work behind this pane. Follow claim's own
-exit procedure instead ('identity --park'), which ends you WITHOUT relaunching; do not
-'identity --submit', which would reboot you into the same dead claim (robots-4ek1).
-EOF
-)
+  TEMPLATES_DIR="$BIN_DIR/../launch-templates"
+  STARTUP_PROMPT=$(load_template "$TEMPLATES_DIR/claim.txt" \
+    "AGENT_ID=$AGENT_ID" \
+    "CLAIM=$CLAIM" \
+    "SETUP_BLOCK=$SETUP_BLOCK") || exit 1
 else
 # Default path: full enrollment block + inline task contract (fold §3.1/§3.6).
 #    The fresh claude processes this as its first turn, so it arms the Monitor
 #    (making the tab "listening") and posts a ready reply before/while working.
 # Build the arm-command out of band: every value single-quoted for the shell,
 # then the whole command JSON-quoted for the Monitor({}) literal (robots-2h4n).
-MONITOR_CMD_JSON=$(json_escape "PARLAY_SERVER=$(shell_quote "$PARLAY") parlay listen --agent $(shell_quote "$AGENT_ID") --name $(shell_quote "$NAME") --color $(shell_quote "$COLOR")")
-STARTUP_PROMPT=$(cat <<EOF
-You are a background agent enrolled in the Pulse/Parlay chat panel at $PARLAY.
-Your agent identity: id="$AGENT_ID", name="$NAME", color="$COLOR".
+  MONITOR_CMD_JSON=$(json_escape "PARLAY_SERVER=$(shell_quote "$PARLAY") parlay listen --agent $(shell_quote "$AGENT_ID") --name $(shell_quote "$NAME") --color $(shell_quote "$COLOR")")
 
-FIRST, before anything else, enroll so the captain can reach you — ONE call does the
-whole thing (register + announce + arm the poll loop), safe to re-run on every restart:
-1. Arm a persistent Monitor running 'parlay listen':
-   Monitor({ command: $MONITOR_CMD_JSON, persistent: true })
-   This registers you in the agent registry, posts a "listening" announce to your own
-   channel so your tab shows ready, then execs the same poll loop as 'parlay monitor' —
-   no separate 'reply' or registration step needed. Your identity is already set
-   (PARLAY_AGENT_ID=$AGENT_ID). (See the pulse-agent skill at ~/.claude/.agents/skills/pulse-agent/SKILL.md for the poll/contract details.)
-
-2. Load your durable memory (it survives restarts): run 'identity' to read who you are and what you have learned about yourself, and 'scratchpad' to read what you were doing. If your identity shows a "📎 Handoff: handoff-XXX" pointer, run 'handoff show handoff-XXX' for the full state from your previous context. If your context was reset, this chain — identity → handoff → scratchpad — is how you recover; do it before you start.
-
-Your surfaces are dead simple and already keyed to you (PARLAY_AGENT_ID) — no paths, no /tmp, no JSON. All three are thin wrappers over the one parlay tool. Use them religiously:
-- reply '<message>'     — your ONLY reply channel to the captain.
-- scratchpad '<note>'   — jot anything down; read it back with bare 'scratchpad'. NEVER write throwaway files in /tmp; use this instead.
-- identity '<fact>'     — record something you learn about yourself (a trait, a failure mode, a lesson); read it with bare 'identity'.
-
-Watch your context budget: when you approach ~80% used, checkpoint to the captain via reply (what is done, next, committed), record the lesson with 'identity', jot open state to 'scratchpad', and suggest a fresh session — never churn silently to 100%, which wedges and kills the session mid-task.
-
-CLEAN SHUTDOWN / RESTART (work done, or context bloated/near the limit): write your handoff by running the 'handoff' skill (it creates a handoff bead), then IMMEDIATELY run 'identity --submit' — with NOTHING in between (no courtesy 'say', no other command). --submit needs no id: it resolves the handoff you just created from the store, so the create and the submit are effectively one atomic act. Interposing anything between the create and the submit is the one way to strand your shutdown — a dying context can be killed in that gap, leaving a live handoff bead but no restart. That IS the whole shutdown: --submit pins the handoff to your identity AND resets your context — it restarts you with a fresh context that recovers itself via identity → handoff → scratchpad. You do NOT run sudoku, context-reset, or any skill yourself; submitting the handoff is the shutdown. If you ever find yourself already past a 'handoff' create with the submit not yet run, run a bare 'identity --submit' now — it recovers that stranded handoff. NEVER --submit before any handoff bead exists — without one the reset you wakes with amnesia.
-
----
-$SETUP_BLOCK
-## Task
-
-$PROMPT
-
-## Definition of done
-
-$DOD
-
-## Status protocol (fold §3.6)
-
-Append a keyed status line at each supervisor-actionable transition:
-  parlay status working|needs-decision|blocked|paused|done|failed "<one line>"
-
-Report SPARSELY — each status wakes your supervisor. Use 'reply' for human prose;
-use 'parlay status' for the machine-readable signal. A 'done' or 'failed' is terminal.
-Examples:
-  parlay status working "analyzing the codebase"
-  parlay status needs-decision "ambiguous requirement — see reply"
-  parlay status done "all tests pass, PR opened at https://..."
-  parlay status failed "build error — see reply for details"
-EOF
-)
+  TEMPLATES_DIR="$BIN_DIR/../launch-templates"
+  STARTUP_PROMPT=$(load_template "$TEMPLATES_DIR/default.txt" \
+    "PARLAY=$PARLAY" \
+    "AGENT_ID=$AGENT_ID" \
+    "NAME=$NAME" \
+    "COLOR=$COLOR" \
+    "MONITOR_CMD_JSON=$MONITOR_CMD_JSON" \
+    "SETUP_BLOCK=$SETUP_BLOCK" \
+    "PROMPT=$PROMPT" \
+    "DOD=$DOD") || exit 1
 fi
 
 # 4. Pre-trust the workdir so the spawned claude never stalls on the folder
