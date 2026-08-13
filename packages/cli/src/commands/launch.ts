@@ -1,4 +1,4 @@
-import { EXIT_USAGE } from "../config"
+import { EXIT_RUNTIME, EXIT_USAGE } from "../config"
 import { die, getJSON } from "../http"
 import { parseArgs } from "../args"
 import { helpWanted } from "../help"
@@ -18,6 +18,31 @@ function parseFrontmatter(src: string): Record<string, string> {
     if (kv) out[kv[1]] = kv[2]
   }
   return out
+}
+
+// The agent-spawning binaries, in preference order: parlay-bin (the Go port,
+// ticket A1, which takes a `spawn` subcommand) then parlay-spawn (the bash
+// original this repo still ships in bin/, same positional contract with no
+// subcommand word). robots-v81b: this file used to spawn a bare "parlay-bin"
+// and never check the result, so on a host whose PATH carries only
+// bin/parlay-spawn — the A1 rename never installed parlay-bin anywhere —
+// `parlay launch <id>` announced a spawn, exited 0, and launched nothing.
+const SPAWNERS: { name: string; sub?: string }[] = [{ name: "parlay-bin", sub: "spawn" }, { name: "parlay-spawn" }]
+
+// The first spawner actually present on PATH, or null when none is.
+function resolveSpawner(): { name: string; argv: string[] } | null {
+  for (const s of SPAWNERS) {
+    if (Bun.which(s.name)) return { name: s.name, argv: s.sub ? [s.name, s.sub] : [s.name] }
+  }
+  return null
+}
+
+// How agents are created, naming whichever spawner this host actually has
+// rather than a binary the reader may not own.
+function spawnUsageHint(): string {
+  const s = resolveSpawner()
+  const prefix = s ? s.argv.join(" ") : SPAWNERS[SPAWNERS.length - 1].name
+  return `${prefix} <id> <name> <color> <prompt> [--cwd PATH]`
 }
 
 export async function cmdLaunch(args: string[]) {
@@ -42,11 +67,14 @@ export async function cmdLaunch(args: string[]) {
     if (!a) return die(`parlay launch: no known agent '${targetId}' — run 'parlay launch' to list available agents`, EXIT_USAGE)
     const revival = "Your context was reset. Follow the recovery chain above (identity → handoff → scratchpad) to restore your state, then await the captain."
     const spawnArgs = [a.id, a.name, a.color, revival, "--cwd", a.cwd, ...(a.model ? ["--model", a.model] : [])]
-    process.stderr.write(`parlay launch: spawning ${a.id} via parlay-bin spawn …\n`)
-    // bin/parlay-spawn (bash) was ported to tools/parlay-bin (Go, docs/scope-go-spawn.md,
-    // ticket A1) exposing `spawn`/`reset` subcommands under one binary — hence the
-    // relocated name and the "spawn" subcommand prefix here.
-    Bun.spawnSync(["parlay-bin", "spawn", ...spawnArgs], { stdio: ["inherit", "inherit", "inherit"] })
+    const spawner = resolveSpawner()
+    if (!spawner) return die(`parlay launch: cannot spawn ${a.id} — no spawner on PATH — install one of ${SPAWNERS.map(s => s.name).join(" or ")} (this repo ships bin/parlay-spawn; symlink it into ~/.local/bin)`, EXIT_RUNTIME)
+    process.stderr.write(`parlay launch: spawning ${a.id} via ${spawner.name} …\n`)
+    // Blocking with inherited stdio — but the result is checked. A spawner
+    // that cannot start, or that exits non-zero, is a failed launch and must
+    // not report success.
+    const res = Bun.spawnSync([...spawner.argv, ...spawnArgs], { stdio: ["inherit", "inherit", "inherit"] })
+    if (res.exitCode !== 0) return die(`parlay launch: ${spawner.name} failed to spawn ${a.id} — exit ${res.exitCode}`, EXIT_RUNTIME)
     return
   }
 
@@ -55,7 +83,7 @@ export async function cmdLaunch(args: string[]) {
   const liveSet = new Set(live.map(a => a.id))
   if (known.length === 0) {
     console.log(`No agent homes found in ${agentsDir}`)
-    console.log("Agents are created with: parlay-bin spawn <id> <name> <color> <prompt> [--cwd PATH]")
+    console.log(`Agents are created with: ${spawnUsageHint()}`)
     return
   }
   const home = homedir()
