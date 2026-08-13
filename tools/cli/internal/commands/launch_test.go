@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -95,17 +96,47 @@ func TestKnownAgentsNoAgentsDir(t *testing.T) {
 	}
 }
 
+// fakeSpawner puts an executable named `name` on a fresh PATH containing only
+// dir, recording each invocation's argv (one arg per line) to dir/<name>.argv
+// and exiting with exitCode. Returns that record file's path.
+func fakeSpawner(t *testing.T, dir, name string, exitCode int) string {
+	t.Helper()
+	record := filepath.Join(dir, name+".argv")
+	script := "#!/bin/sh\n: > " + record + "\nfor a in \"$@\"; do echo \"$a\" >> " + record + "; done\nexit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
 func TestLaunchNoKnownAgentsPrintsHint(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1") // unreachable, must not die
+	t.Setenv("PATH", "")                            // no spawner installed — hint names the shipped one
 
 	out := captureStdout(t, func() { Launch(nil) })
 	if !strings.Contains(out, "No agent homes found in") {
 		t.Errorf("Launch() output = %q, want the no-agents hint", out)
 	}
-	if !strings.Contains(out, "parlay-bin spawn <id> <name> <color> <prompt> [--cwd PATH]") {
+	if !strings.Contains(out, "parlay-spawn <id> <name> <color> <prompt> [--cwd PATH]") {
 		t.Errorf("Launch() output = %q, want the creation hint", out)
+	}
+}
+
+// robots-v81b: the hint must name a binary the reader actually has. With
+// parlay-bin installed it is the preferred spawner and carries a subcommand.
+func TestLaunchHintNamesTheInstalledSpawner(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	bin := t.TempDir()
+	fakeSpawner(t, bin, "parlay-bin", 0)
+	t.Setenv("PATH", bin)
+
+	out := captureStdout(t, func() { Launch(nil) })
+	if !strings.Contains(out, "parlay-bin spawn <id> <name> <color> <prompt> [--cwd PATH]") {
+		t.Errorf("Launch() output = %q, want the parlay-bin creation hint", out)
 	}
 }
 
@@ -167,17 +198,91 @@ func TestLaunchUnknownTargetDies(t *testing.T) {
 	}
 }
 
-func TestLaunchKnownTargetSpawnsWithoutCrashing(t *testing.T) {
+// robots-v81b: no spawner on PATH used to be a silent no-op — the announcement
+// printed, the ENOENT from exec was discarded, and launch exited 0 having
+// launched nothing. It must now die loudly.
+func TestLaunchDiesWhenNoSpawnerOnPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "")
-	// Force exec.Command("parlay-bin", ...) to fail to start (not on PATH);
-	// Launch must not propagate that error (matches Bun.spawnSync's ignored
-	// result).
 	t.Setenv("PATH", "")
 
+	var code int
+	var exited bool
+	out := captureStderr(t, func() { code, exited = withExitTrap(t, func() { Launch([]string{"agent-a"}) }) })
+	if !exited || code != 1 {
+		t.Errorf("Launch([agent-a]) exited=%v code=%d, want exit 1", exited, code)
+	}
+	if !strings.Contains(out, "no spawner on PATH") || !strings.Contains(out, "parlay-spawn") {
+		t.Errorf("Launch([agent-a]) stderr = %q, want a loud unresolvable-spawner error", out)
+	}
+}
+
+// robots-v81b: with only the bash spawner installed, launch must use it — and
+// pass the positional contract with NO `spawn` subcommand word.
+func TestLaunchExecsParlaySpawnWithoutSubcommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "opus")
+	bin := t.TempDir()
+	record := fakeSpawner(t, bin, "parlay-spawn", 0)
+	t.Setenv("PATH", bin)
+
 	out := captureStderr(t, func() { Launch([]string{"agent-a"}) })
-	if !strings.Contains(out, "spawning agent-a via parlay-bin spawn") {
+	if !strings.Contains(out, "spawning agent-a via parlay-spawn") {
 		t.Errorf("Launch([agent-a]) stderr = %q, want the spawning announcement", out)
+	}
+	got, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("spawner was never executed: %v", err)
+	}
+	argv := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+	if argv[0] != "agent-a" || argv[1] != "Agent A" || argv[2] != "#ff0000" {
+		t.Errorf("spawner argv = %q, want id/name/color first", argv)
+	}
+	joined := strings.Join(argv, "\x00")
+	if !strings.Contains(joined, "--cwd\x00/work/a") || !strings.Contains(joined, "--model\x00opus") {
+		t.Errorf("spawner argv = %q, want --cwd and --model passed through", argv)
+	}
+}
+
+// robots-v81b: parlay-bin wins when present, and gets the `spawn` subcommand.
+func TestLaunchPrefersParlayBinWithSubcommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "")
+	bin := t.TempDir()
+	record := fakeSpawner(t, bin, "parlay-bin", 0)
+	fakeSpawner(t, bin, "parlay-spawn", 0)
+	t.Setenv("PATH", bin)
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	got, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("parlay-bin was never executed: %v", err)
+	}
+	argv := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+	if argv[0] != "spawn" || argv[1] != "agent-a" {
+		t.Errorf("parlay-bin argv = %q, want the spawn subcommand first", argv)
+	}
+}
+
+// robots-v81b: a spawner that runs but fails is also a failed launch.
+func TestLaunchDiesWhenSpawnerExitsNonZero(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "")
+	bin := t.TempDir()
+	fakeSpawner(t, bin, "parlay-spawn", 7)
+	t.Setenv("PATH", bin)
+
+	var code int
+	var exited bool
+	out := captureStderr(t, func() { code, exited = withExitTrap(t, func() { Launch([]string{"agent-a"}) }) })
+	if !exited || code != 1 {
+		t.Errorf("Launch([agent-a]) exited=%v code=%d, want exit 1", exited, code)
+	}
+	if !strings.Contains(out, "failed to spawn agent-a") {
+		t.Errorf("Launch([agent-a]) stderr = %q, want the spawn-failure error", out)
 	}
 }

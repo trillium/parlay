@@ -1,4 +1,5 @@
-// `parlay launch` — discover known agents and spawn one via parlay-bin.
+// `parlay launch` — discover known agents and spawn one via the spawner
+// binary (parlay-bin, falling back to parlay-spawn).
 //
 // Ported from packages/cli/src/commands/launch.ts (ticket B9).
 package commands
@@ -54,10 +55,58 @@ func knownAgents() []knownAgent {
 	return known
 }
 
+// spawnerNames lists the agent-spawning binaries in preference order:
+// parlay-bin (the Go port, ticket A1, which takes a `spawn` subcommand) then
+// parlay-spawn (the bash original this repo still ships in bin/, same
+// positional contract with no subcommand word).
+var spawnerNames = []string{"parlay-bin", "parlay-spawn"}
+var spawnerSubcommand = map[string]string{"parlay-bin": "spawn"}
+
+// resolveSpawner returns the argv for launching an agent with the first
+// spawner actually present on PATH, plus the basename to name in messages.
+//
+// robots-v81b: this used to hardcode exec.Command("parlay-bin", …) and
+// discard the run error, faithfully replicating launch.ts's unchecked
+// Bun.spawnSync. The A1 rename was never accompanied by an install of
+// parlay-bin anywhere, so on a host whose PATH carries only the
+// bin/parlay-spawn symlink, every `parlay launch <id>` printed a spawning
+// announcement, exited 0, and launched nothing — ENOENT was indistinguishable
+// from success. Resolving both names fixes the common case; the error
+// returned here is fatal at the call site so an unresolvable spawner is loud.
+func resolveSpawner(spawnArgs []string) (bin string, argv []string, err error) {
+	for _, name := range spawnerNames {
+		abs, lookErr := exec.LookPath(name)
+		if lookErr != nil || abs == "" {
+			continue
+		}
+		if sub := spawnerSubcommand[name]; sub != "" {
+			return abs, append([]string{sub}, spawnArgs...), nil
+		}
+		return abs, spawnArgs, nil
+	}
+	return "", nil, fmt.Errorf("no spawner on PATH — install one of %s (this repo ships bin/parlay-spawn; symlink it into ~/.local/bin)", strings.Join(spawnerNames, " or "))
+}
+
+// spawnUsageHint describes how agents are created, naming whichever spawner
+// this host actually has rather than a binary the reader may not own.
+func spawnUsageHint() string {
+	name := spawnerNames[len(spawnerNames)-1]
+	for _, candidate := range spawnerNames {
+		if abs, err := exec.LookPath(candidate); err == nil && abs != "" {
+			name = candidate
+			break
+		}
+	}
+	if sub := spawnerSubcommand[name]; sub != "" {
+		name += " " + sub
+	}
+	return name + " <id> <name> <color> <prompt> [--cwd PATH]"
+}
+
 // Launch ports cmdLaunch: with no positional arg, lists known agents
 // cross-referenced against which are currently live; with an agent id arg,
-// spawns that agent via `parlay-bin spawn` (an external binary — exec'd,
-// not reimplemented, matching Bun.spawnSync).
+// spawns that agent via the resolved spawner binary (external — exec'd, not
+// reimplemented).
 func Launch(argv []string) {
 	if helpWanted("launch", argv) {
 		return
@@ -79,18 +128,25 @@ func Launch(argv []string) {
 			return
 		}
 		revival := "Your context was reset. Follow the recovery chain above (identity → handoff → scratchpad) to restore your state, then await the captain."
-		spawnArgs := []string{"spawn", target.id, target.name, target.color, revival, "--cwd", target.cwd}
+		spawnArgs := []string{target.id, target.name, target.color, revival, "--cwd", target.cwd}
 		if target.model != "" {
 			spawnArgs = append(spawnArgs, "--model", target.model)
 		}
-		fmt.Fprintf(os.Stderr, "parlay launch: spawning %s via parlay-bin spawn …\n", target.id)
-		// Bun.spawnSync(["parlay-bin", "spawn", ...spawnArgs], { stdio:
-		// ["inherit","inherit","inherit"] }) with its result never checked —
-		// faithfully replicated: blocking, inherited stdio, exit code
-		// discarded.
-		cmd := exec.Command("parlay-bin", spawnArgs...)
+		bin, argv, err := resolveSpawner(spawnArgs)
+		if err != nil {
+			httpc.Die(fmt.Sprintf("parlay launch: cannot spawn %s — %v", target.id, err), config.ExitRuntime)
+			return
+		}
+		spawner := filepath.Base(bin)
+		fmt.Fprintf(os.Stderr, "parlay launch: spawning %s via %s …\n", target.id, spawner)
+		// Blocking with inherited stdio, as launch.ts's Bun.spawnSync was —
+		// but the result is checked. A spawner that cannot start, or that
+		// exits non-zero, is a failed launch and must not report success.
+		cmd := exec.Command(bin, argv...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		_ = cmd.Run()
+		if err := cmd.Run(); err != nil {
+			httpc.Die(fmt.Sprintf("parlay launch: %s failed to spawn %s — %v", spawner, target.id, err), config.ExitRuntime)
+		}
 		return
 	}
 
@@ -108,7 +164,7 @@ func Launch(argv []string) {
 	}
 	if len(known) == 0 {
 		fmt.Printf("No agent homes found in %s\n", parlayAgentsDir())
-		fmt.Println("Agents are created with: parlay-bin spawn <id> <name> <color> <prompt> [--cwd PATH]")
+		fmt.Println("Agents are created with: " + spawnUsageHint())
 		return
 	}
 	home := parlayHomeDir()

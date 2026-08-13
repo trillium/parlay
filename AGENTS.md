@@ -334,12 +334,23 @@ idle}.ts` (that source has since been split from the older single
 `packages/cli/src/commands/*.ts` files directly, not `commands.ts`). Two
 things worth knowing before touching this code:
 
-- **`launch.ts` and `commands-variant.ts` spawn different binaries, and
-  that's a real, pre-existing TS-source divergence, not a bug**: `launch.ts`
-  uses `parlay-bin spawn` (the current binary, per the `bin/parlay-spawn` →
-  `tools/parlay-bin` rename in ticket A1), while `commands-variant.ts` still
-  calls the retired `parlay-spawn` name. `launch.go` and `variant.go`
-  preserve each file's own convention rather than "fixing" the mismatch.
+- **`launch` resolves its spawner at runtime — never hardcode one binary
+  name (robots-v81b)**. Ticket A1 renamed `bin/parlay-spawn` (bash) to
+  `tools/parlay-bin` (Go, `spawn`/`reset` subcommands), and `launch.ts`
+  followed the new name while `commands-variant.ts` kept the old one. That
+  divergence was documented here as harmless; it was not. **`parlay-bin` is
+  built by no install path in this repo** — `bin/parlay` builds `tools/cli`
+  only — so on the captain's box, where `~/.local/bin` carries the
+  `bin/parlay-spawn` symlink and nothing named `parlay-bin`, every `parlay
+  launch <id>` exec'd a nonexistent binary. Compounding it, both CLIs
+  discarded the spawn result (`_ = cmd.Run()` / an unchecked
+  `Bun.spawnSync`), so ENOENT was indistinguishable from success: an
+  announcement, exit 0, and no agent. Both now walk `parlay-bin` (with the
+  `spawn` subcommand) then `parlay-spawn` (bare positionals), take the first
+  on PATH, die loudly when neither resolves, and treat a non-zero spawner
+  exit as a failed launch. The two names are still both live on purpose —
+  the resolution order is the contract, not either binary. `variant.go`
+  still calls `parlay-spawn` directly; it is the one that always existed.
 - **`launch.go`'s `knownAgents()` reuses `guard.go`'s
   `readLocalFrontmatter`/`parlayAgentsDir`/`parlayHomeDir`** instead of a
   fourth copy of the local frontmatter parser — `launch.ts` defines its own
