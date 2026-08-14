@@ -1,0 +1,17 @@
+# sweep-keep — agents `parlay sweep` must never tear down.
+#
+# One agent id per line. Blank lines and `#` comments are ignored.
+# Read by `parlay sweep` (tools/cli/internal/commands/sweep.go) from
+# $PARLAY_STATE_HOME/sweep-keep (default ~/.parlay/sweep-keep).
+#
+# CHANGE THIS: list your own long-lived agents. Anything not listed here is
+# eligible for teardown once `parlay crew-state` reports it finished. Short-lived
+# task agents belong nowhere in this file — being swept is what you want for them.
+#
+# The file is optional. With no sweep-keep at all, only the sweeping agent itself
+# and agents held for a human decision (needs-decision / blocked / failed) are
+# protected.
+
+# The long-lived general-purpose agent from this example. It is never "done", so
+# without this line a sweep could still collect it after a terminal status line.
+helm

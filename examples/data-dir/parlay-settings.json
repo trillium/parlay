@@ -1,0 +1,14 @@
+{
+  "panelSide": "left",
+  "triggerSide": "right",
+  "enabledProjects": "all",
+  "voiceEnabled": false,
+  "voiceSubmitPhrases": ["send it"],
+  "voiceClearPhrases": ["clear the input"],
+  "voiceStopPhrase": "stop talking",
+  "hybridVoice": false,
+  "localOnlyVoice": true,
+  "textScale": 100,
+  "commandPhrases": {},
+  "voiceSettleMs": 450
+}

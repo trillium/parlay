@@ -1,0 +1,201 @@
+# A worked parlay setup
+
+A complete, working two-agent parlay configuration you can copy. It is derived
+from a real running fleet, with every machine-specific value replaced by an
+obvious stand-in — see [Sanitizing](#sanitizing) for exactly what was replaced.
+
+Run it in a throwaway sandbox first, before you copy anything into your home
+directory:
+
+```sh
+examples/bootstrap-sandbox.sh
+```
+
+That copies this example into a temp directory, builds the CLI, starts the server
+on a free port with `$HOME` redirected into the sandbox, exercises it, prints
+PASS/FAIL per check, and deletes the sandbox. It never touches your real
+`~/.parlay`, `~/exchange`, or any running parlay server. Add `--keep` to poke
+around afterwards.
+
+## What this setup is
+
+Two agents with tabs in the panel:
+
+| Agent | id | Shape |
+|---|---|---|
+| **Helm** | `helm` | Long-lived, general-purpose. Stays enrolled across restarts, has accumulated self-knowledge, is on the sweep keep-list. |
+| **Reviewer** | `reviewer` | Task-scoped. Bound to one ticket in one git worktree, torn down when it lands. |
+
+They are two shapes, not two features — most fleets are some mix of the two.
+
+## The layout
+
+Parlay's state splits in two, and the split is the main thing to understand:
+
+```
+examples/
+├── parlay-state/     →  copy to ~/.parlay/          (the CLI and agents read this)
+│   ├── config.json           which server the CLI talks to
+│   ├── sweep-keep            agents `parlay sweep` must never tear down
+│   └── agents/<id>/          identity.md, context.json, scratchpad.md, status
+├── data-dir/         →  copy to $PARLAY_DATA_DIR    (the server writes this)
+│   ├── parlay-agents.json    the agent registry — who gets a tab
+│   ├── parlay-settings.json  panel + voice preferences
+│   └── chat-history.jsonl    the message log
+├── env.example       →  the environment variables, all of them optional
+└── bootstrap-sandbox.sh
+```
+
+The server never reads `~/.parlay`. The CLI never reads `$PARLAY_DATA_DIR`. They
+meet only over HTTP. Each directory has its own README with a per-file table:
+[`parlay-state/README.md`](parlay-state/README.md),
+[`data-dir/README.md`](data-dir/README.md).
+
+## Installing it for real
+
+```sh
+# 1. CLI state
+cp -R examples/parlay-state/. ~/.parlay/
+rm ~/.parlay/README.md                        # docs, not state
+
+# 2. Server state
+mkdir -p ~/.parlay/data
+cp examples/data-dir/*.json examples/data-dir/*.jsonl ~/.parlay/data/
+
+# 3. Edit the placeholders
+$EDITOR ~/.parlay/agents/helm/identity.md     # cwd: /path/to/your/project
+$EDITOR ~/.parlay/agents/reviewer/identity.md # cwd/worktree/project
+$EDITOR ~/.parlay/config.json                 # server URL, if not localhost:4242
+
+# 4. Run the server
+cd packages/server && PARLAY_DATA_DIR=~/.parlay/data bun run start
+
+# 5. Talk to it
+cd tools/cli && go build -o ~/.local/bin/parlay .
+parlay agents
+parlay send --helm "hello"
+```
+
+`/path/to/your/project` is the only value you *must* change. Everything else has
+a working default.
+
+**One repo-specific trap:** the `bin/parlay` wrapper at the repo root exports
+`PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because this
+fleet serves parlay through Pulse on that port. `PARLAY_SERVER` outranks
+`config.json`, so `bin/parlay` ignores the file this example ships. Build the
+binary directly (step 5 above) and `config.json` decides.
+
+## Required vs. taste
+
+**Required for anything to work:**
+
+- An agent's id is the same string in three places — the directory name under
+  `agents/`, `context.json`'s `id`, and `identity.md`'s frontmatter `id`. Anything
+  else and replies land on the wrong tab or nowhere.
+- `identity.md` frontmatter `id`; `name` and `color` if you want a usable tab.
+- A registry entry per agent — though you can skip seeding `parlay-agents.json`
+  entirely and let `parlay listen` register agents on first contact.
+- `cwd` in the frontmatter, if you want `parlay launch <id>` to respawn the agent.
+- `worktree` in the frontmatter for any agent that has one. `parlay teardown`
+  refuses to destroy an agent whose recorded worktree holds uncommitted or
+  unpushed work — and an agent with a worktree but no `worktree:` key gets no
+  such check.
+
+**Taste — this fleet's conventions, not parlay's:**
+
+- The two-agent split itself. Nothing in the code knows about "long-lived" versus
+  "task-scoped".
+- `mode`, `effort`, `yolo`, `kind` in the frontmatter. The CLI records and echoes
+  them; it never interprets them. This fleet's spawner does.
+- Agent names, colours, and the dated `PURPOSE:` / `LESSON:` prose style in
+  `identity.md`. The convention that pays for itself is *dated, one fact per line*
+  — an agent recovering from a context reset reads this top to bottom.
+- Everything in `parlay-settings.json`. Every key has a default; the file is
+  optional. The voice phrases especially are one person's speech habits.
+- Putting `$PARLAY_DATA_DIR` under `~/.parlay/data`. Any directory works. Unset,
+  the server scatters those files to `~/exchange` and `$PAI_DIR/MEMORY/STATE`
+  instead.
+
+**One naming rule that is not taste:** do not name an agent `test-…`, `bench-…`,
+`forge-…`, `profile-…`, `busy-…`, or anything ending in `z<digit>`. The server's
+cleanup sweep (`packages/server/src/prune/policy.ts`) deletes channels matching
+those patterns on sight, however active they are — they are the fingerprints of
+leaked test fixtures. `reviewer` is fine; `reviewer-z1` disappears.
+
+## What was verified
+
+`bootstrap-sandbox.sh` was run against this exact directory on macOS with
+`bun` + `go`, and the following passed:
+
+- `packages/server` starts with `PARLAY_DATA_DIR` pointed at `data-dir/`'s
+  contents, and persists nothing outside the sandbox.
+- The seeded registry is served: `parlay agents` lists both agents.
+- `parlay send --helm "…"` round-trips — read back by `parlay history` and
+  appended to the sandbox's `chat-history.jsonl`.
+- The seeded `chat-history.jsonl` lines load and render on both channels.
+- `parlay remote` resolves the server URL from the sandbox's `config.json`
+  (source: `config`), with `PARLAY_SERVER` unset.
+- `parlay identity --agent helm` reads `identity.md` back with the launch-spec
+  frontmatter stripped.
+- `parlay launch` (no args) discovers both agents' launch specs and reports them
+  live.
+- `parlay doctor` with `PARLAY_AGENT_ID=helm` reports PASS on identity, registry
+  membership, and server reachability.
+
+**Not verified:**
+
+- The browser panel. `packages/client` is served by Pulse, which is outside this
+  repo; the example configures the server and CLI, and nothing here renders a tab
+  in a real browser.
+- `parlay listen` / `parlay monitor`, and therefore live message *delivery* to an
+  agent. Both enroll through a relay daemon that is a per-runtime-dir singleton on
+  the host — arming one from a sandbox is exactly the kind of cross-talk this
+  example is trying to avoid. `parlay doctor` correctly WARNs "monitor not
+  listening" throughout.
+- `parlay launch <id>` actually spawning a process, and `parlay teardown` /
+  `parlay sweep` actually collecting one. Both shell out to host tooling
+  (`parlay-spawn`, `herdr`) that is not part of this repo.
+- `packages/go-server`, the Go rewrite of the server. It reads the same registry
+  and settings shapes, but this example was exercised against `packages/server`.
+- Anything on Linux or Windows. macOS only.
+- `parlay doctor` also probes an eval engine at `http://127.0.0.1:4343`
+  (`PARLAY_EVAL_ENGINE_URL`). Nothing in this example provides one; that check
+  reports on whatever happens to be listening on the machine you run it on.
+
+## Sanitizing
+
+This example is derived from a live personal machine. Everything below was
+replaced or dropped:
+
+**Replaced with stand-ins — change these to your own:**
+
+- Agent ids, names, and colours. `helm` and `reviewer` are inventions; the real
+  fleet's ids are its own.
+- Every filesystem path is either `/path/to/your/project…` or an ordinary
+  `~/.parlay` / `~/exchange`. No real home-directory layout appears.
+- Server URLs are `localhost`. No hostname, tailnet name, tailnet address, or IP
+  from the source machine appears anywhere.
+- The `identity.md` prose. The facts shown are written for this example; they are
+  the *shape* of real ones, not the content.
+- The seeded `chat-history.jsonl` messages, and their ids (`00000000-…-0001`
+  rather than real UUIDs).
+- The voice phrases in `parlay-settings.json`. The real ones are one person's
+  speech habits.
+- `task: EXAMPLE-1` — a placeholder for a real ticket id.
+
+**Deliberately omitted:**
+
+- **Credentials of every kind.** No token, key, or secret appears here in any
+  form, including redacted placeholders shaped like a real value. Parlay's config
+  surface has no credential field, so there was nothing to redact — the chat API
+  currently has **no authentication at all**, which is why it is meant to be bound
+  to localhost or a private tailnet and never exposed publicly.
+- The live agent roster. The source machine runs hundreds of agents; two
+  representative ones are shown.
+- Real `scratchpad.md` and `handoff` content — working notes about private
+  projects.
+- The relay, launchd, and spawner configuration (`tools/relay/deploy`,
+  `tools/parlay-bin`, `herdr`). Host-specific supervision, not config a reader
+  copies.
+- `~/.parlay/guard/`, `~/.parlay/robots-watch/`, `~/.parlay/specs/`, and
+  `reincarnations.log` — runtime scratch written by daemons, not configuration.

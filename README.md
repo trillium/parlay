@@ -179,6 +179,12 @@ of every module in the repo:
 
 Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …).
 
+## A worked config
+
+[`examples/`](examples/) is a complete two-agent setup — every file a configured
+parlay actually needs, with notes on what to change. `examples/bootstrap-sandbox.sh`
+instantiates it in a throwaway sandbox and exercises it, touching nothing of yours.
+
 ## Development
 
 ```sh

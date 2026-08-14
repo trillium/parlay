@@ -1,0 +1,79 @@
+# `parlay-state/` — the CLI's and agents' state
+
+Copy this directory's contents to **`~/.parlay/`** (or to whatever you point
+`PARLAY_STATE_HOME` at). This is the client side of the split: the server never
+reads any of it.
+
+| Path | What it is | Change it? |
+|---|---|---|
+| `config.json` | Persisted default server URL. | Yes — point it at your server. |
+| `sweep-keep` | Agents `parlay sweep` must never tear down. Commented inline. | Yes — list your long-lived agents. |
+| `agents/<id>/identity.md` | The agent's launch spec + durable self-knowledge. | Yes — see below. |
+| `agents/<id>/context.json` | `{id, name, color}` reply-attribution record. | Yes — must match `identity.md` and the registry. |
+| `agents/<id>/scratchpad.md` | The agent's working notes. | No — the agent writes it. Created on first write. |
+| `agents/<id>/status` | Append-only agent→supervisor status lines. | No — `parlay status <verb> "<line>"` appends. |
+
+## `config.json`
+
+```json
+{ "server": "http://localhost:4242" }
+```
+
+Server URL resolution, highest wins (`tools/cli/internal/config`):
+
+1. `PARLAY_SERVER` env var
+2. this file's `server` key
+3. the coded default `http://localhost:4242`
+
+`parlay remote set <url>` writes it, `parlay remote clear` empties it, and
+`parlay remote` prints which of the three is currently winning. A missing or
+corrupt file is treated as empty — resolution just falls through.
+
+**Note for readers of this repo:** the `bin/parlay` wrapper in the repo root
+exports `PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because
+this fleet serves parlay through Pulse on that port. That env var beats
+`config.json`, so `bin/parlay` ignores the file. Build the CLI directly —
+`cd tools/cli && go build -o ~/.local/bin/parlay .` — if you want `config.json` to
+be the thing that decides.
+
+## `agents/<id>/`
+
+One directory per agent, named for the agent id, under
+`$PARLAY_AGENT_HOME` (default `~/.parlay/agents`). Two agents are shipped:
+`helm` (long-lived, general purpose) and `reviewer` (task-scoped, bound to a git
+worktree). The id must be the same string in three places: the directory name,
+`context.json`'s `id`, and `identity.md`'s frontmatter `id`.
+
+### `identity.md` frontmatter — the launch spec
+
+Written by `parlay identity --register …`, read back by `parlay launch <id>`,
+`parlay teardown`, and `parlay sweep`
+(`tools/cli/internal/identity/mem.go`). Hand-editing it is fine.
+
+| Key | Required | Meaning |
+|---|---|---|
+| `id` | yes | The agent id. |
+| `name` | for a tab | Display name. |
+| `color` | for a tab | Tab colour. |
+| `model` | no | Model `parlay launch <id>` respawns with. |
+| `cwd` | for launch | **Change this** — the directory the agent is launched in. |
+| `kind` | no | Free-form: `task`, `service`, … Recorded, not interpreted by the CLI. |
+| `task` | no | Ticket id this agent is bound to. |
+| `worktree` | for teardown | Git worktree to remove on teardown. |
+| `project` | no | The repo the worktree belongs to. |
+| `mode`, `effort`, `yolo` | no | Free-form profile strings this fleet's spawner reads. Recorded, not interpreted by the CLI. |
+
+`worktree` is load-bearing for safety, not cosmetic: `parlay teardown` refuses to
+destroy an agent whose recorded worktree has uncommitted or unpushed work. An agent
+with a worktree and no `worktree:` key is torn down without that check.
+
+Everything below the frontmatter is prose. `parlay identity '<fact>'` appends a
+line; a bare `parlay identity` prints this part with the frontmatter stripped.
+
+### `status`
+
+Appended to by `parlay status <verb> "<line>"`, one line per supervisor-actionable
+transition, read by `parlay crew-state <id>` and `parlay supervise <id>`. Verbs:
+`working`, `needs-decision`, `blocked`, `paused`, `done`, `failed`, `resolved`
+(`tools/cli/internal/commands/status_verb.go`). Terminal states
+(`done`/`failed`) are what makes an agent eligible for `parlay sweep`.
