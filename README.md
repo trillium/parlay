@@ -118,10 +118,10 @@ seeds a channel before its agent has registered, which is exactly the case here.
 That round-trip is the whole substrate. From here:
 
 ```sh
-./bin/parlay monitor --legacy-poll --agent demo   # stream incoming messages on a channel
 ./bin/parlay reply --agent demo "on it"           # an agent replies on its own channel
 ./bin/parlay alert "heads up"                     # broadcast to every agent
 ./bin/parlay help                                 # every verb
+./bin/parlay monitor --legacy-poll --agent demo   # stream a channel; runs until Ctrl-C, so give it a second shell
 ```
 
 `--legacy-poll` polls natively in Go and needs nothing beyond the server. `listen` —
@@ -203,7 +203,8 @@ Docs of note: [`docs/api-contract.md`](docs/api-contract.md) (the HTTP contract
 between client, CLI, and server), [`docs/COMMAND_DESIGN_CONTRACT.md`](docs/COMMAND_DESIGN_CONTRACT.md)
 (the voice engine), and [`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md)
 (CLI verb authoring). Several docs in `docs/` describe integration with the author's
-own private agent fleet — [`docs/README.md`](docs/README.md) says which is which.
+own agent fleet, some of it public and some not — [`docs/README.md`](docs/README.md)
+says which is which.
 
 ## Contributing
 

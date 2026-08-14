@@ -1,12 +1,15 @@
 # docs/
 
 Two kinds of document live here. The first kind is useful to anyone running parlay.
-The second kind documents how parlay integrates with the author's own agent fleet —
-a set of private, unreleased tools (**firstmate**, **PAI**, **beads** stores like
-`robots`/`task`/`projects`, and the `mechanic-dispatch` wrapper). Those are written
-for an internal audience and reference things you will not find in this repo or
-anywhere public. They are kept because the design reasoning is real and travels with
-the code — not because you are expected to reproduce the setup.
+The second kind documents how parlay integrates with the author's own agent fleet.
+Part of that fleet is public: [**firstmate**](https://github.com/trillium/firstmate),
+the agent-fleet orchestrator that drives crews of coding agents through parlay from
+intake through review to merge, and [**herdr**](https://github.com/trillium/herdr),
+the terminal they run in. The rest is not — **PAI**, the **beads** stores like
+`robots`/`task`/`projects`, and the `mechanic-dispatch` wrapper. Those docs are
+written for an internal audience, and nothing in them is required to run parlay. They
+are kept because the design reasoning is real and travels with the code — not because
+you are expected to reproduce the setup.
 
 ## Generally useful
 
@@ -18,9 +21,9 @@ the code — not because you are expected to reproduce the setup.
 | [`context-reset-single-tab.md`](context-reset-single-tab.md) | Why `bin/context-reset` is shaped the way it is — the single-tab guarantee when an agent restarts itself. |
 | [`VERSIONING.md`](VERSIONING.md) | The two version axes (repo semver tag vs. panel `PA_VERSION`) and the automatic tagging scheme. |
 
-## Internal — integration with the author's private agent fleet
+## Internal — integration with the author's agent fleet
 
 | Doc | What it is |
 |---|---|
-| [`PARLAY_FIRSTMATE_FOLD.md`](PARLAY_FIRSTMATE_FOLD.md) | A design doc (status: **design, not built**) for migrating agent-lifecycle mechanics out of *firstmate* — the author's private supervisor — and down into parlay. Assumes firstmate, PAI, herdr, and the beads stores throughout. |
+| [`PARLAY_FIRSTMATE_FOLD.md`](PARLAY_FIRSTMATE_FOLD.md) | A design doc (status: **design, not built**) for migrating agent-lifecycle mechanics out of [*firstmate*](https://github.com/trillium/firstmate) — the sibling agent-fleet orchestrator — and down into parlay. Assumes firstmate, PAI, herdr, and the beads stores throughout. |
 | [`CLI_VERBS_AND_EVENTS.md`](CLI_VERBS_AND_EVENTS.md) | Two references in one: **§1, how to author a `parlay <verb>` subcommand, is generally useful.** §2's event-fabric design is motivated by a private `robots` bead store firing `mechanic-dispatch`, which you will not have. |
