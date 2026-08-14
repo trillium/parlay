@@ -13,6 +13,12 @@
 #      monitor reads the relay's own /agents.server and ABORTS BEFORE /register
 #      rather than enrolling into the wrong registry (parlay-monitor.sh).
 #
+# Sections C and D cover the two later monitor defects that share robots-buu8's
+# failure shape — the agent stays registered while its stream is gone:
+#   C. a best-effort probe written as `VAR=$(cmd)` killed setup (robots-dcag).
+#   D. the stream itself was terminal, so anything that killed `tail` killed the
+#      agent's only reply channel, silently (robots-gv6t).
+#
 # No production state is touched: every case runs against a stub relay on a unix
 # socket in its own temp dir, with $HOME and the runtime dir redirected there.
 #
@@ -35,7 +41,12 @@ note() { [ "${VERBOSE}" = 1 ] && echo "         $*"; return 0; }
 
 command -v bun >/dev/null 2>&1 || { echo "parlay-monitor.test: bun is required" >&2; exit 2; }
 
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/parlay-monitor-test.XXXXXX")"
+# Strip $TMPDIR's trailing slash first: macOS sets it with one, and the doubled
+# separator survives into every path derived from ROOT — which breaks matching a
+# spool path against a running process's argv (section D), where the kernel
+# reports the collapsed form.
+TMPROOT="${TMPDIR:-/tmp}"
+ROOT="$(mktemp -d "${TMPROOT%/}/parlay-monitor-test.XXXXXX")"
 # Space-separated PID list, not an array — macOS ships bash 3.2, where expanding
 # an empty array under `set -u` is itself an error.
 STUBS=""
@@ -422,6 +433,160 @@ got="$(PARLAY_RELAY_PROBE_TIMEOUT=1 parlay_relay_reported_server "${STUB_SOCK}")
 [ "${rc}" = 0 ] && [ -z "${got}" ] \
   && ok "helper returns 0 with an empty result on timeout (never aborts a caller)" \
   || bad "helper signals failure on timeout — set -e callers would die" "rc=${rc} got='${got}'"
+
+# ══ D. the stream is supervised, not terminal (robots-gv6t) ══════════════════
+# The stream used to be `exec tail -F`: whatever killed tail took the agent's
+# only reply channel with it, silently — registration and the "listening"
+# announce had already succeeded, so the panel kept showing a ready agent.
+echo
+echo "D. a dead stream is recovered and reported, never silent"
+
+MON_PID=""
+MON_OUT=""
+MON_ERR=""
+
+# start_monitor <runtime> <sock> <server> <agent> — like run_monitor, but leaves
+# the monitor running so the stream itself can be attacked.
+start_monitor() {
+  local runtime="$1" sock="$2" server="$3" agent="$4"
+  MON_OUT="${ROOT}/mon.out"; MON_ERR="${ROOT}/mon.err"
+  : >"${MON_OUT}"; : >"${MON_ERR}"
+  (
+    export HOME="${ROOT}/home"
+    export PARLAY_RELAY_RUNTIME="${runtime}"
+    export PARLAY_RELAY_SOCK="${sock}"
+    [ -n "${server}" ] && export PARLAY_SERVER="${server}"
+    # A caller that needs tail to fail on demand prepends a stub dir (D3).
+    [ -n "${MONITOR_PATH_PREFIX:-}" ] && export PATH="${MONITOR_PATH_PREFIX}:${PATH}"
+    [ -n "${MIN_UPTIME_OVERRIDE:-}" ] && export PARLAY_MONITOR_MIN_UPTIME="${MIN_UPTIME_OVERRIDE}"
+    [ -n "${MAX_RESTARTS_OVERRIDE:-}" ] && export PARLAY_MONITOR_MAX_RESTARTS="${MAX_RESTARTS_OVERRIDE}"
+    exec "${MONITOR}" --agent "${agent}"
+  ) >"${MON_OUT}" 2>"${MON_ERR}" &
+  MON_PID=$!
+  STUBS="${STUBS} ${MON_PID}"
+}
+
+stop_monitor() {
+  [ -n "${MON_PID}" ] || return 0
+  pkill -P "${MON_PID}" 2>/dev/null
+  kill "${MON_PID}" 2>/dev/null
+  wait "${MON_PID}" 2>/dev/null
+  MON_PID=""
+}
+
+# wait_for_tail <spool> — the "streaming" line is printed a beat BEFORE the loop
+# spawns tail and takes its starting offset, and that offset is end-of-spool (the
+# old `-n0`: don't replay history). Appending inside that window is genuinely
+# skipped, so a test that wants a message delivered must wait for tail itself.
+wait_for_tail() {
+  for _ in $(seq 1 100); do
+    pgrep -f "tail -c .*$1" >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# wait_for <file> <fixed-string> [tenths] — poll until it shows up.
+wait_for() {
+  local f="$1" pat="$2" tries="${3:-100}"
+  for _ in $(seq 1 "${tries}"); do
+    grep -qF "${pat}" "${f}" 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# D1/D2. Kill the tail out from under a live stream.
+start_stub "${ROOT}/d1" "http://127.0.0.1:45001" || exit 1
+D_RUNTIME="${STUB_RUNTIME}"
+start_monitor "${D_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45001" "stream-agent"
+SPOOL="${D_RUNTIME}/stream-agent.chan"
+
+if wait_for "${MON_ERR}" "streaming" && wait_for_tail "${SPOOL}"; then
+  printf 'CHAT_MSG|m1|before the kill\n' >>"${SPOOL}"
+  if wait_for "${MON_OUT}" "before the kill"; then
+    ok "streams normally before anything goes wrong"
+  else
+    bad "the baseline stream never delivered a message" "$(cat "${MON_ERR}")"
+  fi
+
+  # Kill only the tail — the same shape as whatever signal ended the stream in
+  # the field, and precisely what used to end the whole monitor.
+  if pkill -f "tail -c .*${SPOOL}" 2>/dev/null; then
+    # The message has to arrive AFTER the kill, at a byte offset the dead tail
+    # never reached: `-n0` on respawn would drop it, and resuming from the
+    # spool's size-at-restart would drop it too.
+    printf 'CHAT_MSG|m2|after the kill\n' >>"${SPOOL}"
+
+    if kill -0 "${MON_PID}" 2>/dev/null; then
+      ok "the monitor outlives its tail (the stream is no longer terminal)"
+    else
+      bad "the monitor died with its tail — robots-gv6t is still open" "$(cat "${MON_ERR}")"
+    fi
+    if wait_for "${MON_OUT}" "MONITOR|restarted|"; then
+      ok "announces the restart ON STDOUT, where the harness raises an event"
+    else
+      bad "a stream death produced no stdout event" "$(cat "${MON_OUT}")"
+    fi
+    if wait_for "${MON_OUT}" "after the kill"; then
+      ok "delivers a message spooled during the gap (byte-offset resume)"
+    else
+      bad "messages spooled during the restart gap were swallowed" "$(cat "${MON_OUT}")"
+    fi
+    if [ "$(grep -cF "before the kill" "${MON_OUT}")" = 1 ]; then
+      ok "does not re-deliver what the dead tail already emitted"
+    else
+      bad "resume replayed already-delivered messages" "$(grep -cF "before the kill" "${MON_OUT}") copies"
+    fi
+  else
+    bad "could not find the tail process to kill" "$(ps -o pid=,command= -p "${MON_PID}" 2>/dev/null)"
+  fi
+else
+  bad "the monitor never reached the streaming stage" "$(cat "${MON_ERR}")"
+fi
+stop_monitor
+
+# D3. A stream that cannot be kept alive must give up LOUDLY and terminally,
+#     never spin forever and never fall quiet. A `tail` stub that fails
+#     instantly makes every respawn thrash.
+mkdir -p "${ROOT}/failtail"
+cat >"${ROOT}/failtail/tail" <<'SH'
+#!/bin/sh
+exit 9
+SH
+chmod +x "${ROOT}/failtail/tail"
+
+start_stub "${ROOT}/d3" "http://127.0.0.1:45001" || exit 1
+MONITOR_PATH_PREFIX="${ROOT}/failtail"
+MIN_UPTIME_OVERRIDE=2
+MAX_RESTARTS_OVERRIDE=1
+start_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45001" "stream-agent"
+MONITOR_PATH_PREFIX=""; MIN_UPTIME_OVERRIDE=""; MAX_RESTARTS_OVERRIDE=""
+
+D3_CODE="running"
+for _ in $(seq 1 100); do
+  if ! kill -0 "${MON_PID}" 2>/dev/null; then
+    wait "${MON_PID}"; D3_CODE=$?
+    break
+  fi
+  sleep 0.1
+done
+if [ "${D3_CODE}" = 1 ]; then
+  ok "gives up with exit 1 once restarts stop helping (bounded, not infinite)"
+else
+  bad "a hopeless stream did not terminate as a runtime error" "exit=${D3_CODE}"
+fi
+if grep -qF "MONITOR|down|" "${MON_OUT}" && grep -qF "DEAF" "${MON_OUT}"; then
+  ok "giving up says so on stdout, in the words the agent needs to act on"
+else
+  bad "gave up without an agent-visible notice" "$(cat "${MON_OUT}")"
+fi
+if grep -qF "MONITOR|restarted|" "${MON_OUT}"; then
+  ok "tried to recover before giving up"
+else
+  bad "gave up without attempting a restart" "$(cat "${MON_OUT}")"
+fi
+stop_monitor
 
 echo
 echo "parlay-monitor.test: ${pass} passed, ${fail} failed"
