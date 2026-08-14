@@ -15,3 +15,10 @@ packages/server/src/parlay-ui.js
 .claude-file-plan.json
 .worktrees/
 tools/cli/bin/
+
+# Compiled Go binaries `go build ./...` drops in each module root. ~28 MB of
+# these were committed once and still weigh on every clone; listed here so no
+# module's output can be re-added. (parlay-bin also has its own .gitignore.)
+tools/cli/cli
+tools/parlay-bin/parlay-bin
+tools/relay/relay

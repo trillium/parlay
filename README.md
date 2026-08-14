@@ -96,6 +96,13 @@ and the hermetic shell harnesses.
 
 Repo conventions worth knowing:
 
+- **`bun install` installs this repo's git hooks.** The root `package.json`
+  `prepare` script runs `git config core.hooksPath tools/hooks`. `pre-commit`
+  enforces the 250-line limit below and auto-bumps `PA_VERSION`;
+  `post-commit`/`post-merge` rebuild and deliver the panel bundle, and run only
+  in the repo's primary checkout (never a linked worktree) — set
+  `PARLAY_MAIN_CHECKOUT` to point them elsewhere. Opt out entirely with
+  `git config --unset core.hooksPath`.
 - **250-line file limit** (pre-commit) — split a module into a subfolder + barrel
   index past the limit.
 - **Two version axes** — the repo release `vX.Y.Z` git tag and the panel build

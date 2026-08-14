@@ -1,6 +1,6 @@
 // Fold §3.6 — the agent→supervisor keyed status verb.
 //
-// The fold (docs/PARLAY_FIRSTMATE_FOLD.md §3.6) ports firstmate's supervision
+// The fold (design doc §3.6, captain-private, not in this repo) ports firstmate's supervision
 // signal into a thin parlay verb — a sibling to reply/scratchpad/identity. It
 // COLLIDED with the historical `status` name, but that name was only a redundant
 // fall-through alias of bare `parlay` (`case undefined: case "status" →

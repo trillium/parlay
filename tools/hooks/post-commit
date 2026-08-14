@@ -8,8 +8,14 @@
 # This hook closes the paths pre-commit misses: merges, PA_BUMP=none, --no-verify.
 set -uo pipefail  # NOT -e: a delivery failure must never read as a commit failure
 
-MAIN_CHECKOUT="/Users/trilliumsmith/code/parlay"
-LOG="$HOME/Library/Logs/parlay/bundle-rebuild.out.log"
+# Deploy target = this repo's PRIMARY checkout, never a linked worktree. Derived
+# from git (`--git-common-dir` is shared by every worktree and lives inside the
+# primary checkout) so no machine-specific path is baked in; PARLAY_MAIN_CHECKOUT
+# overrides when you deploy from somewhere else.
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+MAIN_CHECKOUT="${PARLAY_MAIN_CHECKOUT:-${COMMON_DIR%/.git}}"
+LOG="${PARLAY_HOOK_LOG:-$HOME/Library/Logs/parlay/bundle-rebuild.out.log}"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 TOP="$(git rev-parse --show-toplevel)"
 
 # Worktree commits (treehouse leases, feature isolation) must never deploy.

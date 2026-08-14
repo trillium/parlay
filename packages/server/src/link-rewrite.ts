@@ -13,8 +13,8 @@
 //                      fail-open to NO rewrite if tailscale is unavailable
 //   - "<host-or-ip>" → use that hostname/IP literally. The captain prefers the
 //                      short tailnet name ("macbook", MagicDNS resolves it), but
-//                      an FQDN ("macbook.hippo-tilapia.ts.net") or bare IP
-//                      ("100.74.138.74") work identically — only the host swaps.
+//                      an FQDN ("macbook.example-tailnet.ts.net") or bare IP
+//                      ("100.100.100.100") work identically — only the host swaps.
 //
 // Fail-open is absolute: any error in resolution or rewriting returns the
 // original text unchanged. This transform must never break message serving.
@@ -63,8 +63,9 @@ function resolvePublicHost(): string | null {
 // The captain reads Parlay over the tailnet where MagicDNS is active, so the
 // SHORT node name (e.g. `macbook`) resolves and is what he wants to see in
 // links — not the raw IP and not the trailing-dotted FQDN. We read
-// `Self.DNSName` from `tailscale status --json` (e.g. `macbook.hippo-tilapia.
-// ts.net.`), strip the trailing dot, and prefer its first label (`macbook`).
+// `Self.DNSName` from `tailscale status --json` (e.g.
+// `macbook.example-tailnet.ts.net.`), strip the trailing dot, and prefer its
+// first label (`macbook`).
 // The full FQDN is the fallback if the name has no usable label.
 //
 // Returns null on any failure (binary missing, non-zero exit, unparseable
@@ -85,7 +86,7 @@ function resolveTailscaleHost(): string | null {
     }
     if (typeof dnsName !== "string") return null
 
-    // Strip the trailing FQDN dot: `macbook.hippo-tilapia.ts.net.` → `...ts.net`.
+    // Strip the trailing FQDN dot: `macbook.example-tailnet.ts.net.` → `...ts.net`.
     const fqdn = dnsName.replace(/\.$/, "").trim()
     if (!fqdn) return null
 

@@ -5,8 +5,11 @@
 # Same guards as post-commit; see that file for the full pipeline map.
 set -uo pipefail
 
-MAIN_CHECKOUT="/Users/trilliumsmith/code/parlay"
-LOG="$HOME/Library/Logs/parlay/bundle-rebuild.out.log"
+# Same primary-checkout derivation as post-commit; see that file for the rationale.
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+MAIN_CHECKOUT="${PARLAY_MAIN_CHECKOUT:-${COMMON_DIR%/.git}}"
+LOG="${PARLAY_HOOK_LOG:-$HOME/Library/Logs/parlay/bundle-rebuild.out.log}"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 TOP="$(git rev-parse --show-toplevel)"
 
 if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
