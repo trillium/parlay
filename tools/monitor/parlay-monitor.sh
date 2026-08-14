@@ -167,7 +167,14 @@ fi
 # respects PARLAY_RELAY_RUNTIME/SOCK via the same lib resolution, and honors
 # PARLAY_SERVER for the started relay.
 if [ -x "$ENSURE_UP" ]; then
-  if ! "$ENSURE_UP"; then
+  ENSURE_RC=0
+  "$ENSURE_UP" || ENSURE_RC=$?
+  if [ "$ENSURE_RC" = 3 ]; then
+    # A relay IS up, bound to the wrong upstream server (robots-93xu). ensure-up
+    # already printed the mismatch and the repair; adding "install the relay"
+    # below would contradict it — a relay is precisely what is already running.
+    exit 1
+  elif [ "$ENSURE_RC" != 0 ]; then
     echo "parlay-monitor: relay is not up and could not be started" >&2
     echo "parlay-monitor: install the relay (tools/relay/deploy/install.sh) or start it manually" >&2
     exit 1
@@ -242,9 +249,26 @@ if [ -n "${PARLAY_SERVER:-}" ]; then
     echo "parlay-monitor:   $RELAY_SERVER but PARLAY_SERVER is $WANT_SERVER." >&2
     echo "parlay-monitor: enrolling anyway would register this agent in the WRONG" >&2
     echo "parlay-monitor:   server's registry (robots-buu8)." >&2
-    echo "parlay-monitor: unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK to get an" >&2
-    echo "parlay-monitor:   automatically server-scoped relay, or point them at a" >&2
-    echo "parlay-monitor:   runtime dir whose relay serves $WANT_SERVER." >&2
+    # The advice has to fit the case, or it is a dead end exactly when it matters
+    # most (robots-93xu): the fleet-wide outage was a wrong-server relay squatting
+    # the CANONICAL dir, where neither override is set — so "unset them" named
+    # nothing to unset and pointed at no repair, on every agent on the box.
+    if [ -n "${PARLAY_RELAY_RUNTIME:-}" ] || [ -n "${PARLAY_RELAY_SOCK:-}" ]; then
+      echo "parlay-monitor: unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK to get an" >&2
+      echo "parlay-monitor:   automatically server-scoped relay, or point them at a" >&2
+      echo "parlay-monitor:   runtime dir whose relay serves $WANT_SERVER." >&2
+    else
+      # No overrides set, so this dir was chosen by the scoping rule itself: the
+      # canonical dir for the default server, or srv-<hash> otherwise. Either way
+      # the relay sitting in it is bound to the wrong server and only repointing
+      # (or removing) that relay fixes it — there is nothing to unset.
+      echo "parlay-monitor: PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK are not set, so this" >&2
+      echo "parlay-monitor:   runtime dir is the scoping rule's own choice for" >&2
+      echo "parlay-monitor:   $WANT_SERVER — the relay squatting it is what is wrong," >&2
+      echo "parlay-monitor:   and every agent on $WANT_SERVER is refused until it is" >&2
+      echo "parlay-monitor:   repointed. Repair the supervised relay with:" >&2
+      echo "parlay-monitor:   tools/relay/deploy/install.sh --server $WANT_SERVER" >&2
+    fi
     exit 1
   fi
 fi

@@ -16,8 +16,9 @@
 # a relay on the shared per-user runtime dir; new `parlay monitor` enrollments use
 # it, and the legacy poll path keeps working untouched.
 #
-# Usage:  install.sh [--rebuild] [--server <url>]
-# Env:    PARLAY_SERVER  upstream Pulse server (default http://localhost:31337)
+# Usage:  install.sh [--rebuild] [--server <url>] [--allow-non-default-server]
+# Env:    PARLAY_SERVER  upstream Pulse server (default http://localhost:31337).
+#                        Refused unless it IS the default — see below.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -25,15 +26,58 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "${HERE}/lib.sh"
 
 REBUILD=0
+ALLOW_NON_DEFAULT=0
 SERVER="${PARLAY_SERVER:-${PARLAY_RELAY_SERVER_DEFAULT}}"
+# Plain `if`, not `[ … ] && VAR=1`: under `set -e` an AND-OR list whose final
+# command never runs returns non-zero and takes the whole script down.
+SERVER_FROM_ENV=0
+if [ -n "${PARLAY_SERVER:-}" ]; then SERVER_FROM_ENV=1; fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --rebuild) REBUILD=1; shift ;;
-    --server)  SERVER="${2:?--server needs a URL}"; shift 2 ;;
+    --server)  SERVER="${2:?--server needs a URL}"; SERVER_FROM_ENV=0; shift 2 ;;
+    --allow-non-default-server) ALLOW_NON_DEFAULT=1; shift ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "install.sh: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+SERVER="${SERVER%/}"
+
+# ── The LaunchAgent may only serve the DEFAULT upstream server (robots-93xu) ───
+# This installs a FIXED singleton: the launcher resolves the CANONICAL runtime
+# dir from getconf (launchd does not inherit our env), so whatever server we bake
+# in here is what the canonical dir's relay is bound to — permanently, across
+# reboots. And the canonical dir is RESERVED for the default server (see
+# parlay_relay_scoped_runtime_dir in lib.sh): every agent on the default server
+# resolves to it, finds a relay bound to something else, and is refused enrollment
+# by parlay-monitor.sh's pre-enroll check. That is a fleet-wide outage whose only
+# symptom is agents failing to enroll.
+#
+# It is exactly how robots-93xu happened: `SERVER` defaults from an AMBIENT
+# $PARLAY_SERVER, so an install run from any shell that happened to export a
+# non-default one (a go-server dev shell on :4242, say) silently rebound the
+# captain's production relay. An ambient env var must never be able to do that.
+#
+# A non-default server belongs in its own scoped runtime dir with its own,
+# unsupervised relay — which ensure-up.sh already starts on demand. The override
+# exists for a box whose whole fleet genuinely moved, and must be deliberate.
+if [ "${SERVER}" != "${PARLAY_RELAY_SERVER_DEFAULT%/}" ] && [ "${ALLOW_NON_DEFAULT}" != 1 ]; then
+  echo "install.sh: refusing to install the LaunchAgent bound to ${SERVER}." >&2
+  if [ "${SERVER_FROM_ENV}" = 1 ]; then
+    echo "install.sh:   That came from the ambient \$PARLAY_SERVER in this shell, not" >&2
+    echo "install.sh:   from --server — almost certainly not what you meant." >&2
+  fi
+  echo "install.sh: the LaunchAgent always serves the CANONICAL runtime dir, which is" >&2
+  echo "install.sh:   reserved for the default server ${PARLAY_RELAY_SERVER_DEFAULT}." >&2
+  echo "install.sh:   Binding it elsewhere refuses enrollment for every default-server" >&2
+  echo "install.sh:   agent on this box (robots-93xu)." >&2
+  echo "install.sh: for the default server:  $0 --server ${PARLAY_RELAY_SERVER_DEFAULT}" >&2
+  echo "install.sh: a non-default server needs no install at all — ensure-up.sh starts a" >&2
+  echo "install.sh:   scoped relay for it on demand." >&2
+  echo "install.sh: if you really mean to rebind this box's supervised relay:" >&2
+  echo "install.sh:   $0 --server ${SERVER} --allow-non-default-server" >&2
+  exit 2
+fi
 
 case "$(uname -s)" in
   Darwin) : ;;
