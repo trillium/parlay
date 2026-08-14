@@ -103,6 +103,42 @@ normalize() {
     -e 's/Get "[^"]+": <CONN_REFUSED>/<CONN_REFUSED>/g'
 }
 
+# --- Go-only verbs ------------------------------------------------------
+# Verbs that exist ONLY in the Go CLI, deliberately and permanently: they
+# were written after `bin/parlay` started exec'ing the Go binary for
+# everything but `lavish-import`, so `packages/cli` (the retired path) was
+# never going to grow them. See this repo's CLAUDE.md — each verb's own
+# section says "Go-only, no TS port … keep it out of tools/cli/parity/run.sh".
+#
+# Keeping them out of the CHECK list is not enough, though: `parlay help`
+# prints the whole usage block, so every one of these verbs' usage lines
+# shows up as a diff on the four help cases below — which is exactly how
+# this harness came to report 4 FAILs against a CLI with no defect
+# (robots-xaxt). The lines are filtered out of the GO side only, and
+# `audit_go_only_verbs` below pins that the list stays honest: a verb that
+# vanishes from Go's usage, or that grows a TS side, FAILs rather than
+# silently muting a real divergence.
+#
+# ADDING A GO-ONLY VERB: append it here as well as documenting it in
+# CLAUDE.md. Anything not listed here still diffs normally, so a verb that
+# was merely FORGOTTEN on the TS side keeps failing the harness, which is
+# the point.
+GO_ONLY_VERBS=(claim merge-gate branch-audit sweep)
+
+go_only_usage_re() {
+  local IFS='|'
+  printf '^  parlay (%s)([^A-Za-z0-9-]|$)' "${GO_ONLY_VERBS[*]}"
+}
+
+# Drop the usage lines documenting Go-only verbs. Applied to the Go output
+# only — if TS ever prints one of these lines the diff must fail, since that
+# means the verb gained a TS side and belongs out of GO_ONLY_VERBS.
+strip_go_only_usage() {
+  # A filter must never be able to fail its caller: grep exits 1 when it
+  # emits nothing, which is a legitimate result here (robots-dcag).
+  grep -Ev "$(go_only_usage_re)" || true
+}
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -114,7 +150,7 @@ check() {
   ts_out="$(run_ts "$@" 2>&1)"; ts_code=$?
   go_out="$(run_go "$@" 2>&1)"; go_code=$?
   ts_norm="$(printf '%s' "$ts_out" | normalize)"
-  go_norm="$(printf '%s' "$go_out" | normalize)"
+  go_norm="$(printf '%s' "$go_out" | normalize | strip_go_only_usage)"
   if [ "$ts_norm" = "$go_norm" ] && [ "$ts_code" = "$go_code" ]; then
     SUMMARY+=("PASS  $label")
     PASS=$((PASS + 1))
@@ -141,7 +177,32 @@ skip() {
   SKIP=$((SKIP + 1))
 }
 
+# Keep GO_ONLY_VERBS honest. Filtering a line out of the diff is only safe
+# while the reason for filtering it still holds, so assert both directions
+# per verb against the two CLIs' real `help` output:
+#   - Go must still document it — otherwise the entry is stale and the
+#     filter is muting nothing (or, worse, is about to mute a real line);
+#   - TS must NOT document it — a TS side means the verb is no longer
+#     Go-only and belongs in the ordinary check list instead.
+audit_go_only_verbs() {
+  local ts_usage go_usage verb
+  ts_usage="$(run_ts help 2>&1)"
+  go_usage="$(run_go help 2>&1)"
+  for verb in "${GO_ONLY_VERBS[@]}"; do
+    if ! printf '%s\n' "$go_usage" | grep -Eq "^  parlay $verb([^A-Za-z0-9-]|$)"; then
+      SUMMARY+=("FAIL  go-only verb '$verb'  (no longer in Go's usage — stale GO_ONLY_VERBS entry)")
+      FAIL=$((FAIL + 1))
+    elif printf '%s\n' "$ts_usage" | grep -Eq "^  parlay $verb([^A-Za-z0-9-]|$)"; then
+      SUMMARY+=("FAIL  go-only verb '$verb'  (now in TS's usage too — drop it from GO_ONLY_VERBS and add real checks)")
+      FAIL=$((FAIL + 1))
+    else
+      SUMMARY+=("GO-ONLY  $verb  (no TS side by design; usage line filtered from the help diffs)")
+    fi
+  done
+}
+
 # --- representative command surface -----------------------------------
+audit_go_only_verbs
 check "help (usage)" help
 check "help status" help status
 check "help agents" help agents
