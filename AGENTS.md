@@ -77,9 +77,15 @@ independent of how the server is deployed.
 
 ### `PARLAY_DATA_DIR` isolates what the server WRITES, not what it READS
 
-`PARLAY_DATA_DIR` redirects every persisted file (`paths.ts`), and
-`packages/server/README.md` is right that nothing under `~/exchange` or `$PAI_DIR`
-is then written. It is **not** a full sandbox: `startHookFiringTailer()` and
+`PARLAY_DATA_DIR` redirects every persisted file that goes through `paths.ts`, so
+nothing lands under `~/exchange`. It is **not** a full sandbox, and not only on
+the read side. `packages/server/src/tts.ts` never touches `paths.ts`: it resolves
+its own `PAI_DIR` (`process.env.PAI_DIR ?? ~/.claude/PAI`) and then **writes**
+`$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl` (`appendFileSync`,
+from both `/api/chat/tts-report` and the substitution handler), **creates**
+`$PAI_DIR/MEMORY/STATE/tts-cache/`, and **`unlinkSync`-deletes** clips out of that
+cache every time it passes `DISK_CACHE_MAX` (100). `PARLAY_DATA_DIR` redirects
+none of it. On the read side, `startHookFiringTailer()` and
 `startToolEventTailer()` still watch `$PAI_DIR` (default `~/.claude/PAI`), which
 `PARLAY_DATA_DIR` does not cover, and every event they see is injected into the
 instance's chat history as a `channel:"system"`, `source:"turn"` message. A
@@ -87,7 +93,8 @@ scratch instance booted on a host that has a populated `$PAI_DIR` will therefore
 fill with real, live agent turns from the agents running on that host — read-only,
 but confusing (and a quiet information leak) for whoever is reading the sandbox.
 Set `PAI_DIR` to an empty scratch dir alongside `PARLAY_DATA_DIR` whenever you
-boot a test instance; `guard.integration.test.ts` already redirects both, and the
+boot a test instance, or the run writes into and deletes out of the real one;
+`guard.integration.test.ts` already redirects both, and the
 public Quickstart in `README.md` says the same for anyone who happens to have a
 `~/.claude/PAI`.
 
