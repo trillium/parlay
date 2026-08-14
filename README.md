@@ -60,12 +60,14 @@ bun install                                   # also wires the git hooks (core.h
 **1. Start the server.** It listens on `:4242` and owns `/api/chat/*`:
 
 ```sh
-cd packages/server && PARLAY_DATA_DIR=~/.parlay/data bun run start
+cd packages/server && PARLAY_DATA_DIR=~/.parlay/data PAI_DIR=~/.parlay/pai-scratch bun run start
 ```
 
-> **⚠️ Set `PARLAY_DATA_DIR`. Without it the server writes to — and can destroy —
-> existing state.** Unset, it does not use one directory; it writes to two production
-> locations:
+Both variables in that command matter, and here is why.
+
+> **⚠️ `PARLAY_DATA_DIR` is not optional. Without it the server writes to — and can
+> destroy — existing state.** Unset, it does not use one directory; it writes to two
+> production locations:
 >
 > - **`~/exchange`** — chat history, draft, settings, agent channels, uploads.
 > - **`$PAI_DIR/MEMORY/STATE`**, default **`~/.claude/PAI/MEMORY/STATE`** — the agent
@@ -79,10 +81,12 @@ cd packages/server && PARLAY_DATA_DIR=~/.parlay/data bun run start
 > happened and two live chat channels were deleted. `PARLAY_DATA_DIR` relocates all
 > of it, flat, into the one directory you name.
 
-`PAI_DIR` is both a write target and a read target: besides the registry above, the
-server tails that tree for agent-activity events and folds them into your chat
-history. If you have a `~/.claude/PAI`, point `PAI_DIR` at an empty scratch directory
-alongside `PARLAY_DATA_DIR` — that pair is what fully protects the real one. See
+`PAI_DIR` is pointed at an empty scratch directory for a second reason: it is both a
+write target and a read target. Besides the registry above, the server tails that tree
+for agent-activity events and folds every one of them into your chat history — so on a
+machine that has a real `~/.claude/PAI`, leaving `PAI_DIR` unset fills a brand-new
+instance with unrelated live agent turns. Setting both variables, as the command
+does, is what fully protects the real directory. See
 [`packages/server/README.md`](packages/server/README.md) for the full config surface.
 
 **2. Point the CLI at it**, in another shell:
@@ -115,18 +119,22 @@ That round-trip is the whole substrate. From here:
 
 ```sh
 ./bin/parlay monitor --legacy-poll --agent demo   # stream incoming messages on a channel
-./bin/parlay reply "on it"            # an enrolled agent replies to its own channel
-./bin/parlay alert "heads up"         # broadcast to every agent
-./bin/parlay help                     # every verb
+./bin/parlay reply --agent demo "on it"           # an agent replies on its own channel
+./bin/parlay alert "heads up"                     # broadcast to every agent
+./bin/parlay help                                 # every verb
 ```
 
-`--legacy-poll` polls natively in Go and needs nothing beyond the server. The
-relay-backed verbs — `monitor` *without* `--legacy-poll`, and `listen` — need a relay
-binary that is gitignored and that neither `bun install` nor `bin/parlay` builds; run
-`tools/relay/build.sh` first or they exit 1 with `relay is not up and could not be
-started`. Mind `listen` especially: it registers and announces with the server
-*before* it starts the relay, so on a fresh clone it leaves an agent that looks
-enrolled and healthy but can never receive anything.
+`--legacy-poll` polls natively in Go and needs nothing beyond the server. `listen` —
+one-call self-enrolment: register, announce, then stream — accepts the same flag and
+takes the same native path, so `listen --agent demo --name Demo --legacy-poll` gives
+you a live enrolled agent on a fresh clone too.
+
+*Without* that flag, both verbs go through a relay binary that is gitignored and that
+neither `bun install` nor `bin/parlay` builds; run `tools/relay/build.sh` first or they
+exit 1 with `relay is not up and could not be started`. Mind bare `listen` especially:
+it registers and announces with the server *before* it starts the relay, so on a fresh
+clone it leaves an agent that looks enrolled and healthy but can never receive
+anything.
 
 Launch a background agent that shows up as a live tab (needs a
 [Claude Code](https://claude.com/claude-code) install and the
