@@ -1,5 +1,13 @@
 # Migrating firstmate's setup mechanics down into parlay (the "fold")
 
+> **Reading this from outside?** This document is internal design work about
+> integrating parlay with **firstmate**, the author's private agent-fleet
+> supervisor, and it assumes several other unreleased tools (PAI, herdr, the
+> `beads` stores). None of them are public, and nothing described here is required
+> to run parlay — see [`../README.md`](../README.md) for that. It is kept in the
+> open because the reasoning about agent supervision is real, not because you are
+> expected to reproduce the setup.
+
 > **Status:** DESIGN — awaiting review. No code written yet.
 > **Ownership direction (decision-3ae, §0):** parlay OWNS the agent-setup MECHANICS
 > as native primitives (spawn / identity / channel / status+supervision / worktree /

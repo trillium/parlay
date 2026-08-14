@@ -73,6 +73,36 @@ persisted `$PARLAY_STATE_HOME/config.json` (default `~/.parlay/config.json`,
 CLI does not import `packages/server` as code, so its functionality is
 independent of how the server is deployed.
 
+### `PARLAY_DATA_DIR` isolates what the server WRITES, not what it READS
+
+`PARLAY_DATA_DIR` redirects every persisted file (`paths.ts`), and
+`packages/server/README.md` is right that nothing under `~/exchange` or `$PAI_DIR`
+is then written. It is **not** a full sandbox: `startHookFiringTailer()` and
+`startToolEventTailer()` still watch `$PAI_DIR` (default `~/.claude/PAI`), which
+`PARLAY_DATA_DIR` does not cover, and every event they see is injected into the
+instance's chat history as a `channel:"system"`, `source:"turn"` message. A
+scratch instance booted on the captain's box with only `PARLAY_DATA_DIR` set will
+therefore fill with real, live agent turns from his fleet — read-only for him,
+but confusing (and a quiet information leak) for whoever is reading the sandbox.
+Set `PAI_DIR` to an empty scratch dir alongside `PARLAY_DATA_DIR` whenever you
+boot a test instance; `guard.integration.test.ts` already redirects both, and the
+public Quickstart in `README.md` says the same for anyone who happens to have a
+`~/.claude/PAI`.
+
+### Never `pkill -f 'src/index.ts'` — `com.parlay.chat-server` matches it
+
+The captain's live chat server is a launchd job (`com.parlay.chat-server`) running
+`~/code/parlay/packages/server/src/index.ts`, so any broad process match on
+`src/index.ts`, `bun`, or `parlay` kills **his** server, not just your sandbox's.
+It is launchd-supervised and respawns in about a second, so the blast radius is a
+brief interruption rather than lost data — but it is still his fleet, and nothing
+in the pattern tells you which instance you matched. Tear a test server down by
+the thing that is unique to it: the port (`PARLAY_PORT=<45xxx>` in the match, or
+the listening pid) or its scratch `PARLAY_DATA_DIR` path. The same trap applies to
+the relay: `$TMPDIR/parlay/` is the captain's shared runtime dir and a scoped test
+relay lives in a `srv-<hash>` subdirectory of it (see the robots-buu8 section
+below) — match the subdirectory, never the parent.
+
 ## Remote debug log + on-screen mobile console (phone-only bug triage)
 
 `packages/client/src/debug-log.ts` captures `window.onerror`,

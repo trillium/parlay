@@ -1,22 +1,23 @@
 # Parlay HTTP API contract
 
-> Ground truth for this doc is the **client** (`packages/client/src/*`) and
-> **CLI** (`packages/cli/src/*`) call sites, plus the one standalone server
-> file that exists outside the broken symlink farm
-> (`packages/server/src/debug-log.ts`). Every other server-side handler
-> (`router.ts`, `router-poll.ts`, `router-device-cmd.ts`, `sse.ts`,
-> `eval-relay.ts`, …) lives under `packages/server/src/`, which — as of
-> 2026-08-01 — is a broken self-referential symlink loop into
-> `~/.claude/PAI/PULSE/modules/chat` and cannot be read from this checkout
-> (see the project `CLAUDE.md`). **Response shapes below are reconstructed
-> from how callers consume them, not read from the handler source** — see
-> [Open Gaps](#open-gaps) for exactly what that means per endpoint.
+> **How this doc was written, and what that means for trusting it.** It was
+> reconstructed from the **client** (`packages/client/src/*`) and **CLI** call
+> sites at a time when `packages/server/src/` could not be read from a checkout —
+> the directory was a broken self-referential symlink loop (fixed since; see the
+> project `CLAUDE.md`). So **response shapes below are inferred from how callers
+> consume them, not read from the handler source.** They have held up in practice
+> and this is the spec both server implementations are built against, but where a
+> shape is under-determined it is called out in [Open Gaps](#open-gaps) rather
+> than guessed at. The handler source is readable again — prefer it when the two
+> disagree, and correct this doc when they do.
 >
 > Base path for all REST/SSE routes: `/api/chat`. `CHAT_BASE` in
 > `packages/client/src/config.ts` is the single client-side constant; the CLI
-> resolves the server origin via `serverUrl()` in `packages/cli/src/config.ts`
-> (`PARLAY_SERVER` env → persisted `~/.parlay/config.json` `"server"` key →
-> `http://localhost:4242`). All request/response bodies are JSON unless noted.
+> resolves the server origin via `config.ServerURL()`
+> (`tools/cli/internal/config/config.go`, and its retired TS predecessor
+> `serverUrl()` in `packages/cli/src/config.ts`): `PARLAY_SERVER` env →
+> persisted `~/.parlay/config.json` `"server"` key → `http://localhost:4242`.
+> All request/response bodies are JSON unless noted.
 
 ## Conventions
 
