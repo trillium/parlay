@@ -56,8 +56,8 @@ Written by `parlay identity --register …`, read back by `parlay launch <id>`,
 | Key | Required | Meaning |
 |---|---|---|
 | `id` | yes | The agent id. |
-| `name` | for a tab | Display name. |
-| `color` | for a tab | Tab colour. |
+| `name` | for launch + a tab | Display name. |
+| `color` | for launch + a tab | Tab colour. |
 | `model` | no | Model `parlay launch <id>` respawns with. |
 | `cwd` | for launch | **Change this** — the directory the agent is launched in. |
 | `kind` | no | Free-form: `task`, `service`, … Recorded, not interpreted by the CLI. |
@@ -65,6 +65,12 @@ Written by `parlay identity --register …`, read back by `parlay launch <id>`,
 | `worktree` | for teardown | Git worktree to remove on teardown. |
 | `project` | no | The repo the worktree belongs to. |
 | `mode`, `effort`, `yolo` | no | Free-form profile strings this fleet's spawner reads. Recorded, not interpreted by the CLI. |
+
+`name` and `color` are not cosmetic either: `knownAgents()`
+(`tools/cli/internal/commands/launch.go`) skips any agent store whose
+frontmatter is missing `id`, `name`, or `color`, so an agent lacking one of
+them is absent from a bare `parlay launch` listing and `parlay launch <id>`
+exits 2 with "no known agent".
 
 `worktree` is load-bearing for safety, not cosmetic: `parlay teardown` refuses to
 destroy an agent whose recorded worktree has uncommitted or unpushed work. An agent

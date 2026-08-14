@@ -157,7 +157,13 @@ say "checks"
 fail=0
 check() { if [ "$2" = "ok" ]; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
 
-parlay agents | grep -q '^helm ' && check "registry served the seeded agents" ok || check "registry served the seeded agents" no
+registry_served_both_agents() {
+  local out; out="$(parlay agents)" || return 1
+  printf '%s\n' "$out" | grep -q '^helm ' || return 1
+  printf '%s\n' "$out" | grep -q '^reviewer ' || return 1
+}
+registry_served_both_agents &&
+  check "registry served the seeded agents" ok || check "registry served the seeded agents" no
 parlay history 5 --full | grep -q "hello from bootstrap-sandbox.sh" &&
   check "message round-tripped through the server" ok || check "message round-tripped through the server" no
 grep -q "hello from bootstrap-sandbox.sh" "$SANDBOX/data/chat-history.jsonl" &&
@@ -179,8 +185,8 @@ identity_body_without_frontmatter &&
   check "identity.md read back with frontmatter stripped" ok || check "identity.md read back with frontmatter stripped" no
 launch_specs_for_both() {
   local out; out="$(parlay launch)" || return 1
-  printf '%s' "$out" | grep -q "helm" || return 1
-  printf '%s' "$out" | grep -q "reviewer" || return 1
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*helm ' || return 1
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*reviewer ' || return 1
 }
 launch_specs_for_both &&
   check "launch spec discovered for both agents" ok || check "launch spec discovered for both agents" no

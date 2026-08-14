@@ -200,7 +200,11 @@ Then edit the placeholders and run the server with
 - An agent's id is the same string in three places — the directory name under
   `agents/`, `context.json`'s `id`, and `identity.md`'s frontmatter `id`. Anything
   else and replies land on the wrong tab or nowhere.
-- `identity.md` frontmatter `id`; `name` and `color` if you want a usable tab.
+- `identity.md` frontmatter `id`, `name`, and `color` — all three. `name` and
+  `color` are not cosmetics: `knownAgents()` skips any agent store missing any
+  one of the three, so an agent with an `id` and a `cwd` but no `color` never
+  appears in `parlay launch`, and `parlay launch <id>` exits 2 with "no known
+  agent" for a store that plainly exists on disk.
 - A registry entry per agent — though you can skip seeding `parlay-agents.json`
   entirely and let `parlay listen` register agents on first contact.
 - `cwd` in the frontmatter, if you want `parlay launch <id>` to respawn the agent.
