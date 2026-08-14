@@ -202,7 +202,8 @@ Repo conventions worth knowing:
 Docs of note: [`docs/api-contract.md`](docs/api-contract.md) (the HTTP contract
 between client, CLI, and server), [`docs/COMMAND_DESIGN_CONTRACT.md`](docs/COMMAND_DESIGN_CONTRACT.md)
 (the voice engine), and [`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md)
-(CLI verb authoring). Several docs in `docs/` describe integration with the author's
+(CLI verb authoring — sound mechanics, but written against the retired TS CLI;
+`tools/cli` is the live surface). Several docs in `docs/` describe integration with the author's
 own agent fleet, some of it public and some not — [`docs/README.md`](docs/README.md)
 says which is which.
 
