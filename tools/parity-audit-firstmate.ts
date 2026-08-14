@@ -42,7 +42,12 @@ const cliIndex = read(`${PL}/packages/cli/src/index.ts`)
 const cliCmds = read(`${PL}/packages/cli/src/commands.ts`)
 const cliStatusSrc = read(`${PL}/packages/cli/src/commands-status.ts`)
 const cliSuperviseSrc = read(`${PL}/packages/cli/src/commands-supervise.ts`)
-const foldDoc = read(`${PL}/docs/PARLAY_FIRSTMATE_FOLD.md`)
+// The fold design doc is captain-private and no longer lives in this repo. Point
+// PARLAY_FOLD_DOC at a copy to re-enable the two doc-derived probes below
+// (`crewDispatchRetentionStated`, `afkHomeInFold`); without it those rows report
+// as NOT EVALUATED rather than silently regressing to MISSING.
+const foldDoc = process.env.PARLAY_FOLD_DOC ? read(process.env.PARLAY_FOLD_DOC) : ""
+const foldDocAvailable = foldDoc.length > 0
 
 const probe = {
   spawnFlag: (f: string) => new RegExp(`--${f}\\b`).test(spawnSrc),
@@ -185,7 +190,12 @@ const M: Row[] = [
 
 // ---- verify integrity ----------------------------------------------------
 const problems: string[] = []
+// Rows whose verdict comes from the fold doc: without it their probe reads
+// false, which would render a real capability as a MISSING contraction.
+const docDerivedCaps = ["Away-mode unattended sub-supervision"]
+const notEvaluated = foldDocAvailable ? [] : docDerivedCaps
 for (const r of M) {
+  if (notEvaluated.includes(r.cap)) continue
   if (r.verdict === "MISSING") {
     if (!r.fix) problems.push(`MISSING w/o fix tag: ${r.cap}`)
     else if (!hasFixTask(r.fix)) problems.push(`MISSING "${r.cap}" → no open fix task tagged parlay-fold ${r.fix}`)
@@ -193,22 +203,31 @@ for (const r of M) {
 }
 // C5 (task-8io0): the crew-dispatch row is only a legitimate STAYS-FIRSTMATE if the
 // fold doc actually states retention + re-activation. Regress to a problem otherwise.
-if (/Crew-dispatch/.test(M.find(r => /Crew-dispatch/.test(r.cap))?.cap ?? "") && !probe.crewDispatchRetentionStated) {
+// Only assertable when the doc is readable; otherwise it is NOT EVALUATED.
+if (foldDocAvailable && /Crew-dispatch/.test(M.find(r => /Crew-dispatch/.test(r.cap))?.cap ?? "") && !probe.crewDispatchRetentionStated) {
   problems.push(`Crew-dispatch marked STAYS-FIRSTMATE but fold doc does not state retention + re-activation (see §3.4a)`)
 }
 
 // ---- render --------------------------------------------------------------
+// Unevaluated rows are reported once under NOT EVALUATED, never counted or
+// listed under a verdict they were never assessed against.
+const rendered = M.filter(r => !notEvaluated.includes(r.cap))
 const counts: Record<string, number> = {}
-for (const r of M) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1
+for (const r of rendered) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1
 
 const asJson = process.argv.includes("--json")
 if (asJson) {
-  console.log(JSON.stringify({ generated: "probe-live", counts, rows: M, problems }, null, 2))
+  console.log(JSON.stringify({ generated: "probe-live", counts, rows: M, problems, notEvaluated }, null, 2))
 } else {
   console.log(`\nparlay×firstmate capability parity — ${M.length} capabilities\n`)
+  if (notEvaluated.length) {
+    console.log(`NOT EVALUATED (fold doc unavailable — set PARLAY_FOLD_DOC to a copy):`)
+    for (const cap of notEvaluated) console.log(`  ${cap}`)
+    console.log()
+  }
   const order: Verdict[] = ["MISSING", "DEFERRED", "COVERED-alternate", "COVERED-same", "EXPANDED", "STAYS-FIRSTMATE", "DROP-justified"]
   for (const v of order) {
-    const rows = M.filter(r => r.verdict === v)
+    const rows = rendered.filter(r => r.verdict === v)
     if (!rows.length) continue
     console.log(`── ${v} (${rows.length}) ${"─".repeat(Math.max(0, 40 - v.length))}`)
     for (const r of rows) {

@@ -9,9 +9,11 @@ import (
 	"time"
 )
 
-// realListenerArgs is the exact `ps -xo args=` shape a live listener has on
-// the captain's box, copied from the robots-fgyz repro.
-const realListenerArgs = "/Users/trilliumsmith/code/parlay/tools/cli/bin/parlay-cli listen --agent mayor"
+// realListenerArgs is the exact `ps -xo args=` shape a live listener has,
+// copied from the robots-fgyz repro with the home path genericized. What
+// matters is the shape: an absolute repo-checkout path ending in the
+// parlay-cli basename, followed by `listen --agent <id>`.
+const realListenerArgs = "/Users/dev/code/parlay/tools/cli/bin/parlay-cli listen --agent mayor"
 
 func TestListensForAgentMatchesARealListener(t *testing.T) {
 	if !listensForAgent(realListenerArgs, "mayor") {
