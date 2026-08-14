@@ -350,8 +350,33 @@ func watchCommands(f commandFilter, asJSON bool) {
 	// link dropped. Follow mode that simply stops is indistinguishable from an
 	// idle fleet — to an operator reading the terminal and to a script reading
 	// the exit code alike — so say so on stdout and fail (robots-dcag).
-	fmt.Println("watch: event stream ended — no longer receiving updates")
+	//
+	// --json is a promise that every stdout line parses, so there the notice is
+	// one compact JSON object and the human sentence moves to stderr (where the
+	// watching… banner above already goes). `error` is the key a schema-blind
+	// consumer should discriminate on: wire.CommandInvocation, the only other
+	// thing this loop prints, has neither `ok` nor `error`, and while
+	// commandsUnsupported is also ok:false (its OK field is left at the zero
+	// value) it cannot co-occur with --watch. Adding `error` to another payload
+	// here, or `ok` to a record, would end that. The payload carries no argv,
+	// path, host, or port — `stream-ended` is the whole machine-readable
+	// message.
+	if asJSON {
+		out, _ := json.Marshal(watchStreamEnded{Error: "stream-ended"})
+		fmt.Println(string(out))
+		fmt.Fprintln(os.Stderr, streamEndedNotice)
+	} else {
+		fmt.Println(streamEndedNotice)
+	}
 	httpc.Exit(config.ExitRuntime)
+}
+
+// streamEndedNotice is fixed text with nothing interpolated into it.
+const streamEndedNotice = "watch: event stream ended — no longer receiving updates"
+
+type watchStreamEnded struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error"`
 }
 
 // isWatched reports whether rec is a RUNNING record this view is following.

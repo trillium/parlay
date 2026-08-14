@@ -234,10 +234,15 @@ func eventStream(body string) http.Handler {
 // harnesses that read these streams (robots-gv6t).
 func watchOnce(t *testing.T, stream string, f commandFilter) (lines []string, code int, exited bool) {
 	t.Helper()
+	return watchOnceMode(t, stream, f, false)
+}
+
+func watchOnceMode(t *testing.T, stream string, f commandFilter, asJSON bool) (lines []string, code int, exited bool) {
+	t.Helper()
 	withServer(t, eventStream(stream))
 
 	out := captureStdout(t, func() {
-		code, exited = withExitTrap(t, func() { watchCommands(f, false) })
+		code, exited = withExitTrap(t, func() { watchCommands(f, asJSON) })
 	})
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line != "" {
@@ -336,5 +341,41 @@ func TestWatchSaysSoWhenTheStreamEnds(t *testing.T) {
 	}
 	if !exited || code == 0 {
 		t.Errorf("exit = %d exited=%v, want a non-zero give-up", code, exited)
+	}
+}
+
+// --json promises that every stdout line parses, so the give-up notice has to
+// announce itself in-band without breaking `parlay commands --json --watch |
+// jq -c .`. The property under test is that the whole stream parses line by
+// line, not what the notice reads like.
+func TestWatchJSONStreamEndStaysParseable(t *testing.T) {
+	lines, code, exited := watchOnceMode(t, followStream, commandFilter{agent: "crew-1"}, true)
+
+	if len(lines) == 0 {
+		t.Fatal("--json --watch printed nothing at all")
+	}
+	for i, line := range lines {
+		var any map[string]any
+		if err := json.Unmarshal([]byte(line), &any); err != nil {
+			t.Fatalf("stdout line %d is not JSON (%v): %q", i+1, err, line)
+		}
+	}
+
+	last := map[string]any{}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("decoding the final line: %v", err)
+	}
+	if last["ok"] != false || last["error"] != "stream-ended" {
+		t.Errorf("final line = %v, want the structured give-up {ok:false, error:\"stream-ended\"}", last)
+	}
+	for i, line := range lines[:len(lines)-1] {
+		var rec map[string]any
+		_ = json.Unmarshal([]byte(line), &rec)
+		if _, ok := rec["error"]; ok {
+			t.Errorf("record line %d carries an `error` key, destroying the discriminator: %q", i+1, line)
+		}
+	}
+	if !exited || code == 0 {
+		t.Errorf("exit = %d exited=%v, want a non-zero give-up in --json mode too", code, exited)
 	}
 }
