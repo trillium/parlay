@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": patch
+"parlay-cli": patch
 ---
 
 Fix `parlay send --agent <id>` silently misrouting a steer to a phantom channel, and refuse sends to unregistered agents (robots-ngg5).

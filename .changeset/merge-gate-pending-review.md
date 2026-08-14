@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 Stop `parlay merge-gate` reporting "blocked on the CODE" when the review simply has not finished — exit `5` PENDING, distinct from `3` BLOCKED (robots-rwf8).

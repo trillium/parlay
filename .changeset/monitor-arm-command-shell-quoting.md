@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": patch
+"parlay-cli": patch
 ---
 
 **The printed Monitor arm-command no longer executes the ticket title (robots-2h4n).**

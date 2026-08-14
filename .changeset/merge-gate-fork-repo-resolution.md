@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": patch
+"parlay-cli": patch
 ---
 
 fix(merge-gate): resolve the repo from `origin`, not gh's upstream-first guess (robots-g4qz)

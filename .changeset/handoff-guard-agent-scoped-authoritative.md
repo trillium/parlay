@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": patch
+"parlay-cli": patch
 ---
 
 Fix the handoff create→submit / say-guard false-positive that mis-nagged every fresh or resumed agent (robots-4x9f; root-cause cluster robots-6wb/0sv/bu8/51s/vi7).

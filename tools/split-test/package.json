@@ -1,5 +1,5 @@
 {
-  "name": "@parlay/split-test",
+  "name": "parlay-split",
   "version": "0.1.0",
   "private": true,
   "description": "Standalone split-testing tool for Parlay: isolated sandboxes, two-door and two-stack probe suites. Zero prod contact.",

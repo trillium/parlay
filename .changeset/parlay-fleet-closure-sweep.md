@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 Add `parlay sweep`, the fleet closure sweep, and restore the `identity --register` worktree/project fields that made teardown's safety checks reachable (robots-6xq7).
