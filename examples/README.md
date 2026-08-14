@@ -55,8 +55,10 @@ meet only over HTTP. Each directory has its own README with a per-file table:
 
 ### Start here: a scratch directory
 
-Nothing of yours is in reach, so there is nothing to be careful about. This is
-the same layout `bootstrap-sandbox.sh` builds, minus the teardown:
+No copy in this path writes into `~/.parlay` or your data dir. This is the same
+layout `bootstrap-sandbox.sh` builds, minus the `$HOME` redirection and the
+teardown — read the two paragraphs after the recipe for what that difference
+still leaves in reach:
 
 ```sh
 # 1. Instantiate the example somewhere new
@@ -71,7 +73,8 @@ $EDITOR "$PARLAY_EXAMPLE/.parlay/agents/reviewer/identity.md" # cwd/worktree/pro
 $EDITOR "$PARLAY_EXAMPLE/.parlay/config.json"                 # server URL, if not localhost:4242
 
 # 3. Run the server against the scratch data dir
-cd packages/server && PARLAY_DATA_DIR="$PARLAY_EXAMPLE/data" bun run start
+cd packages/server && PARLAY_DATA_DIR="$PARLAY_EXAMPLE/data" \
+  PAI_DIR="$PARLAY_EXAMPLE/pai" bun run start
 
 # 4. Talk to it — every CLI call carries the scratch roots
 cd tools/cli && go build -o ~/.local/bin/parlay .
@@ -84,6 +87,13 @@ parlay send --helm "hello"
 `/path/to/your/project` is the only value you *must* change. Everything else has
 a working default. The two `README.md` files copied along the way are
 documentation; nothing reads them.
+
+`PAI_DIR` in step 3 is not optional decoration. `PARLAY_DATA_DIR` does not cover
+it: the hook tailer, the tool tailer, and the boot-time session-channel backfill
+all read `$PAI_DIR/MEMORY/OBSERVABILITY` unconditionally, and `src/tts.ts` writes
+`$PAI_DIR/MEMORY/{OBSERVABILITY/tts-pronunciation-reports.jsonl,STATE/tts-cache/}`
+regardless. Leave it unset and the scratch server tails your real
+`~/.claude/PAI` activity and broadcasts it onto the example's channels.
 
 `PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` cover `identity`, `scratchpad`, `say`,
 `status`, and `doctor`. They do **not** cover `launch`, `teardown`, `variant`, or
@@ -116,7 +126,14 @@ Bun's default bind address is `0.0.0.0` — so the command above listens on ever
 interface of the machine, and the chat API has no authentication of any kind.
 Anyone who can reach the port can read your history and post as any agent. Do
 not run it on a network you do not trust: firewall the port, or put something
-that authenticates in front of it. Same for `packages/go-server`.
+that authenticates in front of it.
+
+`packages/go-server` differs in one half only. It defaults to `127.0.0.1:4242`
+and binds exactly that unless `-addr` / `PARLAY_SERVER_ADDR` says otherwise, so
+it is loopback-only out of the box. It has no authentication either — and unlike
+`packages/server`, no equivalent of `src/guard.ts`, so its write routes have no
+Origin or content-type check at all. Point `-addr` at a non-loopback address and
+you have the TypeScript server's exposure with less in front of it.
 
 ### Optional: merging into a real `~/.parlay`
 
@@ -229,7 +246,9 @@ the authoritative list; it is case-insensitive:
 - The seeded registry is served: `parlay agents` lists both agents.
 - `parlay send --helm "…"` round-trips — read back by `parlay history` and
   appended to the sandbox's `chat-history.jsonl`.
-- The seeded `chat-history.jsonl` lines load and render on both channels.
+- The seeded `chat-history.jsonl` lines load and are served back on the channel
+  each one names — `parlay history --full` shows the seeded `helm` and `reviewer`
+  ids with their channels intact.
 - `parlay remote` resolves the server URL from the sandbox's `config.json`
   (source: `config`), with `PARLAY_SERVER` unset.
 - `parlay identity --agent helm` reads `identity.md` back with the launch-spec
@@ -237,7 +256,12 @@ the authoritative list; it is case-insensitive:
 - `parlay launch` (no args) discovers both agents' launch specs and reports them
   live.
 - `parlay doctor` with `PARLAY_AGENT_ID=helm` reports PASS on identity, registry
-  membership, and server reachability.
+  membership, and server reachability. Its output is captured and those three
+  lines are asserted; the WARNs about the monitor and the eval engine are
+  expected and not asserted.
+
+Every bullet above is one of the script's own PASS/FAIL checks, not something
+observed by eye — if one stops holding, `bootstrap-sandbox.sh` fails.
 
 **Not verified:**
 

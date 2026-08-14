@@ -98,9 +98,13 @@ parlay() {
 
 # ── 3. Start the server ──────────────────────────────────────────────────────
 say "starting packages/server on port $PORT"
+# `exec` is load-bearing: without it the subshell is a real intermediate process
+# on stock macOS bash 3.2, $! records IT rather than bun, and the kill in
+# cleanup() leaves an orphaned server holding this port while $SANDBOX is
+# removed underneath it. exec replaces the subshell, so $! is always the server.
 (
   cd "$REPO/packages/server"
-  env HOME="$SANDBOX" \
+  exec env HOME="$SANDBOX" \
     PARLAY_DATA_DIR="$SANDBOX/data" \
     PAI_DIR="$SANDBOX/pai" \
     PARLAY_PORT="$PORT" \
@@ -141,9 +145,12 @@ curl -fsS -m 5 -X PUT -H 'Content-Type: application/json' \
   -d '{"textScale":123}' "$BASE/api/chat/parlay/settings" >/dev/null
 
 say "parlay doctor — self-diagnosis for PARLAY_AGENT_ID=helm"
+# Captured so the checks below can assert which lines PASSed. WARNs are expected
+# (no monitor is armed, no eval engine), so a non-zero exit is not a failure here.
 env -u PARLAY_SERVER HOME="$SANDBOX" PARLAY_STATE_HOME="$SANDBOX/.parlay" \
   PARLAY_AGENT_HOME="$SANDBOX/.parlay/agents" PARLAY_AGENT_ID=helm \
-  "$SANDBOX/bin/parlay" doctor || true   # WARNs are expected: no monitor is armed
+  "$SANDBOX/bin/parlay" doctor > "$SANDBOX/doctor.log" 2>&1 || true
+cat "$SANDBOX/doctor.log"
 
 # ── 5. Assert ────────────────────────────────────────────────────────────────
 say "checks"
@@ -167,6 +174,27 @@ launch_specs_for_both() {
 }
 launch_specs_for_both &&
   check "launch spec discovered for both agents" ok || check "launch spec discovered for both agents" no
+
+# The four seeded chat-history.jsonl lines are loaded by the server and served
+# back on the channel each one names — two on helm, two on reviewer. `--full`
+# prints `id=… channel=…`, so this asserts routing, not just that the text
+# survived.
+seeded_history_on_both_channels() {
+  local out; out="$(parlay history 20 --full)" || return 1
+  printf '%s' "$out" | grep -q 'id=00000000-0000-4000-8000-000000000001 channel=helm' || return 1
+  printf '%s' "$out" | grep -q 'id=00000000-0000-4000-8000-000000000003 channel=reviewer' || return 1
+}
+seeded_history_on_both_channels &&
+  check "seeded history served on both channels" ok || check "seeded history served on both channels" no
+
+doctor_passes_core_checks() {
+  grep -q '^PASS .*identity\.md ok' "$SANDBOX/doctor.log" || return 1
+  grep -q '^PASS .*registered as "helm"' "$SANDBOX/doctor.log" || return 1
+  grep -q '^PASS .*server reachable' "$SANDBOX/doctor.log" || return 1
+}
+doctor_passes_core_checks &&
+  check "doctor PASSes identity, registry membership, reachability" ok ||
+  check "doctor PASSes identity, registry membership, reachability" no
 
 # The server's persisted WRITES must land in $PARLAY_DATA_DIR and nowhere else.
 # Both halves have to prove a write: the example's own files are copied into

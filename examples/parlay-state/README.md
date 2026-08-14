@@ -78,5 +78,14 @@ line; a bare `parlay identity` prints this part with the frontmatter stripped.
 Appended to by `parlay status <verb> "<line>"`, one line per supervisor-actionable
 transition, read by `parlay crew-state <id>` and `parlay supervise <id>`. Verbs:
 `working`, `needs-decision`, `blocked`, `paused`, `done`, `failed`, `resolved`
-(`tools/cli/internal/commands/status_verb.go`). Terminal states
-(`done`/`failed`) are what makes an agent eligible for `parlay sweep`.
+(`tools/cli/internal/commands/status_verb.go`).
+
+`parlay sweep` reads this file to decide what it may collect, and only **`done`**
+is collectable. `needs-decision`, `blocked`, and `failed` are terminal too, but
+they are the ones a human still has to read, so sweep *holds* and reports them
+instead of absorbing them — a failed agent stays until you deal with it. `done`
+alone is not enough either: unless you name the agent explicitly, sweep also
+requires the store to prove it was a per-task spawn, with a `task:` or a
+`worktree:` in its `identity.md` frontmatter. Anything it cannot prove is held.
+`sweep-keep` overrides all of it (`ClassifySweep` in
+`tools/cli/internal/commands/sweep.go` is the whole policy).
