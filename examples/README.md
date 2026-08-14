@@ -57,12 +57,13 @@ meet only over HTTP. Each directory has its own README with a per-file table:
 
 No copy in this path writes into `~/.parlay` or your data dir. This is the same
 layout `bootstrap-sandbox.sh` builds, minus the `$HOME` redirection and the
-teardown — read the two paragraphs after the recipe for what that difference
-still leaves in reach:
+teardown — the `PARLAY_STATE_HOME` and `parlay sweep` paragraphs below the
+recipe are what that difference still leaves in reach:
 
 Start at the repo root. Step 4 runs the server in the foreground and never
-returns, so it needs a terminal of its own — the two `export`s in step 1 are
-what let you re-enter it there.
+returns, so it needs a terminal of its own, and a new shell inherits nothing
+from step 1 — which is why step 4 sets both roots again rather than assuming
+them.
 
 ```sh
 # 1. Instantiate the example somewhere new
@@ -73,17 +74,20 @@ cp -R examples/parlay-state "$PARLAY_EXAMPLE/.parlay"
 cp -R examples/data-dir     "$PARLAY_EXAMPLE/data"
 
 # 2. Edit the placeholders
-$EDITOR "$PARLAY_EXAMPLE/.parlay/agents/helm/identity.md"     # cwd: /path/to/your/project
-$EDITOR "$PARLAY_EXAMPLE/.parlay/agents/reviewer/identity.md" # cwd/worktree/project
-$EDITOR "$PARLAY_EXAMPLE/.parlay/config.json"                 # server URL, if not localhost:4242
+${EDITOR:-vi} "$PARLAY_EXAMPLE/.parlay/agents/helm/identity.md"     # cwd: /path/to/your/project
+${EDITOR:-vi} "$PARLAY_EXAMPLE/.parlay/agents/reviewer/identity.md" # cwd/worktree/project
+${EDITOR:-vi} "$PARLAY_EXAMPLE/.parlay/config.json"                 # server URL, if not localhost:4242
 
 # 3. Build the CLI into the scratch dir — nothing on your PATH is touched
 mkdir -p "$PARLAY_EXAMPLE/bin"
 cd "$PARLAY_REPO/tools/cli" && go build -o "$PARLAY_EXAMPLE/bin/parlay" .
 
 # 4. SECOND TERMINAL — run the server against the scratch data dir. This blocks
-#    in the foreground until you stop it. Re-export PARLAY_REPO and
-#    PARLAY_EXAMPLE here first; a new shell does not inherit them.
+#    in the foreground until you stop it. Start in the repo root again, the same
+#    directory step 1 started in: a new shell has neither export, and an unset
+#    PARLAY_EXAMPLE would make PAI_DIR empty rather than absent (see below).
+export PARLAY_REPO="$(pwd)"
+export PARLAY_EXAMPLE=~/parlay-example
 cd "$PARLAY_REPO/packages/server" && PARLAY_DATA_DIR="$PARLAY_EXAMPLE/data" \
   PAI_DIR="$PARLAY_EXAMPLE/pai" bun run start
 
@@ -95,12 +99,13 @@ export PARLAY_AGENT_HOME="$PARLAY_EXAMPLE/.parlay/agents"
 "$PARLAY_EXAMPLE/bin/parlay" send --helm "hello"
 ```
 
-Every `parlay` in the prose below means that scratch binary. Nothing here
-installs onto your `PATH`: if you already have a `parlay` there, building over it
-would replace it silently — and in a clone of this repo that name is usually a
-symlink to the repo's own `bin/parlay` wrapper, which does more than the bare Go
-binary does. `bootstrap-sandbox.sh` builds into its sandbox and invokes it by
-absolute path for the same reason.
+Every `parlay` in the prose below means that scratch binary, up to the merge
+section — that one is about your real setup, so the `parlay` there is your own.
+Nothing here installs onto your `PATH`: if you already have a `parlay` there,
+building over it would replace it silently — and in a clone of this repo that
+name is usually a symlink to the repo's own `bin/parlay` wrapper, which does more
+than the bare Go binary does. `bootstrap-sandbox.sh` builds into its sandbox and
+invokes it by absolute path for the same reason.
 
 `/path/to/your/project` is the only value you *must* change. Everything else has
 a working default. The two `README.md` files copied along the way are
@@ -112,6 +117,14 @@ all read `$PAI_DIR/MEMORY/OBSERVABILITY` unconditionally, and `src/tts.ts` write
 `$PAI_DIR/MEMORY/{OBSERVABILITY/tts-pronunciation-reports.jsonl,STATE/tts-cache/}`
 regardless. Leave it unset and the scratch server tails your real
 `~/.claude/PAI` activity and broadcasts it onto the example's channels.
+
+Set it to a real path or leave it out entirely — never let it expand to empty.
+The server resolves it with `??`, not `||`, so `PAI_DIR=""` is a *value*, not
+"unset": `$PAI_DIR/MEMORY/…` becomes a relative path against the server's
+working directory, and the tailers read — and `src/tts.ts` writes — a `MEMORY/`
+tree inside `packages/server` in your clone of this repo. That is what an
+unexported `$PARLAY_EXAMPLE` in step 4 would do, which is why step 4 sets it
+rather than inheriting it.
 
 `PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` cover `identity`, `scratchpad`, `say`,
 `status`, and `doctor`. They do **not** cover `launch`, `teardown`, `variant`, or
@@ -189,8 +202,9 @@ Every line above is marked because it can overwrite something of yours:
   and `status`. Rename the example's directories first, and the `id` inside each
   `identity.md` and `context.json` with them.
 - **The `data-dir/` copy** — the most destructive line in the block, because
-  `env.example` suggests exactly `PARLAY_DATA_DIR="$HOME/.parlay/data"`, so if
-  you took that suggestion this path already holds live server state.
+  `env.example` documents `$HOME/.parlay/data` as the value to use and the
+  `mkdir` above puts it there, so if you already run a server that way this path
+  already holds live server state.
   `parlay-agents.json` is your **whole registry** — the server loads that file as
   the entire agent map, so replacing it with the example's two entries removes
   every other tab. `chat-history.jsonl` is your **whole message log**, replaced by
@@ -198,9 +212,27 @@ Every line above is marked because it can overwrite something of yours:
   If you already have a data dir, **skip this line entirely**, or copy only
   `parlay-settings.json`.
 
-Then edit the placeholders and run the server with
-`PARLAY_DATA_DIR=~/.parlay/data`, exactly as in steps 2-5 above — minus the two
-`PARLAY_*_HOME` exports, since `~/.parlay` is already the default.
+Then edit the placeholders in their new home and start the server. Do not reuse
+steps 2-5: those are written against `$PARLAY_EXAMPLE` and would send you back to
+the scratch copy. This path has its own commands, run from the repo root:
+
+```sh
+# Edit the placeholders, now under ~/.parlay
+${EDITOR:-vi} ~/.parlay/agents/helm/identity.md      # cwd: /path/to/your/project
+${EDITOR:-vi} ~/.parlay/agents/reviewer/identity.md  # cwd/worktree/project
+
+# Run the server against the merged data dir
+cd packages/server && PARLAY_DATA_DIR=~/.parlay/data bun run start
+```
+
+No `PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` here — `~/.parlay` is already where
+the CLI looks — and no scratch binary either: the CLI on this path is whatever
+`parlay` you already had, since this merges into the store it already reads.
+
+No `PAI_DIR` either. Leaving it **unset** is correct here: it falls back to
+`~/.claude/PAI`, which is the activity you now want tailed. Leave it out of the
+command entirely rather than writing `PAI_DIR=`, which is not the same thing —
+see the `PAI_DIR` paragraph above for what an empty value does.
 
 ## Required vs. taste
 
@@ -235,7 +267,11 @@ Then edit the placeholders and run the server with
   optional. The voice phrases especially are one person's speech habits.
 - Putting `$PARLAY_DATA_DIR` under `~/.parlay/data`. Any directory works. Unset,
   the server scatters those files to `~/exchange` and `$PAI_DIR/MEMORY/STATE`
-  instead.
+  instead. Set it on a *new* instance, not on one already running without it:
+  it moves the read side too, so the panel comes up empty, every tab is gone
+  until each agent re-registers, and the server starts a second registry
+  alongside the one you still have. Move the existing files in first, server
+  stopped.
 
 **One naming rule that is not taste:** the server's cleanup sweep deletes
 channels whose id matches any of the patterns below on sight, at every sweep

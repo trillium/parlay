@@ -10,12 +10,21 @@ instead — `~/exchange/` for most, `$PAI_DIR/MEMORY/STATE/` for the registry. T
 split is historical. Set `PARLAY_DATA_DIR`; it is one directory you can back up,
 inspect, and throw away.
 
+Set it *before* a server has state, though, or move that state in first. It
+relocates the read side as well: a server that has been running without it comes
+back with an empty panel, no tabs until every agent re-registers, and a second
+registry here diverging from the one still sitting in `~/exchange` and
+`$PAI_DIR/MEMORY/STATE`. Nothing is lost, but nothing is found either.
+
 `PARLAY_DATA_DIR` is not quite the server's whole write surface: `$PAI_DIR` is
 read unconditionally by the hook and tool tailers and the boot-time
 session-channel backfill, and `src/tts.ts` writes
 `$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl` and
 `$PAI_DIR/MEMORY/STATE/tts-cache/` no matter what `PARLAY_DATA_DIR` says. Set
-`PAI_DIR` as well for a genuinely self-contained instance.
+`PAI_DIR` as well for a genuinely self-contained instance — to a real path, or
+not at all. It is resolved with `??`, so an empty value is not "unset": those
+`$PAI_DIR/…` paths turn relative and the tree lands wherever the server was
+started from.
 
 | File | What it is | Change it? |
 |---|---|---|
