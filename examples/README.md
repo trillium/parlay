@@ -77,8 +77,9 @@ $EDITOR "$PARLAY_EXAMPLE/.parlay/agents/helm/identity.md"     # cwd: /path/to/yo
 $EDITOR "$PARLAY_EXAMPLE/.parlay/agents/reviewer/identity.md" # cwd/worktree/project
 $EDITOR "$PARLAY_EXAMPLE/.parlay/config.json"                 # server URL, if not localhost:4242
 
-# 3. Build the CLI
-cd "$PARLAY_REPO/tools/cli" && go build -o ~/.local/bin/parlay .
+# 3. Build the CLI into the scratch dir — nothing on your PATH is touched
+mkdir -p "$PARLAY_EXAMPLE/bin"
+cd "$PARLAY_REPO/tools/cli" && go build -o "$PARLAY_EXAMPLE/bin/parlay" .
 
 # 4. SECOND TERMINAL — run the server against the scratch data dir. This blocks
 #    in the foreground until you stop it. Re-export PARLAY_REPO and
@@ -86,12 +87,20 @@ cd "$PARLAY_REPO/tools/cli" && go build -o ~/.local/bin/parlay .
 cd "$PARLAY_REPO/packages/server" && PARLAY_DATA_DIR="$PARLAY_EXAMPLE/data" \
   PAI_DIR="$PARLAY_EXAMPLE/pai" bun run start
 
-# 5. Back in the first terminal — every CLI call carries the scratch roots
+# 5. Back in the first terminal — every CLI call carries the scratch roots, and
+#    the binary is invoked by path so it cannot collide with a parlay on PATH
 export PARLAY_STATE_HOME="$PARLAY_EXAMPLE/.parlay"
 export PARLAY_AGENT_HOME="$PARLAY_EXAMPLE/.parlay/agents"
-parlay agents
-parlay send --helm "hello"
+"$PARLAY_EXAMPLE/bin/parlay" agents
+"$PARLAY_EXAMPLE/bin/parlay" send --helm "hello"
 ```
+
+Every `parlay` in the prose below means that scratch binary. Nothing here
+installs onto your `PATH`: if you already have a `parlay` there, building over it
+would replace it silently — and in a clone of this repo that name is usually a
+symlink to the repo's own `bin/parlay` wrapper, which does more than the bare Go
+binary does. `bootstrap-sandbox.sh` builds into its sandbox and invokes it by
+absolute path for the same reason.
 
 `/path/to/your/project` is the only value you *must* change. Everything else has
 a working default. The two `README.md` files copied along the way are

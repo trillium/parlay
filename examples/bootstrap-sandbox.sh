@@ -185,11 +185,12 @@ identity_body_without_frontmatter &&
   check "identity.md read back with frontmatter stripped" ok || check "identity.md read back with frontmatter stripped" no
 launch_specs_for_both() {
   local out; out="$(parlay launch)" || return 1
-  printf '%s\n' "$out" | grep -q '^[[:space:]]*helm ' || return 1
-  printf '%s\n' "$out" | grep -q '^[[:space:]]*reviewer ' || return 1
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*helm .*\[live\]' || return 1
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*reviewer .*\[live\]' || return 1
 }
 launch_specs_for_both &&
-  check "launch spec discovered for both agents" ok || check "launch spec discovered for both agents" no
+  check "launch spec discovered for both agents, both reported live" ok ||
+  check "launch spec discovered for both agents, both reported live" no
 
 # The four seeded chat-history.jsonl lines are loaded by the server and served
 # back on the channel each one names — two on helm, two on reviewer. `--full`

@@ -36,8 +36,11 @@ corrupt file is treated as empty — resolution just falls through.
 exports `PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because
 this fleet serves parlay through Pulse on that port. That env var beats
 `config.json`, so `bin/parlay` ignores the file. Build the CLI directly —
-`cd tools/cli && go build -o ~/.local/bin/parlay .` — if you want `config.json` to
-be the thing that decides.
+`cd tools/cli && go build -o <scratch-dir>/bin/parlay .`, then invoke it by that
+path — if you want `config.json` to be the thing that decides. Build somewhere of
+your own rather than onto your `PATH`: in a clone of this repo the `parlay` on
+your `PATH` is usually a symlink to `bin/parlay`, and building over it replaces
+that wrapper for everything else on the machine.
 
 ## `agents/<id>/`
 
