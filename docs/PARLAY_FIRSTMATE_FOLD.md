@@ -391,6 +391,9 @@ containment gate:
 - if the agent ran in a worktree, run the **same git checks**: uncommitted
   (`git status --porcelain`), unpushed (`git log HEAD --not --remotes`), and
   landed-content containment (PR-merged patch-id / `merge-tree` tree-OID equality).
+  *As shipped, only the `merge-tree` tree-OID half exists — the patch-id half was
+  never implemented in either CLI (robots-ceon); firstmate's `fm-teardown.sh`
+  still has it if this is ever folded the rest of the way.*
   **Refuse** (`exit 1`, preserve everything) on unlanded work; `--force` is the
   only override. No auto-stash.
 - close the herdr tab + kill the session (parlay already knows how — mirror

@@ -84,7 +84,8 @@ const HELP: Record<string, string> = {
   (away) mode: buffers escalations in a durable queue, detects captain return via in-band marker.`,
   teardown: `parlay teardown — safe destroy of an agent with an isolated worktree (fold §3.7 Slice 3).
   Refuses to remove agents that have uncommitted changes or unpushed commits not yet landed.
-  Validates landed-content containment via PR patch-id (if available) or merge-tree equality test.
+  Validates landed-content containment with one check: merge-tree tree-OID equality against the
+  default branch (catches squash-merged work). No PR/patch-id check exists — inconclusive means refuse.
   Usage: parlay teardown <id> [--force]
   --force   Override refusal and discard unlanded work.
   Steps: (1) check git status, (2) validate unpushed commits are landed, (3) deregister from relay,
