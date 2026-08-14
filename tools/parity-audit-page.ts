@@ -96,13 +96,27 @@ const gaps = [
 const gapProse = gaps.length
   ? `${gaps.join(" ")} Each is filed as a fix task below — resolve before the fold lands to keep the "expansion-only" claim true.`
   : `Nothing falls through without a home, and no design blocker is still open.`
+// Both headline branches state a measurement, and a measurement may not claim more
+// rows than it covered: when any row went unevaluated, the headline carries its own
+// scope, for the reader who stops there and never reaches the paragraph below.
+const headlineScope = evaluated === total ? "" : ` among the ${evaluated} of ${total} rows evaluated`
 const headlineGaps = missing + openBlockers.length
-  ? ` — with ${missing} genuine contraction(s) + ${openBlockers.length} design blocker(s) to fix first`
-  : " — with no open contraction or design blocker"
+  ? ` — with ${missing} genuine contraction(s) + ${openBlockers.length} design blocker(s) to fix first${headlineScope}`
+  : ` — with no open contraction or design blocker${headlineScope}`
 const contractionSection = missing + openBlockers.length
   ? `<h2>Contractions — fix before the fold lands</h2>
   <ol class="contractions">${blockerList}${contractionList}</ol>`
   : ""
+
+// A dated manual check the auditor ran by hand, so it is reported inside the NOT
+// EVALUATED block and never promoted into the verdict, the headline or any count —
+// it is not derived from this run. Rendered only when the unevaluated set is exactly
+// the two rows it names; any other set means it no longer describes what is here.
+const MANUALLY_CHECKED = ["Away-mode unattended sub-supervision", "Crew-dispatch profiles + quota-balanced"]
+const manualNote =
+  notEvaluated.length === MANUALLY_CHECKED.length && MANUALLY_CHECKED.every(c => notEvaluated.some(r => r.cap === c))
+    ? `<p class="manual"><b>Auditor's manual check, 2026-08-14</b> — not derived from this run and not in the counts: with a copy of the fold doc supplied out-of-band, both rows above did evaluate and neither came back MISSING (<b>Away-mode unattended sub-supervision</b> → COVERED-alternate, landed; <b>Crew-dispatch profiles + quota-balanced</b> → STAYS-FIRSTMATE).</p>`
+    : ""
 
 const notEvalSection = notEvaluated.length ? `
   <h2>Not evaluated — ${notEvaluated.length} of ${total} capabilities</h2>
@@ -113,6 +127,7 @@ const notEvalSection = notEvaluated.length ? `
       <div class="cap-map"><code>${esc(r.fm)}</code></div>
       ${r.note ? `<div class="cap-note">${esc(r.note)}</div>` : ""}
     </div>`).join("")}
+    ${manualNote}
   </div>` : ""
 
 const html = `<title>parlay × firstmate — capability parity audit</title>
@@ -141,6 +156,7 @@ const html = `<title>parlay × firstmate — capability parity audit</title>
   .v-uneval{background:#fff;color:#3f3f46;border-color:#a1a1aa;border-style:dashed}
   .notice{border:1px solid var(--line);border-left:4px solid #a1a1aa;border-radius:10px;background:var(--card);padding:4px 14px 12px}
   .tag.uneval{background:#e4e4e7;color:#3f3f46}
+  .manual{font-size:12.5px;color:var(--fg);opacity:.9;margin:12px 0 2px;padding:9px 11px;background:var(--bg);border:1px dashed var(--line);border-left:3px solid var(--acc);border-radius:8px}
   @media(prefers-color-scheme:dark){
    .v-missing{background:#3b1213;color:#fca5a5;border-color:#5b1a1c}
    .v-deferred{background:#3a2e08;color:#fcd34d;border-color:#5c4a0c}

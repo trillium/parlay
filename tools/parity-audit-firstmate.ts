@@ -2,9 +2,9 @@
 /**
  * parity-audit-firstmate.ts — re-runnable capability-parity check (task-4bad).
  *
- * Proves the parlay×firstmate fold is EXPANSION-ONLY: every firstmate capability
- * has a home in the folded end-state (parlay primitive OR retained firstmate
- * policy OR justified drop), and flags any that DON'T.
+ * Checks the parlay×firstmate fold's EXPANSION-ONLY claim over the capabilities it can evaluate:
+ * whether each has a home in the folded end-state (parlay primitive OR retained firstmate policy
+ * OR justified drop), flagging those that DON'T; a fold-doc-dependent row is NOT EVALUATED, not passed.
  *
  * It re-derives the parity matrix by probing the LIVE state of both repos, so as
  * the fold implements, `bun tools/parity-audit-firstmate.ts` re-verifies parity
