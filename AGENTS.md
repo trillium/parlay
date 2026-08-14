@@ -749,8 +749,9 @@ what it got. Pinned by `tools/relay/deploy/install.test.sh` and cases 7–8 of
 ## Never merge on a green check alone — run `parlay merge-gate <pr>` (robots-jap6)
 
 A green status check in this repo is **not** evidence that anything reviewed
-the code. CodeRabbit is the only check — there are no `.github/workflows` at
-all — and it lies in two known ways: it reports the check CONCLUSION `pass`
+the code. CodeRabbit is the only *review* check — the CI jobs described in the
+`.github/workflows/ci.yml` section below build and test, they do not review —
+and it lies in two known ways: it reports the check CONCLUSION `pass`
 when it never ran (the account-wide PR review limit; only the free-text
 *description* says "Review rate limited"), and it reports success regardless
 of how many findings it posted. `gh pr view` compounds it with
