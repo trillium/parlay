@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 **`parlay claim <task-id> --silent` claims without the monitor half (robots-nfyp).**

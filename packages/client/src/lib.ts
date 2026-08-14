@@ -1,4 +1,4 @@
-// ── @parlay/client public library entry ─────────────────────────────────────
+// ── parlay-client public library entry ──────────────────────────────────────
 // For EXTERNAL host apps (e.g. herdr-web) that want voice-command input
 // handling backed by a running parlay server, without embedding the full
 // in-page panel (init.ts). Re-exports just the server-eval dispatcher:

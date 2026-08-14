@@ -1,4 +1,4 @@
-# @parlay/cli
+# parlay-cli
 
 ## 0.1.1
 

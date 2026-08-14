@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 Fold in the firstmate-parity CLI surfaces. Four user-facing changes:

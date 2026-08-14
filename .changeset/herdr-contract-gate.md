@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 Add a **herdr contract gate** (robots-4v2e) so herdr CLI drift can no longer silently break mechanic-dispatch. `parlay-spawn` shells out to `herdr` with no version pin or shape check, so in one day three separate herdr upgrades (robots-1uez `agent start --cwd` removal, robots-i4pi `agent_pane_busy` race, robots-tzpe `agent wait --status`→`--until`) each broke live dispatch as a cryptic mid-launch `unknown option` that orphaned a tab.

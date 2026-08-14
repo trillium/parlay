@@ -41,7 +41,7 @@ await buildOrThrow({
 }, "plugins")
 
 // index.js — ESM library entry for external host apps (e.g. herdr-web) that
-// import @parlay/client's server-eval input dispatcher instead of embedding
+// import parlay-client's server-eval input dispatcher instead of embedding
 // the full in-page panel. See src/lib.ts for the exported surface.
 await buildOrThrow({
   entrypoints: ["./src/lib.ts"],

@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 Give `parlay merge-gate` a bounded answer for "the reviewer is unavailable" — exit `4` NEEDS-DECISION, distinct from `3` BLOCKED (robots-8kkq).

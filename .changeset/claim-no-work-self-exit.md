@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 **A claim with no work behind it now ends the agent instead of stranding it (robots-4ek1).**
