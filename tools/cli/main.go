@@ -118,6 +118,8 @@ func main() {
 		commands.Drawdown(args)
 	case "idle":
 		commands.Idle(args)
+	case "mechanic":
+		commands.Mechanic(args)
 	case "merge-gate":
 		commands.MergeGate(args)
 	case "branch-audit":
