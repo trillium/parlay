@@ -20,6 +20,12 @@
 #      an escaped real bun would have nothing to execute.
 # No assertion greps hook source: each one reads an exit code, stdout/stderr, or
 # what the hook actually wrote to (or refused to create on) disk.
+#
+# WHAT A GREEN RUN DOES AND DOES NOT CERTIFY. It certifies the hooks' own control
+# flow — the opt-in gate, primary-checkout resolution, the refusal, and what gets
+# logged — against a stub bun in a redirected $HOME. It is NOT evidence that the
+# delivery works: the real build and the POST to the live Pulse server never
+# execute here, so nothing in this file has ever observed a panel receive a bundle.
 
 set -uo pipefail
 
@@ -155,6 +161,46 @@ for hook in "$POST_COMMIT" "$POST_MERGE"; do
 done
 eq "an unresolvable checkout never delivers" "$(bun_calls)" "$before"
 eq "an unresolvable checkout logs nothing" "$(log_lines)" "$before_log"
+
+# ---- 5. PARLAY_MAIN_CHECKOUT set and readable: it names the delivery target ----
+# The override replaces the git-derived primary checkout, so the tree it names is
+# where the build runs — here the linked worktree, which case 3 proved skips
+# without it — and any OTHER checkout is then the one that skips.
+echo "5. PARLAY_MAIN_CHECKOUT set and readable"
+before="$(bun_calls)"
+( cd "$WT" && PARLAY_MAIN_CHECKOUT="$WT" /bin/bash "$POST_COMMIT" ) > "$SCRATCH/out" 2> "$SCRATCH/err"
+RC=$?
+eq "post-commit exits 0 under a readable override" "$RC" "0"
+eq "the override's tree delivers once" "$(bun_calls)" "$((before + 1))"
+eq "post-commit built from the override, not the git-derived primary" "$(tail -1 "$BUN_CALLS")" "$WT/packages/client|build.ts"
+
+before="$(bun_calls)"
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  ( cd "$MAIN" && PARLAY_MAIN_CHECKOUT="$WT" /bin/bash "$hook" ) > "$SCRATCH/out" 2> "$SCRATCH/err"
+  RC=$?
+  eq "$name exits 0 in a checkout the override does not name" "$RC" "0"
+  has_line "$name logs the skip against the override" "skip: $MAIN is not the main checkout" "$LOG"
+done
+eq "a checkout the override does not name never delivers" "$(bun_calls)" "$before"
+
+# ---- 6. PARLAY_MAIN_CHECKOUT set but unreadable: same refusal as case 4 -------
+# An override that cannot be resolved is a mistake, not a fallback: the hook must
+# refuse rather than fall back to deriving the checkout from git.
+echo "6. PARLAY_MAIN_CHECKOUT set but unreadable"
+before="$(bun_calls)"
+before_log="$(log_lines)"
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  ( cd "$MAIN" && PARLAY_MAIN_CHECKOUT="$SCRATCH/no-such-tree" /bin/bash "$hook" ) > "$SCRATCH/out" 2> "$SCRATCH/err"
+  RC=$?
+  eq "$name exits non-zero on an unreadable override" "$RC" "1"
+  eq "$name says nothing on stdout on an unreadable override" "$(cat "$SCRATCH/out")" ""
+  eq "$name gives one line of reason on an unreadable override" "$(wc -l < "$SCRATCH/err" | tr -d ' ')" "1"
+  has_line "$name names the refusal on an unreadable override" "refusing to deliver: cannot resolve the primary checkout" "$SCRATCH/err"
+done
+eq "an unreadable override never delivers" "$(bun_calls)" "$before"
+eq "an unreadable override logs nothing" "$(log_lines)" "$before_log"
 
 echo
 echo "$PASS passed, $FAIL failed"
