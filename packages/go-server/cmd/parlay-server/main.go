@@ -6,6 +6,10 @@
 // /api/chat/events; C3 (also internal/handlers, registered separately via
 // RegisterData) adds drafts, uploads, and settings. The rest of
 // docs/api-contract.md remains out of scope for later tickets.
+//
+// Everything registered on the mux is served through internal/guard — the
+// cross-origin boundary this server previously lacked entirely (task-6ai1 /
+// defect D7). See that package's doc comment for the policy.
 package main
 
 import (
@@ -23,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"parlay/go-server/internal/guard"
 	"parlay/go-server/internal/handlers"
 	"parlay/go-server/internal/store"
 )
@@ -59,7 +64,14 @@ func main() {
 	handlers.Register(mux, st)
 	handlers.RegisterData(mux, st)
 
-	srv := &http.Server{Addr: *addrFlag, Handler: mux}
+	// One guard in front of the whole mux (task-6ai1 / defect D7): this server
+	// previously had no origin boundary at all, so a hostile page could drive
+	// /send, /alert, /register-agent and /unregister with a CORS simple
+	// request. Wrapping the mux rather than individual handlers means a route
+	// registered later cannot land outside the boundary — see
+	// internal/guard/guard.go for the policy and for where it deliberately
+	// differs from packages/server/src/guard.ts.
+	srv := &http.Server{Addr: *addrFlag, Handler: guard.Wrap(mux)}
 
 	serveErr := make(chan error, 1)
 	go func() {

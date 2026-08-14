@@ -41,6 +41,33 @@
   than authenticating requests."* Treat this as true for the whole surface
   unless proven otherwise.
 
+### Origin guard (both servers)
+
+Unauthenticated does **not** mean unrestricted: every route that mutates
+state, or that discloses an identifier (device uuid, agent id) a hostile page
+could then aim at a mutating route, sits behind an origin guard —
+`packages/server/src/guard.ts` and `packages/go-server/internal/guard`. On
+those routes:
+
+- A request with **no `Origin` header is allowed.** That is every CLI, curl,
+  hook and server-to-server caller, and a browser cannot omit `Origin` on a
+  cross-site request. Nothing in this document changes for those callers.
+- A request **with** an `Origin` must be same-origin, a loopback / `.local` /
+  private-LAN origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
+  `*` opts out). Otherwise: **403** with no CORS headers at all, and the
+  handler is never reached. Preflight from such an origin is refused the same
+  way.
+- `POST`/`PUT` must carry `Content-Type: application/json`, else **415** —
+  this is what forces a preflight instead of letting a CORS *simple request*
+  through. `POST /api/chat/upload` is exempt (multipart by contract); there
+  the origin check alone applies.
+- Allowed responses carry the **exact** origin in
+  `Access-Control-Allow-Origin` plus `Vary: Origin` — never `*`.
+
+Read-only routes (`history`, `agents`, `poll`, `events`, `version`,
+`GET /api/chat/uploads/<name>`) are outside the guard and behave as documented
+below.
+
 ---
 
 ## Messaging

@@ -35,7 +35,9 @@ keep working) and `Content-Type: application/json` (415 otherwise — this is
 what stops a cross-origin CORS *simple request* from reaching a handler
 without a preflight, and preflight on those paths is refused). Their
 responses are re-headered by `withGuardedCors` so the wildcard `CORS` the
-handlers spread never reaches the wire. Read/SSE/upload routes keep the old
+handlers spread never reaches the wire. Only genuinely read-only routes
+(history, agents, poll, events, version, pages, and `GET
+/api/chat/uploads/<name>`, which an `<img src>` must load) keep the old
 wildcard and stay world-readable.
 
 A new route that injects into an agent turn, mutates the registry, or drives a
@@ -44,8 +46,35 @@ send a JSON content type, adding it breaks them. Test with
 `packages/server/src/guard.test.ts` (pure, no side effects — `guard.ts`
 deliberately imports nothing) and `guard.integration.test.ts` (spawns a real
 server on a random 45xxx port with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`
-redirected to a temp dir). `packages/go-server` has the same unauthenticated
-write surface and no equivalent guard yet.
+redirected to a temp dir).
+
+**The route SET is the part that rots, not the mechanism.** An end-to-end
+verification (task-6ai1, defects D9/D7) found the guard working exactly as
+documented while `/eval`, `PUT /draft`, `/upload`, `/parlay/settings`, the tts
+family, the cursorless plugin RPC and `/api/debug/input-timing` all sat
+outside it — and `GET /subscribers` handed any origin the connected device
+uuid plus every registered agent id, which is what made the rest aimable
+(read the device id → `input_action` into the panel → set the captain's draft
+→ submit attacker text as the captain). All of them are guarded now.
+`/subscribers` was **guarded rather than redacted**: no panel code calls it,
+and every real caller (`parlay doctor`/`subscribers`/crew-state, the Go CLI,
+`tools/split-test`) is a no-Origin HTTP client, so guarding costs them
+nothing. Two structural notes: `/api/debug/*` is dispatched in `index.ts`
+*ahead of* `handleChatRequest`, so it runs the guard itself — anything else
+added there must too; and `JSON_EXEMPT_PATHS` (today just `/api/chat/upload`,
+multipart by contract) is how a route keeps the origin check without the
+JSON content-type gate.
+
+`packages/go-server` now has its own guard: `internal/guard`, wrapped once
+around the whole mux in `cmd/parlay-server/main.go` so a route registered
+later cannot land outside it. Same semantics — missing Origin allowed,
+same-origin/loopback/LAN/`PARLAY_ALLOWED_ORIGINS` allowed, 403 with no CORS
+headers otherwise, 415 on non-JSON POST/PUT, reflected ACAO plus `Vary:
+Origin`. Its package comment is the authoritative statement of the two
+deliberate divergences (its unguarded routes send no ACAO at all, where the
+TS side still wildcards; no blanket OPTIONS answer) — both stricter, because
+this server has never sent CORS headers and matching TS exactly would newly
+*open* read access.
 
 `packages/server/src/debug-log.ts` was written during the loop outage as a
 standalone, not-yet-wired handler (Write could still create files whose names

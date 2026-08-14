@@ -26,6 +26,7 @@ pages watcher, and serves every request through `handleChatRequest`
 | `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events.            |
 | `PARLAY_AGENT_ID` | *(unset)*        | Identifies the calling agent for per-agent context lookups.    |
 | `PARLAY_EVAL_ENGINE_URL` | `http://127.0.0.1:4343` | External eval engine for `/api/chat/eval`; returns 502 until running (Go engine deliberately deferred). |
+| `PARLAY_ALLOWED_ORIGINS` | *(unset)*  | Extra browser origins the guard accepts on mutating routes (comma-separated exact origins; `*` disables the origin check). Same-origin, loopback, `.local` and private-LAN origins are already allowed, and a request with **no** `Origin` — every CLI/curl/hook caller — always is. See `src/guard.ts`. |
 
 ## Data files
 
