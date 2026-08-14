@@ -88,6 +88,7 @@ func runStore(store string, args []string) ([]handoffRow, bool) {
 //  1. agent known -> list --assignee <agent> --status open,… (AUTHORITATIVE)
 //  2. agent UNKNOWN only -> list --status open,…  -> newest open in the store
 //  3. agent UNKNOWN only -> show --current        -> store's "current" (may be closed)
+//
 // The store-global steps 2/3 run ONLY when there is no agent identity to
 // scope by (a bare CLI call with no PARLAY_AGENT_ID) — so there is no one to
 // misattribute the result to.
