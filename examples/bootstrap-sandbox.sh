@@ -69,6 +69,10 @@ cp "$EXAMPLES_DIR"/data-dir/*.json "$EXAMPLES_DIR"/data-dir/*.jsonl "$SANDBOX/da
 # The READMEs are documentation for a human, not state the tools read.
 rm -f "$SANDBOX/.parlay/README.md"
 
+# Baseline for the "did the server actually write here?" check below: whatever
+# the seeded history ships with, before anything has run against it.
+SEEDED_HISTORY_LINES="$(wc -l < "$SANDBOX/data/chat-history.jsonl" | tr -d ' ')"
+
 # The one placeholder a reader has to replace. Here: point it at the sandbox.
 find "$SANDBOX/.parlay/agents" -name identity.md -print0 |
   xargs -0 sed -i.bak "s#/path/to/your/project-worktrees#$SANDBOX/code/worktrees#g; s#/path/to/your/project#$SANDBOX/code/example-project#g"
@@ -132,6 +136,10 @@ parlay identity --agent helm
 say "parlay launch — known agents from the sandbox's ~/.parlay/agents"
 parlay launch
 
+say "PUT /api/chat/parlay/settings — settings persist into \$PARLAY_DATA_DIR"
+curl -fsS -m 5 -X PUT -H 'Content-Type: application/json' \
+  -d '{"textScale":123}' "$BASE/api/chat/parlay/settings" >/dev/null
+
 say "parlay doctor — self-diagnosis for PARLAY_AGENT_ID=helm"
 env -u PARLAY_SERVER HOME="$SANDBOX" PARLAY_STATE_HOME="$SANDBOX/.parlay" \
   PARLAY_AGENT_HOME="$SANDBOX/.parlay/agents" PARLAY_AGENT_ID=helm \
@@ -160,14 +168,18 @@ launch_specs_for_both() {
 launch_specs_for_both &&
   check "launch spec discovered for both agents" ok || check "launch spec discovered for both agents" no
 
-# The server's persisted files must exist in $PARLAY_DATA_DIR and nowhere else.
-# "Nowhere else" is checked at the exact paths packages/server/src/paths.ts falls
-# back to when PARLAY_DATA_DIR is not honored: $HOME/exchange and
-# $PAI_DIR/MEMORY/STATE, both of which point inside the sandbox for this run.
+# The server's persisted WRITES must land in $PARLAY_DATA_DIR and nowhere else.
+# Both halves have to prove a write: the example's own files are copied into
+# $SANDBOX/data before boot, so merely existing there proves nothing. History
+# must have grown past its seeded lines (the send above), and settings must carry
+# the value the PUT above sent. "Nowhere else" is checked at the exact paths
+# packages/server/src/paths.ts falls back to when PARLAY_DATA_DIR is not honored:
+# $HOME/exchange and $PAI_DIR/MEMORY/STATE, both inside the sandbox for this run.
 persisted_only_in_data_dir() {
-  [ -s "$SANDBOX/data/chat-history.jsonl" ] || return 1
-  [ -s "$SANDBOX/data/parlay-agents.json" ] || return 1
-  [ -s "$SANDBOX/data/parlay-settings.json" ] || return 1
+  local now
+  now="$(wc -l < "$SANDBOX/data/chat-history.jsonl" | tr -d ' ')" || return 1
+  [ "$now" -gt "$SEEDED_HISTORY_LINES" ] || return 1
+  grep -q '"textScale": *123' "$SANDBOX/data/parlay-settings.json" || return 1
   local stray
   for stray in "$SANDBOX/exchange/chat-history.jsonl" \
                "$SANDBOX/exchange/parlay-settings.json" \

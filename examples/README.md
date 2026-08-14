@@ -88,8 +88,20 @@ documentation; nothing reads them.
 `PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` cover `identity`, `scratchpad`, `say`,
 `status`, and `doctor`. They do **not** cover `launch`, `teardown`, `variant`, or
 `guard`, which resolve `~/.parlay/agents` from `$HOME` directly and will read
-your real store even with both variables set. `bootstrap-sandbox.sh` redirects
-`$HOME` too, which is the only way to isolate those four completely.
+your real store even with both variables set.
+
+`parlay sweep` is the one to watch, because it is split down the middle and
+`sweep --apply` is what deletes agent stores and removes worktrees. Its
+**candidate list** comes from the `$HOME`-based `~/.parlay/agents` and ignores
+`PARLAY_AGENT_HOME`; its **keep-list** comes from
+`$PARLAY_STATE_HOME/sweep-keep`, and each candidate's status from
+`PARLAY_AGENT_HOME`. Run it from the scratch setup and it enumerates your *real*
+agents against the *example's* keep-list. It fails toward holding — a real agent
+whose status is unreadable from the scratch store reads back as unknown, and
+sweep leaves unknown alone — but do not lean on that.
+
+`bootstrap-sandbox.sh` redirects `$HOME` as well as both variables, which is the
+only way to isolate all of these completely.
 
 **One repo-specific trap:** the `bin/parlay` wrapper at the repo root exports
 `PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because this
@@ -125,10 +137,10 @@ cp -R examples/parlay-state/agents/helm     ~/.parlay/agents/   # see below
 cp -R examples/parlay-state/agents/reviewer ~/.parlay/agents/   # see below
 cp examples/parlay-state/config.json        ~/.parlay/          # see below
 cp examples/parlay-state/sweep-keep         ~/.parlay/          # see below
-cp examples/data-dir/*.json examples/data-dir/*.jsonl ~/.parlay/data/
+cp examples/data-dir/*.json examples/data-dir/*.jsonl ~/.parlay/data/  # see below
 ```
 
-Every one of those four is marked because it can overwrite something of yours:
+Every line above is marked because it can overwrite something of yours:
 
 - **`config.json`** — your persisted server URL, the one `parlay remote set`
   wrote. The example ships `http://localhost:4242`. If your server is anywhere
@@ -141,6 +153,15 @@ Every one of those four is marked because it can overwrite something of yours:
   ids, the copy overwrites their `identity.md`, `context.json`, `scratchpad.md`,
   and `status`. Rename the example's directories first, and the `id` inside each
   `identity.md` and `context.json` with them.
+- **The `data-dir/` copy** — the most destructive line in the block, because
+  `env.example` suggests exactly `PARLAY_DATA_DIR="$HOME/.parlay/data"`, so if
+  you took that suggestion this path already holds live server state.
+  `parlay-agents.json` is your **whole registry** — the server loads that file as
+  the entire agent map, so replacing it with the example's two entries removes
+  every other tab. `chat-history.jsonl` is your **whole message log**, replaced by
+  four seeded lines. `parlay-settings.json` is your panel and voice preferences.
+  If you already have a data dir, **skip this line entirely**, or copy only
+  `parlay-settings.json`.
 
 Then edit the placeholders and run the server with
 `PARLAY_DATA_DIR=~/.parlay/data`, exactly as in steps 2-4 above — minus the two
@@ -200,9 +221,11 @@ the authoritative list; it is case-insensitive:
 `bun` + `go`, and the following passed:
 
 - `packages/server` starts with `PARLAY_DATA_DIR` pointed at `data-dir/`'s
-  contents, and writes its persisted files only there — nothing appears at the
-  `~/exchange` or `$PAI_DIR/MEMORY/STATE` locations it falls back to when the
-  variable is not honored.
+  contents, and its writes land only there: `chat-history.jsonl` grows past its
+  seeded lines and a `PUT /api/chat/parlay/settings` shows up in
+  `parlay-settings.json`, while nothing appears at the `~/exchange` or
+  `$PAI_DIR/MEMORY/STATE` locations it falls back to when the variable is not
+  honored.
 - The seeded registry is served: `parlay agents` lists both agents.
 - `parlay send --helm "…"` round-trips — read back by `parlay history` and
   appended to the sandbox's `chat-history.jsonl`.

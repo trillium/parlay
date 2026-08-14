@@ -1,14 +1,21 @@
 # `data-dir/` — the server's persisted state
 
 Copy this directory's contents to whatever you point **`PARLAY_DATA_DIR`** at, then
-start the server with that env var set. Every path `packages/server` writes is
-resolved in `packages/server/src/paths.ts`; setting `PARLAY_DATA_DIR` relocates all
-of them, flat, into that one directory.
+start the server with that env var set. The files below all resolve through
+`packages/server/src/paths.ts`; setting `PARLAY_DATA_DIR` relocates every one of
+them, flat, into that one directory.
 
-With `PARLAY_DATA_DIR` **unset**, the same files scatter to their production
-locations instead — `~/exchange/` for most of them, `$PAI_DIR/MEMORY/STATE/` for
-the registry. That split is historical. Set `PARLAY_DATA_DIR`; it is one directory
-you can back up, inspect, and throw away.
+With `PARLAY_DATA_DIR` **unset**, they scatter to their production locations
+instead — `~/exchange/` for most, `$PAI_DIR/MEMORY/STATE/` for the registry. That
+split is historical. Set `PARLAY_DATA_DIR`; it is one directory you can back up,
+inspect, and throw away.
+
+`PARLAY_DATA_DIR` is not quite the server's whole write surface: `$PAI_DIR` is
+read unconditionally by the hook and tool tailers and the boot-time
+session-channel backfill, and `src/tts.ts` writes
+`$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl` and
+`$PAI_DIR/MEMORY/STATE/tts-cache/` no matter what `PARLAY_DATA_DIR` says. Set
+`PAI_DIR` as well for a genuinely self-contained instance.
 
 | File | What it is | Change it? |
 |---|---|---|
