@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -214,18 +215,126 @@ func TestSSEParserReadsNamedFramesAndSkipsKeepAlives(t *testing.T) {
 	}
 }
 
-func TestWatchLineMarksStartsAndEnds(t *testing.T) {
-	start := watchLine(wire.CommandInvocation{
-		ID: "c-1", Verb: "listen", Agent: "crew-1", State: "running", DurationMs: 1200,
-		Flags: []string{"--agent"},
+// eventStream serves one canned SSE body and then closes the connection,
+// which is what a server restart or a dropped link looks like from the CLI.
+func eventStream(body string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat/events" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, body)
 	})
-	if !strings.HasPrefix(start, "+ ") || !strings.Contains(start, "listen") || !strings.Contains(start, "--agent") {
-		t.Errorf("start line = %q", start)
+}
+
+// watchOnce runs follow mode against a canned stream and returns the printed
+// lines plus the exit the stream's end produced. The follow log is a stdout
+// contract: a notice only an operator's stderr sees is invisible to the
+// harnesses that read these streams (robots-gv6t).
+func watchOnce(t *testing.T, stream string, f commandFilter) (lines []string, code int, exited bool) {
+	t.Helper()
+	withServer(t, eventStream(stream))
+
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { watchCommands(f, false) })
+	})
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
 	}
-	end := watchLine(wire.CommandInvocation{
-		ID: "c-1", Verb: "listen", Agent: "crew-1", State: "finished", DurationMs: 4000, Outcome: "ok",
-	})
-	if !strings.HasPrefix(end, "- ") || !strings.Contains(end, "ok") {
-		t.Errorf("end line = %q", end)
+	return lines, code, exited
+}
+
+// followStream exercises every case the default follow mode has to tell apart:
+// a record already running when the watch began, one that starts and ends
+// during it, one that was already over, one belonging to another agent, and a
+// retention drop.
+const followStream = "event: commands\n" +
+	"data: [{\"id\":\"pre\",\"verb\":\"listen\",\"agent\":\"crew-1\",\"state\":\"running\",\"durationMs\":1000}]\n\n" +
+	"event: command_update\n" +
+	"data: {\"id\":\"new\",\"verb\":\"send\",\"agent\":\"crew-1\",\"state\":\"running\",\"durationMs\":10,\"flags\":[\"--agent\"]}\n\n" +
+	"event: command_update\n" +
+	"data: {\"id\":\"new\",\"verb\":\"send\",\"agent\":\"crew-1\",\"state\":\"finished\",\"exitCode\":0,\"outcome\":\"ok\",\"durationMs\":50}\n\n" +
+	"event: command_update\n" +
+	"data: {\"id\":\"pre\",\"verb\":\"listen\",\"agent\":\"crew-1\",\"state\":\"expired\",\"outcome\":\"no-heartbeat\",\"durationMs\":90000}\n\n" +
+	"event: command_update\n" +
+	"data: {\"id\":\"ghost\",\"verb\":\"stats\",\"agent\":\"crew-1\",\"state\":\"finished\",\"exitCode\":0,\"outcome\":\"ok\",\"durationMs\":20}\n\n" +
+	"event: command_update\n" +
+	"data: {\"id\":\"other\",\"verb\":\"agents\",\"agent\":\"crew-9\",\"state\":\"running\",\"durationMs\":5}\n\n" +
+	"event: command_update\n" +
+	"data: {\"id\":\"new\",\"verb\":\"send\",\"agent\":\"crew-1\",\"state\":\"dropped\",\"durationMs\":60000}\n\n"
+
+// TestWatchLineMarksStartsAndEnds drives the DEFAULT follow mode (no --all),
+// the path an operator actually takes. An end event is how a record leaves the
+// running set, so suppressing it would leave the log asserting that a finished
+// command is still running.
+func TestWatchLineMarksStartsAndEnds(t *testing.T) {
+	lines, _, _ := watchOnce(t, followStream, commandFilter{agent: "crew-1"})
+
+	var starts, ends []string
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "+ "):
+			starts = append(starts, line)
+		case strings.HasPrefix(line, "- "):
+			ends = append(ends, line)
+		}
+	}
+
+	if len(starts) != 1 || !strings.Contains(starts[0], "send") || !strings.Contains(starts[0], "--agent") {
+		t.Errorf("start lines = %v, want one `+` line for the send that started here", starts)
+	}
+	if len(ends) != 2 {
+		t.Fatalf("end lines = %v, want two: the send that finished and the listen that expired", ends)
+	}
+	if !strings.Contains(ends[0], "finished") || !strings.Contains(ends[0], "exit 0 ok") {
+		t.Errorf("first end line = %q, want the finished send with how it ended", ends[0])
+	}
+	if !strings.Contains(ends[1], "expired") || !strings.Contains(ends[1], "no-heartbeat") {
+		t.Errorf("second end line = %q, want the expired listen (it was running when the watch began)", ends[1])
+	}
+
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "stats") {
+		t.Errorf("printed an end for a command that started AND ended before the watch began:\n%s", joined)
+	}
+	if strings.Contains(joined, "crew-9") || strings.Contains(joined, "agents") {
+		t.Errorf("printed a record that never matched --agent crew-1:\n%s", joined)
+	}
+	if strings.Contains(joined, "dropped") {
+		t.Errorf("a retention drop is internal bookkeeping, not an operator-visible end line:\n%s", joined)
+	}
+}
+
+// --all keeps its meaning exactly: every record matching --agent/--verb,
+// whatever its state and whether or not this session saw it running.
+func TestWatchAllShowsEveryRecordIncludingOnesItNeverSawRunning(t *testing.T) {
+	lines, _, _ := watchOnce(t, followStream, commandFilter{all: true, agent: "crew-1"})
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "stats") {
+		t.Errorf("--all dropped a terminal record it never saw start:\n%s", joined)
+	}
+	if strings.Contains(joined, "crew-9") {
+		t.Errorf("--all ignored the --agent filter:\n%s", joined)
+	}
+	if strings.Contains(joined, "dropped") {
+		t.Errorf("--all printed a retention drop as an end line:\n%s", joined)
+	}
+}
+
+// TestWatchSaysSoWhenTheStreamEnds: follow mode that simply stops is
+// indistinguishable from an idle fleet, to an operator and to a script reading
+// the exit code alike (robots-dcag / robots-gv6t).
+func TestWatchSaysSoWhenTheStreamEnds(t *testing.T) {
+	lines, code, exited := watchOnce(t, "event: commands\ndata: []\n\n", commandFilter{})
+
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "event stream ended") {
+		t.Errorf("a closed stream printed no notice on stdout; got:\n%s", joined)
+	}
+	if !exited || code == 0 {
+		t.Errorf("exit = %d exited=%v, want a non-zero give-up", code, exited)
 	}
 }

@@ -61,8 +61,25 @@ func main() {
 	// runs from httpc.Exit (every die() path) and from this defer (normal
 	// return and panic alike).
 	finish := commandreport.Begin(cmd, args)
-	defer finish(config.ExitOK)
+	defer reportEnd(finish)
 
+	dispatch(cmd, args, finish)
+}
+
+// reportEnd closes this invocation's registry record from main's defer. A
+// panicking command is a FAILED command: recording it as exit 0 would leave a
+// green record for an invocation that produced no result, which is worse than
+// no record at all. The panic is re-raised so the runtime still prints the
+// stack trace and the process still dies with its usual status.
+func reportEnd(finish func(int)) {
+	if r := recover(); r != nil {
+		finish(config.ExitRuntime)
+		panic(r)
+	}
+	finish(config.ExitOK)
+}
+
+func dispatch(cmd string, args []string, finish func(int)) {
 	switch cmd {
 	case "":
 		commands.Status() // bare `parlay` = panel/fleet snapshot

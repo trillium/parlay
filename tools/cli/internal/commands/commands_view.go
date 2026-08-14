@@ -33,7 +33,8 @@ import (
 // explicit about the difference between "nothing is running" and "nothing
 // that reports itself is running" is the whole reason the note exists.
 const coverageNote = "Note: only the Go CLI reports itself — shell wrappers, the TS CLI, and\n" +
-	"server-side work are not tracked. See docs/live-commands.md."
+	"server-side work are not tracked, and a bare `parlay` (the fleet snapshot)\n" +
+	"does not report itself either. See docs/live-commands.md."
 
 // unsupportedNote is printed when the server answers 404: an older server
 // has no registry, which is a different fact from an empty one.
@@ -297,6 +298,13 @@ func watchCommands(f commandFilter, asJSON bool) {
 	// here on. The burst is written before any broadcast can reach this
 	// connection, so it always arrives first.
 	seen := map[string]string{}
+	// running is the set of ids this session has shown as running — from the
+	// table/burst, or from a `+` line printed here. Without --all a terminal
+	// record is only worth a line for one of those: an end event is how a
+	// record LEAVES that set, so suppressing it would leave the follow log
+	// asserting that something still runs. A command that started and ended
+	// before this watch began was never in the set and stays unprinted.
+	running := map[string]bool{}
 
 	for ev := range sseEvents(resp.Body) {
 		switch ev.name {
@@ -307,6 +315,9 @@ func watchCommands(f commandFilter, asJSON bool) {
 			}
 			for _, rec := range list {
 				seen[rec.ID] = rec.State
+				if isWatched(rec, f) {
+					running[rec.ID] = true
+				}
 			}
 		case "command_update":
 			var rec wire.CommandInvocation
@@ -318,9 +329,12 @@ func watchCommands(f commandFilter, asJSON bool) {
 			}
 			seen[rec.ID] = rec.State
 			if rec.State == "dropped" {
-				continue // retention expiry, not a change worth a line
+				// Retention expiry, not a state change: the record already
+				// reported how it ended. Internal bookkeeping only.
+				delete(running, rec.ID)
+				continue
 			}
-			if len(filterCommands([]wire.CommandInvocation{rec}, f)) == 0 {
+			if !watchWorthPrinting(rec, f, running) {
 				continue
 			}
 			if asJSON {
@@ -331,6 +345,42 @@ func watchCommands(f commandFilter, asJSON bool) {
 			}
 		}
 	}
+
+	// The stream ended: the server closed the connection, restarted, or the
+	// link dropped. Follow mode that simply stops is indistinguishable from an
+	// idle fleet — to an operator reading the terminal and to a script reading
+	// the exit code alike — so say so on stdout and fail (robots-dcag).
+	fmt.Println("watch: event stream ended — no longer receiving updates")
+	httpc.Exit(config.ExitRuntime)
+}
+
+// isWatched reports whether rec is a RUNNING record this view is following.
+func isWatched(rec wire.CommandInvocation, f commandFilter) bool {
+	return rec.State == "running" && len(filterCommands([]wire.CommandInvocation{rec}, commandFilter{
+		agent: f.agent,
+		verb:  f.verb,
+	})) == 1
+}
+
+// watchWorthPrinting decides whether one update earns a follow line, and
+// maintains the running set as a side effect. --all keeps the table's meaning
+// exactly: every record matching --agent/--verb, whatever its state.
+func watchWorthPrinting(rec wire.CommandInvocation, f commandFilter, running map[string]bool) bool {
+	if f.all {
+		return len(filterCommands([]wire.CommandInvocation{rec}, f)) == 1
+	}
+	if rec.State == "running" {
+		if !isWatched(rec, f) {
+			return false
+		}
+		running[rec.ID] = true
+		return true
+	}
+	if !running[rec.ID] {
+		return false // never shown as running here; its end is not this session's news
+	}
+	delete(running, rec.ID)
+	return true
 }
 
 // watchLine renders one follow-mode change.

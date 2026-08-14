@@ -81,6 +81,9 @@ the following are invisible here:
 - **`parlay commands` itself.** The observer is excluded from its own output,
   so a read never shows at least one running command (itself) and `--watch`
   never shows a permanent entry for the watcher.
+- **A bare `parlay` with no subcommand** — the panel/fleet snapshot. It has no
+  verb to report under, so it does not register, even though it does hit the
+  server. It is short-lived, but it is a real invocation this view omits.
 - **Anything run with `PARLAY_COMMAND_REPORT=0`.**
 - **Anything that could not reach the server.** The first failed report
   disables reporting for the rest of that process, by design — see

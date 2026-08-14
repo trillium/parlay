@@ -38,7 +38,7 @@ export interface CommandsResponse {
 // COVERAGE_NOTE is deliberately the same claim the CLI's empty state makes.
 // If the two ever drift, one of the surfaces is lying about its blind spots.
 export const COVERAGE_NOTE =
-  'Only the Go CLI reports itself — shell wrappers, the TS CLI, and server-side work are not tracked.'
+  'Only the Go CLI reports itself — shell wrappers, the TS CLI, server-side work, and a bare `parlay` are not tracked.'
 
 export const UNSUPPORTED_NOTE =
   'This server does not expose a live-command registry. Nothing is broken; there is simply nothing to read.'

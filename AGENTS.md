@@ -1038,8 +1038,10 @@ POLL (`robots-watch`) paths converge on. The verb itself is
 `PARLAY_MECHANIC_DISPATCH=off`; the sentinel is durable operator intent and
 wins over `PARLAY_MECHANIC_DISPATCH=on`. When OFF the tailer/poller keep
 running and advancing their offsets, so re-enabling does NOT replay the
-backlog. **Go-only, no TS port** — same reasoning as `merge-gate`; keep it out
-of `tools/cli/parity/run.sh`. Complementary to the durable-mechanic-lifecycle
+backlog. **Go-only, no TS port** — same reasoning as `merge-gate`: no `check`
+case in `tools/cli/parity/run.sh`, but it must be in that script's
+`GO_ONLY_VERBS` or its usage line reddens every help diff (robots-xaxt);
+it was missing there until the live-commands branch added it. Complementary to the durable-mechanic-lifecycle
 work (robots-jkwc) — that gates nothing, this dispatches nothing when off.
 
 ## Two-arg `git merge-tree` is not a predicate — teardown's landed check never fired (robots-ceon)
@@ -1191,11 +1193,13 @@ are easy to get wrong from the code alone.
 `tools/cli/main.go` wraps dispatch in `commandreport.Begin`, whose end report
 goes out through *both* `httpc.Exit` (so every `httpc.Die` in every verb closes
 its record without those verbs knowing) and a `defer` in `main` (normal return
-and panic). Anything that is not the Go CLI — `bin/parlay-spawn`,
+and panic — a panic reports a non-zero exit so the record never reads green).
+Anything that is not the Go CLI — `bin/parlay-spawn`,
 `tools/monitor/parlay-monitor.sh`, the retired `packages/cli`, work the server
-originates — is invisible, and `parlay commands` excludes itself so the
-observer never shows up in its own output. Both renderers print that limit in
-their empty state. Do **not** "improve" coverage by having the server infer
+originates — is invisible; `parlay commands` excludes itself so the observer
+never shows up in its own output; and a bare `parlay` (the fleet snapshot) has
+no verb to report under, so it does not register either. Both renderers print
+that limit in their empty state. Do **not** "improve" coverage by having the server infer
 running commands from requests it happens to receive: an entry nothing can
 close becomes a permanent zombie, which is the failure this design spends its
 90s staleness reaper avoiding. `PARLAY_COMMAND_REPORT=0` opts out.
@@ -1217,6 +1221,14 @@ handler, Go CLI, and client Bun suites, and
 `TestSSEBurstAndReadEndpointCarryByteIdenticalCommands` pins that the panel's
 SSE frame and the CLI's read endpoint are the same bytes. Change the wire shape
 and all three fail in one commit — that is the point.
+
+`parlay commands` is **Go-only, no TS port** — same reasoning as `merge-gate`:
+no `check` case in `tools/cli/parity/run.sh`, but it is in that script's
+`GO_ONLY_VERBS`. Its `--watch` mode is a stream, not a snapshot: without
+`--all` it prints the terminal line for any command it already showed as
+running, because an end event is how a record leaves the running set, and it
+gives up loudly (a stdout notice plus a non-zero exit) when the SSE stream
+closes rather than returning quietly — the robots-dcag shape.
 
 ## Maintaining this file
 
