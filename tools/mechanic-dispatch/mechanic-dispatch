@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# mechanic-dispatch — PROOF OF CONCEPT: deterministically ensure the right
+# "mechanic" agent is live and hand it a robots ticket. NO LLM in this loop.
+#
+# This is the "is the mechanic live? no -> launch; give ticket" step, as a plain
+# command. The event trigger (robots write -> call this) is the separate half:
+# either a daemon polling `robots ready` for new open tickets, or the filing
+# agent calls this directly right after `robots create`.
+#
+# Usage:
+#   mechanic-dispatch <robots-ticket-id> [<zone>]
+#
+# Zone -> mechanic-agent routing lives in the table below. If no zone is given,
+# it is read from the ticket's `zone:<x>` label (deterministic if agents stamp
+# one when they file). Falls back to the 'default' mechanic.
+#
+# CANONICAL SOURCE: this file lives at tools/mechanic-dispatch/mechanic-dispatch
+# in the parlay repo and is installed to ~/.local/bin/mechanic-dispatch via
+# tools/mechanic-dispatch/install.sh (matching the tools/robots-emit convention).
+# Edit it here, not the installed copy.
+set -euo pipefail
+
+TICKET="${1:?usage: mechanic-dispatch <robots-ticket-id> [<zone>]}"
+ZONE="${2:-}"
+
+# --- the ticket must exist (bad-id guard) -------------------------------------
+# A nonexistent id is NOT the same as a closed one. `robots show <bad-id>` exits
+# nonzero and prints nothing, so masking it with `|| true` left TICKET_INFO empty,
+# fell straight through the closed/done case below, and dispatched anyway — the
+# fleet-wide "robots-aaa" bug (robots-jl1a): a full opus agent + herdr pane spawned
+# on `parlay claim <bad-id>`, which can never resolve, so the agent boots with no
+# identity, no task, and no exit path. Fail LOUD and nonzero: a bad id is a caller
+# bug (bad value propagated from an event or a hand-run command), unlike the
+# legitimate already-closed skip which correctly exits 0.
+if ! TICKET_INFO=$(robots show "$TICKET" 2>/dev/null) || [ -z "$TICKET_INFO" ]; then
+  echo "abort: $TICKET does not exist — refusing to dispatch" >&2
+  exit 1
+fi
+
+# --- skip tickets that are already resolved (manual/re-dispatch guard) ---------
+# The create-emit daemon only fires on new (open) tickets, but a manual or repeat
+# dispatch can target a ticket that was already closed/fixed. Never launch or wake
+# a mechanic for resolved work.
+STATUS_LINE=$(printf '%s' "${TICKET_INFO%%$'\n'*}" | sed $'s/\x1b\\[[0-9;]*m//g')
+case "$STATUS_LINE" in
+  *CLOSED\]*|*DONE\]*)
+    echo "skip: $TICKET is already closed — nothing to dispatch"
+    exit 0 ;;
+esac
+
+# --- zone -> (agent-id, display, color, cwd) routing table --------------------
+# NOTE: a `case` map, not a bash-4 `declare -A`. macOS /bin/bash is 3.2, where
+# associative arrays are unsupported and `[beads]=...` parses as an arithmetic
+# array index — evaluating `beads` as an unbound var, fatal under `set -u`. That
+# silently killed every dispatch. Keep this lookup portable to bash 3.2.
+# The 'default' zone is special-cased below to a per-ticket identity instead of
+# a static entry — a shared "mechanic" id serializes every ticket onto one pane
+# and was the root cause of the agent_pane_busy retry storm (robots-1uez).
+zone_entry() {
+  case "$1" in
+    beads)  echo "mechanic-beads|Beads Mechanic|#ef4444|$HOME/data/brain" ;;
+    herdr)  echo "shepherd|Shepherd|#10b981|$HOME/code/herdr-oss" ;;
+    parlay) echo "parlay-dev|Parlay Dev|#c084fc|$HOME/code/parlay" ;;
+    *)      echo "mechanic|Mechanic|#f97316|$HOME" ;;
+  esac
+}
+
+# --- resolve the zone from the ticket label if not passed --------------------
+if [ -z "$ZONE" ]; then
+  ZONE=$(robots show "$TICKET" 2>/dev/null | grep -oE 'zone:[a-z0-9-]+' | head -1 | cut -d: -f2 || true)
+fi
+[ -z "$ZONE" ] && ZONE=default
+
+if [ "$ZONE" = default ]; then
+  # Per-ticket identity: mc-<ticket-id>, e.g. mc-robots-w9dq. Display name is
+  # the ticket's own title so the tab reads like the work it's doing.
+  TITLE=$(printf '%s' "$STATUS_LINE" | sed -E 's/^[^·]*·[[:space:]]*//; s/[[:space:]]+\[[^]]*\][[:space:]]*$//')
+  [ -z "$TITLE" ] && TITLE="Mechanic"
+  AGENT="mc-$TICKET"
+  NAME="$TITLE"
+  COLOR="#f97316"
+  CWD="$HOME"
+else
+  ENTRY="$(zone_entry "$ZONE")"
+  IFS='|' read -r AGENT NAME COLOR CWD <<<"$ENTRY"
+fi
+
+# --- worktree isolation decision ---------------------------------------------
+# A robots mechanic must never mutate a repo's PRIMARY checkout — it works in an
+# isolated git worktree that parlay-spawn creates at <repo>/.worktrees/parlay-<id>
+# (treehouse if on PATH, else plain git worktree). We ask for it with --worktree,
+# which parlay-spawn resolves against --cwd (it requires --cwd to be inside a git
+# repo and derives <repo> from `git -C <cwd> rev-parse --show-toplevel`), so
+# --worktree + --cwd <repo-root> compose without any extra plumbing here.
+#
+# Gate on git-repo-ness of CWD, NOT a hardcoded zone list, so a future git-repo
+# zone added to zone_entry() is isolated automatically. The 'default'/~ zone is
+# deliberately excluded and left NON-ISOLATED (triage-only): $HOME is not a repo,
+# there is nothing to worktree there, and passing --worktree would make
+# parlay-spawn fail rather than create a bogus worktree.
+WORKTREE_ARG=""
+if [ "$ZONE" != default ] && git -C "$CWD" rev-parse --show-toplevel >/dev/null 2>&1; then
+  WORKTREE_ARG="--worktree"
+fi
+
+echo "dispatch: ticket=$TICKET zone=$ZONE -> mechanic=$AGENT${WORKTREE_ARG:+ (isolated worktree)}"
+
+# --- resolve (or create) the shared "mechanic" herdr workspace ----------------
+# Every mechanic-dispatch launch lands here, default zone or specialist, so the
+# fleet of running/finished mechanics is visible in one place instead of
+# scattered across whatever workspace happened to be focused at dispatch time.
+resolve_mechanic_workspace() {
+  local ws_id
+  ws_id=$(herdr workspace list 2>/dev/null | jq -r '.result.workspaces[]? | select(.label=="mechanic") | .workspace_id' | head -1)
+  if [ -z "$ws_id" ]; then
+    local json
+    json=$(herdr workspace create --label mechanic --no-focus --cwd "$HOME" 2>/dev/null)
+    ws_id=$(printf '%s' "$json" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
+  fi
+  printf '%s' "$ws_id"
+}
+MECHANIC_WS="$(resolve_mechanic_workspace)"
+
+# --- is the mechanic live? (deterministic) -----------------------------------
+# `herdr agent get <absent>` returns an error object (or empty), not agent info;
+# treat anything without a real agent_status as absent so a dead mechanic always
+# launches rather than silently getting a ticket dispatched into the void.
+RAW=$(herdr agent get "$AGENT" 2>/dev/null || true)
+STATUS=$(printf '%s' "$RAW" | jq -r 'if (.result.agent.agent_status // "") != "" then .result.agent.agent_status else "absent" end' 2>/dev/null || true)
+[ -z "$STATUS" ] && STATUS=absent
+echo "liveness: $AGENT = $STATUS"
+
+# The ticket IS the task now: 'parlay claim <ticket>' hands the agent its
+# identity, enrolls it, and returns the ticket's own title/description as the
+# work (robots tickets default to a "fix + robots close" contract). No task
+# prose is duplicated here — it lives on the ticket.
+if [ "$STATUS" = "absent" ]; then
+  echo "-> mechanic is dead; launching via parlay-spawn (--claim $TICKET)${WORKTREE_ARG:+ in isolated worktree}"
+  exec parlay-spawn "$AGENT" "$NAME" "$COLOR" --claim "$TICKET" --cwd "$CWD" --model opus \
+    $WORKTREE_ARG \
+    ${MECHANIC_WS:+--workspace "$MECHANIC_WS"}
+else
+  echo "-> mechanic is live ($STATUS); handing it the ticket"
+  exec parlay send --"$AGENT" "Claim your next ticket: run 'parlay claim $TICKET'."
+fi
