@@ -38,9 +38,10 @@ below and it is the one this repo fully supports.
 (`packages/client`) is a browser bundle that expects to be served from the *same
 origin* as the chat API, and the author serves it from a personal, unreleased page
 host called Pulse. **Pulse is not open source and is not available** — so there is no
-turnkey `open this URL and see the panel` path here yet. To run the UI you need to
-serve `packages/client/dist/parlay-agent.js` yourself and reverse-proxy `/api/chat/*`
-to the parlay server. That wiring is not documented here yet, and it is the main gap
+turnkey `open this URL and see the panel` path here yet. To run the UI you build the
+bundle (`cd packages/client && bun run build`, which writes
+`dist/parlay-agent.js`), serve it yourself, and reverse-proxy `/api/chat/*` to the
+parlay server. That wiring is not documented here yet, and it is the main gap
 between this repo and the demo.
 
 **Tailscale is optional.** Nothing requires it. It is simply how the author reaches
@@ -62,8 +63,8 @@ bun install                                   # also wires the git hooks (core.h
 cd packages/server && PARLAY_DATA_DIR=~/.parlay/data bun run start
 ```
 
-`PARLAY_DATA_DIR` puts every file it persists in one directory. **Leave it unset and it
-writes to the author's production locations under `~/exchange` instead** — set it.
+`PARLAY_DATA_DIR` puts every file it persists in one directory. **Leave it unset and
+it scatters chat history, drafts and uploads through `~/exchange` instead** — set it.
 If you also happen to have a `~/.claude/PAI` directory, set `PAI_DIR` to somewhere
 empty too: the server tails that tree for agent-activity events and will fold them
 into your chat history. See [`packages/server/README.md`](packages/server/README.md)
@@ -73,18 +74,27 @@ for the full config surface.
 
 ```sh
 export PARLAY_SERVER=http://localhost:4242
-# or persist it so you don't re-export every session:
-./bin/parlay remote set http://localhost:4242
 ```
+
+Export it in every shell you run `./bin/parlay` from. `PARLAY_SERVER` in the
+environment always wins over the address `parlay remote set` persists to
+`~/.parlay/config.json`, and the `bin/parlay` wrapper sets `PARLAY_SERVER` to
+`http://localhost:31337` for you when it is unset — that is the port the author's own
+page host happens to listen on, so exporting `:4242` above is what points the CLI at
+the standalone server you just started. Nothing in this Quickstart needs anything
+listening on `:31337`.
 
 **3. Talk to it:**
 
 ```sh
-./bin/parlay                          # live snapshot: subscribers, agents, last messages
-./bin/parlay send --demo "hello"      # message the 'demo' channel
-./bin/parlay history 5                # read it back
-./bin/parlay doctor                   # self-diagnosis: server reachable? identity set?
+./bin/parlay                               # live snapshot: subscribers, agents, last messages
+./bin/parlay send --demo --force "hello"   # message the 'demo' channel
+./bin/parlay history 5                     # read it back
+./bin/parlay doctor                        # self-diagnosis: server reachable? identity set?
 ```
+
+`send` normally refuses a target that isn't in the live agent registry; `--force`
+seeds a channel before its agent has registered, which is exactly the case here.
 
 That round-trip is the whole substrate. From here:
 
@@ -106,8 +116,13 @@ Launch a background agent that shows up as a live tab (needs a
 ```
 
 To reach it from your phone, expose the host — Tailscale, LAN IP, or any tunnel —
-and point the CLI at that address instead of `localhost`. `parlay remote --help`
-explains the resolution precedence (env var wins over the persisted default).
+and export `PARLAY_SERVER` as that address instead of `localhost`.
+
+**The chat API is unauthenticated by design** (that is how the CLI and plain `curl`
+work — see the header of `packages/server/src/guard.ts`), so anything that can reach
+the port can post into a live agent's turn. Expose it only over a private network —
+a tailnet, a VPN, or a LAN you control — never a public tunnel or a port forwarded
+to the internet.
 
 ## Layout
 
@@ -147,9 +162,12 @@ Repo conventions worth knowing:
   index past the limit.
 - **Two version axes** — the repo release `vX.Y.Z` git tag and the panel build
   `PA_VERSION` (`packages/client/src/version.ts`, auto-bumped per client change).
-- **Don't run `packages/client/build.ts` casually** — on success it POSTs a reload
-  beacon to the author's live server on `127.0.0.1:31337`. Use `bun test` or a scoped
-  `bun build src/<file>.ts --outdir=<tmp>` to validate client changes.
+- **Build the panel bundle with `cd packages/client && bun run build`** (that runs
+  `build.ts`, which writes `dist/parlay-agent.js`). On success it also POSTs a
+  best-effort reload beacon to `127.0.0.1:31337`; if nothing is listening there it
+  just logs that and moves on. If you *are* running a live server on that port, the
+  build will force-reload its connected clients — use `bun test` or a scoped
+  `bun build src/<file>.ts --outdir=<tmp>` when you only want to validate a change.
 
 Docs of note: [`docs/api-contract.md`](docs/api-contract.md) (the HTTP contract
 between client, CLI, and server), [`docs/COMMAND_DESIGN_CONTRACT.md`](docs/COMMAND_DESIGN_CONTRACT.md)
