@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
 // watch names which store, which transitions we care about. Adding a
@@ -96,12 +99,35 @@ func handleRobotsCreated(ev RouteEvent, verbose bool) {
 	dispatchMechanic(ev.ID, verbose)
 }
 
+// mechanicDispatchSentinelPath is the kill-switch sentinel file: when it
+// exists, both trigger paths (POLL and TAILER) skip the spawn. Create with
+// `parlay mechanic off`, remove with `parlay mechanic on`.
+func mechanicDispatchSentinelPath() string {
+	return filepath.Join(config.StateHome(), "mechanic-dispatch.off")
+}
+
+// mechanicDispatchOff returns true when dispatch is disabled.
+// Precedence: PARLAY_MECHANIC_DISPATCH=off forces off (no sentinel needed);
+// a sentinel file disables even when PARLAY_MECHANIC_DISPATCH=on (the env
+// "on" value does NOT override an operator-set sentinel).
+func mechanicDispatchOff() bool {
+	if strings.ToLower(strings.TrimSpace(os.Getenv("PARLAY_MECHANIC_DISPATCH"))) == "off" {
+		return true
+	}
+	_, err := os.Stat(mechanicDispatchSentinelPath())
+	return err == nil
+}
+
 // dispatchMechanic is the reusable dispatch: spawn `mechanic-dispatch <id>`
 // (idempotent — checks the zone's mechanic liveness and launches via
 // parlay-spawn only if down). Shared by the POLL path (handler a) and the
 // TAILER fast path (robots-tail), so both triggers converge on one
 // dispatch. Failure-isolated: never panics.
 func dispatchMechanic(id string, verbose bool) {
+	if mechanicDispatchOff() {
+		fmt.Fprintf(os.Stderr, "robots-watch: mechanic dispatch is OFF, skipping %s\n", id)
+		return
+	}
 	cmd := exec.Command("mechanic-dispatch", id)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
