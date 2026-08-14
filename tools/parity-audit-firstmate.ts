@@ -26,9 +26,8 @@ import { existsSync, readFileSync } from "node:fs"
 import { execSync } from "node:child_process"
 
 const FM = process.env.FM_REPO ?? `${process.env.HOME}/code/firstmate`
-// Default to the checkout this tool lives in (repo root = tools/..), so the audit
-// probes its own source of truth — correct for the canonical ~/code/parlay run and
-// for isolated worktree/CI checkouts alike. Override with PL_REPO to point elsewhere.
+// Default to the checkout this tool lives in (repo root = tools/..) so the audit probes
+// its own source of truth — canonical run and worktree/CI alike. Override with PL_REPO.
 const PL = process.env.PL_REPO ?? `${import.meta.dir}/..`
 
 const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : "")
@@ -44,17 +43,19 @@ const cliStatusSrc = read(`${PL}/packages/cli/src/commands-status.ts`)
 const cliSuperviseSrc = read(`${PL}/packages/cli/src/commands-supervise.ts`)
 // The fold design doc is captain-private and no longer lives in this repo. Point
 // PARLAY_FOLD_DOC at a copy to re-enable the two doc-derived probes below
-// (`crewDispatchRetentionStated`, `afkHomeInFold`); without it those rows report
-// as NOT EVALUATED rather than silently regressing to MISSING.
-const foldDoc = process.env.PARLAY_FOLD_DOC ? read(process.env.PARLAY_FOLD_DOC) : ""
+// (`crewDispatchRetentionStated`, `afkHomeInFold`); without it BOTH their rows are
+// reported once as NOT EVALUATED — never a MISSING contraction, never verified. Unset
+// is supported; set-but-unreadable is a mistake, so say so loudly.
+const foldDocPath = process.env.PARLAY_FOLD_DOC
+const foldDoc = foldDocPath ? read(foldDocPath) : ""
 const foldDocAvailable = foldDoc.length > 0
+if (foldDocPath && !foldDocAvailable) console.error(`⚠ PARLAY_FOLD_DOC="${foldDocPath}" is unreadable or empty — its probes are NOT EVALUATED.`)
 
 const probe = {
   spawnFlag: (f: string) => new RegExp(`--${f}\\b`).test(spawnSrc),
   verb: (v: string) => new RegExp(`case "${v}"`).test(cliIndex),
-  // Keyed status sink: check commands-status.ts (not commands.ts — that's the old
-  // panel-status reader). Landed = the $PARLAY_STATUS_FILE env-configurable sink
-  // is in the dedicated commands-status module, AND the verb is wired in index.ts.
+  // Keyed status sink: check commands-status.ts (not commands.ts — the old panel-status
+  // reader). Landed = $PARLAY_STATUS_FILE sink there AND the verb wired in index.ts.
   keyedStatusBuilt:
     /PARLAY_STATUS_FILE/.test(cliStatusSrc) && /case "status"/.test(cliIndex),
   // Teardown: landed as a CLI verb, not a standalone bin (fold §3.7 chose CLI).
@@ -65,8 +66,8 @@ const probe = {
   effortSpawn: /--effort\b/.test(spawnSrc),
   modeSpawn: /--mode\b/.test(spawnSrc),
   projectSpawn: /--project\b/.test(spawnSrc),
-  // C3: batch id=repo dispatch is landed when the thin-loop block and its
-  // per-pair failure report are both present in parlay-spawn.
+  // C3: batch id=repo dispatch is landed when the thin-loop block and its per-pair
+  // failure report are both present in parlay-spawn.
   batchSpawn: /Batch dispatch \(thin loop\)/.test(spawnSrc) && /batch: FAILED to spawn/.test(spawnSrc),
   // C4: the runtime worktree-tangle guard ported from fm-guard. Landed = the
   // `parlay guard` verb dispatches AND the variant lifecycle calls guardRepo().
@@ -127,13 +128,12 @@ const M: Row[] = [
   { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "parlay-spawn id=repo … --prompt (thin loop, §3.8)", verdict: "COVERED-alternate", built: probe.batchSpawn, note: "C3 RESOLVED (task-ovkq): thin loop re-execs single mode per pair; shared --prompt/--model/--color, name+color derived per id; one failed pair does not stop the rest, batch exits non-zero" },
   { cap: "Multi-harness (codex/opencode/pi/grok)", fm: "fm-harness.sh + adapters", parlay: "deferred primitive, seam scaffolded (§3.4)", verdict: "DEFERRED", note: "built LAST; claude-only until then" },
   { cap: "Runtime backend (tmux/zellij/orca/cmux)", fm: "fm-backend.sh", parlay: "firstmate-retained (herdr-only by design)", verdict: "DROP-justified", note: "decision-3ae does not ask parlay to own backends" },
-  { cap: "Crew-dispatch profiles + quota-balanced", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: "firstmate POLICY, retention stated (§3.4a)", verdict: "STAYS-FIRSTMATE", note: "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" },
+  { cap: "Crew-dispatch profiles + quota-balanced", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: foldDocAvailable ? "firstmate POLICY, retention stated (§3.4a)" : "— (retention claim not checkable here)", verdict: "STAYS-FIRSTMATE", note: foldDocAvailable ? "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" : "the retention + re-activation statement was sourced from the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
 
   // --- brief / meta / identity ---
   { cap: "Structured brief contract", fm: "fm-brief.sh", parlay: "enrollment + appended task contract (§3.1)", verdict: "COVERED-alternate", built: /## Definition of done/.test(spawnSrc) },
   // Recorded meta: parlay-spawn passes --mode/--yolo to identity --register (YAML frontmatter,
-  // not firstmate's key=value .meta format). Probe: --mode and --yolo flags present in spawn
-  // AND the register call includes --mode; --project_bead and --worktree are designed-not-built.
+  // not firstmate's key=value .meta format). Probe: --mode/--yolo present in spawn.
   { cap: "Recorded meta (runtime facts)", fm: "state/<id>.meta", parlay: "identity.md frontmatter superset (§3.2)", verdict: "COVERED-alternate", built: /--mode\b/.test(spawnSrc) && /--yolo\b/.test(spawnSrc) },
   { cap: "Identity / recovery / self-restart", fm: "(none — disposable)", parlay: "durable identity+handoff+context-reset", verdict: "EXPANDED" },
   { cap: "Panel enrollment / phone reachability", fm: "(none)", parlay: "parlay monitor + Pulse panel", verdict: "EXPANDED" },
@@ -147,8 +147,7 @@ const M: Row[] = [
   { cap: "Turn-end guard hooks", fm: "fm-turnend-guard.sh", parlay: "deferred w/ harness primitive (§3.4)", verdict: "DEFERRED" },
   // C2 (task-eg75): away-mode home is DERIVED from the fold doc, so removing §3.6.2
   // reverts this row to MISSING and re-fails integrity — genuine re-verification.
-  // built=probe for the Slice 3 unattended mode LANDED IN CODE (not yet → designed).
-  { cap: "Away-mode unattended sub-supervision", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : "no home: not in Slice 3 scope, not clearly fm-retained" },
+  { cap: "Away-mode unattended sub-supervision", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : foldDocAvailable ? "no home: not in Slice 3 scope, not clearly fm-retained" : "the §3.6.2 home for this capability was stated only in the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
   { cap: "Steer agent (captain→crewmate)", fm: "fm-send.sh", parlay: "parlay send/say --agent + monitor", verdict: "COVERED-same", built: probe.verb("send") && probe.verb("say") },
   { cap: "Peek pane for diagnosis", fm: "fm-peek.sh", parlay: "parlay history + herdr agent get", verdict: "COVERED-alternate", built: probe.verb("history") },
 
@@ -192,7 +191,7 @@ const M: Row[] = [
 const problems: string[] = []
 // Rows whose verdict comes from the fold doc: without it their probe reads
 // false, which would render a real capability as a MISSING contraction.
-const docDerivedCaps = ["Away-mode unattended sub-supervision"]
+const docDerivedCaps = ["Away-mode unattended sub-supervision", "Crew-dispatch profiles + quota-balanced"]
 const notEvaluated = foldDocAvailable ? [] : docDerivedCaps
 for (const r of M) {
   if (notEvaluated.includes(r.cap)) continue
@@ -202,27 +201,28 @@ for (const r of M) {
   }
 }
 // C5 (task-8io0): the crew-dispatch row is only a legitimate STAYS-FIRSTMATE if the
-// fold doc actually states retention + re-activation. Regress to a problem otherwise.
-// Only assertable when the doc is readable; otherwise it is NOT EVALUATED.
+// fold doc actually states retention + re-activation — assertable only when the doc
+// is readable; otherwise the row is NOT EVALUATED (above), not silently verified.
 if (foldDocAvailable && /Crew-dispatch/.test(M.find(r => /Crew-dispatch/.test(r.cap))?.cap ?? "") && !probe.crewDispatchRetentionStated) {
   problems.push(`Crew-dispatch marked STAYS-FIRSTMATE but fold doc does not state retention + re-activation (see §3.4a)`)
 }
 
 // ---- render --------------------------------------------------------------
-// Unevaluated rows are reported once under NOT EVALUATED, never counted or
-// listed under a verdict they were never assessed against.
+// Unevaluated rows are reported once under NOT EVALUATED — in BOTH output modes —
+// never counted or listed under a verdict they were never assessed against.
 const rendered = M.filter(r => !notEvaluated.includes(r.cap))
+const unevaluated = M.filter(r => notEvaluated.includes(r.cap)).map(r => ({ cap: r.cap, fm: r.fm, verdict: "NOT-EVALUATED", note: r.note }))
 const counts: Record<string, number> = {}
 for (const r of rendered) counts[r.verdict] = (counts[r.verdict] ?? 0) + 1
 
 const asJson = process.argv.includes("--json")
 if (asJson) {
-  console.log(JSON.stringify({ generated: "probe-live", counts, rows: M, problems, notEvaluated }, null, 2))
+  console.log(JSON.stringify({ generated: "probe-live", counts, rows: rendered, problems, notEvaluated: unevaluated }, null, 2))
 } else {
-  console.log(`\nparlay×firstmate capability parity — ${M.length} capabilities\n`)
-  if (notEvaluated.length) {
+  console.log(`\nparlay×firstmate capability parity — ${M.length} capabilities (${rendered.length} evaluated)\n`)
+  if (unevaluated.length) {
     console.log(`NOT EVALUATED (fold doc unavailable — set PARLAY_FOLD_DOC to a copy):`)
-    for (const cap of notEvaluated) console.log(`  ${cap}`)
+    for (const r of unevaluated) console.log(`  ${r.cap}${r.note ? `\n      ↳ ${r.note}` : ""}`)
     console.log()
   }
   const order: Verdict[] = ["MISSING", "DEFERRED", "COVERED-alternate", "COVERED-same", "EXPANDED", "STAYS-FIRSTMATE", "DROP-justified"]
@@ -245,5 +245,6 @@ if (problems.length) {
   console.error(`\n✗ parity integrity FAILED:\n  - ${problems.join("\n  - ")}`)
   process.exit(1)
 }
-const missing = M.filter(r => r.verdict === "MISSING").length
-console.error(`\n✓ parity integrity OK — ${missing} contraction(s), each with a tracked fix task; ${M.length - missing} capabilities have a home.`)
+const missing = rendered.filter(r => r.verdict === "MISSING").length
+const held = unevaluated.length ? `; ${unevaluated.length} NOT EVALUATED (set PARLAY_FOLD_DOC)` : ""
+console.error(`\n✓ parity integrity OK — ${missing} contraction(s), each with a tracked fix task; ${rendered.length - missing} of ${rendered.length} evaluated capabilities have a home${held}.`)
