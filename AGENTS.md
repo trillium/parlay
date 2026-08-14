@@ -378,9 +378,14 @@ This section covers npm packages under `packages/` (those with a
 are outside this private/publishable dichotomy entirely. Every npm package
 under `packages/` is `private: true` except `packages/input`
 (`@parlay/input`) and `packages/parlay-input` (unscoped `parlay-input`,
-holds the bare name and re-exports `@parlay/input`) — these are scaffolded
-for eventual publishing but have never actually been published, and the
-`@parlay` npm scope itself has not been claimed. Neither `bun build` nor
+holds the bare name and re-exports `@parlay/input`) — these are configured
+for npm publishing (`publishConfig: { access: "public" }`, `.changeset/config.json`
+`access: "public"`, MIT `LICENSE` in each directory) but the `@parlay` npm
+scope itself has not been claimed and neither package has been published yet.
+Sharp edge: `parlay-input`'s dependency on `@parlay/input` is pinned to a
+concrete version range (`^0.1.0`) rather than `workspace:*` — changeset
+publish does not rewrite Bun's workspace protocol, so the published tarball
+would reference an unresolvable specifier otherwise. Neither `bun build` nor
 `tsc` alone produces a complete publishable output for a TS package here:
 `bun build.ts` emits the JS bundle to `dist/`, and a package-local
 `tsc --emitDeclarationOnly` (via a package-local `tsconfig.json`) emits the

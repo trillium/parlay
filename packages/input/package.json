@@ -27,6 +27,9 @@
     "url": "https://github.com/trillium/parlay.git",
     "directory": "packages/input"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.6",
