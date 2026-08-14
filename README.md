@@ -42,8 +42,7 @@ A [Bun](https://bun.sh) workspace monorepo:
 | `tools/cli` | The Go rewrite of the `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `robots-watch`/`robots-tail`, `doctor`/`health`, and more. `bin/parlay` builds and execs this binary. |
 | `packages/cli` | The original TS `parlay` command surface. Superseded by `tools/cli`; kept only for `lavish-import`, which `bin/parlay` still routes here pending a Go port. |
 | `packages/eval-engine` | A compiled Go (RE2) engine that matches spoken/typed phrases to a closed set of panel actions. |
-| `packages/input` | `@parlay/input` — a framework-agnostic DOM input wrapper for wiring a UI input to a parlay server. Publishable, scaffolded but not yet published. |
-| `packages/parlay-input` | Unscoped `parlay-input` name, held as a re-export pointer to `@parlay/input`. Publishable, scaffolded but not yet published. |
+| `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper (a real client for parlay's REST + shared-SSE input protocol) for wiring a UI input to a parlay server. The one publishable npm package; flat unscoped name, no dependencies. |
 
 Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …) and the
 agent skill documenting enrolment.
