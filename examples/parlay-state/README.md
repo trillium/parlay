@@ -1,8 +1,11 @@
 # `parlay-state/` — the CLI's and agents' state
 
-Copy this directory's contents to **`~/.parlay/`** (or to whatever you point
-`PARLAY_STATE_HOME` at). This is the client side of the split: the server never
-reads any of it.
+This is the client side of the split: the server never reads any of it. Point
+`PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` at a copy of this directory, or merge
+it into an existing `~/.parlay/`. If you already have a `~/.parlay`, follow
+[the merge instructions](../README.md#optional-merging-into-a-real-parlay) —
+`config.json`, `sweep-keep`, and the two agent directories can each overwrite
+state you are using.
 
 | Path | What it is | Change it? |
 |---|---|---|

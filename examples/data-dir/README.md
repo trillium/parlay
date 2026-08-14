@@ -13,7 +13,7 @@ you can back up, inspect, and throw away.
 | File | What it is | Change it? |
 |---|---|---|
 | `parlay-agents.json` | The **agent registry** — every agent that gets a tab in the panel. | Yes: one entry per agent you run. |
-| `parlay-settings.json` | Panel/voice preferences, served over `/api/chat/parlay-settings`. | Optional. Every key has a default. |
+| `parlay-settings.json` | Panel/voice preferences, served over `/api/chat/parlay/settings`. | Optional. Every key has a default. |
 | `chat-history.jsonl` | The message log, one JSON object per line. Rotates at 5 MB. | No — the server appends here. The four seeded lines just give a new panel something to render. |
 
 Files the server creates on demand, so they are not shipped here: `chat-draft.txt`
@@ -34,18 +34,33 @@ A JSON **array** of `AgentInfo` (`packages/server/src/types.ts`, mirrored by
 | `nicknames` | no | Voice/picker aliases. |
 | `urls` | no | Pages this agent owns. |
 | `path` | no | Filesystem paths this agent is responsible for. |
-| `caps` | no | Arbitrary JSON forwarded from `parlay listen --caps`. |
+
+`packages/go-server` additionally persists a `caps` field (arbitrary JSON
+forwarded from `parlay listen --caps`, see `internal/store/registry.go`).
+`packages/server` does not: `AgentInfo` has no such field, its registry loader
+copies only the six keys above, and a hand-seeded `caps` is dropped the next time
+the file is written back. Do not rely on it against the TypeScript server.
 
 You do not have to seed this file at all — `parlay listen` / `parlay monitor`
 register an agent on first contact and the server writes it here. Seeding it means
 the tabs exist before any agent starts.
 
-**Do not name an agent `test-…`, `bench-…`, `forge-…`, `profile-…`, `busy-…`, or
-anything ending in `z<digit>`.** The server's autonomous cleanup sweep
-(`packages/server/src/prune/policy.ts`) deletes channels matching those patterns on
-sight, at every sweep, regardless of how active they are — they are the fingerprints
-of leaked test fixtures. `helm` and `reviewer` are safe; `reviewer-z1` would be
-deleted out from under you.
+**Some agent names are deleted on sight.** The server's autonomous cleanup sweep
+removes any channel whose id matches `TEST_NAME_PATTERNS` in
+`packages/server/src/prune/policy.ts`, at every sweep including startup, regardless
+of how active it is — those are the fingerprints of leaked test fixtures. The
+patterns, all case-insensitive:
+
+| Shape | Matches |
+|---|---|
+| starts with `test-`, `bench-`, `forge-`, `meas-`, `profile-`, `busy-`, `nonexistent-`, `spawn-beads-` | `test-agent`, `forge-deploy-1` |
+| ends with `-test` | `api-test`, `parser-test` |
+| contains `-probe` | `db-probe`, `bench-probe-9` |
+| ends with `z<digits>`, optionally plus one letter | `reviewer-z1`, `worker-z12b`, `nobackendz3` |
+
+`-test` and `-probe` catch names nobody thinks of as fixtures — `api-test` and
+`db-probe` are both deleted. `helm` and `reviewer` are safe; `reviewer-z1` would
+be deleted out from under you.
 
 ## `chat-history.jsonl`
 

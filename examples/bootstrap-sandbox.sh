@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --keep)  KEEP=1; shift ;;
     --port)  PORT="${2:?--port needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -152,10 +152,34 @@ parlay remote | grep -q "source: config" &&
   check "server URL resolved from config.json" ok || check "server URL resolved from config.json" no
 parlay identity --agent helm | grep -q "PURPOSE" &&
   check "identity.md read back with frontmatter stripped" ok || check "identity.md read back with frontmatter stripped" no
-parlay launch | grep -q "reviewer" &&
+launch_specs_for_both() {
+  local out; out="$(parlay launch)" || return 1
+  printf '%s' "$out" | grep -q "helm" || return 1
+  printf '%s' "$out" | grep -q "reviewer" || return 1
+}
+launch_specs_for_both &&
   check "launch spec discovered for both agents" ok || check "launch spec discovered for both agents" no
-grep -q "Data dir *$SANDBOX/data" "$SANDBOX/server.log" &&
-  check "server persisted only inside the sandbox" ok || check "server persisted only inside the sandbox" no
+
+# The server's persisted files must exist in $PARLAY_DATA_DIR and nowhere else.
+# "Nowhere else" is checked at the exact paths packages/server/src/paths.ts falls
+# back to when PARLAY_DATA_DIR is not honored: $HOME/exchange and
+# $PAI_DIR/MEMORY/STATE, both of which point inside the sandbox for this run.
+persisted_only_in_data_dir() {
+  [ -s "$SANDBOX/data/chat-history.jsonl" ] || return 1
+  [ -s "$SANDBOX/data/parlay-agents.json" ] || return 1
+  [ -s "$SANDBOX/data/parlay-settings.json" ] || return 1
+  local stray
+  for stray in "$SANDBOX/exchange/chat-history.jsonl" \
+               "$SANDBOX/exchange/parlay-settings.json" \
+               "$SANDBOX/exchange/chat-draft.txt" \
+               "$SANDBOX/pai/MEMORY/STATE/parlay-agents.json" \
+               "$SANDBOX/pai/MEMORY/STATE/parlay-session-channels.json"; do
+    if [ -e "$stray" ]; then echo "  unexpected write outside \$PARLAY_DATA_DIR: $stray" >&2; return 1; fi
+  done
+  return 0
+}
+persisted_only_in_data_dir &&
+  check "server persisted only into \$PARLAY_DATA_DIR" ok || check "server persisted only into \$PARLAY_DATA_DIR" no
 
 if [ "$fail" = "0" ]; then
   printf '\n\033[32mall checks passed\033[0m — port %s, sandbox %s\n' "$PORT" "$SANDBOX"

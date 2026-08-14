@@ -53,37 +53,98 @@ meet only over HTTP. Each directory has its own README with a per-file table:
 
 ## Installing it for real
 
+### Start here: a scratch directory
+
+Nothing of yours is in reach, so there is nothing to be careful about. This is
+the same layout `bootstrap-sandbox.sh` builds, minus the teardown:
+
 ```sh
-# 1. CLI state
-cp -R examples/parlay-state/. ~/.parlay/
-rm ~/.parlay/README.md                        # docs, not state
+# 1. Instantiate the example somewhere new
+PARLAY_EXAMPLE=~/parlay-example
+mkdir -p "$PARLAY_EXAMPLE"
+cp -R examples/parlay-state "$PARLAY_EXAMPLE/.parlay"
+cp -R examples/data-dir     "$PARLAY_EXAMPLE/data"
 
-# 2. Server state
-mkdir -p ~/.parlay/data
-cp examples/data-dir/*.json examples/data-dir/*.jsonl ~/.parlay/data/
+# 2. Edit the placeholders
+$EDITOR "$PARLAY_EXAMPLE/.parlay/agents/helm/identity.md"     # cwd: /path/to/your/project
+$EDITOR "$PARLAY_EXAMPLE/.parlay/agents/reviewer/identity.md" # cwd/worktree/project
+$EDITOR "$PARLAY_EXAMPLE/.parlay/config.json"                 # server URL, if not localhost:4242
 
-# 3. Edit the placeholders
-$EDITOR ~/.parlay/agents/helm/identity.md     # cwd: /path/to/your/project
-$EDITOR ~/.parlay/agents/reviewer/identity.md # cwd/worktree/project
-$EDITOR ~/.parlay/config.json                 # server URL, if not localhost:4242
+# 3. Run the server against the scratch data dir
+cd packages/server && PARLAY_DATA_DIR="$PARLAY_EXAMPLE/data" bun run start
 
-# 4. Run the server
-cd packages/server && PARLAY_DATA_DIR=~/.parlay/data bun run start
-
-# 5. Talk to it
+# 4. Talk to it — every CLI call carries the scratch roots
 cd tools/cli && go build -o ~/.local/bin/parlay .
+export PARLAY_STATE_HOME="$PARLAY_EXAMPLE/.parlay"
+export PARLAY_AGENT_HOME="$PARLAY_EXAMPLE/.parlay/agents"
 parlay agents
 parlay send --helm "hello"
 ```
 
 `/path/to/your/project` is the only value you *must* change. Everything else has
-a working default.
+a working default. The two `README.md` files copied along the way are
+documentation; nothing reads them.
+
+`PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` cover `identity`, `scratchpad`, `say`,
+`status`, and `doctor`. They do **not** cover `launch`, `teardown`, `variant`, or
+`guard`, which resolve `~/.parlay/agents` from `$HOME` directly and will read
+your real store even with both variables set. `bootstrap-sandbox.sh` redirects
+`$HOME` too, which is the only way to isolate those four completely.
 
 **One repo-specific trap:** the `bin/parlay` wrapper at the repo root exports
 `PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because this
 fleet serves parlay through Pulse on that port. `PARLAY_SERVER` outranks
 `config.json`, so `bin/parlay` ignores the file this example ships. Build the
-binary directly (step 5 above) and `config.json` decides.
+binary directly (step 4 above) and `config.json` decides.
+
+### The server binds every interface, and has no authentication
+
+`packages/server/src/index.ts` calls `serve({ port })` with no hostname, and
+Bun's default bind address is `0.0.0.0` — so the command above listens on every
+interface of the machine, and the chat API has no authentication of any kind.
+Anyone who can reach the port can read your history and post as any agent. Do
+not run it on a network you do not trust: firewall the port, or put something
+that authenticates in front of it. Same for `packages/go-server`.
+
+### Optional: merging into a real `~/.parlay`
+
+Only once you have run the example and want to keep it. `~/.parlay` is live
+state — your CLI, your agents, and `parlay sweep` all read it.
+
+**Back it up first:**
+
+```sh
+cp -R ~/.parlay ~/.parlay.bak
+```
+
+Then copy the pieces individually. Never recursively over the whole directory:
+
+```sh
+mkdir -p ~/.parlay/agents ~/.parlay/data
+cp -R examples/parlay-state/agents/helm     ~/.parlay/agents/   # see below
+cp -R examples/parlay-state/agents/reviewer ~/.parlay/agents/   # see below
+cp examples/parlay-state/config.json        ~/.parlay/          # see below
+cp examples/parlay-state/sweep-keep         ~/.parlay/          # see below
+cp examples/data-dir/*.json examples/data-dir/*.jsonl ~/.parlay/data/
+```
+
+Every one of those four is marked because it can overwrite something of yours:
+
+- **`config.json`** — your persisted server URL, the one `parlay remote set`
+  wrote. The example ships `http://localhost:4242`. If your server is anywhere
+  else, skip the file, or run `parlay remote set <your-url>` afterwards.
+- **`sweep-keep`** — your keep-list. Overwriting it drops every id you had
+  listed, which makes those long-lived agents sweep-eligible: `parlay sweep
+  --apply` tears down any of them sitting in a terminal state. Paste the
+  example's entries into your existing file by hand instead of replacing it.
+- **`agents/helm`, `agents/reviewer`** — if you already run agents under those
+  ids, the copy overwrites their `identity.md`, `context.json`, `scratchpad.md`,
+  and `status`. Rename the example's directories first, and the `id` inside each
+  `identity.md` and `context.json` with them.
+
+Then edit the placeholders and run the server with
+`PARLAY_DATA_DIR=~/.parlay/data`, exactly as in steps 2-4 above — minus the two
+`PARLAY_*_HOME` exports, since `~/.parlay` is already the default.
 
 ## Required vs. taste
 
@@ -116,11 +177,22 @@ binary directly (step 5 above) and `config.json` decides.
   the server scatters those files to `~/exchange` and `$PAI_DIR/MEMORY/STATE`
   instead.
 
-**One naming rule that is not taste:** do not name an agent `test-…`, `bench-…`,
-`forge-…`, `profile-…`, `busy-…`, or anything ending in `z<digit>`. The server's
-cleanup sweep (`packages/server/src/prune/policy.ts`) deletes channels matching
-those patterns on sight, however active they are — they are the fingerprints of
-leaked test fixtures. `reviewer` is fine; `reviewer-z1` disappears.
+**One naming rule that is not taste:** the server's cleanup sweep deletes
+channels whose id matches any of the patterns below on sight, at every sweep
+including startup, however active they are — they are the fingerprints of leaked
+test fixtures. `TEST_NAME_PATTERNS` in `packages/server/src/prune/policy.ts` is
+the authoritative list; it is case-insensitive:
+
+| Shape | Matches |
+|---|---|
+| starts with `test-`, `bench-`, `forge-`, `meas-`, `profile-`, `busy-`, `nonexistent-`, `spawn-beads-` | `test-agent`, `forge-deploy-1` |
+| ends with `-test` | `api-test`, `parser-test` |
+| contains `-probe` | `db-probe`, `bench-probe-9` |
+| ends with `z<digits>`, optionally plus one letter | `reviewer-z1`, `worker-z12b`, `nobackendz3` |
+
+`-test` and `-probe` are the ones that bite, because they are ordinary names:
+`api-test` and `db-probe` both get deleted. `reviewer` is fine; `reviewer-z1` and
+`reviewer-z1b` disappear.
 
 ## What was verified
 
@@ -128,7 +200,9 @@ leaked test fixtures. `reviewer` is fine; `reviewer-z1` disappears.
 `bun` + `go`, and the following passed:
 
 - `packages/server` starts with `PARLAY_DATA_DIR` pointed at `data-dir/`'s
-  contents, and persists nothing outside the sandbox.
+  contents, and writes its persisted files only there — nothing appears at the
+  `~/exchange` or `$PAI_DIR/MEMORY/STATE` locations it falls back to when the
+  variable is not honored.
 - The seeded registry is served: `parlay agents` lists both agents.
 - `parlay send --helm "…"` round-trips — read back by `parlay history` and
   appended to the sandbox's `chat-history.jsonl`.
@@ -188,8 +262,9 @@ replaced or dropped:
 - **Credentials of every kind.** No token, key, or secret appears here in any
   form, including redacted placeholders shaped like a real value. Parlay's config
   surface has no credential field, so there was nothing to redact — the chat API
-  currently has **no authentication at all**, which is why it is meant to be bound
-  to localhost or a private tailnet and never exposed publicly.
+  currently has **no authentication at all**, and the server binds every
+  interface. See [the warning above](#the-server-binds-every-interface-and-has-no-authentication);
+  keeping it off untrusted networks is your job, not the config's.
 - The live agent roster. The source machine runs hundreds of agents; two
   representative ones are shown.
 - Real `scratchpad.md` and `handoff` content — working notes about private
