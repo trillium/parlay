@@ -70,6 +70,7 @@ func Commands(argv []string) {
 	verb, _ := r.String("--verb")
 	filter := commandFilter{all: r.Bool("--all"), agent: agent, verb: verb}
 	asJSON := r.Bool("--json")
+	watch := r.Bool("--watch")
 
 	resp, supported := fetchCommands()
 	if !supported {
@@ -86,20 +87,29 @@ func Commands(argv []string) {
 
 	if asJSON {
 		// Re-emit the server's own envelope with only the filtered records,
-		// so a script sees the same field names the panel does.
-		out, _ := json.MarshalIndent(wire.CommandsResponse{
+		// so a script sees the same field names the panel does. Pretty when
+		// this is a document; compact under --watch, where it is the first
+		// line of a stream whose every later line is one JSON object and a
+		// strict line reader would choke on an indented one.
+		envelope := wire.CommandsResponse{
 			OK:           resp.OK,
 			Now:          resp.Now,
 			Running:      countRunning(shown),
 			StaleAfterMs: resp.StaleAfterMs,
 			Commands:     shown,
-		}, "", "  ")
+		}
+		var out []byte
+		if watch {
+			out, _ = json.Marshal(envelope)
+		} else {
+			out, _ = json.MarshalIndent(envelope, "", "  ")
+		}
 		fmt.Println(string(out))
 	} else {
 		fmt.Print(renderCommandTable(resp, shown, filter))
 	}
 
-	if r.Bool("--watch") {
+	if watch {
 		watchCommands(filter, asJSON)
 		return
 	}
@@ -293,18 +303,7 @@ func watchCommands(f commandFilter, asJSON bool) {
 		fmt.Fprintln(os.Stderr, "\nwatching… (ctrl-c to stop)")
 	}
 
-	// The connect burst re-sends every record the table above already
-	// printed; seed from it so the follow log only reports what changes from
-	// here on. The burst is written before any broadcast can reach this
-	// connection, so it always arrives first.
-	seen := map[string]string{}
-	// running is the set of ids this session has shown as running — from the
-	// table/burst, or from a `+` line printed here. Without --all a terminal
-	// record is only worth a line for one of those: an end event is how a
-	// record LEAVES that set, so suppressing it would leave the follow log
-	// asserting that something still runs. A command that started and ended
-	// before this watch began was never in the set and stays unprinted.
-	running := map[string]bool{}
+	state := newWatchState()
 
 	for ev := range sseEvents(resp.Body) {
 		switch ev.name {
@@ -313,28 +312,13 @@ func watchCommands(f commandFilter, asJSON bool) {
 			if json.Unmarshal(ev.data, &list) != nil {
 				continue
 			}
-			for _, rec := range list {
-				seen[rec.ID] = rec.State
-				if isWatched(rec, f) {
-					running[rec.ID] = true
-				}
-			}
+			state.seed(list, f)
 		case "command_update":
 			var rec wire.CommandInvocation
 			if json.Unmarshal(ev.data, &rec) != nil {
 				continue
 			}
-			if seen[rec.ID] == rec.State {
-				continue
-			}
-			seen[rec.ID] = rec.State
-			if rec.State == "dropped" {
-				// Retention expiry, not a state change: the record already
-				// reported how it ended. Internal bookkeeping only.
-				delete(running, rec.ID)
-				continue
-			}
-			if !watchWorthPrinting(rec, f, running) {
+			if !state.update(rec, f) {
 				continue
 			}
 			if asJSON {
@@ -378,6 +362,55 @@ type watchStreamEnded struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error"`
 }
+
+// watchState is one follow session's memory. seen dedupes repeated states for
+// an id; running is the set of ids this session has shown as running — from
+// the connect burst (which re-sends what the table above already printed) or
+// from a `+` line. Without --all a terminal record is only worth a line for
+// one of those: an end event is how a record LEAVES the running set, so
+// suppressing it would leave the follow log asserting that something still
+// runs, while a command that started and ended before this watch began was
+// never in the set and stays unprinted.
+//
+// Follow mode is designed to run indefinitely, so nothing here may grow
+// without bound: `dropped` is the server saying "this id has aged out, forget
+// it", and both maps release it there — the same pruning the panel does.
+type watchState struct {
+	seen    map[string]string
+	running map[string]bool
+}
+
+func newWatchState() *watchState {
+	return &watchState{seen: map[string]string{}, running: map[string]bool{}}
+}
+
+// seed absorbs the connect burst, which always arrives before any broadcast
+// can reach this connection.
+func (w *watchState) seed(list []wire.CommandInvocation, f commandFilter) {
+	for _, rec := range list {
+		w.seen[rec.ID] = rec.State
+		if isWatched(rec, f) {
+			w.running[rec.ID] = true
+		}
+	}
+}
+
+// update records one change and reports whether it earns a follow line.
+func (w *watchState) update(rec wire.CommandInvocation, f commandFilter) bool {
+	if w.seen[rec.ID] == rec.State {
+		return false
+	}
+	if rec.State == "dropped" {
+		delete(w.running, rec.ID)
+		delete(w.seen, rec.ID)
+		return false
+	}
+	w.seen[rec.ID] = rec.State
+	return watchWorthPrinting(rec, f, w.running)
+}
+
+// tracked is how many ids this session is still holding.
+func (w *watchState) tracked() int { return len(w.seen) + len(w.running) }
 
 // isWatched reports whether rec is a RUNNING record this view is following.
 func isWatched(rec wire.CommandInvocation, f commandFilter) bool {

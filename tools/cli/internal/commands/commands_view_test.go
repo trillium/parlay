@@ -234,22 +234,21 @@ func eventStream(body string) http.Handler {
 // harnesses that read these streams (robots-gv6t).
 func watchOnce(t *testing.T, stream string, f commandFilter) (lines []string, code int, exited bool) {
 	t.Helper()
-	return watchOnceMode(t, stream, f, false)
-}
-
-func watchOnceMode(t *testing.T, stream string, f commandFilter, asJSON bool) (lines []string, code int, exited bool) {
-	t.Helper()
 	withServer(t, eventStream(stream))
 
 	out := captureStdout(t, func() {
-		code, exited = withExitTrap(t, func() { watchCommands(f, asJSON) })
+		code, exited = withExitTrap(t, func() { watchCommands(f, false) })
 	})
+	return splitLines(out), code, exited
+}
+
+func splitLines(out string) (lines []string) {
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line != "" {
 			lines = append(lines, line)
 		}
 	}
-	return lines, code, exited
+	return lines
 }
 
 // followStream exercises every case the default follow mode has to tell apart:
@@ -344,27 +343,59 @@ func TestWatchSaysSoWhenTheStreamEnds(t *testing.T) {
 	}
 }
 
-// --json promises that every stdout line parses, so the give-up notice has to
-// announce itself in-band without breaking `parlay commands --json --watch |
-// jq -c .`. The property under test is that the whole stream parses line by
-// line, not what the notice reads like.
-func TestWatchJSONStreamEndStaysParseable(t *testing.T) {
-	lines, code, exited := watchOnceMode(t, followStream, commandFilter{agent: "crew-1"}, true)
+// commandsAndEvents serves both routes the verb touches: the snapshot read it
+// prints first, then the canned follow stream.
+func commandsAndEvents(snapshot, stream string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/chat/commands":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, snapshot)
+		case "/api/chat/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, stream)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
 
-	if len(lines) == 0 {
-		t.Fatal("--json --watch printed nothing at all")
+// `parlay commands --json --watch` is a STREAM, so every line of it — the
+// leading snapshot envelope included — has to parse on its own or a strict
+// NDJSON reader dies on line one. Driven through the verb, not watchCommands,
+// because the envelope is printed before follow mode is ever entered.
+func TestJSONWatchIsLineParseableEndToEnd(t *testing.T) {
+	snapshot := `{"ok":true,"now":"2026-01-01T00:00:00Z","running":1,"staleAfterMs":90000,` +
+		`"commands":[{"id":"pre","verb":"listen","agent":"crew-1","state":"running","durationMs":1000}]}`
+	withServer(t, commandsAndEvents(snapshot, followStream))
+
+	var code int
+	var exited bool
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() {
+			Commands([]string{"--json", "--watch", "--agent", "crew-1"})
+		})
+	})
+	lines := splitLines(out)
+
+	if len(lines) < 2 {
+		t.Fatalf("--json --watch printed %d line(s), want the envelope plus follow output:\n%s", len(lines), out)
 	}
 	for i, line := range lines {
-		var any map[string]any
-		if err := json.Unmarshal([]byte(line), &any); err != nil {
-			t.Fatalf("stdout line %d is not JSON (%v): %q", i+1, err, line)
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+			t.Fatalf("stdout line %d does not parse on its own (%v): %q", i+1, err, line)
 		}
 	}
 
-	last := map[string]any{}
-	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
-		t.Fatalf("decoding the final line: %v", err)
+	var first map[string]any
+	_ = json.Unmarshal([]byte(lines[0]), &first)
+	if _, ok := first["commands"]; !ok {
+		t.Errorf("first line = %q, want the snapshot envelope", lines[0])
 	}
+
+	var last map[string]any
+	_ = json.Unmarshal([]byte(lines[len(lines)-1]), &last)
 	if last["ok"] != false || last["error"] != "stream-ended" {
 		t.Errorf("final line = %v, want the structured give-up {ok:false, error:\"stream-ended\"}", last)
 	}
@@ -372,10 +403,61 @@ func TestWatchJSONStreamEndStaysParseable(t *testing.T) {
 		var rec map[string]any
 		_ = json.Unmarshal([]byte(line), &rec)
 		if _, ok := rec["error"]; ok {
-			t.Errorf("record line %d carries an `error` key, destroying the discriminator: %q", i+1, line)
+			t.Errorf("line %d carries an `error` key, destroying the discriminator: %q", i+1, line)
 		}
 	}
 	if !exited || code == 0 {
 		t.Errorf("exit = %d exited=%v, want a non-zero give-up in --json mode too", code, exited)
+	}
+}
+
+// --json without --watch is a DOCUMENT: pretty-printing it is correct, and the
+// compact-under-watch branch must not have flattened it.
+func TestJSONSnapshotWithoutWatchStaysPretty(t *testing.T) {
+	snapshot := `{"ok":true,"now":"2026-01-01T00:00:00Z","running":1,"staleAfterMs":90000,` +
+		`"commands":[{"id":"pre","verb":"listen","agent":"crew-1","state":"running","durationMs":1000}]}`
+	withServer(t, commandsAndEvents(snapshot, ""))
+
+	out := captureStdout(t, func() {
+		Commands([]string{"--json"})
+	})
+	if len(splitLines(out)) < 2 {
+		t.Errorf("--json alone printed one line; the document form should stay indented:\n%s", out)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("--json output does not parse: %v", err)
+	}
+}
+
+// A dropped update is the server saying "forget this id". Follow mode is built
+// to run indefinitely, so its bookkeeping must shrink again — the panel prunes
+// on the same signal.
+func TestDroppedRecordIsForgottenByTheFollowState(t *testing.T) {
+	f := commandFilter{}
+	state := newWatchState()
+	state.seed([]wire.CommandInvocation{
+		{ID: "pre", Verb: "listen", Agent: "crew-1", State: "running"},
+	}, f)
+
+	for _, rec := range []wire.CommandInvocation{
+		{ID: "new", Verb: "send", Agent: "crew-1", State: "running"},
+		{ID: "new", Verb: "send", Agent: "crew-1", State: "finished", Outcome: "ok"},
+		{ID: "pre", Verb: "listen", Agent: "crew-1", State: "expired", Outcome: "no-heartbeat"},
+	} {
+		state.update(rec, f)
+	}
+	if state.tracked() == 0 {
+		t.Fatal("terminal records were forgotten before the server said to drop them")
+	}
+
+	for _, id := range []string{"pre", "new"} {
+		if printed := state.update(wire.CommandInvocation{ID: id, State: "dropped"}, f); printed {
+			t.Errorf("a retention drop for %q earned an operator-visible line", id)
+		}
+	}
+	if state.tracked() != 0 {
+		t.Errorf("state still holds %d id(s) after both were dropped (seen=%v running=%v)",
+			state.tracked(), state.seen, state.running)
 	}
 }
