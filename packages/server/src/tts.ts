@@ -87,7 +87,7 @@ function diskPut(key: string, wav: Uint8Array): void {
 // daemon reuses its kokoro cache + voice pool; caller is pinned to "parlay"
 // so the panel keeps one consistent voice.
 
-const SOCKET_PATH = `/tmp/speak-${process.env.USER ?? "trilliumsmith"}.sock`
+const SOCKET_PATH = `/tmp/speak-${process.env.USER ?? "unknown-user"}.sock`
 const SYNTH_TIMEOUT_MS = 30_000
 
 // Small in-memory clip cache — chat replies repeat rarely, but replays are free

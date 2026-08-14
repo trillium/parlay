@@ -5,12 +5,15 @@
 # Same guards as post-commit; see that file for the full pipeline map.
 set -uo pipefail
 
-# Same primary-checkout derivation as post-commit; see that file for the rationale.
+# Same primary-checkout derivation (and symlink resolution of both sides of the
+# comparison) as post-commit; see that file for the rationale.
+resolve_dir() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
 COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-MAIN_CHECKOUT="${PARLAY_MAIN_CHECKOUT:-${COMMON_DIR%/.git}}"
+COMMON_DIR="$(resolve_dir "$COMMON_DIR")"
+MAIN_CHECKOUT="$(resolve_dir "${PARLAY_MAIN_CHECKOUT:-${COMMON_DIR%/.git}}")"
 LOG="${PARLAY_HOOK_LOG:-$HOME/Library/Logs/parlay/bundle-rebuild.out.log}"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
-TOP="$(git rev-parse --show-toplevel)"
+TOP="$(resolve_dir "$(git rev-parse --show-toplevel)")"
 
 if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
   echo "[post-merge] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
