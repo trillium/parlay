@@ -372,9 +372,27 @@ func variantTeardown(argv []string) {
 		httpc.Die(fmt.Sprintf("parlay variant teardown: '%s' is not a variant (no variant_of field)", variantID), config.ExitUsage)
 		return
 	}
+	force := r.Bool("--force")
+	wkPath := filepath.Join(parlayWktreesDir(), variantID)
+	wkExists := false
+	if _, err := os.Stat(wkPath); err == nil {
+		wkExists = true
+	}
+	// Git safety FIRST — before the memory checks and before mergeKind writes
+	// anything into the primary. A variant's worktree is the only copy of its
+	// working tree, and the removal below is `--force`; refusing here is the
+	// only thing standing between a stale teardown and destroyed source
+	// (robots-cncx). Same rules and same --force override as `parlay
+	// teardown`, which has always checked this.
+	if wkExists {
+		if err := checkWorktreeGitSafety("parlay variant teardown", variantID, wkPath, force); err != nil {
+			httpc.Die(err.Error(), config.ExitUsage)
+			return
+		}
+	}
 	unID := unmergedCount(variantID, pID, "identity")
 	unSp := unmergedCount(variantID, pID, "scratchpad")
-	if unID+unSp > 0 && !r.Bool("--force") {
+	if unID+unSp > 0 && !force {
 		httpc.Die(fmt.Sprintf("parlay variant teardown: %s has %d unmerged identity fact(s) + %d scratchpad note(s). Run 'parlay variant merge %s' first, or --force to discard.", variantID, unID, unSp, variantID), config.ExitUsage)
 		return
 	}
@@ -383,8 +401,7 @@ func variantTeardown(argv []string) {
 	if iN+sN > 0 {
 		fmt.Printf("auto-merged %d identity + %d scratchpad into %s\n", iN, sN, pID)
 	}
-	wkPath := filepath.Join(parlayWktreesDir(), variantID)
-	if _, err := os.Stat(wkPath); err == nil {
+	if wkExists {
 		// Tangle backstop on teardown too: check the PRIMARY (not this
 		// variant's own worktree) so a stranded primary surfaces on the next
 		// fleet action. Advisory.
