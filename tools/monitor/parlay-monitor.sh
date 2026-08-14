@@ -3,10 +3,15 @@
 #
 # One-call enroll + stream: registers this agent with the central relay (adds
 # itself to the registry, which starts the relay's upstream poll loop for this
-# channel), then execs `tail -F` on the agent's spool file so its final process
-# footprint is `tail` alone (~1.2MB) — not a ~40MB bun poller.
+# channel), then follows the agent's spool file with `tail -F` so its process
+# footprint is a bash supervisor plus `tail` (~2MB) — not a ~40MB bun poller.
 #
 # A harness Monitor tool runs this and wakes the agent on every CHAT_MSG line.
+#
+# Stdout carries two kinds of line:
+#   CHAT_MSG|…   a spooled message, byte-for-byte from the relay
+#   MONITOR|…    this script reporting on the stream itself (`restarted`,
+#                `down`) — see the supervision section below (robots-gv6t)
 #
 # Usage:
 #   parlay-monitor.sh --agent <id> [--notify-safe]
@@ -33,8 +38,13 @@
 #                          server, $TMPDIR/parlay/by-server/<slug> otherwise)
 #   PARLAY_RELAY_SOCK      explicit control-socket path (default: <runtime>/relay.sock)
 #   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
+#   PARLAY_RELAY_PROBE_TIMEOUT  seconds to allow the relay's /agents probe (default 15)
+#   PARLAY_MONITOR_MIN_UPTIME   seconds a tail must survive to count as healthy (default 2)
+#   PARLAY_MONITOR_MAX_RESTARTS consecutive fast respawns tolerated before giving up (default 5)
 #
-# Exit codes: 0 (never, tail runs until killed), 2 usage error, 1 relay/enroll error.
+# Exit codes: 0 (never — the stream is supervised and only ends when this
+# process is killed), 2 usage error, 1 relay/enroll error OR a stream that
+# could not be kept alive (announced as MONITOR|down on stdout first).
 set -euo pipefail
 
 usage() {
@@ -83,6 +93,10 @@ done
 STREAMING=0
 on_setup_exit() {
   local code=$?
+  # A bare `[ … ] && rm` would make this whole statement the function's status
+  # under `set -e` and skip the warning below — the exact silence robots-dcag
+  # is about.
+  if [ -n "${CONSUMED:-}" ]; then rm -f "$CONSUMED"; fi
   [ "$code" = 0 ] && return 0
   [ "$STREAMING" = 1 ] && return 0
   echo "parlay-monitor: FAILED during setup (exit $code) — '$AGENT' is NOT streaming." >&2
@@ -305,38 +319,162 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 echo "parlay-monitor: streaming '$AGENT' from $SPOOL" >&2
-# Setup is over: past here, an exit is the stream ending (usually the harness
-# killing us), not the silent registered-but-deaf failure the trap warns about.
+# Setup is over: past here, the stream is live and its death is a different,
+# separately-reported event (see stream_down below), not the silent
+# registered-but-deaf setup failure the trap warns about.
 STREAMING=1
 
-# 2. Stream. Flags:
-#      -n0  start at end-of-file — no replay of already-consumed spool lines
-#      -F   follow by name; re-open on truncate/rotate/recreate. This is the
-#           "channel re-open after relay restart" correctness requirement: if the
-#           relay is restarted and the spool is recreated, tail -F reattaches
-#           without the monitor needing to restart.
+# ── 2. Stream, SUPERVISED (robots-gv6t) ───────────────────────────────────────
+# The stream used to be terminal: `exec tail` (or tail|awk) ran until something
+# killed it, and whatever that something was took the agent's ONLY reply channel
+# with it. The death was silent in the worst possible direction — registration
+# and the "listening" announce had already succeeded, so the panel kept showing a
+# ready agent while nothing reached it. An agent that did not happen to read its
+# harness task-failure notification was unreachable for the rest of its session,
+# and the captain had no signal that a message went nowhere.
 #
-# Default (no --notify-safe): `exec` replaces this shell with tail so the monitor's
-# footprint is tail's alone (~1.2MB) and the raw spool line reaches stdout byte-
-# for-byte. Programmatic consumers depend on that completeness.
+# Two things follow from that, and both are implemented here:
 #
-# --notify-safe: pipe tail through awk that caps each over-budget line and appends
-# a self-describing pointer (id survives — it sits in the first ~55 chars). fflush
-# after every line keeps the Monitor tool's per-line event contract intact. This
-# costs one extra awk process; only harness agents that opt in pay it.
-if [ "$NOTIFY_SAFE" = 1 ]; then
-  BUDGET="${PARLAY_NOTIFY_BUDGET:-400}"
-  # No `exec` here: it cannot replace the shell with a pipeline. tail+awk run under
-  # this shell; killing the monitor's process group (as the harness does) reaps both.
-  tail -n0 -F "$SPOOL" | awk -v BUD="$BUDGET" '
-    {
-      if (length($0) > BUD) {
-        printf "%s ⟪+%d chars truncated for notification — run: parlay history 30 --full⟫\n", substr($0, 1, BUD), length($0) - BUD
-      } else {
-        print $0
-      }
-      fflush()
-    }'
-else
-  exec tail -n0 -F "$SPOOL"
-fi
+#   1. A dead tail is RECOVERED, not fatal. tail is respawned in a loop instead
+#      of being the last thing this script ever does. Whatever killed it (a
+#      stray signal, an OOM reap, a bad fd) has to keep winning to keep the
+#      channel down, and the common case — one transient kill — self-heals.
+#
+#   2. Every stream event is announced ON STDOUT. A harness Monitor tool raises
+#      a notification per *stdout* line and never reads stderr, so a stderr-only
+#      notice is invisible to the very agent whose channel just dropped. Notices
+#      use a `MONITOR|<kind>|<text>` prefix, deliberately distinct from the
+#      `CHAT_MSG|` lines the relay spools, so a programmatic consumer of this
+#      stream can filter them out by prefix and a human/agent reading it can't
+#      miss them. They are also mirrored to stderr for the process log.
+#
+# Restarting from end-of-file would re-open the channel but silently swallow
+# everything the relay spooled during the gap, so each respawn resumes at the
+# byte offset the previous tail stopped at (`tail -c +N`) rather than `-n0`.
+# The first arm still starts at end-of-file — offset := current spool size —
+# which is exactly what `-n0` meant.
+#
+# --notify-safe pipes tail through awk that caps each over-budget line and
+# appends a self-describing pointer (the message id survives — it sits in the
+# first ~55 chars). fflush after every line keeps the Monitor tool's per-line
+# event contract intact. Only harness agents that opt in pay for the extra awk.
+#
+# Tunables (tests pin them; defaults are what production runs):
+#   PARLAY_MONITOR_MIN_UPTIME    seconds a tail must survive to count as healthy
+#                                and reset the thrash counter (default 2)
+#   PARLAY_MONITOR_MAX_RESTARTS  consecutive sub-MIN_UPTIME respawns tolerated
+#                                before giving up loudly (default 5)
+MIN_UPTIME="${PARLAY_MONITOR_MIN_UPTIME:-2}"
+MAX_RESTARTS="${PARLAY_MONITOR_MAX_RESTARTS:-5}"
+BUDGET="${PARLAY_NOTIFY_BUDGET:-400}"
+
+# notice <kind> <text> — the loud channel. stdout so the harness raises an event
+# for the agent; stderr so it also lands in the process log.
+notice() {
+  printf 'MONITOR|%s|%s\n' "$1" "$2"
+  echo "parlay-monitor: $1 — $2" >&2
+}
+
+# spool_bytes — current spool size, or 0 while the relay has yet to (re)create
+# it. `wc -c <file` rather than `stat`, whose flags differ between BSD and GNU.
+spool_bytes() {
+  local n=0
+  if [ -f "$SPOOL" ]; then
+    # Consume the status explicitly: under `set -e` a bare `n=$(…)` assignment
+    # would take the pipeline's status and abort the supervisor over a probe
+    # that is allowed to fail (robots-dcag).
+    n="$(wc -c <"$SPOOL" 2>/dev/null | tr -d '[:space:]')" || n=0
+  fi
+  case "$n" in
+    ''|*[!0-9]*) n=0 ;;
+  esac
+  printf '%s' "$n"
+}
+
+# CONSUMED holds the byte count the counting stage below reports for one tail
+# run. It has to be a file, not a variable: the counter is a pipeline stage, so
+# it runs in a subshell and cannot assign back into this one.
+# on_setup_exit removes it on the way out (the EXIT trap is already spoken for
+# by robots-dcag's setup guard); the signal traps cover a kill that skips EXIT.
+CONSUMED="$(mktemp "${TMPDIR:-/tmp}/parlay-monitor-consumed.XXXXXX")"
+trap 'rm -f "$CONSUMED"; exit 143' HUP INT TERM
+
+# run_tail <offset> — stream from byte <offset>+1 to end, following the file by
+# name so a relay restart that recreates the spool reattaches on its own.
+# Returns tail's (or the pipeline's) status; never aborts the script, so the
+# supervisor below decides what a non-zero status means.
+#
+# The first stage after tail counts the bytes it forwarded and writes the total
+# to $CONSUMED at EOF. That is the resume point — NOT the spool's size when the
+# supervisor gets around to looking, which would swallow anything the relay
+# appended between tail's death and that read. Counting runs under LC_ALL=C so
+# `length()` is bytes, matching `tail -c`; the truncation stage deliberately
+# does not, since its budget is about how much text a notification can carry.
+# (Byte arithmetic assumes the spool only ever grows. `tail -F` would reattach
+# to a truncated/rotated spool from its start, and the offset would then be
+# wrong — the relay never rotates spools, and a wrong offset here degrades to
+# replayed or skipped lines, not a dead channel.)
+run_tail() {
+  local from="$1" rc=0
+  : >"$CONSUMED"
+  if [ "$NOTIFY_SAFE" = 1 ]; then
+    # No `exec` even in the single-tail case now: this shell has to outlive the
+    # stream to restart it.
+    tail -c "+$((from + 1))" -F "$SPOOL" \
+      | LC_ALL=C awk -v CF="$CONSUMED" '{ n += length($0) + 1; print; fflush() } END { printf "%d", n > CF }' \
+      | awk -v BUD="$BUDGET" '
+      {
+        if (length($0) > BUD) {
+          printf "%s ⟪+%d chars truncated for notification — run: parlay history 30 --full⟫\n", substr($0, 1, BUD), length($0) - BUD
+        } else {
+          print $0
+        }
+        fflush()
+      }' || rc=$?
+  else
+    tail -c "+$((from + 1))" -F "$SPOOL" \
+      | LC_ALL=C awk -v CF="$CONSUMED" '{ n += length($0) + 1; print; fflush() } END { printf "%d", n > CF }' || rc=$?
+  fi
+  return "$rc"
+}
+
+# consumed_bytes — what the last run_tail forwarded, or 0 if the counter never
+# got to write (killed outright rather than seeing EOF). Same explicit-status
+# discipline as spool_bytes.
+consumed_bytes() {
+  local n=0
+  n="$(tr -d '[:space:]' <"$CONSUMED" 2>/dev/null)" || n=0
+  case "$n" in
+    ''|*[!0-9]*) n=0 ;;
+  esac
+  printf '%s' "$n"
+}
+
+OFFSET="$(spool_bytes)"
+THRASH=0
+while :; do
+  STARTED_AT=$SECONDS
+  RC=0
+  run_tail "$OFFSET" || RC=$?
+  UPTIME=$((SECONDS - STARTED_AT))
+
+  # Resume exactly where delivery stopped. Everything before this point reached
+  # stdout, so re-reading it would duplicate messages the agent already acted
+  # on; everything after it is the gap, and skipping it is the silent loss this
+  # whole loop exists to prevent.
+  OFFSET=$((OFFSET + $(consumed_bytes)))
+
+  if [ "$UPTIME" -lt "$MIN_UPTIME" ]; then
+    THRASH=$((THRASH + 1))
+  else
+    THRASH=1
+  fi
+
+  if [ "$THRASH" -gt "$MAX_RESTARTS" ]; then
+    notice "down" "stream for '$AGENT' died ${THRASH}x in a row (last exit $RC) — GIVING UP. This agent is registered but DEAF: nothing sent to it will arrive. Re-arm with: parlay listen --agent $AGENT"
+    exit 1
+  fi
+
+  notice "restarted" "stream for '$AGENT' ended after ${UPTIME}s (exit $RC) — resuming from byte $OFFSET (attempt $THRASH/$MAX_RESTARTS)"
+  sleep 1
+done

@@ -126,6 +126,27 @@ relay serves something else" and quietly declined to use launchd at all.
 | `PARLAY_RELAY_RUNTIME` | `$TMPDIR/parlay`, or `$TMPDIR/parlay/srv-<hash>` when `PARLAY_SERVER` is non-default | runtime dir with `relay.sock` + `<agent>.chan` |
 | `PARLAY_RELAY_SOCK`    | `<runtime>/relay.sock` | explicit control-socket path |
 | `PARLAY_NOTIFY_BUDGET` | `400` | `--notify-safe` per-line char budget before truncating |
+| `PARLAY_MONITOR_MIN_UPTIME` | `2` | seconds a `tail` run must survive to count as healthy |
+| `PARLAY_MONITOR_MAX_RESTARTS` | `5` | consecutive fast respawns tolerated before giving up |
+
+## Stream supervision (robots-gv6t)
+
+The stream is **not** terminal. `tail` runs in a supervised loop, and each
+respawn resumes at the byte offset delivery actually reached — so a killed
+`tail` costs nothing, and messages spooled during the gap still arrive.
+
+Stdout therefore carries two kinds of line:
+
+| Prefix | Meaning |
+|--------|---------|
+| `CHAT_MSG\|…` | a spooled message, byte-for-byte from the relay |
+| `MONITOR\|<kind>\|<text>` | this script reporting on the stream (`restarted`, `down`) |
+
+Programmatic consumers should filter on the prefix. The notices go to stdout on
+purpose: a harness Monitor tool raises an event per stdout line and never reads
+stderr, so a stderr-only warning is invisible to the agent whose channel dropped.
+`MONITOR|down|…` means supervision gave up — the agent is registered but deaf
+until `parlay listen` is re-run.
 
 ## Failure modes
 
@@ -141,3 +162,6 @@ relay serves something else" and quietly declined to use launchd at all.
 - Relay rejects the enroll (bad id, shutting down) → exits 1 with the relay's
   error echoed.
 - Bad `--agent` (not a kebab-slug) → exits 2.
+- Stream dies repeatedly and fast → `MONITOR|down|…` on stdout, then exits 1.
+  Every other stream death is recovered in place and reported as
+  `MONITOR|restarted|…`.
