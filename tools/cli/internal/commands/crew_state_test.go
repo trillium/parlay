@@ -1,7 +1,9 @@
 // Mirrors packages/cli/src/commands-crew-state.test.ts's cases, plus
 // dedicated regression coverage for the ticket B5 fidelity fix (see
 // status_verb.go's statusFileForAgent doc): crew-state must reconcile the
-// TARGET agent's status file, not the caller's own.
+// TARGET agent's status file, not the caller's own — and for robots-me7m: a
+// FAILED relay lookup must never be reported as "not enrolled", and a
+// stale-but-valid status file must never be discarded for "unknown".
 package commands
 
 import (
@@ -9,7 +11,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func newCrewStateServer(t *testing.T, registeredIDs ...string) *httptest.Server {
@@ -31,7 +35,19 @@ func newCrewStateServer(t *testing.T, registeredIDs ...string) *httptest.Server 
 	return srv
 }
 
+// noRetrySleep makes the relay-lookup backoff free in tests.
+func noRetrySleep(t *testing.T) {
+	t.Helper()
+	orig := sleep
+	sleep = func(time.Duration) {}
+	t.Cleanup(func() { sleep = orig })
+}
+
+// writeStatus (<home>/<agent>/status) lives in supervise_test.go — same
+// package, same fixture shape.
+
 func TestCrewStateForAgentUnknownWhenNotEnrolled(t *testing.T) {
+	noRetrySleep(t)
 	srv := newCrewStateServer(t) // no agents registered
 	t.Setenv("PARLAY_SERVER", srv.URL)
 	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
@@ -40,9 +56,13 @@ func TestCrewStateForAgentUnknownWhenNotEnrolled(t *testing.T) {
 	if res.State != "unknown" || res.Source != "none" {
 		t.Errorf("CrewStateForAgent() = %+v, want state=unknown source=none", res)
 	}
+	if res.Detail != "agent not registered with relay" || res.ExitCode != ExitCrewNotEnrolled {
+		t.Errorf("CrewStateForAgent() = %+v, want the authoritative not-registered detail + exit %d", res, ExitCrewNotEnrolled)
+	}
 }
 
 func TestCrewStateForAgentUnknownWhenNoStatusRecorded(t *testing.T) {
+	noRetrySleep(t)
 	srv := newCrewStateServer(t, "agent-a")
 	t.Setenv("PARLAY_SERVER", srv.URL)
 	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
@@ -50,6 +70,125 @@ func TestCrewStateForAgentUnknownWhenNoStatusRecorded(t *testing.T) {
 	res := CrewStateForAgent("agent-a")
 	if res.State != "unknown" || res.Detail != "no status recorded" {
 		t.Errorf("CrewStateForAgent() = %+v, want unknown/no status recorded", res)
+	}
+	// "no news" must be distinguishable from "gone" without string-matching.
+	if res.ExitCode != ExitCrewNoStatus {
+		t.Errorf("CrewStateForAgent() exit = %d, want %d (no status ≠ not enrolled)", res.ExitCode, ExitCrewNoStatus)
+	}
+}
+
+// THE robots-me7m regression: a failed relay lookup must never be reported
+// as "agent not enrolled with relay". The agent is live and its status file
+// is valid; the relay is simply unreachable, so the durable on-disk record
+// is the answer — never "unknown".
+func TestCrewStateFallsBackToStatusFileWhenRelayLookupFails(t *testing.T) {
+	noRetrySleep(t)
+	home := t.TempDir()
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1") // nothing listening
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	writeStatus(t, home, "leg3", "working: reading fm-send.sh to add parlay send path\n")
+
+	res := CrewStateForAgent("leg3")
+	if res.State != "working" {
+		t.Fatalf("CrewStateForAgent() = %+v, want state=working from the on-disk status file", res)
+	}
+	if res.Source != "status-degraded" {
+		t.Errorf("source = %q, want status-degraded (relay unreachable, status is the fallback)", res.Source)
+	}
+	if !strings.Contains(res.Detail, "reading fm-send.sh") || !strings.Contains(res.Detail, "relay unreachable") {
+		t.Errorf("detail = %q, want the status note plus a staleness caveat", res.Detail)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("exit = %d, want 0 — a state WAS determined", res.ExitCode)
+	}
+	if strings.Contains(res.Detail, "not registered") || strings.Contains(res.Detail, "not enrolled") {
+		t.Errorf("detail = %q must not claim the agent is unenrolled — the relay never answered", res.Detail)
+	}
+}
+
+// A failed lookup with nothing on disk is the one case crew-state has no
+// opinion — and it must say so distinctly from "gone".
+func TestCrewStateRelayUnreachableAndNoStatus(t *testing.T) {
+	noRetrySleep(t)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+
+	res := CrewStateForAgent("nobody")
+	if res.State != "unknown" || res.Source != "none" {
+		t.Errorf("CrewStateForAgent() = %+v, want unknown/none", res)
+	}
+	if res.Detail != "relay unreachable and no status recorded" || res.ExitCode != ExitCrewRelayUnreachable {
+		t.Errorf("CrewStateForAgent() = %+v, want the relay-unreachable detail + exit %d", res, ExitCrewRelayUnreachable)
+	}
+}
+
+// The observed failure was transient and cleared on retry, so a single
+// hiccup must not degrade the answer at all.
+func TestCrewStateRetriesTransientRelayFailure(t *testing.T) {
+	noRetrySleep(t)
+	home := t.TempDir()
+	calls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"registered":{"agents":[{"id":"leg3","name":"n","color":"#fff"}]}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	writeStatus(t, home, "leg3", "working: still going\n")
+
+	res := CrewStateForAgent("leg3")
+	if res.State != "working" || res.Source != "status" || res.Detail != "still going" || res.ExitCode != 0 {
+		t.Errorf("CrewStateForAgent() = %+v, want a clean working/status result after the retry", res)
+	}
+	if calls < 2 {
+		t.Errorf("subscribers called %d time(s), want a retry after the 503", calls)
+	}
+}
+
+// An authoritative "not registered" still must not throw away a valid
+// status line — the last known state is reported, with the source and exit
+// code carrying the "gone" signal.
+func TestCrewStateKeepsLastStatusWhenRelaySaysUnenrolled(t *testing.T) {
+	noRetrySleep(t)
+	home := t.TempDir()
+	srv := newCrewStateServer(t) // relay answers: nobody registered
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	writeStatus(t, home, "retired", "done: shipped it\n")
+
+	res := CrewStateForAgent("retired")
+	if res.State != "done" {
+		t.Errorf("CrewStateForAgent() = %+v, want the recorded terminal verb, not unknown", res)
+	}
+	if res.Source != "status-unenrolled" || res.ExitCode != ExitCrewNotEnrolled {
+		t.Errorf("CrewStateForAgent() = %+v, want source=status-unenrolled + exit %d", res, ExitCrewNotEnrolled)
+	}
+}
+
+// "status unreadable" is its own condition, distinct from "nothing
+// recorded" — a supervisor must not read a corrupt file as "no news".
+func TestCrewStateUnparseableStatusLine(t *testing.T) {
+	noRetrySleep(t)
+	home := t.TempDir()
+	srv := newCrewStateServer(t, "agent-garbled")
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	writeStatus(t, home, "agent-garbled", "this line has no verb colon grammar\n")
+
+	res := CrewStateForAgent("agent-garbled")
+	if res.State != "unknown" || res.Source != "status" {
+		t.Errorf("CrewStateForAgent() = %+v, want unknown/status", res)
+	}
+	if !strings.Contains(res.Detail, "unparseable") || res.ExitCode != ExitCrewStatusUnreadable {
+		t.Errorf("CrewStateForAgent() = %+v, want an unparseable detail + exit %d", res, ExitCrewStatusUnreadable)
 	}
 }
 
