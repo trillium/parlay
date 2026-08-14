@@ -6,22 +6,42 @@
 # Complements: pre-commit PA_VERSION auto-bump + the com.parlay.bundle-rebuild
 # launchd WatchPaths agent (covers uncommitted live-dev edits to version.ts).
 # This hook closes the paths pre-commit misses: merges, PA_BUMP=none, --no-verify.
-set -uo pipefail  # NOT -e: a delivery failure must never read as a commit failure
+set -uo pipefail  # NOT -e: a delivery failure must never read as a commit
+                  # failure. The one deliberate non-zero exit is an unresolvable
+                  # primary checkout below, where guessing could deliver from the
+                  # wrong tree; a build/delivery failure still exits 0.
+
+# Opt-in, per checkout. `bun install` installs these hooks for everyone, so the
+# rebuild (which runs a build and POSTs to a local port) must not fire on a
+# machine that never asked for it. A git config rather than an env var: a hook
+# fires from IDEs, GUIs and cron-like contexts that never sourced a shell
+# profile, and `git config core.hooksPath` is already how these are activated.
+#   git config --bool parlay.autobuild true
+[[ "$(git config --bool --get parlay.autobuild 2>/dev/null || true)" == "true" ]] || exit 0
 
 # Deploy target = this repo's PRIMARY checkout, never a linked worktree. Derived
 # from git (`--git-common-dir` is shared by every worktree and lives inside the
 # primary checkout) so no machine-specific path is baked in; PARLAY_MAIN_CHECKOUT
-# overrides when you deploy from somewhere else. Both sides of the comparison are
-# symlink-resolved (the repo_identity idiom in bin/parlay-spawn) because
-# --show-toplevel already is, so a symlinked path prefix must not read as a
-# worktree and silently stop delivery in the primary checkout.
-resolve_dir() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
-COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-COMMON_DIR="$(resolve_dir "$COMMON_DIR")"
-MAIN_CHECKOUT="$(resolve_dir "${PARLAY_MAIN_CHECKOUT:-${COMMON_DIR%/.git}}")"
+# overrides when you deploy from somewhere else. resolve_dir refuses an empty or
+# unreadable path instead of resolving it: bash 3.2 treats `cd ""` as success, so
+# tolerating it would silently yield the hook's cwd — the top of whatever tree is
+# committing — and let a linked worktree deploy.
+resolve_dir() { [[ -n "${1:-}" ]] || return 1; (cd "$1" 2>/dev/null && pwd -P); }
+if [[ -n "${PARLAY_MAIN_CHECKOUT:-}" ]]; then
+  MAIN_CHECKOUT="$(resolve_dir "$PARLAY_MAIN_CHECKOUT")" || MAIN_CHECKOUT=""
+else
+  COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  COMMON_DIR="$(resolve_dir "$COMMON_DIR")" || COMMON_DIR=""
+  MAIN_CHECKOUT="$(resolve_dir "${COMMON_DIR%/.git}")" || MAIN_CHECKOUT=""
+fi
+if [[ -z "$MAIN_CHECKOUT" ]]; then
+  echo "[post-commit] refusing to deliver: cannot resolve the primary checkout — PARLAY_MAIN_CHECKOUT is unset or unreadable and 'git rev-parse --path-format=absolute --git-common-dir' returned nothing (git older than 2.31?)" >&2
+  exit 1
+fi
+
 LOG="${PARLAY_HOOK_LOG:-$HOME/Library/Logs/parlay/bundle-rebuild.out.log}"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
-TOP="$(resolve_dir "$(git rev-parse --show-toplevel)")"
+TOP="$(resolve_dir "$(git rev-parse --show-toplevel)")" || TOP=""
 
 # Worktree commits (treehouse leases, feature isolation) must never deploy.
 if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
