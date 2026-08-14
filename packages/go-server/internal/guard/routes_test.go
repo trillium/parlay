@@ -12,14 +12,17 @@ package guard_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"parlay/go-server/internal/guard"
 	"parlay/go-server/internal/handlers"
@@ -374,6 +377,119 @@ func TestUploadIsGuardedByOriginButNotByContentType(t *testing.T) {
 		resp := do(t, http.MethodPost, base+"/api/chat/upload", "", ct, body.String())
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+	})
+}
+
+// pollChannels reads the channels /api/chat/subscribers reports as actively
+// polling. A poller exists only for the life of its request (handlePoll's
+// AddPoller/RemovePoller pair), so this is the one observable that says a
+// poll reached the handler.
+func pollChannels(t *testing.T, base string) []string {
+	t.Helper()
+	body := decode(t, do(t, http.MethodGet, base+"/api/chat/subscribers", "", "", ""))
+	p, _ := body["poll"].(map[string]any)
+	list, _ := p["channels"].([]any)
+	out := []string{}
+	for _, e := range list {
+		if m, ok := e.(map[string]any); ok {
+			if s, ok := m["channel"].(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// TestCrossOriginPollCannotRegisterAChannel is the regression for the second
+// round of the same defect as D7: /api/chat/poll is a GET, so it was
+// classified as a read and left outside the guard, while the handler takes a
+// Presence poller slot for whatever channel the caller names (and on the TS
+// server writes the agent registry outright). Against the pre-fix route set
+// the request below answers 200 and the channel appears in /subscribers.
+func TestCrossOriginPollCannotRegisterAChannel(t *testing.T) {
+	base := newServer(t)
+
+	// A legitimate no-Origin long poll held open in the background. It is the
+	// control: it proves /subscribers really does surface a poller, so the
+	// attacker's absence further down is evidence rather than an
+	// unobservable state.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/chat/poll?channel=cli-poller", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}()
+
+	// The attack: a CORS *simple request* — a bare GET, no preflight, no
+	// content type a browser would refuse to send.
+	resp := do(t, http.MethodGet, base+"/api/chat/poll?channel=evil-poller", evil, "", "")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (was 200 before this fix)", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want none on a refusal", got)
+	}
+
+	var chans []string
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		chans = pollChannels(t, base)
+		if slices.Contains(chans, "cli-poller") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !slices.Contains(chans, "cli-poller") {
+		t.Fatalf("the legitimate no-Origin poll never showed up in /subscribers (%v) — the assertion below would prove nothing", chans)
+	}
+	if slices.Contains(chans, "evil-poller") {
+		t.Fatalf("the refused cross-origin poll registered a poller anyway: %v", chans)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestPollStillWorksForItsRealCallers is the other half: every poller in this
+// repo (the relay, both CLI monitors, tools/split-test) is a no-Origin HTTP
+// client, and the panel would be same-origin. Guarding /poll must cost them
+// nothing.
+func TestPollStillWorksForItsRealCallers(t *testing.T) {
+	base := newServer(t)
+
+	// Queue a message so the poll returns immediately instead of blocking for
+	// defaultPollTimeout — an unknown `after` id falls back to full replay.
+	if r := do(t, http.MethodPost, base+"/api/chat/message", "", "application/json",
+		`{"channel":"cli-poller","text":"queued"}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("setup message: status = %d", r.StatusCode)
+	}
+	url := base + "/api/chat/poll?channel=cli-poller&after=unknown-id"
+
+	t.Run("CLI/relay: no-Origin poll is accepted", func(t *testing.T) {
+		resp := do(t, http.MethodGet, url, "", "", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if got, _ := decode(t, resp)["text"].(string); got != "queued" {
+			t.Fatalf("polled text = %q, want the queued message", got)
+		}
+	})
+
+	t.Run("panel: same-origin poll is accepted and echoes its own origin", func(t *testing.T) {
+		resp := do(t, http.MethodGet, url, base, "", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != base {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want %q — never a wildcard", got, base)
 		}
 	})
 }

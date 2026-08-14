@@ -104,6 +104,50 @@ Reference implementation (the source of truth this wrapper follows):
 | `/api/chat/draft` | PUT / GET | Cross-device draft persistence, decoupled from evaluation. |
 | `/api/chat/send` | POST | Actual message submission (distinct from evaluation — evaluation never sends a message itself). |
 
+### Which origins the server accepts
+
+The parlay server has **no authentication** and is not meant to be reachable
+from the public internet. What stands in for auth on the writing half of the
+API is an **origin guard**, and `POST /api/chat/eval` — this package's entire
+up-channel — is one of the routes behind it. So the page you mount
+`parlayInput` on has to be served from an origin the server allows.
+
+**Works:**
+
+- **Same origin** as the server (the normal case — the panel itself).
+- **Loopback**: `http://localhost:<port>`, `http://127.0.0.1:<port>`.
+- **`.local` hostnames** (mDNS/Bonjour), e.g. `http://mac-studio.local:4242`.
+- **Private-LAN literals**: `10.x`, `192.168.x`, `172.16–31.x`, `169.254.x` —
+  this is how the phone reaches the panel over the LAN.
+- **Anything listed in `PARLAY_ALLOWED_ORIGINS`** on the server (see below).
+- **No `Origin` header at all** — every non-browser caller (curl, the CLI,
+  server-to-server). Not something a browser page can opt into.
+
+**Does not work:** any public origin — `https://your-app.example.com`,
+a Vercel/Netlify preview URL, a CodePen/JSFiddle frame, a `file://` page or a
+sandboxed iframe (both send `Origin: null`).
+
+**The failure is a deliberate refusal, not a network problem.** A disallowed
+origin gets **`403`** with a JSON body of `{"error": "cross-origin request
+rejected"}` and **no CORS headers at all**, so the browser also blocks your
+code from reading that response — in the console it surfaces as a CORS error
+and in your code as a rejected `fetch`, which looks exactly like the server
+being down. It is not: the server answered, and refused. A preflight from
+such an origin is refused the same way, and a `POST` that skips the preflight
+by using a simple content type gets **`415`** instead. Neither is retryable
+and neither reaches a handler.
+
+**The escape hatch is explicit opt-in, server-side.** Set
+`PARLAY_ALLOWED_ORIGINS` on the parlay server to a comma-separated list of
+exact origins (the single value `*` disables the origin check entirely):
+
+```sh
+PARLAY_ALLOWED_ORIGINS="https://your-app.example.com" bun run start
+```
+
+There is no client-side equivalent, by design — the whole point is that the
+server decides. Full policy: `docs/api-contract.md` § Origin guard.
+
 ### `POST /api/chat/eval` request body
 
 ```ts

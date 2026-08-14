@@ -100,16 +100,18 @@ func TestGuardedPathsCoverEveryMutatingRoute(t *testing.T) {
 		"/api/chat/register-agent", "/api/chat/unregister",
 		"/api/chat/draft", "/api/chat/upload", "/api/chat/parlay/settings",
 		"/api/chat/subscribers",
+		// A GET, and still guarded: the verb is not the classifier. handlePoll
+		// takes a Presence poller slot that /subscribers then reports.
+		"/api/chat/poll",
 	}
 	for _, p := range mustGuard {
 		if !IsGuarded(p) {
 			t.Errorf("%s mutates state or discloses identifiers and must be guarded", p)
 		}
 	}
-	// Read/SSE routes stay open — a guard that refuses these breaks the panel
-	// and every polling client.
+	// Read/SSE routes stay open — a guard that refuses these breaks the panel.
 	for _, p := range []string{
-		"/health", "/api/chat/history", "/api/chat/agents", "/api/chat/poll",
+		"/health", "/api/chat/history", "/api/chat/agents",
 		"/api/chat/events", "/api/chat/uploads/abc123.png",
 	} {
 		if IsGuarded(p) {

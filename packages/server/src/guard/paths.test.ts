@@ -42,9 +42,16 @@ describe("guarded route set", () => {
     expect(isGuardedChatPath("/api/chat/plugin/some-future-plugin/rpc")).toBe(true)
   })
 
+  // A GET is not evidence of a read: handlePollRequest registers an unknown
+  // channel in the agent registry, broadcasts agent_register and persists to
+  // disk. This assertion FAILS against the pre-fix route set.
+  test("GET /api/chat/poll is guarded — it writes the registry", () => {
+    expect(isGuardedChatPath("/api/chat/poll")).toBe(true)
+  })
+
   test("read and SSE routes stay unguarded", () => {
     for (const p of [
-      "/api/chat/history", "/api/chat/events", "/api/chat/poll", "/api/chat/agents",
+      "/api/chat/history", "/api/chat/events", "/api/chat/agents",
       "/api/chat/version", "/api/chat/pages", "/api/chat/plugins",
     ]) expect(isGuardedChatPath(p)).toBe(false)
   })

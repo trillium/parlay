@@ -70,7 +70,7 @@ func main() {
 	// request. Wrapping the mux rather than individual handlers means a route
 	// registered later cannot land outside the boundary — see
 	// internal/guard/guard.go for the policy and for where it deliberately
-	// differs from packages/server/src/guard.ts.
+	// differs from packages/server/src/guard/.
 	srv := &http.Server{Addr: *addrFlag, Handler: guard.Wrap(mux)}
 
 	serveErr := make(chan error, 1)

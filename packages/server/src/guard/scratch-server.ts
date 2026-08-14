@@ -1,9 +1,10 @@
 // Spawns a REAL server process for this folder's integration tests, on a
-// scratch port with HOME, PARLAY_DATA_DIR and PAI_DIR redirected into a temp
-// dir — it never touches ~/exchange, ~/.parlay, or the captain's live
-// instance on :31337. Not a .test.ts, so it is never collected as a suite.
+// scratch port with HOME, PARLAY_DATA_DIR, PAI_DIR and PARLAY_STATE_HOME
+// redirected into a temp dir — it never touches ~/exchange, ~/.parlay, or the
+// captain's live instance on :31337. Not a .test.ts, so it is never collected
+// as a suite.
 
-import { mkdtempSync, rmSync } from "fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 
@@ -14,34 +15,78 @@ export interface ScratchServer {
   base: string
   /** http://localhost:<port> — the panel's own origin. */
   origin: string
+  /** PARLAY_DATA_DIR — every file this instance persists lands here. */
+  dataDir: string
   stop(): void
 }
 
+// Reserves a port by actually binding it, then releasing it. A port taken by
+// something else cannot be handed out twice, so this is the difference
+// between "probably free" and "was free a moment ago" — a random port in a
+// fixed range is neither, and a collision would have silently pointed a test
+// at somebody else's server.
+function reservePort(): number {
+  const srv = Bun.serve({ port: 0, fetch: () => new Response("reserved") })
+  const port = srv.port
+  srv.stop(true)
+  return port
+}
+
+// Proves nothing is listening: a connect to a closed port is refused, so
+// fetch must REJECT. If it resolves, some other process owns that port and
+// the eval tests' "502 engine unreachable" would be a lie.
+async function assertNotListening(url: string): Promise<void> {
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(1000) })
+  } catch {
+    return
+  }
+  throw new Error(`${url} is answering — the dead eval-engine port is not dead`)
+}
+
 /**
- * Starts the server and resolves once it answers. Each caller gets its own
- * process on its own random 45xxx port, so test files stay independent.
+ * Starts the server and resolves once it answers AS ITSELF. Each caller gets
+ * its own process on its own reserved port with its own data dir, so test
+ * files stay independent.
  */
 export async function startScratchServer(): Promise<ScratchServer> {
-  const port = 45000 + Math.floor(Math.random() * 900)
+  const port = reservePort()
+  const evalPort = reservePort()
   const dir = mkdtempSync(join(tmpdir(), "parlay-guard-"))
+  const dataDir = join(dir, "exchange")
   const base = `http://127.0.0.1:${port}`
+
+  // Identity marker: seeded into this instance's history before it boots, so
+  // the readiness probe can tell OUR server from anything else that might be
+  // answering on this port. Without it, a squatter's 200 reads as ready and
+  // every assertion after it is about the wrong process.
+  const marker = `scratch-${port}-${crypto.randomUUID()}`
+  mkdirSync(dataDir, { recursive: true })
+  writeFileSync(
+    join(dataDir, "chat-history.jsonl"),
+    JSON.stringify({ id: marker, role: "agent", text: marker, ts: new Date().toISOString() }) + "\n",
+    "utf8",
+  )
+
+  await assertNotListening(`http://127.0.0.1:${evalPort}/`)
 
   const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "index.ts")], {
     env: {
       ...process.env,
       HOME: dir,
       PARLAY_PORT: String(port),
-      PARLAY_DATA_DIR: join(dir, "exchange"),
+      PARLAY_DATA_DIR: dataDir,
       PAI_DIR: join(dir, "pai"),
       PARLAY_STATE_HOME: join(dir, "state"),
       PARLAY_ALLOWED_ORIGINS: "",
       // /api/chat/eval relays to the compiled Go engine, whose coded default
       // is 127.0.0.1:4343 — the captain's LIVE eval engine. Point it at a
-      // dead scratch port so an accepted (same-origin / no-Origin) eval
-      // answers 502 "engine unreachable" instead of reaching the real one.
-      // A 502 is exactly as good a proof as a 200 here: the request got past
-      // the guard and into the handler, which is what these tests assert.
-      PARLAY_EVAL_ENGINE_URL: `http://127.0.0.1:${port + 1}`,
+      // reserved-then-released port, verified above to refuse connections, so
+      // an accepted (same-origin / no-Origin) eval answers 502 "engine
+      // unreachable" instead of reaching the real one. A 502 is exactly as
+      // good a proof as a 200 here: the request got past the guard and into
+      // the handler, which is what these tests assert.
+      PARLAY_EVAL_ENGINE_URL: `http://127.0.0.1:${evalPort}`,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -53,10 +98,22 @@ export async function startScratchServer(): Promise<ScratchServer> {
   }
 
   for (let i = 0; i < 100; i++) {
+    if (proc.exitCode !== null) {
+      const err = await new Response(proc.stderr).text()
+      stop()
+      throw new Error(`scratch parlay server exited ${proc.exitCode} before answering:\n${err}`)
+    }
     try {
-      await fetch(`${base}/api/chat/history`)
-      return { base, origin: `http://localhost:${port}`, stop }
-    } catch { await Bun.sleep(100) }
+      const body = await (await fetch(`${base}/api/chat/history`)).text()
+      if (!body.includes(marker)) {
+        stop()
+        throw new Error(`${base} is answering, but it is not our server — no identity marker in /api/chat/history`)
+      }
+      return { base, origin: `http://localhost:${port}`, dataDir, stop }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("not our server")) throw e
+      await Bun.sleep(100)
+    }
   }
   stop()
   throw new Error("scratch parlay server never came up")

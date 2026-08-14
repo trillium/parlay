@@ -1,4 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test"
+import { existsSync, readFileSync } from "fs"
+import { join } from "path"
 import { EVIL, startScratchServer, type ScratchServer } from "./scratch-server"
 
 // End-to-end proof against a REAL server process that every cross-origin
@@ -105,5 +107,61 @@ describe("live server: D9 — the routes the attack chain used", () => {
     const r = await fetch(`${base}/api/debug/input-timing`, { headers: { Origin: EVIL } })
     expect(r.status).toBe(403)
     expect(r.headers.get("access-control-allow-origin")).toBeNull()
+  })
+})
+
+// ── GET /api/chat/poll ──────────────────────────────────────────────────────
+// A GET, and a CORS *simple request* — no preflight, no content type the
+// browser would refuse to send. Against the pre-fix route set every assertion
+// below fails: the poll answered 200, created the agent, broadcast
+// agent_register to the panel and wrote parlay-agents.json.
+describe("live server: a cross-origin poll cannot register an agent", () => {
+  const CHANNEL = "evil-poller-x9"
+
+  // Collects SSE frames for `ms`, then aborts. The panel's own event stream:
+  // whatever a foreign origin makes the server broadcast shows up here.
+  async function sseFor(ms: number, during: () => Promise<void>): Promise<string> {
+    const ac = new AbortController()
+    const r = await fetch(`${base}/api/chat/events`, { signal: ac.signal })
+    const reader = r.body!.getReader()
+    const dec = new TextDecoder()
+    let seen = ""
+    const pump = (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) return
+          seen += dec.decode(value, { stream: true })
+        }
+      } catch { /* aborted */ }
+    })()
+    await during()
+    await Bun.sleep(ms)
+    ac.abort()
+    await pump
+    return seen
+  }
+
+  test("cross-origin GET /api/chat/poll → 403, and the registry is untouched", async () => {
+    let status = 0
+    let acao: string | null = "unset"
+    const frames = await sseFor(300, async () => {
+      const r = await fetch(`${base}/api/chat/poll?channel=${CHANNEL}`, { headers: { Origin: EVIL } })
+      status = r.status
+      acao = r.headers.get("access-control-allow-origin")
+      expect(await r.json()).toEqual({ error: "cross-origin request rejected" })
+    })
+
+    expect(status).toBe(403)
+    expect(acao).toBeNull()
+
+    // Nothing broadcast to the panel.
+    expect(frames).not.toContain(CHANNEL)
+    // Nothing in the live registry, read back as a legitimate caller.
+    const agents = await (await fetch(`${base}/api/chat/agents`)).json()
+    expect(JSON.stringify(agents)).not.toContain(CHANNEL)
+    // Nothing persisted to disk.
+    const file = join(srv.dataDir, "parlay-agents.json")
+    if (existsSync(file)) expect(readFileSync(file, "utf8")).not.toContain(CHANNEL)
   })
 })

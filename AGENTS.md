@@ -27,26 +27,36 @@ production changes made outside this repo (never edit `~/.claude` from here).
 
 ### Adding a mutating `/api/chat` route? Add it to `GUARDED_CHAT_PATHS`
 
-`packages/server/src/guard.ts` is the one security boundary for the chat API
-(which still has **no authentication**). `handleChatRequest` in `router.ts`
-runs it before dispatch: paths listed in `GUARDED_CHAT_PATHS` require an
+`packages/server/src/guard/` is the one security boundary for the chat API
+(which still has **no authentication**) — `guard/paths.ts` is the route set,
+`guard/origin.ts` the origin/content-type predicates, `guard/index.ts` the
+policy that applies them. `handleChatRequest` in `router.ts` runs it before
+dispatch: paths listed in `GUARDED_CHAT_PATHS` require an
 allowed `Origin` (missing Origin = allowed, which is how the CLI/hooks/curl
 keep working) and `Content-Type: application/json` (415 otherwise — this is
 what stops a cross-origin CORS *simple request* from reaching a handler
 without a preflight, and preflight on those paths is refused). Their
 responses are re-headered by `withGuardedCors` so the wildcard `CORS` the
 handlers spread never reaches the wire. Only genuinely read-only routes
-(history, agents, poll, events, version, pages, and `GET
+(history, agents, events, version, pages, and `GET
 /api/chat/uploads/<name>`, which an `<img src>` must load) keep the old
 wildcard and stay world-readable.
+
+**The rule, on both servers: a route is guarded if it mutates server state or
+discloses an identifier, REGARDLESS OF HTTP METHOD.** The verb is not
+evidence — `GET /subscribers` is guarded because it hands out identifiers, and
+`GET /poll` because it registers the channel it is polling for. Classify by
+reading the handler.
 
 A new route that injects into an agent turn, mutates the registry, or drives a
 device is unguarded until you add it to that set — and if its callers do not
 send a JSON content type, adding it breaks them. Test with
-`packages/server/src/guard.test.ts` (pure, no side effects — `guard.ts`
-deliberately imports nothing) and `guard.integration.test.ts` (spawns a real
-server on a random 45xxx port with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`
-redirected to a temp dir).
+`packages/server/src/guard/{paths,origin,allow,reject}.test.ts` (pure, no side
+effects — `guard/origin.ts` and `guard/paths.ts` deliberately import nothing)
+and `guard/integration-{attack,callers}.test.ts` (each spawns a real server via
+`guard/scratch-server.ts` on a port reserved by binding `:0`, with
+`HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`/`PARLAY_STATE_HOME` redirected to a temp
+dir).
 
 **The route SET is the part that rots, not the mechanism.** An end-to-end
 verification (task-6ai1, defects D9/D7) found the guard working exactly as
@@ -56,10 +66,19 @@ outside it — and `GET /subscribers` handed any origin the connected device
 uuid plus every registered agent id, which is what made the rest aimable
 (read the device id → `input_action` into the panel → set the captain's draft
 → submit attacker text as the captain). All of them are guarded now.
-`/subscribers` was **guarded rather than redacted**: no panel code calls it,
-and every real caller (`parlay doctor`/`subscribers`/crew-state, the Go CLI,
-`tools/split-test`) is a no-Origin HTTP client, so guarding costs them
-nothing. Two structural notes: `/api/debug/*` is dispatched in `index.ts`
+`/subscribers` was **guarded rather than redacted**: its only panel caller is
+same-origin (`packages/client/src/tab-online.ts`, a relative `fetch` for the
+per-tab online check), and every caller outside the panel (`parlay
+doctor`/`subscribers`/crew-state, the Go CLI, `tools/split-test`) is a
+no-Origin HTTP client, so guarding costs them nothing. `GET /poll` was added
+for the same reason a round later — on the TS side it auto-registers an
+unknown `channel` in the agent registry, broadcasts `agent_register` and calls
+`persistAgents()`, so a cross-origin CORS-simple GET could create an agent and
+write it to disk; the Go handler only takes a Presence poller slot, and is
+guarded on that (see its package comment — the Go set is derived from Go
+handlers, never copied from TS). Every poller in this repo is a no-Origin HTTP
+client and nothing in `packages/client` polls at all. Two structural notes:
+`/api/debug/*` is dispatched in `index.ts`
 *ahead of* `handleChatRequest`, so it runs the guard itself — anything else
 added there must too; and `JSON_EXEMPT_PATHS` (today just `/api/chat/upload`,
 multipart by contract) is how a route keeps the origin check without the

@@ -1,7 +1,8 @@
-// Origin + content-type hardening for the MUTATING chat routes (review-3y3 /
+// Origin + content-type hardening for the GUARDED chat routes (review-3y3 /
 // task-qg00). Barrel for this folder: ./paths.ts decides WHICH routes are
-// guarded, ./origin.ts decides WHO may call them, and this file applies the
-// policy and builds the responses.
+// guarded — anything that mutates state or discloses an identifier, whatever
+// its HTTP method — ./origin.ts decides WHO may call them, and this file
+// applies the policy and builds the responses.
 //
 // The chat API has no authentication: anything that can reach the port can
 // post into a live agent's turn. Before this module, EVERY /api/chat response
@@ -26,7 +27,7 @@
 //      preflight on these paths is rejected. The no-preflight shapes cannot
 //      reach the handler at all.
 //
-// Read routes (history, agents, SSE events, poll) are untouched and still
+// Read routes (history, agents, SSE events) are untouched and still
 // world-readable: out of scope here, see the PR body.
 //
 // ── Second pass (task-6ai1, defect D9 of the end-to-end verification) ────────

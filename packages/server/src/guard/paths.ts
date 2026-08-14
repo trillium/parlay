@@ -6,7 +6,7 @@
 
 // ── Legacy wildcard CORS ────────────────────────────────────────────────────
 // Still applied to the UNGUARDED routes — the read/SSE surface (history,
-// agents, poll, events, version, pages, plugins manifest) and GET
+// agents, events, version, pages, plugins manifest) and GET
 // /api/chat/uploads/<name>, which serves content-addressed image bytes an
 // <img> tag must be able to load. It lives here rather than in sse.ts because
 // the CORS policy belongs with the code that decides who gets it. sse.ts
@@ -18,9 +18,13 @@ export const CORS = {
 }
 
 // ── Guarded route set ───────────────────────────────────────────────────────
-// Everything that injects into an agent turn, mutates persisted state, drives
-// a connected device, or discloses an identifier a cross-origin page could
-// then aim at one of the above. Only the read/SSE surface is left outside.
+// THE RULE: a route is guarded if it mutates server state or discloses an
+// identifier, REGARDLESS OF HTTP METHOD. "It is a GET" is not evidence of
+// anything — /poll is a GET that writes to the agent registry, and
+// /subscribers is a GET that hands out the ids the rest of the surface is
+// aimed with. Classify by what the handler does, never by the verb or by the
+// route's name. Only a handler that neither writes nor discloses — the
+// read/SSE surface — is left outside.
 export const GUARDED_CHAT_PATHS = new Set([
   // Agent-turn injection and registry mutation (original set).
   "/api/chat/send",
@@ -63,6 +67,16 @@ export const GUARDED_CHAT_PATHS = new Set([
   "/api/chat/tts-report",        // POST appends to the TTS report log
   "/api/chat/tts-event",         // POST broadcasts a tts_event to every client
   "/api/chat/tts/validate-splits",
+
+  // A GET that mutates. router-poll.ts registers an unknown `channel` on
+  // first poll: it inserts into `agents`, broadcasts `agent_register` to
+  // every SSE client, and calls persistAgents() — a registry write, an
+  // event to the panel, and a disk write, from a cross-origin CORS-simple
+  // GET needing no preflight. Guarding it costs no real caller: every
+  // poller in this repo (the relay, the Go and TS CLI monitors,
+  // tools/split-test, pages/chat/agent-notify.ts) is a no-Origin HTTP
+  // client, and nothing in packages/client polls at all.
+  "/api/chat/poll",
 ])
 
 // Prefix matches.

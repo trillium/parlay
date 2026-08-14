@@ -106,6 +106,39 @@ describe("live server: the panel and the CLI are unaffected", () => {
     expect((await get.json()).textScale).toBe(120)
   })
 
+  // The pollers this repo actually has — the relay, both CLI monitors,
+  // tools/split-test, pages/chat/agent-notify.ts — are all no-Origin HTTP
+  // clients. Guarding /poll must leave them untouched.
+  // Queue a message first so each poll below returns immediately instead of
+  // holding its connection open for 30s. The handler registers the channel
+  // before it looks for pending work either way, so this still exercises the
+  // write the guard now sits in front of.
+  const queueFor = async (channel: string) => {
+    const r = await fetch(`${base}/api/chat/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: `queued for ${channel}`, toAgent: channel }),
+    })
+    expect((await r.json()).ok).toBe(true)
+  }
+
+  test("CLI/relay: no-Origin GET /api/chat/poll reaches the handler and registers", async () => {
+    await queueFor("cli-poller")
+    const r = await fetch(`${base}/api/chat/poll?channel=cli-poller`)
+    expect(r.status).toBe(200)
+    expect((await r.json()).text).toBe("queued for cli-poller")
+    const agents = await (await fetch(`${base}/api/chat/agents`)).json()
+    expect(JSON.stringify(agents)).toContain("cli-poller")
+  })
+
+  test("panel-origin GET /api/chat/poll is accepted and echoes its own origin, not '*'", async () => {
+    await queueFor("panel-poller")
+    const r = await fetch(`${base}/api/chat/poll?channel=panel-poller`, { headers: { Origin: ORIGIN } })
+    expect(r.status).toBe(200)
+    expect(r.headers.get("access-control-allow-origin")).toBe(ORIGIN)
+    expect((await r.json()).text).toBe("queued for panel-poller")
+  })
+
   test("panel: same-origin preflight on a newly guarded route still succeeds", async () => {
     const r = await fetch(`${base}/api/chat/draft`, {
       method: "OPTIONS",

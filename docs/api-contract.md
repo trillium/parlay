@@ -46,8 +46,11 @@
 Unauthenticated does **not** mean unrestricted: every route that mutates
 state, or that discloses an identifier (device uuid, agent id) a hostile page
 could then aim at a mutating route, sits behind an origin guard —
-`packages/server/src/guard.ts` and `packages/go-server/internal/guard`. On
-those routes:
+`packages/server/src/guard/` (route set in `guard/paths.ts`) and
+`packages/go-server/internal/guard`. **A route is guarded by what its handler
+does, not by its HTTP method:** `GET /api/chat/subscribers` and `GET
+/api/chat/poll` are both guarded, the first because it discloses identifiers,
+the second because polling registers the channel. On those routes:
 
 - A request with **no `Origin` header is allowed.** That is every CLI, curl,
   hook and server-to-server caller, and a browser cannot omit `Origin` on a
@@ -64,7 +67,7 @@ those routes:
 - Allowed responses carry the **exact** origin in
   `Access-Control-Allow-Origin` plus `Vary: Origin` — never `*`.
 
-Read-only routes (`history`, `agents`, `poll`, `events`, `version`,
+Read-only routes (`history`, `agents`, `events`, `version`,
 `GET /api/chat/uploads/<name>`) are outside the guard and behave as documented
 below.
 

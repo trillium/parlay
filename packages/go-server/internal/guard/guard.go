@@ -1,6 +1,8 @@
-// Package guard is the Go port of packages/server/src/guard.ts — the one
+// Package guard is the Go port of packages/server/src/guard/ — the one
 // security boundary for the unauthenticated chat API (task-6ai1, defect D7 of
-// the end-to-end verification).
+// the end-to-end verification). Over there the policy lives in
+// guard/origin.ts + guard/index.ts and the route set in guard/paths.ts; this
+// package holds both.
 //
 // Before this package, packages/go-server had no origin boundary of any kind.
 // An end-to-end verifier sent cross-origin CORS *simple requests* (Content-
@@ -12,9 +14,9 @@
 //
 // It is DELIBERATELY not an authentication scheme. Both servers are
 // unauthenticated by design and documented as such; this is only the
-// cross-origin half, exactly as guard.ts is.
+// cross-origin half, exactly as the TS guard is.
 //
-// # Semantics, and where they differ from packages/server/src/guard.ts
+// # Semantics, and where they differ from packages/server/src/guard/
 //
 // Identical:
 //
@@ -40,15 +42,15 @@
 // Two deliberate divergences, both in the direction of LESS access:
 //
 //  1. Unguarded routes here send no Access-Control-Allow-Origin at all,
-//     where guard.ts still spreads a wildcard `CORS` on its read/SSE routes.
-//     This server has never sent CORS headers on any route, so adding a
-//     wildcard to match the TS side would newly OPEN read access that is
-//     currently closed. Cross-origin reads of /history, /agents, /poll and
-//     /events therefore still execute (as they do on the TS side) but their
-//     bodies remain unreadable to a foreign page. If the panel is ever served
-//     from a different origin than this server, that is the knob to revisit.
+//     where the TS guard still spreads a wildcard `CORS` on its read/SSE
+//     routes. This server has never sent CORS headers on any route, so adding
+//     a wildcard to match the TS side would newly OPEN read access that is
+//     currently closed. Cross-origin reads of /history, /agents and /events
+//     therefore still execute (as they do on the TS side) but their bodies
+//     remain unreadable to a foreign page. If the panel is ever served from a
+//     different origin than this server, that is the knob to revisit.
 //  2. OPTIONS on an unguarded route is left to the route's own handler
-//     (today: 405), where guard.ts answers a blanket 204 + wildcard. Same
+//     (today: 405), where the TS guard answers a blanket 204 + wildcard. Same
 //     reasoning — no preflight permission this server does not already grant.
 //
 // One divergence that is not a policy choice: the guarded path SETS differ
@@ -57,6 +59,25 @@
 // /navigate, /reload, /device-cmd, /eval, /eval-push, the /tts family, the
 // /plugin/ RPC prefix, /api/debug/ and DELETE /api/chat/agents/:id, none of
 // which exist here. Every route the two DO share is classified identically.
+//
+// # How a route gets into GuardedPaths
+//
+// THE RULE, the same one stated in packages/server/src/guard/paths.ts: a
+// route is guarded if it mutates server state or discloses an identifier,
+// REGARDLESS OF HTTP METHOD. The verb is not evidence — /subscribers and
+// /poll are both GETs and both guarded, the first because it hands out the
+// device uuid and every agent id, the second because polling registers the
+// channel.
+//
+// Apply that rule to THIS server's handlers; do not copy the TS set. The two
+// implementations of a shared route can differ in what they touch, and
+// handlePoll is the worked example: the TS handler auto-registers an unknown
+// channel in the agent registry, broadcasts agent_register and persists to
+// disk, while this one only takes a Presence poller slot for the life of the
+// request and never writes the registry. Both are guarded — a poller entry is
+// still server state a foreign page must not be able to create, and keeping
+// the two sets aligned on shared routes is worth more than the narrowest
+// possible boundary — but the classification was derived here, not inherited.
 package guard
 
 import (
@@ -70,8 +91,9 @@ import (
 
 // GuardedPaths is every route on this server that mutates state or discloses
 // an identifier a cross-origin page could then aim at one of the mutating
-// routes. Mirrors GUARDED_CHAT_PATHS in packages/server/src/guard.ts for the
-// routes the two servers share.
+// routes — see "How a route gets into GuardedPaths" in the package comment
+// for the rule, which is method-independent. Mirrors GUARDED_CHAT_PATHS in
+// packages/server/src/guard/paths.ts for the routes the two servers share.
 //
 // A new mutating route is UNGUARDED until it is added here. If its callers do
 // not send a JSON content type, it also belongs in jsonExemptPaths.
@@ -92,6 +114,13 @@ var GuardedPaths = map[string]bool{
 	// Read-only, but it is the route that handed the TS-side attack chain its
 	// connected device uuid and the ids of every registered agent (D9).
 	"/api/chat/subscribers": true,
+
+	// A GET that takes a Presence poller slot for the life of the request,
+	// which /subscribers then reports. Guarded on this server's own behavior,
+	// not by copying TS — see the package comment's handlePoll asymmetry. No
+	// caller is affected: every poller in this repo is a no-Origin HTTP
+	// client, and nothing in packages/client polls.
+	"/api/chat/poll": true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
@@ -106,7 +135,7 @@ var jsonExemptPaths = map[string]bool{
 // IsGuarded reports whether path is inside the guard.
 func IsGuarded(path string) bool { return GuardedPaths[path] }
 
-// privateV4 mirrors guard.ts's PRIVATE_V4 exactly: loopback and private-LAN
+// privateV4 mirrors guard/origin.ts's PRIVATE_V4 exactly: loopback and private-LAN
 // literals. The phone reaches the panel over the LAN and a reverse proxy may
 // rewrite Host, so a strict same-host test alone would cut off legitimate
 // local clients. None of these can be an attacker's origin without them
@@ -146,7 +175,7 @@ func AllowedOriginList() []string {
 	return out
 }
 
-// OriginAllowed is the port of guard.ts's originAllowed.
+// OriginAllowed is the port of guard/origin.ts's originAllowed.
 func OriginAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	// No Origin at all → not a browser cross-site request. CLI, curl, hooks,
@@ -207,7 +236,7 @@ func hostnameOf(hostport string) string {
 	return hostport
 }
 
-// IsJSONContentType is the port of guard.ts's isJsonContentType.
+// IsJSONContentType is the port of guard/origin.ts's isJsonContentType.
 func IsJSONContentType(value string) bool {
 	if value == "" {
 		return false
