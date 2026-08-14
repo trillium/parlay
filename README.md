@@ -173,7 +173,7 @@ Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …).
 ## Development
 
 ```sh
-cd packages/<name> && bun test    # run a package's suite from inside it — see note below
+cd packages/<name> && bun test    # a TS package (server/client/cli/input), from inside it — see note below
 cd tools/cli && go test ./...     # the Go CLI
 ```
 
