@@ -63,12 +63,27 @@ bun install                                   # also wires the git hooks (core.h
 cd packages/server && PARLAY_DATA_DIR=~/.parlay/data bun run start
 ```
 
-`PARLAY_DATA_DIR` puts every file it persists in one directory. **Leave it unset and
-it scatters chat history, drafts and uploads through `~/exchange` instead** — set it.
-If you also happen to have a `~/.claude/PAI` directory, set `PAI_DIR` to somewhere
-empty too: the server tails that tree for agent-activity events and will fold them
-into your chat history. See [`packages/server/README.md`](packages/server/README.md)
-for the full config surface.
+> **⚠️ Set `PARLAY_DATA_DIR`. Without it the server writes to — and can destroy —
+> existing state.** Unset, it does not use one directory; it writes to two production
+> locations:
+>
+> - **`~/exchange`** — chat history, draft, settings, agent channels, uploads.
+> - **`$PAI_DIR/MEMORY/STATE`**, default **`~/.claude/PAI/MEMORY/STATE`** — the agent
+>   registry (`parlay-agents.json`) and the session→channel map
+>   (`parlay-session-channels.json`).
+>
+> That second one is the dangerous half, because a Claude Code / PAI user already has
+> that directory: the server runs a prune sweep against that registry at boot, so
+> starting it unconfigured mutates a live registry rather than an empty one.
+> `packages/server/src/paths.ts` exists because of a real incident where exactly this
+> happened and two live chat channels were deleted. `PARLAY_DATA_DIR` relocates all
+> of it, flat, into the one directory you name.
+
+`PAI_DIR` is both a write target and a read target: besides the registry above, the
+server tails that tree for agent-activity events and folds them into your chat
+history. If you have a `~/.claude/PAI`, point `PAI_DIR` at an empty scratch directory
+alongside `PARLAY_DATA_DIR` — that pair is what fully protects the real one. See
+[`packages/server/README.md`](packages/server/README.md) for the full config surface.
 
 **2. Point the CLI at it**, in another shell:
 
@@ -99,12 +114,19 @@ seeds a channel before its agent has registered, which is exactly the case here.
 That round-trip is the whole substrate. From here:
 
 ```sh
-./bin/parlay monitor --agent demo     # enrol + stream incoming messages (agents arm this)
-./bin/parlay listen --agent demo --name Demo   # one call: register + announce + monitor
+./bin/parlay monitor --legacy-poll --agent demo   # stream incoming messages on a channel
 ./bin/parlay reply "on it"            # an enrolled agent replies to its own channel
 ./bin/parlay alert "heads up"         # broadcast to every agent
 ./bin/parlay help                     # every verb
 ```
+
+`--legacy-poll` polls natively in Go and needs nothing beyond the server. The
+relay-backed verbs — `monitor` *without* `--legacy-poll`, and `listen` — need a relay
+binary that is gitignored and that neither `bun install` nor `bin/parlay` builds; run
+`tools/relay/build.sh` first or they exit 1 with `relay is not up and could not be
+started`. Mind `listen` especially: it registers and announces with the server
+*before* it starts the relay, so on a fresh clone it leaves an agent that looks
+enrolled and healthy but can never receive anything.
 
 Launch a background agent that shows up as a live tab (needs a
 [Claude Code](https://claude.com/claude-code) install and the
