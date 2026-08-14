@@ -273,22 +273,14 @@ see the `PAI_DIR` paragraph above for what an empty value does.
   alongside the one you still have. Move the existing files in first, server
   stopped.
 
-**One naming rule that is not taste:** the server's cleanup sweep deletes
-channels whose id matches any of the patterns below on sight, at every sweep
-including startup, however active they are — they are the fingerprints of leaked
-test fixtures. `TEST_NAME_PATTERNS` in `packages/server/src/prune/policy.ts` is
-the authoritative list; it is case-insensitive:
-
-| Shape | Matches |
-|---|---|
-| starts with `test-`, `bench-`, `forge-`, `meas-`, `profile-`, `busy-`, `nonexistent-`, `spawn-beads-` | `test-agent`, `forge-deploy-1` |
-| ends with `-test` | `api-test`, `parser-test` |
-| contains `-probe` | `db-probe`, `bench-probe-9` |
-| ends with `z<digits>`, optionally plus one letter | `reviewer-z1`, `worker-z12b`, `nobackendz3` |
-
-`-test` and `-probe` are the ones that bite, because they are ordinary names:
-`api-test` and `db-probe` both get deleted. `reviewer` is fine; `reviewer-z1` and
-`reviewer-z1b` disappear.
+**One naming rule that is not taste:** the server's cleanup sweep deletes any
+channel whose id looks like a leaked test fixture, on sight, at every sweep
+including startup and however active the channel is. `-test` and `-probe` are the
+ones that bite, because they are ordinary names — `api-test` and `db-probe` are
+both deleted. The full pattern table is in
+[`data-dir/README.md`](data-dir/README.md#parlay-agentsjson), next to the file
+where you name agents; `TEST_NAME_PATTERNS` in
+`packages/server/src/prune/policy.ts` is the authoritative list.
 
 ## What was verified
 

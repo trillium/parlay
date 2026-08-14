@@ -1298,14 +1298,11 @@ notes above). `PAI_DIR` too: it is read *unconditionally*, not covered by
 `PARLAY_DATA_DIR`, by both tailers, the boot-time session-channel backfill, and
 `tts.ts`'s writes under `$PAI_DIR/MEMORY/`.
 
-`sweep` is the sharpest case, because it straddles the split: `sweepCandidates()`
-enumerates `parlayAgentsDir()` (`$HOME`-based, ignores `PARLAY_AGENT_HOME`) while
-`readSweepKeep()` reads `config.StateHome()` and per-candidate status resolves via
-`identity.AgentsRoot()` (both env-aware). A half-redirected `sweep --apply` there
-therefore judges the REAL agent store against a redirected keep-list — it fails
-toward held (unreadable status reads back unknown, which `ClassifySweep` leaves
-alone), but it is the verb that deletes stores and removes worktrees, so redirect
-`$HOME` rather than relying on that.
+`sweep` is the sharpest case, because it straddles that split: a half-redirected
+`sweep --apply` judges the REAL agent store against a redirected keep-list, and
+it is the verb that deletes stores and removes worktrees. It fails toward held,
+but redirect `$HOME` rather than relying on that. `examples/README.md` has the
+per-variable breakdown.
 
 Two traps it exists to keep you out of: `pkill -f 'bun src/index.ts'` matches
 **every** worktree's sandbox server on this box, not just yours (the script
