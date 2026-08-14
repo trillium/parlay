@@ -961,7 +961,8 @@ under `--all` (`--force` is the deliberate override).
 
 That last guard is the important one. `--worktree`/`--project` had been
 dropped from `MemValueFlags` and from `--register`'s meta-field loop during
-the Go port, and `args.Parse` dies with `EXIT_USAGE` on an unknown flag — so
+the Go port, and `args.Parse` dies with `EXIT_USAGE` on an unknown flag
+(`args.go:89`) — so
 every `parlay identity --register … --worktree <path> --project <path>` that
 `parlay-spawn` issues for a worktree agent exited 2 and wrote no frontmatter
 at all, with `registerIdentity`'s `_ = cmd.Run()` swallowing the code. The
@@ -974,6 +975,17 @@ fix are still empty on disk, which is exactly what the hold protects. When
 adding a flag to a Go-ported command, diff its table against the TS source's
 (`packages/cli/src/commands-identity/store.ts` here); a dropped flag is not a
 degraded flag, it is a hard exit that callers may be discarding.
+
+Two follow-ons to that (robots-jusi). **When you add a lifecycle field to the
+launch spec, add it in three places** — the flag table, the `--register` field
+loop in `mem.go`, and whatever reads it back. And the reason the fatal exit
+went unseen for so long: `bin/parlay-spawn` ended its registration with
+`>/dev/null 2>&1 || true`; it now prints a named warning on failure instead
+(still non-fatal — a launch spec isn't worth aborting a live spawn over).
+
+Note `teardown` resolves `~/.parlay/agents` from `HOME` and ignores
+`PARLAY_AGENT_HOME` (matching `commands-teardown.ts:23`); `identity` honors
+`PARLAY_AGENT_HOME`. Set `HOME` when testing teardown end-to-end.
 
 ## Arming a listener is a TAKEOVER, not an addition (robots-fgyz)
 

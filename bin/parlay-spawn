@@ -780,15 +780,26 @@ fi
 # Fold §3.2: also record mode/effort/yolo/kind so a relaunch restores full lifecycle
 # context, not just id/name/color. yolo=on because parlay-spawn always launches
 # with --dangerously-skip-permissions.
+#
+# robots-jusi: this call used to be `>/dev/null 2>&1 || true`, which swallowed a
+# fatal unknown-flag exit when the Go port dropped --worktree/--project. The spec
+# was never written, so `parlay teardown` saw no `worktree:` field and took its
+# no-worktree fast path — silently skipping every safety guard. Registration stays
+# non-fatal (a launch spec is not worth aborting a live spawn over), but a failure
+# is now LOUD: the CLI's own error reaches stderr and we name it explicitly.
 if [ "$EPHEMERAL" -eq 0 ]; then
-  identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" \
+  if ! identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" \
     ${MODEL:+--model "$MODEL"} \
     --mode "$MODE" \
     --yolo on \
     ${EFFORT:+--effort "$EFFORT"} \
     ${WORKTREE_PATH:+--worktree "$WORKTREE_PATH"} \
     ${PROJECT_PATH:+--project "$PROJECT_PATH"} \
-    >/dev/null 2>&1 || true
+    >/dev/null; then
+    echo "parlay-spawn: WARNING — identity --register failed for $AGENT_ID; no launch spec written." >&2
+    echo "  This agent cannot self-reconstitute after a context reset, and if it holds a worktree," >&2
+    echo "  'parlay teardown' will not see it and will skip its uncommitted/unpushed guards." >&2
+  fi
 fi
 
 # 6. Post-launch liveness watchdog (robots-3c0). The charter was just delivered
