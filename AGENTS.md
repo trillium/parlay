@@ -1117,6 +1117,52 @@ closed-ticket skip, liveness re-dispatch). Test:
 `tools/mechanic-dispatch/mechanic-dispatch.test.sh`. Phase-1 (isolation) only —
 firstmate state-meta bridging and worktree teardown/landing are follow-ups.
 
+## CI is `.github/workflows/ci.yml` — and a green check was never proof before it
+
+Until this landed the repo had no `.github` directory at all: the only PR check
+was CodeRabbit, which reports conclusion `pass` even when its account-wide rate
+limit meant it never read the diff (see the merge-gate section above — that verb
+exists because of the same lie). A triage of the open-PR backlog found 23/23 PRs
+green and 3 provably broken.
+
+Four parallel jobs, each pinned to action commit SHAs with `permissions:
+contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
+all five modules), **bun** (tests for `packages/{input,client,server,cli}`,
+typecheck for `packages/input` and `tools/split-test`), **shell** (six hermetic
+harnesses), **hygiene** (conflict markers, 2 MiB tracked-file ceiling). Read the
+file's own comments for per-step rationale rather than re-deriving it.
+
+Three things worth knowing before editing it:
+
+- **`gofmt` in CI is not a duplicate of `TestGofmtClean`.** That test
+  (`tools/cli/internal/commands/gofmt_test.go`) resolves its root to the
+  tools/cli module, so it guards one module of five; the CI step covers the
+  other four. All five Go modules are pure stdlib — no `go.sum`, no external
+  requires — so the whole Go suite runs in seconds and the cache is a build
+  cache, not a download cache.
+- **Every test step redirects `$HOME`, and it is load-bearing, not ceremony.**
+  `packages/cli`'s tests resolve `join(homedir(), ".parlay", "agents", …)`
+  directly and really do create it; several Go tests write `~/.parlay`,
+  `~/.config/bd`, `~/.beads`. A hosted runner throws `$HOME` away, but this must
+  also be safe on a self-hosted one — see the `uninstall.sh --purge` incident
+  above, where a smoke test permanently deleted the live `~/.parlay`. Because Go
+  derives `GOCACHE`/`GOMODCACHE` from `$HOME`, the go job pins those to explicit
+  paths *before* the redirect; drop that step and the cache silently evaporates.
+- **Deliberately not in CI**, because they drive live or macOS-only state:
+  `tools/monitor/parlay-monitor.test.sh` (enrols over a relay control socket),
+  `tools/relay/deploy/{ensure-up,install}.test.sh` (launchctl/PlistBuddy),
+  `tools/cli/parity/run.sh` (stands up a real go-server fixture), and
+  `packages/client`'s `bun run build` (its `build.ts` POSTs to the captain's
+  live `:31337` — see the packages/client note above). The other six shell
+  harnesses were each trial-run with `~/.parlay` and `~/.treehouse` snapshotted
+  before and after and produced zero drift; that is the bar for adding one.
+
+The `hygiene` job's artifact guard is `git status --porcelain` being empty after
+a full `go build ./...`, not a filename list, so a newly added main package
+cannot reintroduce the 9.6 MB `tools/relay/relay` binary that one PR committed —
+that path is now gitignored alongside the pre-existing
+`packages/eval-engine/eval-engine` entry.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

@@ -1,0 +1,301 @@
+name: CI
+
+# Parlay's first CI. Before this, the only check on a pull request was
+# CodeRabbit, which reports the check conclusion "pass" even when its
+# account-wide rate limit meant it never reviewed the diff at all. A triage of
+# the open-PR backlog found 23/23 PRs showing a green check while 3 were
+# provably broken (committed conflict markers, a clean merge that broke main's
+# build, and a 9.6 MB committed binary). Every one of those three is caught by
+# a job below.
+
+on:
+  # No branch filter: contributions arrive from forks and long-lived branches.
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege. Nothing here writes to the repo, comments on a PR, or
+# publishes an artifact, so read access to the contents is the entire need.
+#
+# Deliberately NOT pull_request_target: this repo is about to go public and
+# accept PRs from strangers. That trigger runs the workflow definition from the
+# base branch but with a writable token and repository secrets in scope, while
+# checking out untrusted code — the standard way public repos leak credentials.
+# Everything below runs with the fork's read-only token and no secrets.
+permissions:
+  contents: read
+
+# A superseded push should not keep burning a runner; the newest commit is the
+# only one whose answer matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/eval-engine,
+  #    packages/go-server ───────────────────────────────────────────────────
+  # Five separate modules, no root go.work, so each is entered on its own.
+  # All five are pure standard library (no go.sum, no external requires), which
+  # is why the whole suite runs in seconds.
+  go:
+    name: Go (build, vet, test, gofmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # Matches the `go 1.26` directive every module declares.
+          go-version: '1.26'
+          # No module has a go.sum (zero external dependencies), so the cache
+          # key is keyed off the go.mod files instead. The value here is the
+          # build cache, not a download cache.
+          cache-dependency-path: |
+            tools/cli/go.mod
+            tools/relay/go.mod
+            tools/parlay-bin/go.mod
+            packages/eval-engine/go.mod
+            packages/go-server/go.mod
+
+      # Pin the Go cache/GOPATH locations as explicit environment variables
+      # BEFORE any step redirects HOME. Go derives GOCACHE and GOMODCACHE from
+      # $HOME by default, so without this the HOME redirect below would silently
+      # move them to an empty directory and discard the cache restored above.
+      - name: Pin Go cache paths against the HOME redirect
+        run: |
+          {
+            echo "GOCACHE=$(go env GOCACHE)"
+            echo "GOMODCACHE=$(go env GOMODCACHE)"
+            echo "GOPATH=$(go env GOPATH)"
+          } >> "$GITHUB_ENV"
+
+      # gofmt across every module.
+      #
+      # tools/cli already guards itself with TestGofmtClean
+      # (tools/cli/internal/commands/gofmt_test.go), which runs as part of
+      # `go test` below — but that test resolves its root to the tools/cli
+      # module and therefore covers exactly one of the five modules. This step
+      # is what covers the other four; it is not a duplicate of that guard, it
+      # is the other 80%.
+      - name: gofmt
+        run: |
+          dirty="$(gofmt -l tools/cli tools/relay tools/parlay-bin \
+                            packages/eval-engine packages/go-server)"
+          if [ -n "$dirty" ]; then
+            echo "::error::these files are not gofmt-clean:"
+            echo "$dirty"
+            echo "Inspect with 'gofmt -d <file>' before running 'gofmt -w': gofmt"
+            echo "reformats doc comments and can rewrite documented prose."
+            exit 1
+          fi
+          echo "all five modules are gofmt-clean"
+
+      - name: Build
+        run: |
+          for m in tools/cli tools/relay tools/parlay-bin \
+                   packages/eval-engine packages/go-server; do
+            echo "::group::go build ./... ($m)"
+            ( cd "$m" && go build ./... )
+            echo "::endgroup::"
+          done
+
+      - name: Vet
+        run: |
+          for m in tools/cli tools/relay tools/parlay-bin \
+                   packages/eval-engine packages/go-server; do
+            echo "::group::go vet ./... ($m)"
+            ( cd "$m" && go vet ./... )
+            echo "::endgroup::"
+          done
+
+      # HOME is redirected for the test run. Several Go tests write under
+      # $HOME (observed: ~/.parlay, ~/.config/bd, ~/.beads) because the code
+      # they cover resolves ~/.parlay/agents directly rather than honouring
+      # $PARLAY_AGENT_HOME — see the AGENTS.md notes on guard/teardown/variant
+      # and on the ~/.parlay/agents/status-agent pollution incident. On a
+      # hosted runner $HOME is thrown away with the VM, but this workflow must
+      # also be safe on a self-hosted runner, where $HOME persists and is a
+      # real developer's state. AGENTS.md records a smoke test permanently
+      # deleting a live ~/.parlay; nothing in this file gets the chance.
+      - name: Test
+        env:
+          HOME: ${{ runner.temp }}/go-home
+        run: |
+          mkdir -p "$HOME"
+          for m in tools/cli tools/relay tools/parlay-bin \
+                   packages/eval-engine packages/go-server; do
+            echo "::group::go test ./... ($m)"
+            ( cd "$m" && go test ./... )
+            echo "::endgroup::"
+          done
+
+      # `go build ./...` writes a binary next to any main package that is not
+      # gitignored. tools/relay/relay is 9.6 MB and was exactly that — the
+      # committed-binary PR the triage found. This asserts the working tree is
+      # still clean after a full build, so a newly added main package cannot
+      # reintroduce it: the check fixes itself as modules are added, which a
+      # hardcoded filename list would not.
+      - name: No build artifact may be left untracked
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::go build ./... produced files that are neither tracked nor gitignored:"
+            git status --porcelain
+            echo "Add the binary to .gitignore (see the existing"
+            echo "packages/eval-engine/eval-engine and tools/cli/bin/ entries)."
+            exit 1
+          fi
+          echo "working tree clean after a full build"
+
+  # ── Bun workspace: packages/input, packages/client, packages/server,
+  #    packages/cli ──────────────────────────────────────────────────────────
+  # packages/server and packages/cli have real test files but no "test" script
+  # in package.json, so `bun test` is invoked directly. Every package is run
+  # from inside its own directory: there is no root bunfig.toml, so the
+  # happy-dom preload that packages/client and packages/input need is only
+  # picked up from the package directory (see AGENTS.md).
+  bun:
+    name: Bun (test, typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.11'
+
+      - name: Cache Bun install cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'tools/split-test/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      # The root workspaces glob is packages/* only, so tools/split-test has
+      # its own lockfile and needs its own install.
+      - name: Install (workspace root)
+        run: bun install --frozen-lockfile
+
+      - name: Install (tools/split-test)
+        run: bun install --frozen-lockfile
+        working-directory: tools/split-test
+
+      # HOME is redirected for the same reason as the Go job, and here it is
+      # load-bearing rather than defensive: packages/cli's own tests resolve
+      # join(homedir(), ".parlay", "agents", <test agent>) directly
+      # (commands-crew-state.test.ts, commands-supervise.test.ts,
+      # commands-status.test.ts) and genuinely create that directory. Verified
+      # locally: a sandboxed run leaves .parlay/agents/unit-test-agent behind.
+      # Without this redirect the suite writes into a real developer's
+      # ~/.parlay on any self-hosted runner.
+      - name: Test
+        env:
+          HOME: ${{ runner.temp }}/bun-home
+        run: |
+          mkdir -p "$HOME"
+          for p in packages/input packages/client packages/server packages/cli; do
+            echo "::group::bun test ($p)"
+            ( cd "$p" && bun test )
+            echo "::endgroup::"
+          done
+
+      # Typecheck only where a tsconfig actually exists and resolves. Both use
+      # the locked, package-local tsc rather than `bunx tsc`, which would fetch
+      # TypeScript from the network at run time instead of using the pinned
+      # version in the lockfile.
+      - name: Typecheck (packages/input)
+        run: ./node_modules/.bin/tsc --noEmit
+        working-directory: packages/input
+
+      - name: Typecheck (tools/split-test)
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+        working-directory: tools/split-test
+
+  # ── Hermetic shell harnesses ──────────────────────────────────────────────
+  # Only the six harnesses that were verified to be genuinely side-effect-free
+  # are here. Each was trial-run against a redirected HOME with the live
+  # ~/.parlay/agents and ~/.treehouse snapshotted before and after; all six
+  # produced zero drift in either. The three excluded harnesses are named in
+  # the "not covered" list in the PR description and in AGENTS.md:
+  #
+  #   tools/monitor/parlay-monitor.test.sh   — enrols over a relay control
+  #       socket and spawns relay processes; touches live relay state.
+  #   tools/relay/deploy/ensure-up.test.sh   — drives launchctl (macOS launchd).
+  #   tools/relay/deploy/install.test.sh     — launchctl + plist/PlistBuddy.
+  #
+  # HOME is redirected here too, and PARLAY_SERVER is pointed at a closed port
+  # so that any spawn path which somehow reached a network call fails fast
+  # instead of registering against a live Pulse instance.
+  shell:
+    name: Shell harnesses (hermetic only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # HOME is set on this step rather than on the job, so that the checkout
+      # above still runs with a real home directory.
+      - name: Run hermetic harnesses
+        env:
+          HOME: ${{ runner.temp }}/shell-home
+          PARLAY_SERVER: http://127.0.0.1:1
+        run: |
+          mkdir -p "$HOME"
+          # These build real throwaway git repositories; git refuses to commit
+          # without an identity, and the redirected HOME has no gitconfig.
+          git config --global user.email ci@example.invalid
+          git config --global user.name  "parlay ci"
+          for t in bin/parlay-spawn.templates.test.sh \
+                   bin/parlay-spawn.integration.test.sh \
+                   bin/parlay-spawn.quoting.test.sh \
+                   bin/parlay-spawn.batch.test.sh \
+                   bin/parlay-spawn.worktree.test.sh \
+                   bin/parlay-treehouse-guard.test.sh; do
+            echo "::group::$t"
+            bash "$t"
+            echo "::endgroup::"
+          done
+
+  # ── Repository hygiene ────────────────────────────────────────────────────
+  # No toolchain needed, so this answers in seconds and catches two of the
+  # three breakages the open-PR triage found on its own.
+  hygiene:
+    name: Hygiene (conflict markers, large files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # One of the open PRs committed conflict markers and did not compile.
+      # This file is excluded from its own scan: the pattern below is written
+      # to avoid matching itself, but the exclusion makes that explicit.
+      - name: No committed conflict markers
+        run: |
+          if git grep -nIE '^(<{7}|={7}|>{7})( |$)' -- \
+               ':!.github/workflows/ci.yml' > /tmp/markers.txt; then
+            echo "::error::committed merge-conflict markers:"
+            cat /tmp/markers.txt
+            exit 1
+          fi
+          echo "no conflict markers"
+
+      # A 9.6 MB Go binary was committed on one of the open PRs. The largest
+      # legitimately tracked file in this repo is AGENTS.md at ~65 KB, so a
+      # 2 MiB ceiling is far above anything real and still catches a binary.
+      - name: No oversized tracked files
+        run: |
+          limit=$((2 * 1024 * 1024))
+          fail=0
+          while IFS= read -r -d '' f; do
+            size=$(stat -c%s "$f")
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error file=$f::$f is $size bytes, over the $limit byte limit"
+              fail=1
+            fi
+          done < <(git ls-files -z)
+          if [ "$fail" -ne 0 ]; then
+            echo "Committed build artifacts belong in .gitignore, not in git."
+            exit 1
+          fi
+          echo "no tracked file exceeds $limit bytes"
