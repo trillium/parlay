@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": patch
+"parlay-cli": patch
 ---
 
 Stop `parlay ensure-up` from killing a healthy relay and then declaring it dead (robots-mpr3).

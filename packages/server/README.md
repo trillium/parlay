@@ -1,4 +1,4 @@
-# @parlay/server
+# parlay-server
 
 A standalone [Bun](https://bun.sh) HTTP server that owns the Parlay chat API
 (`/api/chat/*`): message history, agent presence/registry, SSE streams, polling,

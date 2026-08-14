@@ -378,10 +378,14 @@ This section covers npm packages under `packages/` (those with a
 are outside this private/publishable dichotomy entirely. The naming rule is
 fixed: anything meant for npm uses a **flat, unscoped** `parlay-<part>` name,
 and the `@parlay` scope is **never** published (the scope is unclaimed and
-nothing should depend on claiming it). Internal, never-published packages keep
-their existing `@parlay/*` names but must stay `private: true`; do not rename
-them (renaming would break their pending changesets and, for
-`packages/client`/`packages/server`, is out of scope).
+nothing should depend on claiming it — a real publish attempt under it returned
+404). Every npm package under `packages/`/`tools/` now uses that flat scheme:
+`parlay-cli` (`packages/cli`), `parlay-client` (`packages/client`),
+`parlay-server` (`packages/server`), and `parlay-split` (`tools/split-test`,
+whose package name now matches its `parlay-split` bin). Those four stay
+`private: true` — the rename is repo-wide naming hygiene, not a decision to
+publish them; publishing remains the captain's separate call. The `@parlay`
+scope no longer appears in any manifest, import, config, or changeset.
 
 The single publishable package today is `packages/input`, named
 `parlay-input`. It is self-contained — a real client for parlay's REST + shared-SSE

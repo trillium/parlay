@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": patch
+"parlay-cli": patch
 ---
 
 Stop `parlay listen` from enrolling into the LIVE relay/registry when `PARLAY_SERVER` points elsewhere (robots-buu8).

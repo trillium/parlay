@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 Add **`parlay claim <task-id>`** — one-call agent bootstrap (idea-tm0). A freshly-launched agent runs it and follows the printed brief; in one command it:

@@ -1,4 +1,4 @@
-# @parlay/client
+# parlay-client
 
 ## 0.1.1
 

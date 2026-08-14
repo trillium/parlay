@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": minor
+"parlay-cli": minor
 ---
 
 **`parlay branch-audit` — reversion detection now compares against the merge-base, not the tip (robots-d988).**

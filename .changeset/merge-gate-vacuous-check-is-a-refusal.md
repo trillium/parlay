@@ -1,5 +1,5 @@
 ---
-"@parlay/cli": patch
+"parlay-cli": patch
 ---
 
 `parlay merge-gate`: a rate-limited *check description* is a refusal too, and exit `4` now names the way out (robots-eowy).
