@@ -165,7 +165,17 @@ grep -q "hello from bootstrap-sandbox.sh" "$SANDBOX/data/chat-history.jsonl" &&
   check "message persisted to \$PARLAY_DATA_DIR/chat-history.jsonl" no
 parlay remote | grep -q "source: config" &&
   check "server URL resolved from config.json" ok || check "server URL resolved from config.json" no
-parlay identity --agent helm | grep -q "PURPOSE" &&
+# Both halves, so a strip regression fails in either direction: the body prose
+# must survive, and no line of the launch-spec frontmatter (its `---` fences or
+# its keys) may reach the agent.
+identity_body_without_frontmatter() {
+  local out; out="$(parlay identity --agent helm)" || return 1
+  printf '%s\n' "$out" | grep -q "PURPOSE" || return 1
+  if printf '%s\n' "$out" | grep -qx -- '---'; then return 1; fi
+  if printf '%s\n' "$out" | grep -q '^id: helm'; then return 1; fi
+  return 0
+}
+identity_body_without_frontmatter &&
   check "identity.md read back with frontmatter stripped" ok || check "identity.md read back with frontmatter stripped" no
 launch_specs_for_both() {
   local out; out="$(parlay launch)" || return 1

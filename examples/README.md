@@ -60,9 +60,14 @@ layout `bootstrap-sandbox.sh` builds, minus the `$HOME` redirection and the
 teardown — read the two paragraphs after the recipe for what that difference
 still leaves in reach:
 
+Start at the repo root. Step 4 runs the server in the foreground and never
+returns, so it needs a terminal of its own — the two `export`s in step 1 are
+what let you re-enter it there.
+
 ```sh
 # 1. Instantiate the example somewhere new
-PARLAY_EXAMPLE=~/parlay-example
+export PARLAY_REPO="$(pwd)"
+export PARLAY_EXAMPLE=~/parlay-example
 mkdir -p "$PARLAY_EXAMPLE"
 cp -R examples/parlay-state "$PARLAY_EXAMPLE/.parlay"
 cp -R examples/data-dir     "$PARLAY_EXAMPLE/data"
@@ -72,12 +77,16 @@ $EDITOR "$PARLAY_EXAMPLE/.parlay/agents/helm/identity.md"     # cwd: /path/to/yo
 $EDITOR "$PARLAY_EXAMPLE/.parlay/agents/reviewer/identity.md" # cwd/worktree/project
 $EDITOR "$PARLAY_EXAMPLE/.parlay/config.json"                 # server URL, if not localhost:4242
 
-# 3. Run the server against the scratch data dir
-cd packages/server && PARLAY_DATA_DIR="$PARLAY_EXAMPLE/data" \
+# 3. Build the CLI
+cd "$PARLAY_REPO/tools/cli" && go build -o ~/.local/bin/parlay .
+
+# 4. SECOND TERMINAL — run the server against the scratch data dir. This blocks
+#    in the foreground until you stop it. Re-export PARLAY_REPO and
+#    PARLAY_EXAMPLE here first; a new shell does not inherit them.
+cd "$PARLAY_REPO/packages/server" && PARLAY_DATA_DIR="$PARLAY_EXAMPLE/data" \
   PAI_DIR="$PARLAY_EXAMPLE/pai" bun run start
 
-# 4. Talk to it — every CLI call carries the scratch roots
-cd tools/cli && go build -o ~/.local/bin/parlay .
+# 5. Back in the first terminal — every CLI call carries the scratch roots
 export PARLAY_STATE_HOME="$PARLAY_EXAMPLE/.parlay"
 export PARLAY_AGENT_HOME="$PARLAY_EXAMPLE/.parlay/agents"
 parlay agents
@@ -88,7 +97,7 @@ parlay send --helm "hello"
 a working default. The two `README.md` files copied along the way are
 documentation; nothing reads them.
 
-`PAI_DIR` in step 3 is not optional decoration. `PARLAY_DATA_DIR` does not cover
+`PAI_DIR` in step 4 is not optional decoration. `PARLAY_DATA_DIR` does not cover
 it: the hook tailer, the tool tailer, and the boot-time session-channel backfill
 all read `$PAI_DIR/MEMORY/OBSERVABILITY` unconditionally, and `src/tts.ts` writes
 `$PAI_DIR/MEMORY/{OBSERVABILITY/tts-pronunciation-reports.jsonl,STATE/tts-cache/}`
@@ -117,7 +126,7 @@ only way to isolate all of these completely.
 `PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because this
 fleet serves parlay through Pulse on that port. `PARLAY_SERVER` outranks
 `config.json`, so `bin/parlay` ignores the file this example ships. Build the
-binary directly (step 4 above) and `config.json` decides.
+binary directly (step 3 above) and `config.json` decides.
 
 ### The server binds every interface, and has no authentication
 
@@ -181,7 +190,7 @@ Every line above is marked because it can overwrite something of yours:
   `parlay-settings.json`.
 
 Then edit the placeholders and run the server with
-`PARLAY_DATA_DIR=~/.parlay/data`, exactly as in steps 2-4 above — minus the two
+`PARLAY_DATA_DIR=~/.parlay/data`, exactly as in steps 2-5 above — minus the two
 `PARLAY_*_HOME` exports, since `~/.parlay` is already the default.
 
 ## Required vs. taste
