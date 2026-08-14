@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# parlay-treehouse-guard - keep OCCUPIED treehouse pool slots out of the pool.
+#
+# robots-n8d9. `treehouse get --lease` resets the slot it hands out: it checks
+# origin/main out over whatever branch was there. Its eligibility rules are
+# dirty / has-live-processes / already-leased, and all three missed a slot that
+# a LIVE agent was working in:
+#
+#   parlay-spawn ... --cwd ~/code/firstmate --worktree
+#     -> "worktree via treehouse at ~/.treehouse/firstmate-ed399d/12/firstmate"
+#
+# but ed399d/12 was already held by an agent from a DIFFERENT firstmate home
+# (firstmate-7bab20/4), whose state/*.meta recorded that path as `worktree=`
+# and whose endpoint read alive. The slot was clean and its processes were not
+# attributable, so treehouse called it available and checked
+# `agent/skill/stale-branch-repair-docs` out from under the running agent. Two
+# agents, one worktree. Nothing was lost only because that branch happened to
+# be pushed. The same run also reclaimed a slot holding `fm/charter-corr-ack`,
+# whose only off-box copy was the no-mistakes mirror, not origin.
+#
+# treehouse is a third-party binary with no "skip these slots" flag, but it
+# does honor one thing we can write: a lease. Per `treehouse get --help`, "a
+# leased worktree is never handed out by a later get and never removed by
+# prune". So this guard sweeps the pool BEFORE parlay-spawn calls
+# `treehouse get` and takes a protective lease (holder `parlay-guard:<reason>`)
+# on every slot that is still occupied. It is self-healing: a guard lease whose
+# reason no longer holds is released on the next sweep, so slots return to the
+# pool on their own.
+#
+# A slot is protected when ANY of these holds:
+#   dirty       working tree is not clean (belt-and-braces; treehouse checks
+#               this too, but this guard must not depend on that staying true)
+#   unlanded    HEAD holds commits absent from every origin/* ref, so the only
+#               copy is local or on a non-origin mirror like no-mistakes
+#   live-agent  a firstmate state/*.meta anywhere on the box records the slot
+#               as `worktree=` and its endpoint does not read confidently dead
+#
+# Fail-safe by construction: unreadable state, missing jq, an unclassifiable
+# endpoint, or a lock we cannot take all resolve toward PROTECT / leave-alone.
+# The worst case is a slot that stays out of the pool for one more sweep; the
+# alternative is checking out over a running agent.
+#
+# Usage:
+#   parlay-treehouse-guard <project-path>       sweep every pool of that repo
+#   parlay-treehouse-guard --why <slot-path>    print the protection reason
+#                                               ("" when the slot is free)
+#
+# Env (tests):
+#   PARLAY_TH_STATE       use exactly this treehouse-state.json
+#   PARLAY_TH_META_ROOTS  colon-separated globs of dirs holding *.meta
+#   PARLAY_TH_FM_BACKEND  path to firstmate's bin/fm-backend.sh
+#   PARLAY_TH_QUIET       set to 1 to silence the per-slot stderr notes
+set -uo pipefail
+
+GUARD_HOLDER_PREFIX="parlay-guard"
+
+th_log() { [ "${PARLAY_TH_QUIET:-0}" = "1" ] || printf 'parlay-treehouse-guard: %s\n' "$*" >&2; }
+
+# Symlink-resolved absolute path, or the input unchanged when it does not exist.
+th_real() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+
+# --- ownership ---------------------------------------------------------------
+
+# Every *.meta firstmate writes, across EVERY home on the box. The displaced
+# agent in the repro belonged to a different home than the spawner, so scanning
+# only the caller's home is exactly the blind spot that caused this.
+th_meta_files() {
+  local roots="${PARLAY_TH_META_ROOTS:-$HOME/.treehouse/*/*/*/state:$HOME/code/*/state}"
+  local saved_ifs=$IFS pat
+  IFS=:
+  # shellcheck disable=SC2086  # split on ':' — that is what IFS is set for here
+  set -- $roots
+  IFS=$saved_ifs
+  for pat in "$@"; do
+    # shellcheck disable=SC2086  # deliberately unquoted: these are globs, not paths
+    ls -d $pat/*.meta 2>/dev/null || true
+  done
+}
+
+# Prints the meta file that claims <slot real path> as its worktree, if any.
+th_meta_owning() {
+  local slot=$1 f wt
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    wt=$(sed -n 's/^worktree=//p' "$f" | head -1)
+    [ -n "$wt" ] || continue
+    if [ "$(th_real "$wt")" = "$slot" ]; then printf '%s' "$f"; return 0; fi
+  done < <(th_meta_files)
+  return 1
+}
+
+# alive | dead | unknown for the endpoint a meta records. Delegates to
+# firstmate's own recovery-grade classifier (fm_backend_agent_alive) rather
+# than re-deriving liveness here; anything it cannot classify is `unknown`,
+# and `unknown` protects.
+th_meta_liveness() {
+  local meta=$1 home backend window lib
+  home=$(cd "$(dirname "$(dirname "$meta")")" 2>/dev/null && pwd -P) || home=""
+  backend=$(sed -n 's/^backend=//p' "$meta" | head -1); backend=${backend:-tmux}
+  window=$(sed -n 's/^window=//p' "$meta" | head -1)
+  [ -n "$window" ] || { printf 'unknown'; return 0; }
+
+  lib="${PARLAY_TH_FM_BACKEND:-}"
+  [ -n "$lib" ] || lib="$home/bin/fm-backend.sh"
+  [ -f "$lib" ] || { printf 'unknown'; return 0; }
+
+  (
+    FM_ROOT_OVERRIDE="$home"
+    export FM_ROOT_OVERRIDE
+    # shellcheck disable=SC1090
+    . "$lib" >/dev/null 2>&1 || { printf 'unknown'; exit 0; }
+    command -v fm_backend_agent_alive >/dev/null 2>&1 || { printf 'unknown'; exit 0; }
+    fm_backend_agent_alive "$backend" "$window" 2>/dev/null || printf 'unknown'
+  )
+}
+
+# --- protection --------------------------------------------------------------
+
+# Prints the reason a slot must not be reclaimed, or nothing when it is free.
+th_slot_reason() {
+  local slot_raw=$1 slot meta ahead
+  [ -d "$slot_raw" ] || return 0
+  slot=$(th_real "$slot_raw")
+  git -C "$slot" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+  if [ -n "$(git -C "$slot" status --porcelain 2>/dev/null)" ]; then
+    printf 'dirty'; return 0
+  fi
+
+  # "Landed" means reachable from origin. Prefer origin specifically: the
+  # reclaimed `fm/charter-corr-ack` slot was pushed to the no-mistakes mirror
+  # but NOT to origin, and a mirror is not a landing. Fall back to any
+  # remote-tracking ref when the repo has no origin, and skip the signal
+  # entirely when it has no remotes at all — there, nothing is ever "landed"
+  # and protecting every slot forever would just disable the pool.
+  if git -C "$slot" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    local scope=""
+    if [ -n "$(git -C "$slot" for-each-ref --count=1 --format='%(refname)' refs/remotes/origin 2>/dev/null)" ]; then
+      scope="--remotes=origin"
+    elif [ -n "$(git -C "$slot" for-each-ref --count=1 --format='%(refname)' refs/remotes 2>/dev/null)" ]; then
+      scope="--remotes"
+    fi
+    if [ -n "$scope" ]; then
+      ahead=$(git -C "$slot" rev-list --count HEAD --not $scope 2>/dev/null) || ahead=""
+      if [ -n "$ahead" ] && [ "$ahead" -gt 0 ] 2>/dev/null; then
+        printf 'unlanded'; return 0
+      fi
+    fi
+  fi
+
+  if meta=$(th_meta_owning "$slot"); then
+    case "$(th_meta_liveness "$meta")" in
+      dead) : ;;
+      *) printf 'live-agent'; return 0 ;;
+    esac
+  fi
+  return 0
+}
+
+# --- state file --------------------------------------------------------------
+
+# Every treehouse pool state file that holds worktrees of <project>. A repo can
+# have slots in more than one pool; guard all of them, since which pool
+# treehouse resolves to depends on its own cwd hashing, not on ours.
+th_state_files() {
+  if [ -n "${PARLAY_TH_STATE:-}" ]; then printf '%s\n' "$PARLAY_TH_STATE"; return 0; fi
+  local proj=$1 line wt pool
+  git -C "$proj" worktree list --porcelain 2>/dev/null | while IFS= read -r line; do
+    case "$line" in worktree\ *) wt=${line#worktree } ;; *) continue ;; esac
+    pool=$(dirname "$(dirname "$wt")")
+    [ -f "$pool/treehouse-state.json" ] && printf '%s\n' "$pool/treehouse-state.json"
+  done | sort -u
+}
+
+th_lease_id() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 16 2>/dev/null && return 0
+  fi
+  printf '%s%s' "$(date +%s)" "$$" | shasum 2>/dev/null | cut -c1-32
+}
+
+# Rewrite one state file: take guard leases on newly protected slots, release
+# guard leases whose reason has lapsed, never touch anyone else's lease.
+#
+# `leased_at` MUST be strict RFC3339 — treehouse parses it with Go's
+# time.RFC3339, which rejects a `-0700` offset (only `-07:00` or `Z`), calls
+# the whole state file corrupt, and recovers by marking EVERY slot in the pool
+# leased. Writing `date +%z` here once did exactly that. UTC `Z` avoids the
+# question entirely.
+th_sweep_state() {
+  local state=$1 tmp reasons path reason held changed=0 rc
+
+  reasons=$(mktemp "${TMPDIR:-/tmp}/parlay-guard-reasons.XXXXXX") || return 1
+  tmp="$state.parlay-guard.$$"
+
+  while IFS=$'\t' read -r path held; do
+    [ -n "$path" ] || continue
+    reason=$(th_slot_reason "$path")
+    if [ -n "$reason" ]; then
+      printf '%s\t%s\n' "$path" "$reason" >> "$reasons"
+      if [ "$held" != "1" ]; then
+        th_log "protecting $path ($reason)"
+        changed=1
+      fi
+    elif [ "$held" = "1" ]; then
+      th_log "releasing $path (no longer occupied)"
+      changed=1
+    fi
+  done < <(jq -r --arg pfx "$GUARD_HOLDER_PREFIX" '
+      .worktrees[]? |
+      [ .path,
+        (if (.leased == true) and ((.lease_holder // "") | startswith($pfx)) then "1" else "0" end)
+      ] | @tsv' "$state" 2>/dev/null)
+
+  if [ "$changed" = "0" ]; then rm -f "$reasons"; return 0; fi
+
+  jq --slurpfile prot <(jq -R -s -c '
+        split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: .[1]}) | from_entries
+      ' "$reasons") \
+     --arg pfx "$GUARD_HOLDER_PREFIX" \
+     --arg lid "$(th_lease_id)" \
+     --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    ($prot[0] // {}) as $p
+    | .worktrees |= map(
+        ($p[.path] // null) as $reason
+        | (((.leased == true) and ((.lease_holder // "") | startswith($pfx))) as $mine
+        | if $reason != null then
+            if (.leased == true) and ($mine | not) then .
+            else . + {leased: true, lease_id: $lid, lease_holder: ($pfx + ":" + $reason), leased_at: $now}
+            end
+          elif $mine then
+            del(.leased, .lease_id, .lease_holder, .leased_at)
+          else . end)
+      )' "$state" > "$tmp" 2>/dev/null
+  rc=$?
+  if [ "$rc" -eq 0 ] && [ -s "$tmp" ]; then
+    mv "$tmp" "$state"; rc=$?
+  else
+    rc=1
+  fi
+  rm -f "$tmp" "$reasons"
+  return "$rc"
+}
+
+# Run `$0 --sweep-state <state>` holding treehouse's own state lock, so a
+# concurrent treehouse read-modify-write cannot clobber the leases we just
+# wrote. If no locking tool is available or the lock cannot be taken in time,
+# sweep anyway: an unlocked write is a small race, skipping the guard is a
+# clobbered agent.
+th_locked_sweep() {
+  local state=$1 lock
+  lock="$(dirname "$state")/treehouse-state.lock"
+  : >>"$lock" 2>/dev/null || { th_sweep_state "$state"; return $?; }
+
+  if command -v flock >/dev/null 2>&1; then
+    flock -w 10 "$lock" "$0" --sweep-state "$state" && return 0
+    th_log "state lock unavailable; sweeping without it"
+    th_sweep_state "$state"
+    return $?
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$lock" "$0" --sweep-state "$state" <<'PY'
+import fcntl, subprocess, sys
+with open(sys.argv[1], "a") as fh:
+    fcntl.flock(fh, fcntl.LOCK_EX)
+    sys.exit(subprocess.call(sys.argv[2:]))
+PY
+    return $?
+  fi
+  th_sweep_state "$state"
+}
+
+# --- entrypoint --------------------------------------------------------------
+
+case "${1:-}" in
+  --why)
+    [ $# -ge 2 ] || { echo "usage: parlay-treehouse-guard --why <slot-path>" >&2; exit 2; }
+    th_slot_reason "$2"; printf '\n'
+    exit 0
+    ;;
+  --sweep-state)
+    # Internal: one already-locked state file. Not part of the public surface.
+    [ $# -ge 2 ] || { echo "usage: parlay-treehouse-guard --sweep-state <file>" >&2; exit 2; }
+    command -v jq >/dev/null 2>&1 || exit 0
+    th_sweep_state "$2"
+    exit $?
+    ;;
+  ""|-h|--help)
+    sed -n '43,52p' "$0" >&2
+    exit 0
+    ;;
+esac
+
+PROJECT=$1
+command -v jq >/dev/null 2>&1 || { th_log "jq not found; skipping pool guard"; exit 0; }
+
+while IFS= read -r STATE; do
+  [ -f "$STATE" ] || continue
+  th_locked_sweep "$STATE" || true
+done < <(th_state_files "$PROJECT")
+exit 0

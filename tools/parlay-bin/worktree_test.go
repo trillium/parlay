@@ -123,6 +123,57 @@ func TestSetupWorktreeRejectsWrongRepoTreehousePath(t *testing.T) {
 	}
 }
 
+// robots-n8d9: `treehouse get` RESETS the slot it hands out, and its own
+// eligibility rules cannot see a live agent sitting in a clean one — it
+// checked origin/main out over a running agent's branch. The pool guard has to
+// run BEFORE the lease request, pinned to the project dir like treehouse
+// itself, or it protects nothing: once treehouse has answered, the displaced
+// agent's checkout is already gone.
+func TestSetupWorktreeGuardsPoolBeforeLeasing(t *testing.T) {
+	root := t.TempDir()
+	target := initRepo(t, filepath.Join(root, "target"))
+	pool := filepath.Join(root, "pool", "slot")
+	if out, err := exec.Command("git", "-C", target, "worktree", "add", "-q", "--detach", pool).CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %v\n%s", err, out)
+	}
+
+	binDir := t.TempDir()
+	log := filepath.Join(root, "calls.log")
+	stubs := map[string]string{
+		"parlay-treehouse-guard": `printf 'guard %s\n' "$PWD" >> "` + log + `"`,
+		"treehouse":              `printf 'treehouse %s %s\n' "$1" "$PWD" >> "` + log + `"; [ "$1" = get ] && echo "` + pool + `"; exit 0`,
+	}
+	for name, body := range stubs {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/usr/bin/env bash\n"+body+"\n"), 0o755); err != nil {
+			t.Fatalf("write %s stub: %v", name, err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := setupWorktree(target, "n8d9", "report"); err != nil {
+		t.Fatalf("setupWorktree: %v", err)
+	}
+
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("guard never ran and treehouse never ran: %v", err)
+	}
+	calls := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(calls) < 2 {
+		t.Fatalf("expected a guard call and a treehouse call, got %q", calls)
+	}
+	if !strings.HasPrefix(calls[0], "guard ") {
+		t.Errorf("pool guard did not run before `treehouse get`: call order %q", calls)
+	}
+	targetReal, _ := realpath(target)
+	if gotDir := strings.TrimPrefix(calls[0], "guard "); gotDir != target && gotDir != targetReal {
+		t.Errorf("guard ran against %s, not the project dir %s — it would sweep the wrong pool", gotDir, target)
+	}
+	if !strings.HasPrefix(calls[1], "treehouse get ") {
+		t.Errorf("expected `treehouse get` right after the guard, got %q", calls[1])
+	}
+}
+
 // repoIdentity must agree across a repo and every linked worktree of it, and
 // must differ between two unrelated repos — the property the guard relies on.
 func TestRepoIdentityDistinguishesRepos(t *testing.T) {
