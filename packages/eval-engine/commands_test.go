@@ -144,9 +144,9 @@ func TestTrimTrailingPunct(t *testing.T) {
 func TestLastIndexFold(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name           string
-		hay, needle    string
-		want           int
+		name        string
+		hay, needle string
+		want        int
 	}{
 		{"found case-insensitive", "Hello BRAVELY", "bravely", 6},
 		{"last occurrence", "go go go", "go", 6},
