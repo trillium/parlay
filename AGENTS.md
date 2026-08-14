@@ -1127,10 +1127,13 @@ green and 3 provably broken.
 
 Four parallel jobs, each pinned to action commit SHAs with `permissions:
 contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
-all five modules), **bun** (tests for `packages/{input,client,server,cli}`,
-typecheck for `packages/input` and `tools/split-test`), **shell** (six hermetic
-harnesses), **hygiene** (conflict markers, 2 MiB tracked-file ceiling). Read the
-file's own comments for per-step rationale rather than re-deriving it.
+all five modules), **bun** (tests for `packages/{input,client,server,cli}` and
+`tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
+dependencies — plus typecheck for `packages/input` and `tools/split-test`),
+**shell** (seven hermetic harnesses), **hygiene** (conflict markers, 2 MiB
+tracked-file ceiling measured on the tracked *blob* via `git ls-tree -l`, never
+`stat` on the worktree path, which would follow this repo's tracked symlinks).
+Read the file's own comments for per-step rationale rather than re-deriving it.
 
 Three things worth knowing before editing it:
 
@@ -1153,11 +1156,15 @@ Three things worth knowing before editing it:
   `tools/relay/deploy/{ensure-up,install}.test.sh` (launchctl/PlistBuddy),
   `tools/cli/parity/run.sh` (stands up a real go-server fixture), and
   `packages/client`'s `bun run build` (its `build.ts` POSTs to the captain's
-  live `:31337` — see the packages/client note above). The other six shell
-  harnesses were each trial-run with `~/.parlay` and `~/.treehouse` snapshotted
-  before and after and produced zero drift; that is the bar for adding one.
+  live `:31337` — see the packages/client note above). Also not enforced:
+  `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a
+  staged-diff check, not a whole-tree one, so it does not map onto a CI job; it
+  is named here so a contributor whose commit the hook rejects can find the
+  rule written down. The other seven shell harnesses were each trial-run with
+  `~/.parlay` and `~/.treehouse` snapshotted before and after and produced zero
+  drift; that is the bar for adding one.
 
-The `hygiene` job's artifact guard is `git status --porcelain` being empty after
+The `go` job's artifact guard is `git status --porcelain` being empty after
 a full `go build ./...`, not a filename list, so a newly added main package
 cannot reintroduce the 9.6 MB `tools/relay/relay` binary that one PR committed —
 that path is now gitignored alongside the pre-existing

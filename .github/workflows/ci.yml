@@ -27,9 +27,14 @@ permissions:
 
 # A superseded push should not keep burning a runner; the newest commit is the
 # only one whose answer matters.
+#
+# Scoped to pull requests only. Cancelling a superseded PR run is the intent
+# here; cancelling a push-to-main run would leave landed code with no verdict at
+# all, which is the exact ambiguous-green state this workflow exists to remove.
+# Main is the branch people rely on, so every commit on it gets a completed run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/eval-engine,
@@ -148,12 +153,20 @@ jobs:
           echo "working tree clean after a full build"
 
   # ── Bun workspace: packages/input, packages/client, packages/server,
-  #    packages/cli ──────────────────────────────────────────────────────────
+  #    packages/cli, plus tools/gate-tag ─────────────────────────────────────
   # packages/server and packages/cli have real test files but no "test" script
   # in package.json, so `bun test` is invoked directly. Every package is run
   # from inside its own directory: there is no root bunfig.toml, so the
   # happy-dom preload that packages/client and packages/input need is only
   # picked up from the package directory (see AGENTS.md).
+  #
+  # Known gap, deliberately NOT enforced here: tools/hooks/pre-commit imposes a
+  # 250-line ceiling on staged .ts files. It is a staged-diff check rather than
+  # a whole-tree one, so it does not map cleanly onto a CI job — a PR can be
+  # perfectly mergeable while files it never touched sit over the limit. It is
+  # named here (and in AGENTS.md) so that a contributor whose commit is rejected
+  # by a hook they never installed on purpose can find the rule written down
+  # instead of discovering it as an ambush.
   bun:
     name: Bun (test, typecheck)
     runs-on: ubuntu-latest
@@ -189,12 +202,19 @@ jobs:
       # locally: a sandboxed run leaves .parlay/agents/unit-test-agent behind.
       # Without this redirect the suite writes into a real developer's
       # ~/.parlay on any self-hosted runner.
+      #
+      # tools/gate-tag is in this loop but deliberately absent from the install
+      # steps above: it has no package.json and no dependencies, so
+      # `bun install --frozen-lockfile` there would fail. `bun test` in that
+      # directory is the whole requirement — semver.test.ts imports only
+      # `bun:test` and `./semver`.
       - name: Test
         env:
           HOME: ${{ runner.temp }}/bun-home
         run: |
           mkdir -p "$HOME"
-          for p in packages/input packages/client packages/server packages/cli; do
+          for p in packages/input packages/client packages/server packages/cli \
+                   tools/gate-tag; do
             echo "::group::bun test ($p)"
             ( cd "$p" && bun test )
             echo "::endgroup::"
@@ -213,9 +233,9 @@ jobs:
         working-directory: tools/split-test
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
-  # Only the six harnesses that were verified to be genuinely side-effect-free
+  # Only the seven harnesses that were verified to be genuinely side-effect-free
   # are here. Each was trial-run against a redirected HOME with the live
-  # ~/.parlay/agents and ~/.treehouse snapshotted before and after; all six
+  # ~/.parlay/agents and ~/.treehouse snapshotted before and after; all seven
   # produced zero drift in either. The three excluded harnesses are named in
   # the "not covered" list in the PR description and in AGENTS.md:
   #
@@ -251,7 +271,8 @@ jobs:
                    bin/parlay-spawn.quoting.test.sh \
                    bin/parlay-spawn.batch.test.sh \
                    bin/parlay-spawn.worktree.test.sh \
-                   bin/parlay-treehouse-guard.test.sh; do
+                   bin/parlay-treehouse-guard.test.sh \
+                   tools/mechanic-dispatch/mechanic-dispatch.test.sh; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"
@@ -268,12 +289,13 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       # One of the open PRs committed conflict markers and did not compile.
-      # This file is excluded from its own scan: the pattern below is written
-      # to avoid matching itself, but the exclusion makes that explicit.
+      # This file is deliberately NOT excluded from its own scan — the workflow
+      # must not be the one place the gate cannot see. The pattern below is
+      # written so it cannot self-match: the regex source contains no run of
+      # seven markers at the start of a line.
       - name: No committed conflict markers
         run: |
-          if git grep -nIE '^(<{7}|={7}|>{7})( |$)' -- \
-               ':!.github/workflows/ci.yml' > /tmp/markers.txt; then
+          if git grep -nIE '^(<{7}|={7}|>{7})( |$)' > /tmp/markers.txt; then
             echo "::error::committed merge-conflict markers:"
             cat /tmp/markers.txt
             exit 1
@@ -281,19 +303,31 @@ jobs:
           echo "no conflict markers"
 
       # A 9.6 MB Go binary was committed on one of the open PRs. The largest
-      # legitimately tracked file in this repo is AGENTS.md at ~65 KB, so a
+      # legitimately tracked file in this repo is AGENTS.md at ~75 KB, so a
       # 2 MiB ceiling is far above anything real and still catches a binary.
+      #
+      # Sizes come from `git ls-tree -l`, i.e. the tracked blob, not `stat` on
+      # the worktree path. This repo tracks symlinks (CLAUDE.md,
+      # packages/eval-engine/commands.json); `stat` follows them, so it would
+      # measure whatever they point at — and under `set -e` a symlink whose
+      # target is missing after checkout would abort the step with an opaque
+      # "cannot stat" rather than a size verdict. A symlink's blob is just its
+      # target string, which is what should be measured.
       - name: No oversized tracked files
         run: |
           limit=$((2 * 1024 * 1024))
           fail=0
-          while IFS= read -r -d '' f; do
-            size=$(stat -c%s "$f")
+          while IFS= read -r -d '' entry; do
+            meta=${entry%%$'\t'*}
+            path=${entry#*$'\t'}
+            size=${meta##* }
+            # Gitlinks (submodule commits) report "-" instead of a byte count.
+            [ "$size" = "-" ] && continue
             if [ "$size" -gt "$limit" ]; then
-              echo "::error file=$f::$f is $size bytes, over the $limit byte limit"
+              echo "::error file=$path::$path is $size bytes, over the $limit byte limit"
               fail=1
             fi
-          done < <(git ls-files -z)
+          done < <(git ls-tree -r -l -z --full-tree HEAD)
           if [ "$fail" -ne 0 ]; then
             echo "Committed build artifacts belong in .gitignore, not in git."
             exit 1
