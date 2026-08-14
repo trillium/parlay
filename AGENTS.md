@@ -1130,13 +1130,24 @@ contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
 all five modules), **bun** (tests for `packages/{input,client,server,cli}` and
 `tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
 dependencies — plus typecheck for `packages/input` and `tools/split-test`),
-**shell** (seven hermetic harnesses), **hygiene** (conflict markers, 2 MiB
+**shell** (seven hermetic harnesses, preceded by a `jq`/`curl`/`git` presence
+check so a binary missing from the rolling runner image fails the step instead
+of letting a harness skip itself green), **hygiene** (conflict markers, 2 MiB
 tracked-file ceiling measured on the tracked *blob* via `git ls-tree -l`, never
 `stat` on the worktree path, which would follow this repo's tracked symlinks).
+Both hygiene gates distinguish "the tool failed" from "the tree is clean" —
+`git grep`'s status 2+ and a failed or empty `git ls-tree` each fail the step.
 Read the file's own comments for per-step rationale rather than re-deriving it.
 
-Three things worth knowing before editing it:
+Four things worth knowing before editing it:
 
+- **Only pull-request runs share a concurrency group.** PR runs key on
+  `github.ref` with `cancel-in-progress`, so a new push supersedes the old run.
+  Push-to-main runs key on `github.run_id` — a group of one each. That is not
+  interchangeable with `cancel-in-progress: false`: runs sharing a group key
+  evict each other while still *pending*, so a burst of landings on the shared
+  `refs/heads/main` key would drop the middle commits' runs before they started.
+  Only a unique key guarantees every landed commit gets a verdict.
 - **`gofmt` in CI is not a duplicate of `TestGofmtClean`.** That test
   (`tools/cli/internal/commands/gofmt_test.go`) resolves its root to the
   tools/cli module, so it guards one module of five; the CI step covers the

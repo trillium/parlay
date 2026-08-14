@@ -25,15 +25,19 @@ on:
 permissions:
   contents: read
 
-# A superseded push should not keep burning a runner; the newest commit is the
-# only one whose answer matters.
+# Pull-request runs are grouped by ref and a superseded one is cancelled: the
+# newest commit on a branch is the only one whose answer matters, and there is
+# no reason to keep burning a runner on an answer nobody will read.
 #
-# Scoped to pull requests only. Cancelling a superseded PR run is the intent
-# here; cancelling a push-to-main run would leave landed code with no verdict at
-# all, which is the exact ambiguous-green state this workflow exists to remove.
-# Main is the branch people rely on, so every commit on it gets a completed run.
+# Push runs are deliberately given a group key unique per run (github.run_id),
+# which puts each of them in a group of one. `cancel-in-progress: false` alone
+# would not be enough: runs sharing a group key also evict each other while
+# still *pending*, and every push to main shares refs/heads/main — so a burst of
+# landings would silently drop the middle commits' runs before they ever start.
+# A unique key is the only way no landed commit loses its verdict, which is the
+# ambiguous-green state this workflow exists to remove.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -46,6 +50,12 @@ jobs:
     name: Go (build, vet, test, gofmt)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The module list, consumed unquoted by gofmt/build/vet/test below so the
+    # shell splits it on whitespace. A sixth module is added here and in
+    # cache-dependency-path, and every step picks it up; a per-step list would
+    # let one step drift and leave a module silently unchecked.
+    env:
+      GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/eval-engine packages/go-server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -85,8 +95,7 @@ jobs:
       # is the other 80%.
       - name: gofmt
         run: |
-          dirty="$(gofmt -l tools/cli tools/relay tools/parlay-bin \
-                            packages/eval-engine packages/go-server)"
+          dirty="$(gofmt -l $GO_MODULES)"
           if [ -n "$dirty" ]; then
             echo "::error::these files are not gofmt-clean:"
             echo "$dirty"
@@ -98,8 +107,7 @@ jobs:
 
       - name: Build
         run: |
-          for m in tools/cli tools/relay tools/parlay-bin \
-                   packages/eval-engine packages/go-server; do
+          for m in $GO_MODULES; do
             echo "::group::go build ./... ($m)"
             ( cd "$m" && go build ./... )
             echo "::endgroup::"
@@ -107,8 +115,7 @@ jobs:
 
       - name: Vet
         run: |
-          for m in tools/cli tools/relay tools/parlay-bin \
-                   packages/eval-engine packages/go-server; do
+          for m in $GO_MODULES; do
             echo "::group::go vet ./... ($m)"
             ( cd "$m" && go vet ./... )
             echo "::endgroup::"
@@ -128,8 +135,7 @@ jobs:
           HOME: ${{ runner.temp }}/go-home
         run: |
           mkdir -p "$HOME"
-          for m in tools/cli tools/relay tools/parlay-bin \
-                   packages/eval-engine packages/go-server; do
+          for m in $GO_MODULES; do
             echo "::group::go test ./... ($m)"
             ( cd "$m" && go test ./... )
             echo "::endgroup::"
@@ -261,6 +267,24 @@ jobs:
           HOME: ${{ runner.temp }}/shell-home
           PARLAY_SERVER: http://127.0.0.1:1
         run: |
+          # bin/parlay-treehouse-guard.test.sh opens with a `command -v jq ||
+          # exit 0` skip, which is right on a developer laptop and wrong here:
+          # if jq ever left the runner image the harness would report success
+          # having asserted nothing, and the gate would read green. The other
+          # harnesses lean on git and curl the same way. ubuntu-latest is a
+          # rolling image, so assert the dependencies rather than assume them —
+          # a missing one must fail loudly, not silently pass.
+          missing=""
+          for b in git jq curl; do
+            command -v "$b" >/dev/null 2>&1 || missing="$missing $b"
+          done
+          if [ -n "$missing" ]; then
+            for b in $missing; do
+              echo "::error::required binary '$b' is not on PATH; the shell harnesses would skip or fail vacuously without it"
+            done
+            exit 1
+          fi
+
           mkdir -p "$HOME"
           # These build real throwaway git repositories; git refuses to commit
           # without an identity, and the redirected HOME has no gitconfig.
@@ -293,14 +317,33 @@ jobs:
       # must not be the one place the gate cannot see. The pattern below is
       # written so it cannot self-match: the regex source contains no run of
       # seven markers at the start of a line.
+      #
+      # git grep's three exit statuses are distinguished rather than collapsed
+      # into if/else: 0 is "matches found", 1 is "clean", and anything else is
+      # git itself failing. Treating that third case as clean is how a gate goes
+      # vacuously green — the whole failure mode this workflow exists to remove.
       - name: No committed conflict markers
         run: |
-          if git grep -nIE '^(<{7}|={7}|>{7})( |$)' > /tmp/markers.txt; then
-            echo "::error::committed merge-conflict markers:"
-            cat /tmp/markers.txt
-            exit 1
-          fi
-          echo "no conflict markers"
+          markers="$(mktemp)"
+          set +e
+          git grep -nIE '^(<{7}|={7}|>{7})( |$)' > "$markers"
+          status=$?
+          set -e
+          case "$status" in
+            0)
+              echo "::error::committed merge-conflict markers:"
+              cat "$markers"
+              exit 1
+              ;;
+            1)
+              echo "no conflict markers"
+              ;;
+            *)
+              echo "::error::git grep exited $status: the conflict-marker scan did not run"
+              cat "$markers"
+              exit 1
+              ;;
+          esac
 
       # A 9.6 MB Go binary was committed on one of the open PRs. The largest
       # legitimately tracked file in this repo is AGENTS.md at ~75 KB, so a
@@ -313,23 +356,41 @@ jobs:
       # target is missing after checkout would abort the step with an opaque
       # "cannot stat" rather than a size verdict. A symlink's blob is just its
       # target string, which is what should be measured.
+      #
+      # The listing is written to a file rather than piped in from a process
+      # substitution, whose exit status the `while ... done < <(...)` form never
+      # consumes: a failing git ls-tree would feed the loop nothing and the gate
+      # would announce a clean tree it never read. The scanned count is asserted
+      # for the same reason — an empty listing is an unanswered question, not a
+      # pass.
       - name: No oversized tracked files
         run: |
           limit=$((2 * 1024 * 1024))
+          listing="$(mktemp)"
+          if ! git ls-tree -r -l -z --full-tree HEAD > "$listing"; then
+            echo "::error::git ls-tree failed: the tracked-file size scan did not run"
+            exit 1
+          fi
           fail=0
+          scanned=0
           while IFS= read -r -d '' entry; do
             meta=${entry%%$'\t'*}
             path=${entry#*$'\t'}
             size=${meta##* }
+            scanned=$((scanned + 1))
             # Gitlinks (submodule commits) report "-" instead of a byte count.
             [ "$size" = "-" ] && continue
             if [ "$size" -gt "$limit" ]; then
               echo "::error file=$path::$path is $size bytes, over the $limit byte limit"
               fail=1
             fi
-          done < <(git ls-tree -r -l -z --full-tree HEAD)
+          done < "$listing"
           if [ "$fail" -ne 0 ]; then
             echo "Committed build artifacts belong in .gitignore, not in git."
             exit 1
           fi
-          echo "no tracked file exceeds $limit bytes"
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::git ls-tree listed no tracked files at HEAD: the size scan proved nothing"
+            exit 1
+          fi
+          echo "no tracked file exceeds $limit bytes ($scanned scanned)"
