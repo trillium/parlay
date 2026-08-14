@@ -12,6 +12,7 @@ const data = JSON.parse(raw) as {
   counts: Record<string, number>
   rows: Array<{ cap: string; fm: string; parlay: string; verdict: string; built?: boolean; fix?: string; note?: string }>
   problems: string[]
+  notEvaluated?: Array<{ cap: string; fm: string; verdict: string; note?: string }>
 }
 
 const VERDICT_META: Record<string, { label: string; cls: string; blurb: string }> = {
@@ -26,13 +27,16 @@ const VERDICT_META: Record<string, { label: string; cls: string; blurb: string }
 const ORDER = ["MISSING", "DEFERRED", "COVERED-alternate", "COVERED-same", "EXPANDED", "STAYS-FIRSTMATE", "DROP-justified"]
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 
-const total = data.rows.length
+const notEvaluated = data.notEvaluated ?? []
+const evaluated = data.rows.length
+const total = evaluated + notEvaluated.length
 const missing = data.counts["MISSING"] ?? 0
+const haveHome = evaluated - missing
 const contractions = data.rows.filter(r => r.verdict === "MISSING")
 
 const chips = ORDER.filter(v => data.counts[v])
   .map(v => `<span class="chip ${VERDICT_META[v].cls}">${VERDICT_META[v].label.split(" ")[0]} ${data.counts[v]}</span>`)
-  .join("")
+  .join("") + (notEvaluated.length ? `<span class="chip v-uneval">NOT EVALUATED ${notEvaluated.length}</span>` : "")
 
 const groups = ORDER.filter(v => data.rows.some(r => r.verdict === v)).map(v => {
   const meta = VERDICT_META[v]
@@ -61,10 +65,27 @@ const contractionList = contractions.map(r => {
     <div class="c-fix">Filed: <code>parlay-fold ${r.fix}</code> in the <code>task</code> store</div></li>`
 }).join("")
 
-// C1 is a design-blocker (a note on a COVERED row), not its own MISSING row.
-const c1 = `<li id="c-C1"><span class="c-tag block">C1</span> <strong>'parlay status' verb name collision</strong>
-  <div class="c-note">The fold's proposed keyed <code>parlay status &lt;verb&gt;</code> (§3.6) collides with parlay's EXISTING <code>status</code> verb — a panel/fleet reader (<code>commands.ts:27 cmdStatus</code>). Unacknowledged in the fold. Design blocker before Slice 1.</div>
-  <div class="c-fix">Filed: <code>parlay-fold C1</code> (P1) in the <code>task</code> store</div></li>`
+// Design blockers are notes on COVERED rows, not MISSING rows of their own, so
+// they are not in the probe data — but the verdict prose counts them from here.
+const BLOCKERS = [{
+  id: "C1",
+  title: "'parlay status' verb name collision",
+  note: `The fold's proposed keyed <code>parlay status &lt;verb&gt;</code> (§3.6) collides with parlay's EXISTING <code>status</code> verb — a panel/fleet reader (<code>commands.ts:27 cmdStatus</code>). Unacknowledged in the fold. Design blocker before Slice 1.`,
+}]
+const blockerList = BLOCKERS.map(b => `<li id="c-${b.id}"><span class="c-tag block">${b.id}</span> <strong>${esc(b.title)}</strong>
+  <div class="c-note">${b.note}</div>
+  <div class="c-fix">Filed: <code>parlay-fold ${b.id}</code> (P1) in the <code>task</code> store</div></li>`).join("")
+
+const notEvalSection = notEvaluated.length ? `
+  <h2>Not evaluated — ${notEvaluated.length} of ${total} capabilities</h2>
+  <div class="notice">
+    <p class="grp-blurb">These verdicts were derived from the fold design doc, which is not in this repo. The audit cannot check their claims, so they are reported here rather than shown as verified below. Point <code>PARLAY_FOLD_DOC</code> at a readable copy and re-run to evaluate them.</p>
+    ${notEvaluated.map(r => `<div class="cap">
+      <div class="cap-h"><span class="cap-name">${esc(r.cap)}</span><span class="tag uneval">not evaluated</span></div>
+      <div class="cap-map"><code>${esc(r.fm)}</code></div>
+      ${r.note ? `<div class="cap-note">${esc(r.note)}</div>` : ""}
+    </div>`).join("")}
+  </div>` : ""
 
 const html = `<title>parlay × firstmate — capability parity audit</title>
 <style>
@@ -89,6 +110,9 @@ const html = `<title>parlay × firstmate — capability parity audit</title>
   .v-expanded{background:#f3e8ff;color:#6b21a8;border-color:#e9d5ff}
   .v-stays{background:#e4e4e7;color:#3f3f46;border-color:#d4d4d8}
   .v-drop{background:#f4f4f5;color:#71717a;border-color:#e4e4e7}
+  .v-uneval{background:#fff;color:#3f3f46;border-color:#a1a1aa;border-style:dashed}
+  .notice{border:1px solid var(--line);border-left:4px solid #a1a1aa;border-radius:10px;background:var(--card);padding:4px 14px 12px}
+  .tag.uneval{background:#e4e4e7;color:#3f3f46}
   @media(prefers-color-scheme:dark){
    .v-missing{background:#3b1213;color:#fca5a5;border-color:#5b1a1c}
    .v-deferred{background:#3a2e08;color:#fcd34d;border-color:#5c4a0c}
@@ -96,7 +120,8 @@ const html = `<title>parlay × firstmate — capability parity audit</title>
    .v-same{background:#0c2c18;color:#86efac;border-color:#14401f}
    .v-expanded{background:#2a1245;color:#d8b4fe;border-color:#3f1d63}
    .v-stays{background:#232327;color:#c4c4cc;border-color:#33333a}
-   .v-drop{background:#1a1a1e;color:#8b8b93;border-color:#2a2a30}}
+   .v-drop{background:#1a1a1e;color:#8b8b93;border-color:#2a2a30}
+   .v-uneval{background:#0b0b0d;color:#c4c4cc;border-color:#4a4a52}}
   h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:26px 0 10px}
   .grp{border:1px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden;background:var(--card)}
   .grp-h{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border:0;border-left:4px solid currentColor;background:transparent;color:inherit;font:inherit;font-weight:700;cursor:pointer;text-align:left}
@@ -116,7 +141,7 @@ const html = `<title>parlay × firstmate — capability parity audit</title>
   .tag{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:6px;text-decoration:none}
   .tag.landed{background:#dcfce7;color:#166534}.tag.designed{background:#fef9c3;color:#854d0e}
   .tag.fix{background:#fee2e2;color:#991b1b}
-  @media(prefers-color-scheme:dark){.tag.landed{background:#0c2c18;color:#86efac}.tag.designed{background:#3a2e08;color:#fcd34d}.tag.fix{background:#3b1213;color:#fca5a5}}
+  @media(prefers-color-scheme:dark){.tag.landed{background:#0c2c18;color:#86efac}.tag.designed{background:#3a2e08;color:#fcd34d}.tag.fix{background:#3b1213;color:#fca5a5}.tag.uneval{background:#232327;color:#c4c4cc}}
   ol.contractions{list-style:none;padding:0;margin:0;counter-reset:c}
   ol.contractions li{border:1px solid var(--line);border-left:4px solid #dc2626;border-radius:9px;padding:12px 14px;margin-bottom:9px;background:var(--card)}
   .c-tag{display:inline-block;font-weight:800;font-size:12px;background:#fee2e2;color:#991b1b;border-radius:6px;padding:1px 8px;margin-right:6px}
@@ -133,16 +158,16 @@ const html = `<title>parlay × firstmate — capability parity audit</title>
   <p class="sub">Independent audit · task-4bad · ${total} firstmate capabilities mapped onto the fold (decision-3ae). Auditor: parity-audit (not parlay-dev).</p>
 
   <div class="verdict">
-    <b>Verdict: EXPANSION-ONLY holds at the DESIGN level — with ${missing} genuine contractions + 1 design blocker to fix first.</b>
-    <p>The fold is design-only (no code landed yet). Of ${total} capabilities: <b>40 have a home</b> (parlay primitive, retained firstmate policy, or justified drop) and parlay genuinely <b>expands</b> (durable identity, phone reach, panel enrollment, richer state oracle). <b>${missing} fall through</b> with no home, and the proposed <code>parlay status</code> verb <b>collides</b> with an existing one. Each is filed as a fix task below — resolve before the fold lands to keep the "expansion-only" claim true.</p>
+    <b>Verdict: EXPANSION-ONLY holds at the DESIGN level — with ${missing} genuine contraction(s) + ${BLOCKERS.length} design blocker(s) to fix first.</b>
+    <p>The fold is design-only (no code landed yet). Of ${total} capabilities, ${evaluated} were evaluated here${notEvaluated.length ? ` and ${notEvaluated.length} could not be` : ""}. Of those ${evaluated}: <b>${haveHome} have a home</b> (parlay primitive, retained firstmate policy, or justified drop) and parlay genuinely <b>expands</b> (durable identity, phone reach, panel enrollment, richer state oracle). <b>${missing} fall through</b> with no home, and the proposed <code>parlay status</code> verb <b>collides</b> with an existing one. Each is filed as a fix task below — resolve before the fold lands to keep the "expansion-only" claim true.</p>
   </div>
 
   <div class="chips">${chips}</div>
 
   <h2>Contractions — fix before the fold lands</h2>
-  <ol class="contractions">${c1}${contractionList}</ol>
-
-  <h2>Full parity matrix — ${total} capabilities</h2>
+  <ol class="contractions">${blockerList}${contractionList}</ol>
+${notEvalSection}
+  <h2>Full parity matrix — ${evaluated} of ${total} capabilities evaluated</h2>
   ${groups}
 
   <h2>Re-runnable check</h2>
