@@ -484,8 +484,19 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
   # *firstmate* worktree and launched the agent in the wrong repo, silently.
   # Always run it with cwd = $PROJECT_PATH (the repo --cwd resolved to), and
   # verify the repo identity of whatever it hands back before trusting it.
+  #
+  # robots-n8d9: `treehouse get` RESETS the slot it hands out (checks
+  # origin/main out over whatever branch was there), and its own eligibility
+  # rules are blind to a live agent sitting in a clean slot — it reclaimed one
+  # out from under a running agent belonging to a different firstmate home.
+  # bin/parlay-treehouse-guard sweeps the pool first and takes a protective
+  # lease on every still-occupied slot, which treehouse does honor. Best
+  # effort: a guard failure must never block a spawn.
   _wt_created=0
   if command -v treehouse >/dev/null 2>&1; then
+    if [ -x "$BIN_DIR/parlay-treehouse-guard" ]; then
+      "$BIN_DIR/parlay-treehouse-guard" "$PROJECT_PATH" || true
+    fi
     _th_out=$(cd "$PROJECT_PATH" && treehouse get --lease "parlay-$AGENT_ID" 2>/dev/null) && {
       _th_path=$(printf '%s' "$_th_out" | tr -d '[:space:]')
       if [ -d "$_th_path" ]; then
