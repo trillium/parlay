@@ -44,3 +44,34 @@ type SubscribersInfo struct {
 	} `json:"registered,omitempty"`
 	PresenceBroadcasts int `json:"presence_broadcasts,omitempty"`
 }
+
+// CommandInvocation is one live-command record from GET /api/chat/commands
+// and from the `commands` / `command_update` SSE events. Field-for-field the
+// server's store.CommandInvocation — see docs/live-commands.md.
+//
+// The server never sends a flag's VALUE, a positional argument, or raw argv:
+// Flags carries flag names only. Nothing here is free-form text.
+type CommandInvocation struct {
+	ID         string   `json:"id"`
+	Verb       string   `json:"verb"`
+	Agent      string   `json:"agent,omitempty"`
+	Channel    string   `json:"channel,omitempty"`
+	Flags      []string `json:"flags,omitempty"`
+	PID        int      `json:"pid,omitempty"`
+	State      string   `json:"state"`
+	StartedAt  string   `json:"startedAt"`
+	UpdatedAt  string   `json:"updatedAt"`
+	EndedAt    string   `json:"endedAt,omitempty"`
+	ExitCode   *int     `json:"exitCode,omitempty"`
+	Outcome    string   `json:"outcome,omitempty"`
+	DurationMs int64    `json:"durationMs"`
+}
+
+// CommandsResponse is the GET /api/chat/commands response shape.
+type CommandsResponse struct {
+	OK           bool                `json:"ok"`
+	Now          string              `json:"now"`
+	Running      int                 `json:"running"`
+	StaleAfterMs int64               `json:"staleAfterMs"`
+	Commands     []CommandInvocation `json:"commands"`
+}

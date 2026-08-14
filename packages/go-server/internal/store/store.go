@@ -24,6 +24,10 @@
 //	settings.json    full-snapshot ParlaySettings, atomic rewrite
 //	uploads/         one file per uploaded attachment, named by UploadStore.Save
 //
+// PresenceTracker and CommandRegistry have no on-disk form at all: both hold
+// state that is only true while this process is up, and each says why in its
+// own doc comment.
+//
 // Every substore owns its own sync.RWMutex and exposes a narrow method set
 // (Append/History, Upsert/List, Get/Set, Get/Replace) rather than raw file
 // access, so this format can change later without touching
@@ -45,6 +49,7 @@ type Store struct {
 	Settings *SettingsStore
 	Presence *PresenceTracker
 	Uploads  *UploadStore
+	Commands *CommandRegistry
 }
 
 // Config controls where and how much Open persists.
@@ -97,6 +102,7 @@ func Open(cfg Config) (*Store, error) {
 		Settings: settings,
 		Presence: newPresenceTracker(),
 		Uploads:  uploads,
+		Commands: NewCommandRegistry(CommandRegistryConfig{}),
 	}, nil
 }
 

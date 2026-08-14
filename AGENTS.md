@@ -1182,6 +1182,42 @@ cannot reintroduce the 9.6 MB `tools/relay/relay` binary that one PR committed �
 that path is now gitignored alongside the pre-existing
 `packages/eval-engine/eval-engine` entry.
 
+## The live-command registry sees only what reports itself — say so, don't fill the gap
+
+`docs/live-commands.md` is authoritative for the design; two things about it
+are easy to get wrong from the code alone.
+
+**Registration is Go-CLI self-reporting, and the coverage gap is a feature.**
+`tools/cli/main.go` wraps dispatch in `commandreport.Begin`, whose end report
+goes out through *both* `httpc.Exit` (so every `httpc.Die` in every verb closes
+its record without those verbs knowing) and a `defer` in `main` (normal return
+and panic). Anything that is not the Go CLI — `bin/parlay-spawn`,
+`tools/monitor/parlay-monitor.sh`, the retired `packages/cli`, work the server
+originates — is invisible, and `parlay commands` excludes itself so the
+observer never shows up in its own output. Both renderers print that limit in
+their empty state. Do **not** "improve" coverage by having the server infer
+running commands from requests it happens to receive: an entry nothing can
+close becomes a permanent zombie, which is the failure this design spends its
+90s staleness reaper avoiding. `PARLAY_COMMAND_REPORT=0` opts out.
+
+**The registry stores no free-form text — keep it that way.** Verb, agent id,
+channel id, pid, flag **names** (max 8), and a short `outcome` token; never
+argv, flag values, positionals, paths, or an error string, because a parlay
+command line routinely carries message bodies and tokens. The CLI strips values
+before sending *and* `internal/store/commands.go` sanitizes again on arrival —
+the report endpoints are unauthenticated, so the storage layer cannot trust its
+callers. Adding a field here means adding it to that whitelist deliberately.
+The three mutating routes require `Content-Type: application/json` for the same
+CSRF-shaped reason `packages/server/src/guard.ts` does; the read route stays
+world-readable like `/api/chat/agents`.
+
+The "one registry, two renderers" claim is enforced, not asserted:
+`packages/go-server/testdata/live-commands.golden.json` is read by the Go
+handler, Go CLI, and client Bun suites, and
+`TestSSEBurstAndReadEndpointCarryByteIdenticalCommands` pins that the panel's
+SSE frame and the CLI's read endpoint are the same bytes. Change the wire shape
+and all three fail in one commit — that is the point.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

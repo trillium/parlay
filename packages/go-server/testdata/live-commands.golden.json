@@ -1,0 +1,67 @@
+{
+  "ok": true,
+  "now": "2026-01-01T12:00:30Z",
+  "running": 2,
+  "staleAfterMs": 90000,
+  "commands": [
+    {
+      "id": "cmd-5",
+      "verb": "listen",
+      "agent": "crew-1",
+      "channel": "c1",
+      "flags": ["--agent", "--caps"],
+      "pid": 4242,
+      "state": "running",
+      "startedAt": "2026-01-01T12:00:12Z",
+      "updatedAt": "2026-01-01T12:00:28Z",
+      "durationMs": 18000
+    },
+    {
+      "id": "cmd-4",
+      "verb": "history",
+      "state": "running",
+      "startedAt": "2026-01-01T12:00:10Z",
+      "updatedAt": "2026-01-01T12:00:10Z",
+      "durationMs": 20000
+    },
+    {
+      "id": "cmd-3",
+      "verb": "merge-gate",
+      "agent": "crew-2",
+      "flags": ["--json"],
+      "pid": 4310,
+      "state": "failed",
+      "startedAt": "2026-01-01T12:00:05Z",
+      "updatedAt": "2026-01-01T12:00:09Z",
+      "endedAt": "2026-01-01T12:00:09Z",
+      "exitCode": 3,
+      "outcome": "error",
+      "durationMs": 4000
+    },
+    {
+      "id": "cmd-2",
+      "verb": "send",
+      "agent": "crew-1",
+      "channel": "c1",
+      "pid": 4300,
+      "state": "finished",
+      "startedAt": "2026-01-01T12:00:02Z",
+      "updatedAt": "2026-01-01T12:00:03Z",
+      "endedAt": "2026-01-01T12:00:03Z",
+      "exitCode": 0,
+      "outcome": "ok",
+      "durationMs": 1000
+    },
+    {
+      "id": "cmd-1",
+      "verb": "robots-watch",
+      "agent": "crew-3",
+      "state": "expired",
+      "startedAt": "2026-01-01T11:58:00Z",
+      "updatedAt": "2026-01-01T11:58:20Z",
+      "endedAt": "2026-01-01T11:59:50Z",
+      "outcome": "no-heartbeat",
+      "durationMs": 110000
+    }
+  ]
+}

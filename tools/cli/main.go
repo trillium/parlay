@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/trillium/parlay/tools/cli/internal/commandreport"
 	"github.com/trillium/parlay/tools/cli/internal/commands"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/help"
@@ -52,6 +53,15 @@ func main() {
 	if len(argv) > 0 {
 		cmd, args = argv[0], argv[1:]
 	}
+
+	// Live-command visibility: tell the server this invocation is running so
+	// it shows up in `parlay commands` and the chat panel. Best-effort and
+	// self-disabling — internal/commandreport is written so it can never turn
+	// a working command into a failing one. finish is idempotent; it also
+	// runs from httpc.Exit (every die() path) and from this defer (normal
+	// return and panic alike).
+	finish := commandreport.Begin(cmd, args)
+	defer finish(config.ExitOK)
 
 	switch cmd {
 	case "":
@@ -124,8 +134,11 @@ func main() {
 		commands.MergeGate(args)
 	case "branch-audit":
 		commands.BranchAudit(args)
+	case "commands":
+		commands.Commands(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
+		finish(config.ExitUsage)
 		os.Exit(config.ExitUsage)
 	}
 }
