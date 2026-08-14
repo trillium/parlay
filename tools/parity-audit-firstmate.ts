@@ -32,8 +32,6 @@ const PL = process.env.PL_REPO ?? `${import.meta.dir}/..`
 
 const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : "")
 const has = (p: string) => existsSync(p)
-/** does a file contain a token */
-const grepFile = (p: string, re: RegExp) => re.test(read(p))
 
 // ---- live probes of the parlay CLI surface -------------------------------
 const spawnSrc = read(`${PL}/bin/parlay-spawn`)
@@ -134,6 +132,8 @@ const M: Row[] = [
   { cap: "Structured brief contract", fm: "fm-brief.sh", parlay: "enrollment + appended task contract (§3.1)", verdict: "COVERED-alternate", built: /## Definition of done/.test(spawnSrc) },
   // Recorded meta: parlay-spawn passes --mode/--yolo to identity --register (YAML frontmatter,
   // not firstmate's key=value .meta format). Probe: --mode/--yolo present in spawn.
+  // BLIND SPOT: --mode/--yolo are all this checks. The rest of the meta superset the row
+  // claims (--project_bead, --worktree recording) is designed-not-built and unprobed here.
   { cap: "Recorded meta (runtime facts)", fm: "state/<id>.meta", parlay: "identity.md frontmatter superset (§3.2)", verdict: "COVERED-alternate", built: /--mode\b/.test(spawnSrc) && /--yolo\b/.test(spawnSrc) },
   { cap: "Identity / recovery / self-restart", fm: "(none — disposable)", parlay: "durable identity+handoff+context-reset", verdict: "EXPANDED" },
   { cap: "Panel enrollment / phone reachability", fm: "(none)", parlay: "parlay monitor + Pulse panel", verdict: "EXPANDED" },

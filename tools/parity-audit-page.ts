@@ -65,16 +65,44 @@ const contractionList = contractions.map(r => {
     <div class="c-fix">Filed: <code>parlay-fold ${r.fix}</code> in the <code>task</code> store</div></li>`
 }).join("")
 
-// Design blockers are notes on COVERED rows, not MISSING rows of their own, so
-// they are not in the probe data — but the verdict prose counts them from here.
+// Design blockers are notes on COVERED rows, not MISSING rows of their own, so the
+// probe carries no row of its own for them. Whether one is still OPEN is derived from
+// the same rows the matrix renders — a row's note declaring "<id> RESOLVED" retires it
+// everywhere at once, so the verdict prose below cannot disagree with the matrix.
 const BLOCKERS = [{
   id: "C1",
   title: "'parlay status' verb name collision",
   note: `The fold's proposed keyed <code>parlay status &lt;verb&gt;</code> (§3.6) collides with parlay's EXISTING <code>status</code> verb — a panel/fleet reader (<code>commands.ts:27 cmdStatus</code>). Unacknowledged in the fold. Design blocker before Slice 1.`,
 }]
-const blockerList = BLOCKERS.map(b => `<li id="c-${b.id}"><span class="c-tag block">${b.id}</span> <strong>${esc(b.title)}</strong>
+const resolvedInData = new Set(
+  data.rows.flatMap(r => [...(r.note ?? "").matchAll(/\b(C\d+)\s+RESOLVED\b/g)].map(m => m[1]))
+)
+const openBlockers = BLOCKERS.filter(b => !resolvedInData.has(b.id))
+const blockerList = openBlockers.map(b => `<li id="c-${b.id}"><span class="c-tag block">${b.id}</span> <strong>${esc(b.title)}</strong>
   <div class="c-note">${b.note}</div>
   <div class="c-fix">Filed: <code>parlay-fold ${b.id}</code> (P1) in the <code>task</code> store</div></li>`).join("")
+
+// Both verdict claims below are derived, never asserted: "design-only" from how many
+// probe-checked rows report landed, and each gap clause from an open blocker.
+const landedRows = data.rows.filter(r => r.built === true).length
+const probedRows = data.rows.filter(r => r.built !== undefined).length
+const foldStatus = landedRows === 0
+  ? "The fold is design-only (no code landed yet)."
+  : `The fold is partly built: ${landedRows} of ${probedRows} probe-checked rows are landed, the rest design-only.`
+const gaps = [
+  ...(missing ? [`<b>${missing} fall through</b> with no home.`] : []),
+  ...(openBlockers.some(b => b.id === "C1") ? [`The proposed <code>parlay status</code> verb <b>collides</b> with an existing one.`] : []),
+]
+const gapProse = gaps.length
+  ? `${gaps.join(" ")} Each is filed as a fix task below — resolve before the fold lands to keep the "expansion-only" claim true.`
+  : `Nothing falls through without a home, and no design blocker is still open.`
+const headlineGaps = missing + openBlockers.length
+  ? ` — with ${missing} genuine contraction(s) + ${openBlockers.length} design blocker(s) to fix first`
+  : " — with no open contraction or design blocker"
+const contractionSection = missing + openBlockers.length
+  ? `<h2>Contractions — fix before the fold lands</h2>
+  <ol class="contractions">${blockerList}${contractionList}</ol>`
+  : ""
 
 const notEvalSection = notEvaluated.length ? `
   <h2>Not evaluated — ${notEvaluated.length} of ${total} capabilities</h2>
@@ -158,14 +186,13 @@ const html = `<title>parlay × firstmate — capability parity audit</title>
   <p class="sub">Independent audit · task-4bad · ${total} firstmate capabilities mapped onto the fold (decision-3ae). Auditor: parity-audit (not parlay-dev).</p>
 
   <div class="verdict">
-    <b>Verdict: EXPANSION-ONLY holds at the DESIGN level — with ${missing} genuine contraction(s) + ${BLOCKERS.length} design blocker(s) to fix first.</b>
-    <p>The fold is design-only (no code landed yet). Of ${total} capabilities, ${evaluated} were evaluated here${notEvaluated.length ? ` and ${notEvaluated.length} could not be` : ""}. Of those ${evaluated}: <b>${haveHome} have a home</b> (parlay primitive, retained firstmate policy, or justified drop) and parlay genuinely <b>expands</b> (durable identity, phone reach, panel enrollment, richer state oracle). <b>${missing} fall through</b> with no home, and the proposed <code>parlay status</code> verb <b>collides</b> with an existing one. Each is filed as a fix task below — resolve before the fold lands to keep the "expansion-only" claim true.</p>
+    <b>Verdict: EXPANSION-ONLY holds at the DESIGN level${headlineGaps}.</b>
+    <p>${foldStatus} Of ${total} capabilities, ${evaluated} were evaluated here${notEvaluated.length ? ` and ${notEvaluated.length} could not be` : ""}. Of those ${evaluated}: <b>${haveHome} have a home</b> (parlay primitive, retained firstmate policy, or justified drop) and parlay genuinely <b>expands</b> (durable identity, phone reach, panel enrollment, richer state oracle). ${gapProse}</p>
   </div>
 
   <div class="chips">${chips}</div>
 
-  <h2>Contractions — fix before the fold lands</h2>
-  <ol class="contractions">${blockerList}${contractionList}</ol>
+  ${contractionSection}
 ${notEvalSection}
   <h2>Full parity matrix — ${evaluated} of ${total} capabilities evaluated</h2>
   ${groups}

@@ -1,0 +1,161 @@
+#!/bin/bash
+# Regression harness for tools/hooks/post-commit and tools/hooks/post-merge.
+#
+#   tools/hooks/hooks.test.sh
+#
+# Every hook here is invoked as `/bin/bash <hook>` on purpose, NOT through its
+# `#!/usr/bin/env bash` shebang: macOS /bin/bash is 3.2, where `cd ""` SUCCEEDS,
+# and bash 5 errors. The empty-common-dir fail-open these hooks guard against
+# only reproduces on 3.2, so letting the shebang pick up a newer bash would
+# silently stop testing for it.
+#
+# The real delivery path is never reached. packages/client/build.ts POSTs to a
+# live Pulse server on 127.0.0.1:31337 and force-reloads whatever panels are
+# connected, so three independent barriers keep it out of this harness:
+#   1. $HOME is redirected into the scratch dir, so the hooks' hardcoded
+#      "$HOME/.bun/bin/bun" cannot resolve the machine's real bun.
+#   2. That path holds a stub recording "<cwd>|<argv>" and exiting 0 — which is
+#      also how "did the hook reach delivery?" is asserted positively.
+#   3. The scratch repo has packages/client/src/ but no build.ts at all, so even
+#      an escaped real bun would have nothing to execute.
+# No assertion greps hook source: each one reads an exit code, stdout/stderr, or
+# what the hook actually wrote to (or refused to create on) disk.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+POST_COMMIT="$REPO_ROOT/tools/hooks/post-commit"
+POST_MERGE="$REPO_ROOT/tools/hooks/post-merge"
+# `type -P` so this is always the git ON DISK: case 4's stub re-execs it by path,
+# and a name resolved through PATH (or a shell function) would re-enter the stub.
+REAL_GIT="$(type -P git)"
+[[ -x "$REAL_GIT" ]] || { echo "no git on PATH" >&2; exit 2; }
+
+PASS=0
+FAIL=0
+ok() { PASS=$((PASS + 1)); echo "  ok   $1"; }
+bad() { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
+eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 — want [$3], got [$2]"; fi; }
+has_line() { if grep -q "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1 — no /$2/ in $3"; fi; }
+no_path() { if [[ -e "$2" ]]; then bad "$1 — $2 exists"; else ok "$1"; fi; }
+
+SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/parlay-hooks-test.XXXXXX")" && pwd -P)"
+trap 'rm -rf "$SCRATCH"' EXIT
+
+export HOME="$SCRATCH/home"
+export GIT_AUTHOR_NAME=hooks-test GIT_AUTHOR_EMAIL=hooks@test
+export GIT_COMMITTER_NAME=hooks-test GIT_COMMITTER_EMAIL=hooks@test
+unset PARLAY_MAIN_CHECKOUT PARLAY_HOOK_LOG
+mkdir -p "$HOME/.bun/bin"
+
+BUN_CALLS="$HOME/bun-calls.log"
+cat > "$HOME/.bun/bin/bun" <<'STUB'
+#!/bin/bash
+echo "$PWD|$*" >> "$HOME/bun-calls.log"
+exit 0
+STUB
+chmod +x "$HOME/.bun/bin/bun"
+
+LOG_DIR="$HOME/Library/Logs/parlay"
+LOG="$LOG_DIR/bundle-rebuild.out.log"
+bun_calls() { [[ -f "$BUN_CALLS" ]] && wc -l < "$BUN_CALLS" | tr -d ' ' || echo 0; }
+log_lines() { [[ -f "$LOG" ]] && wc -l < "$LOG" | tr -d ' ' || echo 0; }
+
+RC=0
+run_hook() { # <hook> <cwd>
+  ( cd "$2" && /bin/bash "$1" ) > "$SCRATCH/out" 2> "$SCRATCH/err"
+  RC=$?
+}
+
+MAIN="$SCRATCH/main"
+mkdir -p "$MAIN/packages/client/src"
+git -C "$MAIN" init -q
+git -C "$MAIN" symbolic-ref HEAD refs/heads/main
+echo seed > "$MAIN/README.md"
+echo 'export const a = 1' > "$MAIN/packages/client/src/a.ts"
+git -C "$MAIN" add -A --force
+git -C "$MAIN" commit -qm seed
+
+echo "hooks regression harness — $(/bin/bash --version | head -1)"
+
+# ---- 1. opted out: silent, exits 0, creates nothing ------------------------
+echo "1. opted out (no parlay.autobuild)"
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  run_hook "$hook" "$MAIN"
+  eq "$name exits 0" "$RC" "0"
+  eq "$name writes no stdout" "$(cat "$SCRATCH/out")" ""
+  eq "$name writes no stderr" "$(cat "$SCRATCH/err")" ""
+done
+no_path "opted out creates no log directory" "$LOG_DIR"
+eq "opted out never invokes the build" "$(bun_calls)" "0"
+
+# ---- 2. opted in, primary checkout: proceeds past the guard ---------------
+echo "2. opted in, primary checkout"
+git -C "$MAIN" config --bool parlay.autobuild true
+echo 'export const b = 2' > "$MAIN/packages/client/src/b.ts"
+git -C "$MAIN" add -A --force
+git -C "$MAIN" commit -qm "client change"
+run_hook "$POST_COMMIT" "$MAIN"
+eq "post-commit exits 0" "$RC" "0"
+has_line "post-commit logs the delivery" "delivering" "$LOG"
+eq "post-commit reached delivery once" "$(bun_calls)" "1"
+eq "post-commit built from the primary checkout" "$(tail -1 "$BUN_CALLS")" "$MAIN/packages/client|build.ts"
+
+git -C "$MAIN" checkout -q -b merge-src
+echo 'export const c = 3' > "$MAIN/packages/client/src/c.ts"
+git -C "$MAIN" add -A --force
+git -C "$MAIN" commit -qm "client change on branch"
+git -C "$MAIN" checkout -q main
+git -C "$MAIN" merge -q --no-ff -m "merge" merge-src
+run_hook "$POST_MERGE" "$MAIN"
+eq "post-merge exits 0" "$RC" "0"
+eq "post-merge reached delivery once" "$(bun_calls)" "2"
+eq "post-merge built from the primary checkout" "$(tail -1 "$BUN_CALLS")" "$MAIN/packages/client|build.ts"
+
+# ---- 3. opted in, linked worktree: logs a skip, delivers nothing ----------
+echo "3. opted in, linked worktree"
+WT="$SCRATCH/wt"
+git -C "$MAIN" worktree add -q -b feature "$WT" > /dev/null 2>&1
+echo 'export const d = 4' > "$WT/packages/client/src/d.ts"
+git -C "$WT" add -A --force
+git -C "$WT" commit -qm "client change in worktree"
+before="$(bun_calls)"
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  run_hook "$hook" "$WT"
+  eq "$name exits 0 in a linked worktree" "$RC" "0"
+  has_line "$name logs the skip" "skip: $WT is not the main checkout" "$LOG"
+done
+eq "a linked worktree never delivers" "$(bun_calls)" "$before"
+
+# ---- 4. unresolvable primary checkout: refuses loudly, does not guess -----
+# The round-2 regression, and the single most important case in this file: a git
+# whose --git-common-dir probe answers nothing, with PARLAY_MAIN_CHECKOUT unset.
+# Under bash 3.2 an empty path handed to `cd` succeeds, so a hook that resolved
+# it would silently deliver from whatever tree is committing.
+echo "4. unresolvable primary checkout"
+mkdir -p "$SCRATCH/bin"
+cat > "$SCRATCH/bin/git" <<STUB
+#!/bin/bash
+for a in "\$@"; do [[ "\$a" == "--git-common-dir" ]] && exit 0; done
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$SCRATCH/bin/git"
+before="$(bun_calls)"
+before_log="$(log_lines)"
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  ( cd "$MAIN" && PATH="$SCRATCH/bin:$PATH" /bin/bash "$hook" ) > "$SCRATCH/out" 2> "$SCRATCH/err"
+  RC=$?
+  eq "$name exits non-zero" "$RC" "1"
+  eq "$name says nothing on stdout" "$(cat "$SCRATCH/out")" ""
+  eq "$name gives one line of reason" "$(wc -l < "$SCRATCH/err" | tr -d ' ')" "1"
+  has_line "$name names the refusal" "refusing to deliver: cannot resolve the primary checkout" "$SCRATCH/err"
+done
+eq "an unresolvable checkout never delivers" "$(bun_calls)" "$before"
+eq "an unresolvable checkout logs nothing" "$(log_lines)" "$before_log"
+
+echo
+echo "$PASS passed, $FAIL failed"
+[[ "$FAIL" -eq 0 ]]
