@@ -254,6 +254,17 @@ parlay_relay_reported_server() {
 # --server` resolved to. Empty if there is no plist or no such key.
 parlay_relay_installed_plist_server() {
   [ -e "${PARLAY_RELAY_PLIST}" ] || return 0
-  /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PARLAY_SERVER" \
-    "${PARLAY_RELAY_PLIST}" 2>/dev/null || true
+  local out
+  out="$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PARLAY_SERVER" \
+    "${PARLAY_RELAY_PLIST}" 2>/dev/null)" || return 0
+  # PlistBuddy reports its failures ("Error Reading File: …", "Does Not Exist")
+  # on STDOUT, and can still exit 0 — so a bare capture hands the caller an error
+  # message where a URL belongs. ensure-up then compares that string against the
+  # wanted server, concludes the launchd relay serves something else, and quietly
+  # declines to use launchd at all (starting an unsupervised duplicate instead).
+  # Only ever emit something that actually looks like a server URL.
+  case "${out}" in
+    http://*|https://*) printf '%s\n' "${out}" ;;
+    *) return 0 ;;
+  esac
 }

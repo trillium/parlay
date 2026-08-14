@@ -83,6 +83,41 @@ Two mechanisms, both needed:
 Regression harness: `parlay-monitor.test.sh` (stub relay on a unix socket; the
 cross-server case asserts `/register` is *never* reached).
 
+### The canonical dir is reserved — and something has to enforce that (robots-93xu)
+
+Scoping keeps *non-default* servers out of the canonical dir, but nothing kept a
+non-default relay from **occupying** it. `install.sh` defaulted its `--server`
+from an ambient `$PARLAY_SERVER`, so one install run from a shell that happened
+to export `http://localhost:4242` rebound the captain's supervised, canonical-dir
+relay — permanently, across reboots. Every default-server agent then resolved to
+that dir, found `:4242`, and was refused by mechanism 2 above: a fleet-wide
+enrollment outage whose only symptom was agents failing to start.
+
+Three things close it, and each is a rule worth keeping:
+
+3. **`install.sh` refuses a non-default server** unless `--allow-non-default-server`
+   is passed, and says so louder when the value came from the environment rather
+   than the flag. The LaunchAgent is a fixed singleton on the canonical dir, so
+   there is no configuration where an ambient env var should be able to rebind
+   it. A non-default server needs no install at all — `ensure-up.sh` starts a
+   scoped relay for it on demand.
+4. **`ensure-up.sh` checks the binding, not just `/health`.** Its fast path used
+   to return 0 for any relay answering `/health`, which is a false green: the
+   caller got a success line and then died at its own enroll guard. It now exits
+   **3** — distinct from 1, "no relay could be started" — and never restarts the
+   relay, which is a live singleton possibly serving a whole fleet on its own
+   server (robots-mpr3). `parlay-monitor.sh` recognizes 3 and stays quiet,
+   because ensure-up already printed the diagnosis and the repair command.
+5. **The refusal advice fits the case.** "Unset `PARLAY_RELAY_RUNTIME`/`SOCK`"
+   was a dead end here — neither was set, which is precisely why the resolution
+   rule picked the squatted dir. With no override set the monitor now names the
+   squatting relay as the fault and prints the `install.sh --server …` repair.
+
+`parlay_relay_installed_plist_server` (`../relay/deploy/lib.sh`) was also fixed
+along the way: PlistBuddy prints its errors on **stdout**, so an unreadable plist
+came back looking like a server URL, and `ensure-up.sh` read that as "the launchd
+relay serves something else" and quietly declined to use launchd at all.
+
 ## Env
 
 | Var | Default | Meaning |
@@ -98,6 +133,8 @@ cross-server case asserts `/register` is *never* reached).
   streams a stale spool with no live upstream).
 - Relay bound to a different upstream server than `$PARLAY_SERVER` → exits 1
   *before* enrolling, rather than registering in the wrong server's registry.
+  With no `PARLAY_RELAY_RUNTIME`/`SOCK` override set, the message names the
+  squatting relay and gives the `install.sh --server …` repair (robots-93xu).
 - Control-socket path over the 103-byte `sun_path` limit → exits 1 naming the
   length and the path, instead of letting the relay fail with `bind: invalid
   argument`.

@@ -227,9 +227,20 @@ if grep -q "/register" "${STUB_LOG}"; then
 else
   ok "never sent /register to the production relay"
 fi
+# Two layers can answer here, and the assertions are on the OUTCOME rather than
+# on which one spoke: ensure-up.sh now detects a healthy-but-wrong-server relay
+# first and exits 3 (robots-93xu), so it usually gets there before the monitor's
+# own pre-enroll guard. The guard is still the last line of defence for a
+# checkout with no ensure-up.sh — B4 and B6 below exercise exactly that path.
 case "${ERR}" in
-  *"refusing to enroll"*"${DEFAULT_SERVER}"*) ok "error names the relay's actual bound server" ;;
+  *"${DEFAULT_SERVER}"*) ok "error names the relay's actual bound server" ;;
   *) bad "error message does not explain the mismatch" "${ERR}" ;;
+esac
+# The advice must fit the case: an override IS set here, so it is the thing to
+# change — and whichever layer answers has to say so.
+case "${ERR}" in
+  *PARLAY_RELAY_RUNTIME*) ok "pinned dir: advice names the override that caused this" ;;
+  *) bad "pinned dir: advice does not mention the overrides that caused this" "${ERR}" ;;
 esac
 [ ! -e "${STUB_RUNTIME}/verify-agent.chan" ] \
   && ok "no spool created in the production runtime dir" \
@@ -277,6 +288,49 @@ if grep -q "/register" "${STUB_LOG}"; then
 else
   bad "unset PARLAY_SERVER was blocked" "exit=${CODE} ${ERR}"
 fi
+
+# B6. NEITHER override set — the shape of the real fleet-wide outage
+#     (robots-93xu). A relay bound to the wrong server was squatting the runtime
+#     dir the resolution rule itself picked, so "unset PARLAY_RELAY_RUNTIME/SOCK"
+#     named nothing to unset and pointed at no repair: a dead end printed to
+#     every agent on the box. The advice must instead identify the squatting
+#     relay and give the command that repoints it.
+NOENV_BASE="${ROOT}/noenv"
+start_stub "${NOENV_BASE}/parlay" "${DEFAULT_SERVER}" || exit 1
+# The lib.sh-less copy from B4: with no lib.sh its runtime dir falls back to
+# $TMPDIR/parlay, which is how this stays hermetic while leaving both overrides
+# genuinely unset. (It also has no ensure-up.sh, so nothing runs before the guard.)
+NOENV_OUT="${ROOT}/noenv.err"
+(
+  export HOME="${ROOT}/home"
+  export TMPDIR="${NOENV_BASE}"
+  export PARLAY_SERVER="http://127.0.0.1:45001"
+  unset PARLAY_RELAY_RUNTIME PARLAY_RELAY_SOCK
+  exec "${ROOT}/nolib/tools/monitor/parlay-monitor.sh" --agent "verify-agent"
+) >/dev/null 2>"${NOENV_OUT}" &
+NOENV_PID=$!
+NOENV_CODE="running"
+for _ in $(seq 1 60); do
+  if ! kill -0 "${NOENV_PID}" 2>/dev/null; then wait "${NOENV_PID}"; NOENV_CODE=$?; break; fi
+  sleep 0.1
+done
+[ "${NOENV_CODE}" = "running" ] && { kill "${NOENV_PID}" 2>/dev/null; wait "${NOENV_PID}" 2>/dev/null; }
+NOENV_ERR="$(cat "${NOENV_OUT}")"
+note "noenv exit=${NOENV_CODE} stderr: ${NOENV_ERR}"
+if [ "${NOENV_CODE}" != 1 ] || grep -q "/register" "${STUB_LOG}"; then
+  bad "no-override cross-server enroll was not refused" \
+      "exit=${NOENV_CODE} requests: $(tr '\n' ' ' <"${STUB_LOG}")"
+else
+  ok "refuses the enroll with neither override set"
+fi
+case "${NOENV_ERR}" in
+  *"unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK"*)
+    bad "told the agent to unset overrides that were never set — the dead end is back" "${NOENV_ERR}" ;;
+  *"install.sh --server http://127.0.0.1:45001"*)
+    ok "no overrides: names the squatting relay as the fault and gives the repair" ;;
+  *)
+    bad "no overrides: advice gives no actionable repair" "${NOENV_ERR}" ;;
+esac
 
 # ══ C. a slow /agents probe must never kill the monitor ══════════════════════
 # robots-dcag: the section-B probe was a bare `VAR=$(curl … | sed …)`, and under
