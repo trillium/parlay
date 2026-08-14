@@ -371,21 +371,29 @@ though they pass cleanly run from their own directory (`cd packages/X && bun
 test`). This predates any one package; always run a package's tests from
 inside that package when validating.
 
-## Publishable `@parlay/*` packages (npm scope not yet claimed)
+## Publishable packages use flat, unscoped `parlay-<part>` names — the `@parlay` scope is never published
 
 This section covers npm packages under `packages/` (those with a
 `package.json`); Go modules like `packages/go-server` (no `package.json`)
-are outside this private/publishable dichotomy entirely. Every npm package
-under `packages/` is `private: true` except `packages/input`
-(`@parlay/input`) and `packages/parlay-input` (unscoped `parlay-input`,
-holds the bare name and re-exports `@parlay/input`) — these are configured
-for npm publishing (`publishConfig: { access: "public" }`, `.changeset/config.json`
-`access: "public"`, MIT `LICENSE` in each directory) but the `@parlay` npm
-scope itself has not been claimed and neither package has been published yet.
-Sharp edge: `parlay-input`'s dependency on `@parlay/input` is pinned to a
-concrete version range (`^0.1.0`) rather than `workspace:*` — changeset
-publish does not rewrite Bun's workspace protocol, so the published tarball
-would reference an unresolvable specifier otherwise. Neither `bun build` nor
+are outside this private/publishable dichotomy entirely. The naming rule is
+fixed: anything meant for npm uses a **flat, unscoped** `parlay-<part>` name,
+and the `@parlay` scope is **never** published (the scope is unclaimed and
+nothing should depend on claiming it). Internal, never-published packages keep
+their existing `@parlay/*` names but must stay `private: true`; do not rename
+them (renaming would break their pending changesets and, for
+`packages/client`/`packages/server`, is out of scope).
+
+The single publishable package today is `packages/input`, named
+`parlay-input`. It is self-contained — a real client for parlay's REST + shared-SSE
+input protocol, built directly from its own `src/index.ts`, declaring no
+runtime dependencies — and configured for npm publishing (`publishConfig:
+{ access: "public" }`, `.changeset/config.json` `access: "public"`, MIT
+`LICENSE` on disk). The earlier two-package split (a private `@parlay/input`
+plus a `packages/parlay-input` shim re-exporting it) is **gone**: `@parlay/input`
+cannot be published (unclaimed scope), so it was collapsed into this one
+package and the shim deleted. `parlay-input@0.1.0` was the broken shim; the
+self-contained rewrite is `0.2.0`. Every other npm package under `packages/`
+is `private: true`. Neither `bun build` nor
 `tsc` alone produces a complete publishable output for a TS package here:
 `bun build.ts` emits the JS bundle to `dist/`, and a package-local
 `tsc --emitDeclarationOnly` (via a package-local `tsconfig.json`) emits the
