@@ -21,12 +21,15 @@
     "build": "bun build.ts && tsc --emitDeclarationOnly"
   },
   "dependencies": {
-    "@parlay/input": "workspace:*"
+    "@parlay/input": "^0.1.0"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/trillium/parlay.git",
     "directory": "packages/parlay-input"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "license": "MIT",
   "devDependencies": {
