@@ -58,28 +58,28 @@ func TestMechanicStatusTable(t *testing.T) {
 		wantSubstr  string
 	}{
 		{
-			name: "on_no_sentinel_no_env",
+			name:    "on_no_sentinel_no_env",
 			wantOff: false, wantSubstr: "mechanic-dispatch.off",
 		},
 		{
-			name: "on_env_on_no_sentinel",
+			name:   "on_env_on_no_sentinel",
 			envVal: "on", wantOff: false, wantSubstr: "mechanic-dispatch.off",
 		},
 		{
-			name: "off_via_sentinel",
+			name:        "off_via_sentinel",
 			hasSentinel: true, wantOff: true, wantSubstr: "sentinel file present",
 		},
 		{
-			name: "off_via_env",
+			name:   "off_via_env",
 			envVal: "off", wantOff: true, wantSubstr: "PARLAY_MECHANIC_DISPATCH=off",
 		},
 		{
-			name: "off_env_on_with_sentinel",
+			name:   "off_env_on_with_sentinel",
 			envVal: "on", hasSentinel: true,
 			wantOff: true, wantSubstr: "PARLAY_MECHANIC_DISPATCH=on ignored",
 		},
 		{
-			name: "off_env_off_with_sentinel",
+			name:   "off_env_off_with_sentinel",
 			envVal: "off", hasSentinel: true,
 			wantOff: true, wantSubstr: "sentinel also present",
 		},

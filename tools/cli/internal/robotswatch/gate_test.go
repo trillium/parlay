@@ -103,10 +103,10 @@ func TestTickAdvancesOffsetWhenGateOff(t *testing.T) {
 // TestMechanicDispatchOffPrecedence table covers all sentinel×env combinations.
 func TestMechanicDispatchOffPrecedence(t *testing.T) {
 	cases := []struct {
-		name           string
-		envVal         string
-		hasSentinel    bool
-		wantOff        bool
+		name        string
+		envVal      string
+		hasSentinel bool
+		wantOff     bool
 	}{
 		{"no_env_no_sentinel", "", false, false},
 		{"env_on_no_sentinel", "on", false, false},
