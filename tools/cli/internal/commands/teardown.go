@@ -7,7 +7,8 @@
 //
 // Steps: 1) check uncommitted changes, 2) check unpushed commits, 3)
 // validate landed-content containment, 4) deregister from the relay
-// (best-effort), 5) remove the worktree, 6) delete the agent store.
+// (best-effort), 5) remove the worktree, 6) delete the agent store, 7) close
+// the agent's herdr pane/tab (best-effort — see herdr.go; robots-iz9o).
 package commands
 
 import (
@@ -112,14 +113,14 @@ func teardownAgent(agentID string, force bool) (string, error) {
 	if worktree == "" {
 		bestEffortUnregister(agentID)
 		os.RemoveAll(idHome)
-		return fmt.Sprintf("agent %s torn down (no worktree)", agentID), nil
+		return fmt.Sprintf("agent %s torn down (no worktree)%s", agentID, closeHerdrSurface(agentID)), nil
 	}
 
 	// Worktree already gone (stale reference).
 	if _, err := os.Stat(worktree); err != nil {
 		bestEffortUnregister(agentID)
 		os.RemoveAll(idHome)
-		return fmt.Sprintf("agent %s torn down (worktree already gone)", agentID), nil
+		return fmt.Sprintf("agent %s torn down (worktree already gone)%s", agentID, closeHerdrSurface(agentID)), nil
 	}
 
 	// Check for uncommitted changes.
@@ -162,5 +163,5 @@ func teardownAgent(agentID string, force bool) (string, error) {
 	// default (firstmate keeps permanent agents' stores separately).
 	os.RemoveAll(idHome)
 
-	return fmt.Sprintf("agent %s torn down", agentID), nil
+	return fmt.Sprintf("agent %s torn down%s", agentID, closeHerdrSurface(agentID)), nil
 }

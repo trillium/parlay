@@ -853,6 +853,28 @@ with no filesystem in `sweep_test.go`. **Go-only, no TS port** — same
 reasoning as `merge-gate` above; no `check` case in
 `tools/cli/parity/run.sh`, but it is in that script's `GO_ONLY_VERBS`.
 
+**Teardown closes the herdr surface too, and that is the whole point
+(robots-iz9o).** The first version of the sweep unregistered, removed the
+worktree and deleted the store — and left the pane running. It printed
+`closed` for a fleet that was entirely still alive, and 57 panes had to be
+walked by hand with `herdr tab close` afterwards. `teardownAgent` now ends by
+calling `closeHerdrSurface` (`tools/cli/internal/commands/herdr.go`), so both
+`sweep --apply` and a direct `parlay teardown` reclaim the terminal.
+
+The lookup key on both sides is the parlay agent id, because `tools/parlay-bin`
+spawns with `herdr agent start <id>` and `herdr tab create --label <id>`. Both
+lookups are needed: a live agent resolves through `herdr agent get`, while an
+agent whose process already exited has no herdr agent at all and is findable
+only by its lingering labelled tab — that residue is what fills `herdr tab
+list` with dead `mc-*` tabs. Two rules hold the blast radius: a tab reporting
+`pane_count > 1` is shared, so only the agent's own pane is closed (`herdr tab
+close` would take the bystanders with it), and the *calling* agent's surface is
+never closed, so `parlay teardown $SELF` cannot kill the pane mid-command. All
+of it is best-effort like `bestEffortUnregister` — no herdr on PATH, no daemon
+or an unparseable reply must never block the git safety checks or the store
+delete. Note `herdr` exits 0 even when it prints an `error` object, so the
+reply body is the only usable signal.
+
 Four things are never swept, and each guard exists because of a real way this
 could destroy work: the sweeping agent itself; ids listed in
 `$PARLAY_STATE_HOME/sweep-keep` (one id per line, `#` comments — where
