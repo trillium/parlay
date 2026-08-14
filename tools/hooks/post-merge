@@ -7,7 +7,9 @@ set -uo pipefail  # NOT -e: a delivery failure must never read as a commit
                   # failure. The one deliberate non-zero exit is an unresolvable
                   # primary checkout below; a build/delivery failure exits 0.
 
-# Same per-checkout opt-in as post-commit; see that file for the rationale.
+# Same per-CLONE opt-in as post-commit: one setting in the shared .git/config
+# covers every linked worktree of the clone, and does not by itself decide where
+# delivery happens. See that file for the rationale.
 #   git config --bool parlay.autobuild true
 [[ "$(git config --bool --get parlay.autobuild 2>/dev/null || true)" == "true" ]] || exit 0
 

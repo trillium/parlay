@@ -208,15 +208,21 @@ Repo conventions worth knowing:
   runs for everyone: it enforces the 250-line limit below and auto-bumps
   `PA_VERSION`. `post-commit`/`post-merge` rebuild and deliver the panel bundle
   — a build plus a POST to a local Pulse server — and **do nothing at all unless
-  you opt in** per checkout:
+  you opt in**:
 
   ```sh
   git config --bool parlay.autobuild true   # enable; omit or set false to stay off
   ```
 
-  Opted in, they still run only in the repo's primary checkout (never a linked
-  worktree) — set `PARLAY_MAIN_CHECKOUT` to point them elsewhere. To drop all
-  the hooks including `pre-commit`: `git config --unset core.hooksPath`.
+  That setting lands in the clone's shared `.git/config`, so **one `git config`
+  covers every linked worktree of that clone** — it does not matter which
+  checkout you run it from, and you never run it per worktree.
+
+  Enabling is not delivering — two different things. Opted in, the hooks still
+  deliver only from the repo's primary checkout; a commit in a linked worktree
+  logs a skip and delivers nothing. Set `PARLAY_MAIN_CHECKOUT` to point them at
+  a different tree. To drop all the hooks including `pre-commit`:
+  `git config --unset core.hooksPath`.
 - **250-line file limit** (pre-commit) — split a module into a subfolder + barrel
   index past the limit.
 - **Two version axes** — the repo release `vX.Y.Z` git tag and the panel build

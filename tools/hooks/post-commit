@@ -11,7 +11,10 @@ set -uo pipefail  # NOT -e: a delivery failure must never read as a commit
                   # primary checkout below, where guessing could deliver from the
                   # wrong tree; a build/delivery failure still exits 0.
 
-# Opt-in, per checkout. `bun install` installs these hooks for everyone, so the
+# Opt-in, per CLONE — this config lands in the shared .git/config every linked
+# worktree of the clone reads, so setting it once from any checkout enables them
+# all (enabling is not delivering: the primary-checkout guard below still decides
+# where delivery happens). `bun install` installs these hooks for everyone, so the
 # rebuild (which runs a build and POSTs to a local port) must not fire on a
 # machine that never asked for it. A git config rather than an env var: a hook
 # fires from IDEs, GUIs and cron-like contexts that never sourced a shell
