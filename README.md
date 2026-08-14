@@ -45,7 +45,7 @@ parlay server. That wiring is not documented here yet, and it is the main gap
 between this repo and the demo.
 
 **Tailscale is optional.** Nothing requires it. It is simply how the author reaches
-the host from a phone; a LAN address or any other tunnel works the same way.
+the host from a phone; a LAN address or any other private tunnel works the same way.
 
 ## Quickstart (local only — no Pulse, no tailnet)
 
@@ -118,7 +118,7 @@ seeds a channel before its agent has registered, which is exactly the case here.
 That round-trip is the whole substrate. From here:
 
 ```sh
-./bin/parlay reply --agent demo "on it"           # an agent replies on its own channel
+./bin/parlay reply --agent demo "on it"           # posts an agent-role message into history; channel routing needs a spawned agent's context
 ./bin/parlay alert "heads up"                     # broadcast to every agent
 ./bin/parlay help                                 # every verb
 ./bin/parlay monitor --legacy-poll --agent demo   # stream a channel; runs until Ctrl-C, so give it a second shell
@@ -145,8 +145,8 @@ Launch a background agent that shows up as a live tab (needs a
   "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
 ```
 
-To reach it from your phone, expose the host — Tailscale, LAN IP, or any tunnel —
-and export `PARLAY_SERVER` as that address instead of `localhost`.
+To reach it from your phone, expose the host — Tailscale, LAN IP, or a private
+tunnel — and export `PARLAY_SERVER` as that address instead of `localhost`.
 
 **The chat API is unauthenticated by design** (that is how the CLI and plain `curl`
 work — see the header of `packages/server/src/guard.ts`), so anything that can reach
