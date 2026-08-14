@@ -1,6 +1,6 @@
 {
-  "name": "@parlay/input",
-  "version": "0.1.0",
+  "name": "parlay-input",
+  "version": "0.2.0",
   "description": "Framework-agnostic DOM input wrapper for wiring a UI input to a parlay server",
   "type": "module",
   "main": "./dist/index.js",

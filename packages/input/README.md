@@ -1,31 +1,92 @@
-# @parlay/input
+# parlay-input
 
-A thin, framework-agnostic DOM input wrapper intended for wiring a webpage's
-primary input box into the parlay command server. No dependencies, no
-framework assumptions — it operates on a plain DOM `Element`.
+A thin, framework-agnostic DOM input wrapper for wiring a webpage's primary
+input box into the parlay command server. No dependencies, no framework
+assumptions — it operates on a plain DOM `Element`.
 
-## ⚠️ Current implementation does not match the real server protocol
+It implements parlay's real input protocol: a REST up-channel plus a single
+shared Server-Sent Events down-channel, with client-owned version/seq staleness
+handling. There is no client-side evaluation — every edit is relayed to the
+compiled Go engine (`packages/eval-engine`), which decides what happens (clear
+the box, submit, show a picker, …) and pushes the result back down the SSE
+stream.
 
-This package was originally scaffolded against an invented protocol — a
-single duplex WebSocket to `/api/input` sending `{type:'input', event,
-value}` frames. **That endpoint does not exist anywhere in `packages/server`**,
-and the real system does not use WebSockets at all. The section below
-documents the actual protocol, discovered by reading the live reference
-implementation (`packages/client` + `packages/server`). Anyone picking this
-package back up should treat `src/index.ts`'s current transport as a stub to
-be replaced, not a working client — its tests pass only because they exercise
-a mock WebSocket server that also doesn't correspond to anything real.
+## Install / quick start
 
-## The real protocol: REST + a single shared SSE stream
+```sh
+npm install parlay-input
+```
 
-Parlay's actual input pipeline is **not per-input-box request/response** — it's
-one shared, page-wide Server-Sent Events connection that multiplexes many
-event types, plus separate REST endpoints for each concern. There is no local
-evaluation on the client: every keystroke is relayed to a compiled Go engine
-(`packages/eval-engine`) which decides what should happen (clear the box,
-submit, show a picker, ...) and pushes the result back down the SSE stream.
+You need a running parlay server (see the parlay repo — `packages/server`, or
+the Go rewrite in `packages/go-server`; default port `4242`). Point the wrapper
+at it and hand it your input element:
 
-Reference implementation (read these before writing new client code):
+```ts
+import { parlayInput } from "parlay-input"
+
+const el = document.querySelector("#composer")! // <input>, <textarea>, or contenteditable
+
+const unsubscribe = parlayInput(el, {
+  server: "http://localhost:4242",
+})
+
+// later: tear down the DOM listener and the SSE connection
+unsubscribe()
+```
+
+That's the whole happy path. On every edit the wrapper POSTs the buffer to the
+server for evaluation, and applies whatever the engine pushes back over SSE —
+clearing the box, submitting, etc. The core verbs (`setText`/`clear`/
+`submitNow`) are applied to `el` for you.
+
+If your app already runs its own page-wide SSE connection, or renders custom UI
+for verbs like pickers and tab switches, wire those in via options:
+
+```ts
+const unsubscribe = parlayInput(el, {
+  server: "http://localhost:4242",
+  // Reuse an existing shared EventSource instead of opening a second one:
+  subscribe: (event, handler) => myEventBus.on(event, handler), // returns an unsubscribe
+  // Handle UI verbs the wrapper doesn't apply itself (pickers, tab switches, …):
+  onAction: (action, ctx) => { /* render your UI */ },
+})
+```
+
+## API
+
+`parlayInput(element, options)` attaches `element` to a parlay server and
+returns an idempotent `Unsubscribe`. Key options (see `src/index.ts` for the
+full, typed surface):
+
+- `server` — base URL of the parlay server (required).
+- `event` — DOM event to listen for. Default `"input"`.
+- `settleMs` — voice-settle debounce; rapid edits collapse into one eval of the
+  stabilized text. Default `450`.
+- `onAction(action, ctx)` — handle verbs the wrapper does not apply itself. The
+  core input verbs (`noop`/`setText`/`clear`/`submitNow`) are always applied to
+  the element directly; everything else (pickers, tab switches, navigation) is
+  delegated here so the wrapper stays UI-agnostic.
+- `onSubmit(text)` — how `submitNow` actually submits. Default `POST
+  /api/chat/send`. Evaluation never submits on its own.
+- `subscribe(event, handler)` — plug into an existing shared SSE connection
+  instead of opening one; return an unsubscribe. When omitted, the wrapper opens
+  its own `EventSource` to `/api/chat/events` with exponential-backoff reconnect.
+- `device` / `streamId` / `tabs` / `voiceEnabled` — protocol context; `device`
+  is auto-generated and persisted to localStorage when omitted.
+- `fetch` / `EventSource` — injectable implementations (for a non-DOM host or
+  tests).
+
+The **staleness/version/seq machinery is configurable, not hard-coded** to the
+reference UI's choices — `settleMs`, the protocol version, and the SSE transport
+are all options.
+
+## The protocol: REST + a single shared SSE stream
+
+Parlay's input pipeline is **not** per-input-box request/response — it's one
+shared, page-wide SSE connection that multiplexes many event types, plus
+separate REST endpoints for each concern.
+
+Reference implementation (the source of truth this wrapper follows):
 
 - `packages/client/src/input.ts` — wires the DOM input element up end to end
 - `packages/client/src/sse.ts` — the shared `EventSource` connection + plugin registry
@@ -49,10 +110,10 @@ Reference implementation (read these before writing new client code):
 {
   streamId: string        // per-page-load epoch: `eval-${device}-${epoch}` — avoids
                            // colliding with the engine's version counter across reloads
-  version: number          // monotonic, bumped on EVERY local buffer mutation (bumpInputVersion())
+  version: number          // monotonic, bumped on EVERY local buffer mutation
   text: string              // current buffer contents
   cursor: { anchor: number, active: number }
-  reason: string             // e.g. 'input', 'voice-settle'
+  reason: string             // e.g. 'input', 'resync'
   voiceEnabled: boolean
   tabs: { id: string, name: string, nicknames: string[] }[]
   device: string
@@ -64,7 +125,7 @@ The client does **not** apply the synchronous HTTP response directly — actions
 are only ever applied via the SSE `input_action` event, so there's a single
 source of truth for ordering/staleness regardless of whether an action
 originated from a live POST or the engine's own server-owned timer fire. The
-synchronous response is used only for round-trip timing (latency overlay).
+synchronous response is used only for round-trip timing.
 
 ### `input_action` SSE event (`ActionEnvelope`)
 
@@ -79,68 +140,31 @@ synchronous response is used only for round-trip timing (latency overlay).
 }
 ```
 
-Every inbound envelope goes through `applyEnvelope()`
-(`packages/client/src/commands/dispatcher/apply.ts`), which rejects it rather
-than applying it when:
+Every inbound envelope is validated before any action touches the element:
 
-- `baseVersion < currentInputVersion()` — the user has typed something newer
-  since this action was computed → **stale**, dropped, triggers a resync.
+- `baseVersion < currentVersion` **and** the envelope mutates the buffer — the
+  user has typed something newer since this action was computed → **stale**,
+  dropped, triggers a resync. A stale *non-mutating* action (a hint, a picker)
+  is harmless and still applied.
 - `seq` skips ahead of the expected next value — an SSE event was dropped in
   transit → triggers a resync.
 
-`types.ts` also declares an `ACTION_TTL_MS` (1500ms) constant and a
-`rejected-expired` `ApplyResult` variant for action-age expiry, but
-`applyEnvelope()` does not currently check action age anywhere — TTL
-rejection is declared in the type, not enforced by the dispatcher.
-
 A "resync" re-POSTs the current buffer to re-anchor the server's view of state.
-This staleness handling is the part most likely to be skipped by a naive
-reimplementation — without it, a slow network round-trip can silently apply
-an action computed against text the user has since edited away.
+This staleness handling is load-bearing: without it, a slow network round-trip
+can silently apply an action computed against text the user has since edited
+away. `submitNow` additionally re-verifies its `requireTail` against the truly
+current buffer at apply time before firing — the server's decision is ~1
+round-trip stale, and on a slow link the tail has often already moved.
 
-### Debounce / send cadence
-
-Sends are **not** fired on every keystroke. `scheduleEval()`
-(`packages/client/src/commands/dispatcher/up.ts`) debounces on a
-"voice-settle" timer (`ctx.settleMs`) so a rapid dictation burst collapses
-into one evaluation of the stabilized text — the server never evaluates
-mid-correction text.
-
-## What "enrolling a webpage's primary input" requires
-
-To wire a new input element into the real system, an implementation needs to:
-
-1. **Establish a device identity** — a stable per-browser id (see
-   `getDeviceId()` in `packages/client/src/sse.ts`), used to scope both the
-   SSE subscription and every eval POST.
-2. **Open the single shared SSE connection** — `GET /api/chat/events?device=...`
-   via `EventSource`, with exponential-backoff reconnect (`packages/client/src/sse.ts`'s
-   `connect()`). Register an `input_action` listener through the `onSse()`
-   plugin registry rather than opening a second connection.
-3. **On every input event**: call `bumpInputVersion()`, then
-   `scheduleEval(getText, getCtx, immediate, reason)` to debounce-POST
-   `/api/chat/eval` with the current buffer + cursor + device/stream context.
-4. **On every inbound `input_action` SSE event**: call `applyEnvelope(env, resync)`
-   and apply whichever verbs it returns to the DOM element — do not skip the
-   staleness/seq checks described above.
-5. **Wire draft sync** (optional but expected by the reference UI) — `PUT
-   /api/chat/draft` debounced on edit, `GET /api/chat/draft` on load, and
-   handle the `draft` SSE event for cross-device sync.
-6. **Wire message submission separately from evaluation** — `POST
-   /api/chat/send` on explicit submit; evaluation (`/api/chat/eval`) never
-   sends a message on its own.
-
-This is meaningfully richer than a generic "send value, get action back"
-wrapper: the version/seq staleness protocol and the single-shared-stream
-multiplexing are load-bearing, not optional polish. A future
-`@parlay/input` v2 needs to implement a real subset of this contract — likely
-exposing the debounce/version/resync machinery as configurable hooks — rather
-than assuming a bespoke duplex channel per input box.
+Note: `ACTION_TTL_MS` (1500ms) and a `rejected-expired` `ApplyResult` variant
+are declared for wire parity, but — matching the reference dispatcher — action
+age is **not** enforced. The constant is exported so the contract is visible,
+not because a TTL check runs.
 
 ## Development
 
 ```sh
 bun install
-bun test        # run the test suite (currently exercises the stale WebSocket transport)
+bun test        # run the test suite (fakes the REAL REST + SSE endpoints)
 bun run build   # emit dist/index.js (bun) + dist/index.d.ts (tsc)
 ```
