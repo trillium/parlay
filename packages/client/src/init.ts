@@ -22,6 +22,7 @@ import { setRenderThreadFn, msgInView } from './tabs'
 import { initAgentSwitcher } from './switcher'
 import { renderThread } from './thread'
 import { wireToolLogEvents } from './toollog'
+import { wireLiveCommandsEvents } from './live-commands'
 import { connect, setOpenDrawerFn, onSse } from './sse'
 import { wireInputEvents, loadDraft, sendMsg, wireServerEval, evalVoice } from './input'
 import { wireAnnotation, doSetAnnotate } from './annotation'
@@ -186,6 +187,9 @@ initCommands()   // voice/text command subsystem (src/commands/, COMMANDS.md)
 initPlugins()    // plugin loader — before connect() so SSE subscriptions catch the first burst
 initLightbox()   // shared image lightbox — delegated over all .pa-img surfaces
 wireToolLogEvents()
+// Live-command registry view (▷ in the header, also in the mobile sheet).
+// Wired before connect() so its SSE subscriptions catch the first burst.
+wireLiveCommandsEvents(onSse)
 wireInputEvents()
 // Server-side eval: subscribe the action dispatcher to input_action SSE (onSse auto-reattaches across reconnects).
 wireServerEval(onSse)

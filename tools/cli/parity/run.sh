@@ -123,7 +123,7 @@ normalize() {
 # CLAUDE.md. Anything not listed here still diffs normally, so a verb that
 # was merely FORGOTTEN on the TS side keeps failing the harness, which is
 # the point.
-GO_ONLY_VERBS=(claim merge-gate branch-audit sweep)
+GO_ONLY_VERBS=(claim merge-gate branch-audit sweep mechanic commands)
 
 go_only_usage_re() {
   local IFS='|'
