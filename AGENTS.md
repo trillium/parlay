@@ -1301,9 +1301,9 @@ Four things worth knowing before editing it:
   `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a
   staged-diff check, not a whole-tree one, so it does not map onto a CI job; it
   is named here so a contributor whose commit the hook rejects can find the
-  rule written down. The other seven shell harnesses were each trial-run with
-  `~/.parlay` and `~/.treehouse` snapshotted before and after and produced zero
-  drift; that is the bar for adding one.
+  rule written down. Every shell harness in the job cleared a hermeticity bar
+  before it was added — see the `shell` job's own comment in `ci.yml` for what
+  each one had to show; that is the bar for adding another.
 
 The `go` job's artifact guard is `git status --porcelain` being empty after
 a full `go build ./...`, not a filename list, so a newly added main package
