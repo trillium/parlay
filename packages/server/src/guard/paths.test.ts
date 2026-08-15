@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { isGuardedChatPath } from "./paths"
+import { JSON_EXEMPT_PATHS, isGuardedChatPath } from "./paths"
 
 // The route SET, on its own. This is the file that would have caught D9: the
 // guard mechanism was fine, these classifications were not.
@@ -40,6 +40,23 @@ describe("guarded route set", () => {
       "/api/chat/plugin/cursorless/rpc", "/api/chat/plugin/cursorless/response",
       "/api/debug/input-timing",
     ]) expect(isGuardedChatPath(p)).toBe(true)
+  })
+
+  // The Cursorless bridge's two routes are classified together as guarded and
+  // apart on the content-type gate. Both halves are pinned so a future edit
+  // cannot silently drop /rpc from either set: dropping it from the guarded
+  // set would open it cross-origin, dropping it from the exempt set would 415
+  // the Talon caller.
+  test("POST /api/chat/plugin/cursorless/rpc is guarded AND JSON-exempt", () => {
+    expect(isGuardedChatPath("/api/chat/plugin/cursorless/rpc")).toBe(true)
+    expect(JSON_EXEMPT_PATHS.has("/api/chat/plugin/cursorless/rpc")).toBe(true)
+  })
+
+  test("the panel's /response POST keeps both layers", () => {
+    // It sends Content-Type: application/json explicitly, so there is nothing
+    // to exempt — see packages/client/src-plugins/cursorless.ts.
+    expect(isGuardedChatPath("/api/chat/plugin/cursorless/response")).toBe(true)
+    expect(JSON_EXEMPT_PATHS.has("/api/chat/plugin/cursorless/response")).toBe(false)
   })
 
   test("a plugin route nobody has written yet is guarded by the prefix", () => {

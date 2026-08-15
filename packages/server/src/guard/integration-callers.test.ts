@@ -87,6 +87,24 @@ describe("live server: the panel and the CLI are unaffected", () => {
     expect((await r.json()).ok).toBe(true)
   })
 
+  // Talon: an out-of-repo Python caller whose JSON body may arrive under
+  // whatever content type `requests` gave it. The handler is `await
+  // req.json()`, which parses the body regardless of the header, so the route's
+  // contract is the body — hence the JSON_EXEMPT_PATHS entry. `device` names a
+  // client that is not connected, so the handler answers immediately with a
+  // string only it can produce, instead of holding the 2.5s waiter open.
+  for (const ct of ["text/plain", "application/x-www-form-urlencoded"]) {
+    test(`Talon-shaped no-Origin POST /rpc under ${ct} reaches the handler`, async () => {
+      const r = await fetch(`${base}/api/chat/plugin/cursorless/rpc`, {
+        method: "POST",
+        headers: { "Content-Type": ct },
+        body: JSON.stringify({ op: "getEditorState", device: "no-such-device" }),
+      })
+      expect(r.status).toBe(200)
+      expect(await r.json()).toEqual({ ok: false, error: "no client for device no-such-device" })
+    })
+  }
+
   test("panel: same-origin POST /api/chat/eval reaches the handler", async () => {
     // PARLAY_EVAL_ENGINE_URL points at a dead port (see ./scratch-server), so
     // the handler answers 502 "engine unreachable" — which only the handler can

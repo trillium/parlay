@@ -108,6 +108,21 @@ describe("live server: D9 — the routes the attack chain used", () => {
     }
   })
 
+  test("the /rpc JSON exemption does not open it cross-origin", async () => {
+    // /rpc is exempt from the content-type gate only. It is still in the
+    // guarded set, so the origin check refuses a foreign page under exactly
+    // the simple content types the exemption now lets a no-Origin caller use.
+    for (const ct of ["text/plain", "application/x-www-form-urlencoded"]) {
+      const r = await fetch(`${base}/api/chat/plugin/cursorless/rpc`, {
+        method: "POST",
+        headers: { "Content-Type": ct, Origin: EVIL },
+        body: JSON.stringify({ op: "getEditorState" }),
+      })
+      expect({ ct, status: r.status, acao: r.headers.get("access-control-allow-origin") })
+        .toEqual({ ct, status: 403, acao: null })
+    }
+  })
+
   test("GET /api/debug/input-timing no longer hands device ids to a foreign origin", async () => {
     const r = await fetch(`${base}/api/debug/input-timing`, { headers: { Origin: EVIL } })
     expect(r.status).toBe(403)

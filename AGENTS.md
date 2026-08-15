@@ -95,9 +95,14 @@ handlers, never copied from TS). Every poller in this repo is a no-Origin HTTP
 client and nothing in `packages/client` polls at all. Two structural notes:
 `/api/debug/*` is dispatched in `index.ts`
 *ahead of* `handleChatRequest`, so it runs the guard itself — anything else
-added there must too; and `JSON_EXEMPT_PATHS` (today just `/api/chat/upload`,
-multipart by contract) is how a route keeps the origin check without the
-JSON content-type gate.
+added there must too; and `JSON_EXEMPT_PATHS` is how a route keeps the origin
+check without the JSON content-type gate. It has two members, each for its own
+reason: `/api/chat/upload` (multipart by contract) and `POST
+/api/chat/plugin/cursorless/rpc` (its handler is `await req.json()`, which
+parses the body whatever the header says, and its only caller is an
+out-of-repo Talon script — so its contract has always been a JSON *body*,
+never a JSON content type). Both stay inside the guarded set; the exemption
+drops one layer, not the boundary.
 
 `packages/go-server` now has its own guard: `internal/guard`, wrapped once
 around the whole mux in `cmd/parlay-server/main.go` so a route registered

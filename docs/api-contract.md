@@ -64,8 +64,11 @@ channel. On those routes:
   way.
 - `POST`/`PUT` must carry `Content-Type: application/json`, else **415** —
   this is what forces a preflight instead of letting a CORS *simple request*
-  through. `POST /api/chat/upload` is exempt (multipart by contract); there
-  the origin check alone applies. **The origin check runs first**, so a
+  through. Two routes are exempt from this gate and this gate only —
+  `POST /api/chat/upload` (multipart by contract) and `POST
+  /api/chat/plugin/cursorless/rpc` (its handler parses the body with
+  `req.json()` regardless of the header, for an out-of-repo Talon caller) —
+  and on those the origin check alone applies. **The origin check runs first**, so a
   disallowed origin sending a simple content type gets 403, not 415; a 415 is
   only ever reachable from an origin that was already allowed.
 - Allowed responses carry the **exact** origin in

@@ -31,6 +31,13 @@ let _settleTimer: ReturnType<typeof setTimeout> | null = null
 // CORS headers, so it surfaces here as a rejected fetch that looks exactly
 // like the server being down. There is no client-side opt-in, by design — see
 // packages/input/README.md and docs/api-contract.md § Origin guard.
+//
+// In practice the hosts that import this today are local: herdr-web is a
+// Capacitor app whose PARLAY_SERVER_URL is derived from its own
+// window.location.hostname, so its origin is already loopback or private-LAN
+// and passes. A host served from a PUBLIC origin is the case that needs
+// action, and the action is on the SERVER, not here: add that exact origin to
+// PARLAY_ALLOWED_ORIGINS on the parlay server.
 let _baseUrl = ''
 export function setEvalServerBaseUrl(url: string): void { _baseUrl = url.replace(/\/+$/, '') }
 

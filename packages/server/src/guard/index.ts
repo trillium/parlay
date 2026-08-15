@@ -98,7 +98,10 @@ export function guardChatRequest(req: Request, pathname: string): Response | nul
   // Only POST/PUT can arrive without a preflight, so only they need the
   // content-type gate; DELETE is never a CORS simple request and carries no
   // body here, and GET has no body at all. JSON_EXEMPT_PATHS opts a guarded
-  // route out of the gate when its real contract is not JSON (uploads).
+  // route out of THIS GATE ONLY — never out of the origin check above — when
+  // its callers do not send a JSON content type (a multipart upload; an
+  // out-of-repo caller whose handler reads the body with req.json() regardless
+  // of the header). See ./paths.ts for the per-route reason.
   if ((req.method === "POST" || req.method === "PUT")
       && !JSON_EXEMPT_PATHS.has(pathname)
       && !isJsonContentType(req.headers.get("content-type"))) {

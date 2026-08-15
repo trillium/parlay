@@ -41,6 +41,19 @@ describe("D9: the panel and the CLI still work on every newly guarded route", ()
     expect(guardChatRequest(noOrigin("POST", "/api/chat/upload", ct), "/api/chat/upload")).toBeNull()
   })
 
+  test("Talon's /rpc POST is not 415'd on a non-JSON content type", () => {
+    // The handler is `await req.json()`, which parses the body whatever the
+    // header says, so this route's contract has always been a JSON BODY. Its
+    // only caller is the out-of-repo Talon script; a Python
+    // requests.post(url, data=…) sends application/x-www-form-urlencoded and
+    // worked before the guard existed. Drop /rpc from JSON_EXEMPT_PATHS and
+    // every case here becomes a 415.
+    const p = "/api/chat/plugin/cursorless/rpc"
+    for (const ct of ["text/plain", "application/x-www-form-urlencoded", null] as const) {
+      expect(guardChatRequest(noOrigin("POST", p, ct), p)).toBeNull()
+    }
+  })
+
   test("a panel behind a Host-forwarding tunnel can still write, on the same-host branch alone", () => {
     // TUNNEL_ORIGIN's hostname is not loopback, private-LAN, .local or
     // allow-listed, so ./origin.ts's same-host comparison is the only thing

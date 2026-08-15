@@ -108,9 +108,17 @@ export const GUARDED_CHAT_PATHS = new Set([
 //   /api/chat/plugin/  — plugin RPC. Guarded as a PREFIX, deliberately, so a
 //     plugin added later is guarded by default instead of shipping open until
 //     someone remembers this file. Today that is the Cursorless bridge, whose
-//     /rpc drives edits into the captain's input box. Both its routes are
-//     same-origin (panel) or no-Origin (Talon) JSON POSTs. A future plugin
-//     route that is NOT JSON must be added to JSON_EXEMPT_PATHS.
+//     /rpc drives edits into the captain's input box. Its two routes do NOT
+//     share a content-type contract. The panel's /response POST sets
+//     `Content-Type: application/json` explicitly (packages/client/
+//     src-plugins/cursorless.ts), so it keeps both layers. /rpc's caller is
+//     Talon-side Python that lives outside this repo, and the handler reads it
+//     with `await req.json()` (../plugins/cursorless.ts), which parses the
+//     body as JSON whatever the header says — so /rpc's contract has always
+//     been a JSON BODY, never a JSON content type, and it is in
+//     JSON_EXEMPT_PATHS for that reason. Both routes stay origin-guarded. A
+//     future plugin route whose callers do not send a JSON content type
+//     belongs in JSON_EXEMPT_PATHS too.
 //   /api/debug/    — input-timing telemetry. Not under /api/chat, so it is
 //     dispatched in index.ts ahead of handleChatRequest and has to run the
 //     guard itself; index.ts does. Guarded for the same reason /subscribers
@@ -120,14 +128,29 @@ export const GUARDED_CHAT_PATHS = new Set([
 const GUARDED_PREFIXES = ["/api/chat/agents/", "/api/chat/plugin/", "/api/debug/"]
 
 // Guarded paths that must NOT be held to `Content-Type: application/json`.
-// /api/chat/upload is multipart/form-data by contract — the panel posts a
-// FormData — so the content-type gate would 415 every legitimate upload. For
-// these, the origin check alone is the defense, and it is sufficient: a
-// browser always sends Origin on a cross-origin request, including on a
-// multipart form POST, so a foreign page cannot reach the handler. The
-// content-type gate is belt-and-suspenders for the other paths (it forces a
-// preflight, which is then refused), not the primary check.
-export const JSON_EXEMPT_PATHS = new Set(["/api/chat/upload"])
+// Two members, each for its own stated reason — this is a deliberate list, not
+// a special case with an exception bolted on. Both stay INSIDE the guarded set
+// above: the exemption drops one layer on one route, never the boundary.
+//
+//   /api/chat/upload — multipart/form-data by contract (the panel posts a
+//     FormData), so the gate would 415 every legitimate upload.
+//   /api/chat/plugin/cursorless/rpc — its handler is `await req.json()`
+//     (../plugins/cursorless.ts), which parses the body regardless of the
+//     header, and its only caller is the out-of-repo Talon script. A Python
+//     `requests.post(url, data=…)` sends a JSON body under
+//     application/x-www-form-urlencoded, and that worked before this guard
+//     existed; holding the route to the header would break voice editing at
+//     runtime on the captain's box, with no caller in this repo to catch it.
+//
+// For both, the origin check alone is the defense, and it is sufficient: a
+// browser always sends Origin on a cross-origin request — on a multipart form
+// POST and on a simple-content-type POST alike — so a foreign page cannot
+// reach either handler. The content-type gate is defence-in-depth on the other
+// paths (it forces a preflight, which is then refused), not the primary check.
+export const JSON_EXEMPT_PATHS = new Set([
+  "/api/chat/upload",
+  "/api/chat/plugin/cursorless/rpc",
+])
 
 export function isGuardedChatPath(pathname: string): boolean {
   return GUARDED_CHAT_PATHS.has(pathname) || GUARDED_PREFIXES.some(p => pathname.startsWith(p))
