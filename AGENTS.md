@@ -1208,7 +1208,10 @@ Four things worth knowing before editing it:
 - **Deliberately not in CI**, because they drive live or macOS-only state:
   `tools/monitor/parlay-monitor.test.sh` (enrols over a relay control socket),
   `tools/relay/deploy/{ensure-up,install}.test.sh` (launchctl/PlistBuddy),
-  `tools/cli/parity/run.sh` (stands up a real go-server fixture), and
+  `tools/cli/parity/run.sh` (stands up a real go-server fixture),
+  `examples/bootstrap-sandbox.sh` (same class as the previous entry — it stands
+  up a real `packages/server` fixture; it has also not been trial-run to the
+  bar stated at the end of this bullet), and
   `packages/client`'s `bun run build` (its `build.ts` POSTs to the captain's
   live `:31337` — see the packages/client note above). Also not enforced:
   `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a
