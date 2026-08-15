@@ -2,6 +2,7 @@
   "name": "parlay-cli",
   "version": "0.1.1",
   "private": true,
+  "license": "MIT",
   "bin": {
     "parlay": "./src/index.ts"
   },

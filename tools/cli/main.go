@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/trillium/parlay/tools/cli/internal/commandreport"
 	"github.com/trillium/parlay/tools/cli/internal/commands"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/help"
@@ -53,6 +54,32 @@ func main() {
 		cmd, args = argv[0], argv[1:]
 	}
 
+	// Live-command visibility: tell the server this invocation is running so
+	// it shows up in `parlay commands` and the chat panel. Best-effort and
+	// self-disabling — internal/commandreport is written so it can never turn
+	// a working command into a failing one. finish is idempotent; it also
+	// runs from httpc.Exit (every die() path) and from this defer (normal
+	// return and panic alike).
+	finish := commandreport.Begin(cmd, args)
+	defer reportEnd(finish)
+
+	dispatch(cmd, args, finish)
+}
+
+// reportEnd closes this invocation's registry record from main's defer. A
+// panicking command is a FAILED command: recording it as exit 0 would leave a
+// green record for an invocation that produced no result, which is worse than
+// no record at all. The panic is re-raised so the runtime still prints the
+// stack trace and the process still dies with its usual status.
+func reportEnd(finish func(int)) {
+	if r := recover(); r != nil {
+		finish(config.ExitRuntime)
+		panic(r)
+	}
+	finish(config.ExitOK)
+}
+
+func dispatch(cmd string, args []string, finish func(int)) {
 	switch cmd {
 	case "":
 		commands.Status() // bare `parlay` = panel/fleet snapshot
@@ -124,8 +151,11 @@ func main() {
 		commands.MergeGate(args)
 	case "branch-audit":
 		commands.BranchAudit(args)
+	case "commands":
+		commands.Commands(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
+		finish(config.ExitUsage)
 		os.Exit(config.ExitUsage)
 	}
 }

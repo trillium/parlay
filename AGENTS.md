@@ -1,5 +1,7 @@
 # Project agent memory
 
+This file is internal operating memory for AI agents working in this repository, not user documentation — it is written for whoever (or whatever) is editing the code next. See [`README.md`](README.md) if you are looking for how to run parlay.
+
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
 - Add durable project-specific notes here as they are discovered through real work.
@@ -156,6 +158,44 @@ persisted `$PARLAY_STATE_HOME/config.json` (default `~/.parlay/config.json`,
 `http://localhost:4242`. `parlay doctor` reports which source is active. The
 CLI does not import `packages/server` as code, so its functionality is
 independent of how the server is deployed.
+
+### `PARLAY_DATA_DIR` isolates what the server WRITES, not what it READS
+
+`PARLAY_DATA_DIR` redirects every persisted file that goes through `paths.ts`, so
+nothing lands under `~/exchange`. It is **not** a full sandbox, and not only on
+the read side. `packages/server/src/tts.ts` never touches `paths.ts`: it resolves
+its own `PAI_DIR` (`process.env.PAI_DIR ?? ~/.claude/PAI`) and then **writes**
+`$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl` (`appendFileSync`,
+from both `/api/chat/tts-report` and the substitution handler), **creates**
+`$PAI_DIR/MEMORY/STATE/tts-cache/`, and **`unlinkSync`-deletes** clips out of that
+cache every time it passes `DISK_CACHE_MAX` (100). `PARLAY_DATA_DIR` redirects
+none of it. On the read side, `startHookFiringTailer()` and
+`startToolEventTailer()` still watch `$PAI_DIR` (default `~/.claude/PAI`), which
+`PARLAY_DATA_DIR` does not cover, and every event they see is injected into the
+instance's chat history as a `channel:"system"`, `source:"turn"` message. A
+scratch instance booted on a host that has a populated `$PAI_DIR` will therefore
+fill with real, live agent turns from the agents running on that host — read-only,
+but confusing (and a quiet information leak) for whoever is reading the sandbox.
+Set `PAI_DIR` to an empty scratch dir alongside `PARLAY_DATA_DIR` whenever you
+boot a test instance, or the run writes into and deletes out of the real one;
+`guard.integration.test.ts` already redirects both, and the
+public Quickstart in `README.md` says the same for anyone who happens to have a
+`~/.claude/PAI`.
+
+### Never `pkill -f 'src/index.ts'` — `com.parlay.chat-server` matches it
+
+On a development host the production chat server runs as a launchd job
+(`com.parlay.chat-server`) executing `~/code/parlay/packages/server/src/index.ts`,
+so any broad process match on `src/index.ts`, `bun`, or `parlay` kills **that**
+server, not just your sandbox's. It is launchd-supervised and respawns in about a
+second, so the blast radius is a brief interruption rather than lost data — but it
+is a live server other agents are talking to, and nothing in the pattern tells you
+which instance you matched. Tear a test server down by the thing that is unique to
+it: the port (`PARLAY_PORT=<45xxx>` in the match, or the listening pid) or its
+scratch `PARLAY_DATA_DIR` path. The same trap applies to the relay: `$TMPDIR/parlay/`
+is the host-wide shared runtime dir and a scoped test relay lives in a
+`srv-<hash>` subdirectory of it (see the robots-buu8 section below) — match the
+subdirectory, never the parent.
 
 ## Remote debug log + on-screen mobile console (phone-only bug triage)
 
@@ -1122,8 +1162,10 @@ POLL (`robots-watch`) paths converge on. The verb itself is
 `PARLAY_MECHANIC_DISPATCH=off`; the sentinel is durable operator intent and
 wins over `PARLAY_MECHANIC_DISPATCH=on`. When OFF the tailer/poller keep
 running and advancing their offsets, so re-enabling does NOT replay the
-backlog. **Go-only, no TS port** — same reasoning as `merge-gate`; keep it out
-of `tools/cli/parity/run.sh`. Complementary to the durable-mechanic-lifecycle
+backlog. **Go-only, no TS port** — same reasoning as `merge-gate`: no `check`
+case in `tools/cli/parity/run.sh`, but it must be in that script's
+`GO_ONLY_VERBS` or its usage line reddens every help diff (robots-xaxt);
+it was missing there until the live-commands branch added it. Complementary to the durable-mechanic-lifecycle
 work (robots-jkwc) — that gates nothing, this dispatches nothing when off.
 
 ## Two-arg `git merge-tree` is not a predicate — teardown's landed check never fired (robots-ceon)
@@ -1265,6 +1307,65 @@ a full `go build ./...`, not a filename list, so a newly added main package
 cannot reintroduce the 9.6 MB `tools/relay/relay` binary that one PR committed —
 that path is now gitignored alongside the pre-existing
 `packages/eval-engine/eval-engine` entry.
+
+## The live-command registry sees only what reports itself — say so, don't fill the gap
+
+`docs/live-commands.md` is authoritative for the design; two things about it
+are easy to get wrong from the code alone.
+
+**Registration is Go-CLI self-reporting, and the coverage gap is a feature.**
+`tools/cli/main.go` wraps dispatch in `commandreport.Begin`, whose end report
+goes out through *both* `httpc.Exit` (so every `httpc.Die` in every verb closes
+its record without those verbs knowing) and a `defer` in `main` (normal return
+and panic — a panic reports a non-zero exit so the record never reads green).
+Anything that is not the Go CLI — `bin/parlay-spawn`,
+`tools/monitor/parlay-monitor.sh`, the retired `packages/cli`, work the server
+originates — is invisible; `parlay commands` excludes itself so the observer
+never shows up in its own output; and a bare `parlay` (the fleet snapshot) has
+no verb to report under, so it does not register either. Both renderers print
+that limit in their empty state. Do **not** "improve" coverage by having the server infer
+running commands from requests it happens to receive: an entry nothing can
+close becomes a permanent zombie, which is the failure this design spends its
+90s staleness reaper avoiding. `PARLAY_COMMAND_REPORT=0` opts out.
+
+**The registry stores no free-form text — keep it that way.** Verb, agent id,
+pid, flag **names** (max 8), and a short `outcome` token; never argv, flag
+values, positionals, paths, or an error string, because a parlay command line
+routinely carries message bodies and tokens. Both enforcement points —
+`commandreport.flagNames` before sending, `internal/store/commands.go`'s
+`sanitizeFlags` on arrival — apply the identical rule: after cutting the token
+at its first `=`, a flag name is one or two dashes, then a letter, then only
+letters, digits, and dashes, and is at most 32 characters — `maxReportedFlagName`
+and `maxCommandFlagName` are twins whose comments each name the other, since
+separate Go modules cannot share the constant. **A leading dash is not what
+makes a token a flag** — `-- heads up: the key is …` is a message body, and
+anything failing the shape or the length is dropped WHOLE, never trimmed into
+conforming shape: a trimmed name arrives looking like a legitimate flag. That
+rule is about flag NAMES only. The identifier fields (`id`, `verb`, `agent`,
+`outcome`) are clamped in place instead — whitelisted characters up to a
+length bound — because they carry no caller prose and dropping one would
+render an unattributed row or, for `id`, no row at all. The 500-record cap
+bounds the whole registry and is therefore server-only. The server repeats the check because the report
+endpoints are unauthenticated and client-side classification is not a security
+boundary. Adding a field here means adding it to that whitelist deliberately.
+The three mutating routes require `Content-Type: application/json` for the same
+CSRF-shaped reason `packages/server/src/guard.ts` does; the read route stays
+world-readable like `/api/chat/agents`.
+
+The "one registry, two renderers" claim is enforced, not asserted:
+`packages/go-server/testdata/live-commands.golden.json` is read by the Go
+handler, Go CLI, and client Bun suites, and
+`TestSSEBurstAndReadEndpointCarryByteIdenticalCommands` pins that the panel's
+SSE frame and the CLI's read endpoint are the same bytes. Change the wire shape
+and all three fail in one commit — that is the point.
+
+`parlay commands` is **Go-only, no TS port** — same reasoning as `merge-gate`:
+no `check` case in `tools/cli/parity/run.sh`, but it is in that script's
+`GO_ONLY_VERBS`. Its `--watch` mode is a stream, not a snapshot: without
+`--all` it prints the terminal line for any command it already showed as
+running, because an end event is how a record leaves the running set, and it
+gives up loudly (a stdout notice plus a non-zero exit) when the SSE stream
+closes rather than returning quietly — the robots-dcag shape.
 
 ## Maintaining this file
 
