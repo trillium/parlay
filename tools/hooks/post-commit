@@ -48,13 +48,18 @@ if [[ -z "$MAIN_CHECKOUT" ]]; then
   exit 1
 fi
 
+# Naming the log file is not writing to it: the directory is created only on a
+# path that is about to write, so a clone that never opted in leaves no trace on
+# disk — no directory, no file, no line — for any commit anywhere in the tree.
 LOG="${PARLAY_HOOK_LOG:-$HOME/Library/Logs/parlay/bundle-rebuild.out.log}"
-mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 TOP="$(resolve_dir "$(git rev-parse --show-toplevel)")" || TOP=""
 
 # Worktree commits (treehouse leases, feature isolation) must never deploy.
 if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
-  echo "[post-commit] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  if [[ "$AUTOBUILD" == "true" ]]; then
+    mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+    echo "[post-commit] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  fi
   exit 0
 fi
 
@@ -79,6 +84,7 @@ fi
 # Hooks fire from IDEs, GUIs and cron-like contexts with a minimal PATH, so keep
 # the absolute fallback for the common install location.
 BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 echo "[post-commit] $(date +%FT%T) delivering $(git log -1 --format='%h %s' | head -c 80)" >> "$LOG"
 if ( cd "$MAIN_CHECKOUT/packages/client" && "$BUN" build.ts ) >> "$LOG" 2>&1; then
   echo "[post-commit] delivered" >> "$LOG"
