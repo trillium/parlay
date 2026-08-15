@@ -65,7 +65,9 @@ channel. On those routes:
 - `POST`/`PUT` must carry `Content-Type: application/json`, else **415** —
   this is what forces a preflight instead of letting a CORS *simple request*
   through. `POST /api/chat/upload` is exempt (multipart by contract); there
-  the origin check alone applies.
+  the origin check alone applies. **The origin check runs first**, so a
+  disallowed origin sending a simple content type gets 403, not 415; a 415 is
+  only ever reachable from an origin that was already allowed.
 - Allowed responses carry the **exact** origin in
   `Access-Control-Allow-Origin` plus `Vary: Origin` — never `*`.
 

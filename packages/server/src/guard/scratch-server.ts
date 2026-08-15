@@ -13,8 +13,19 @@ export const EVIL = "https://evil.example.com"
 export interface ScratchServer {
   /** http://127.0.0.1:<port> — what a request is sent to. */
   base: string
-  /** http://localhost:<port> — the panel's own origin. */
-  origin: string
+  /**
+   * http://127.0.0.1:<port> — host:port identical to `base`, so originAllowed
+   * accepts it on its SAME-HOST comparison against the request's Host header.
+   * This is the panel's real shape: served by the server it calls.
+   */
+  sameHostOrigin: string
+  /**
+   * http://localhost:<port> — a loopback HOSTNAME. It does NOT match `base`'s
+   * host, so originAllowed can only accept it on its isLocalHostname branch —
+   * a different branch from `sameHostOrigin`, and the one a browser sends when
+   * the panel is opened as localhost while requests resolve to 127.0.0.1.
+   */
+  loopbackOrigin: string
   /** PARLAY_DATA_DIR — every file this instance persists lands here. */
   dataDir: string
   stop(): void
@@ -109,7 +120,7 @@ export async function startScratchServer(): Promise<ScratchServer> {
         stop()
         throw new Error(`${base} is answering, but it is not our server — no identity marker in /api/chat/history`)
       }
-      return { base, origin: `http://localhost:${port}`, dataDir, stop }
+      return { base, sameHostOrigin: base, loopbackOrigin: `http://localhost:${port}`, dataDir, stop }
     } catch (e) {
       if (e instanceof Error && e.message.includes("not our server")) throw e
       await Bun.sleep(100)

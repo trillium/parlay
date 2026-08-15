@@ -8,12 +8,17 @@ import { EVIL, startScratchServer, uploadForm, type ScratchServer } from "./scra
 
 let srv: ScratchServer
 let base = ""
+// host:port identical to `base` — accepted on originAllowed's same-host
+// comparison. Distinct from LOOPBACK_ORIGIN below, which shares no host with
+// `base` and can only be accepted on the loopback-hostname branch.
 let ORIGIN = ""
+let LOOPBACK_ORIGIN = ""
 
 beforeAll(async () => {
   srv = await startScratchServer()
   base = srv.base
-  ORIGIN = srv.origin
+  ORIGIN = srv.sameHostOrigin
+  LOOPBACK_ORIGIN = srv.loopbackOrigin
 }, 20_000)
 
 afterAll(() => srv?.stop())
@@ -146,6 +151,46 @@ describe("live server: the panel and the CLI are unaffected", () => {
     })
     expect(r.status).toBe(204)
     expect(r.headers.get("access-control-allow-origin")).toBe(ORIGIN)
+    expect(r.headers.get("access-control-allow-methods")).toContain("PUT")
+  })
+})
+
+// originAllowed accepts on two independent branches, and the cases above only
+// reach the first: an origin whose host:port equals the one the request was
+// sent to. A panel opened as http://localhost:<port> while requests resolve to
+// 127.0.0.1 matches no host at all and survives only on isLocalHostname — a
+// different branch, so it needs its own end-to-end coverage rather than being
+// assumed from the same-host cases.
+describe("live server: the loopback-HOSTNAME branch (localhost ≠ base's host)", () => {
+  test("loopback-hostname origin is a different host than base, so it cannot be same-host", () => {
+    expect(new URL(LOOPBACK_ORIGIN).host).not.toBe(new URL(base).host)
+  })
+
+  test("loopback-hostname origin: guarded POST is accepted and echoes that origin", async () => {
+    const r = await fetch(`${base}/api/chat/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: LOOPBACK_ORIGIN },
+      body: JSON.stringify({ text: "from localhost" }),
+    })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ ok: true })
+    expect(r.headers.get("access-control-allow-origin")).toBe(LOOPBACK_ORIGIN)
+  })
+
+  test("loopback-hostname origin: guarded GET /api/chat/subscribers is accepted", async () => {
+    const r = await fetch(`${base}/api/chat/subscribers`, { headers: { Origin: LOOPBACK_ORIGIN } })
+    expect(r.status).toBe(200)
+    expect(r.headers.get("access-control-allow-origin")).toBe(LOOPBACK_ORIGIN)
+    expect(await r.json()).toHaveProperty("registered.count")
+  })
+
+  test("loopback-hostname origin: preflight on a guarded route succeeds", async () => {
+    const r = await fetch(`${base}/api/chat/draft`, {
+      method: "OPTIONS",
+      headers: { Origin: LOOPBACK_ORIGIN, "Access-Control-Request-Method": "PUT", "Access-Control-Request-Headers": "content-type" },
+    })
+    expect(r.status).toBe(204)
+    expect(r.headers.get("access-control-allow-origin")).toBe(LOOPBACK_ORIGIN)
     expect(r.headers.get("access-control-allow-methods")).toContain("PUT")
   })
 })

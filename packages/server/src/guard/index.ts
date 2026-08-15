@@ -1,8 +1,9 @@
 // Origin + content-type hardening for the GUARDED chat routes (review-3y3 /
 // task-qg00). Barrel for this folder: ./paths.ts decides WHICH routes are
-// guarded — anything that mutates state or discloses an identifier, whatever
-// its HTTP method — ./origin.ts decides WHO may call them, and this file
-// applies the policy and builds the responses.
+// guarded — the mutating and identifier-aiming surface, classified by what the
+// handler does rather than by its HTTP method, with the accepted residue named
+// there — ./origin.ts decides WHO may call them, and this file applies the
+// policy and builds the responses.
 //
 // The chat API has no authentication: anything that can reach the port can
 // post into a live agent's turn. Before this module, EVERY /api/chat response
@@ -39,8 +40,10 @@
 // (wildcard ACAO), `POST /api/chat/eval` drove a real `input_action` into that
 // device, `PUT /api/chat/draft` set the captain's outgoing text, and the
 // engine's submit phrase sent it — attacker-authored text delivered to an
-// agent AS THE CAPTAIN. Every route that mutates state, drives a device, or
-// discloses an identifier is now inside the guard; see ./paths.ts.
+// agent AS THE CAPTAIN. Every route in that chain — and every other route that
+// AIMS anything — is now inside the guard; see ./paths.ts for the route set,
+// the classification test, and the two routes left outside it as accepted
+// residue (also noted above).
 //
 // packages/go-server/internal/guard is the Go port of this policy (defect D7),
 // and its package comment states the two places the two deliberately differ.

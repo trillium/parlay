@@ -28,9 +28,14 @@ describe("live server: mutating routes", () => {
     expect(r.headers.get("access-control-allow-origin")).toBeNull()
   })
 
-  test("non-JSON Content-Type → 415", async () => {
-    const r = await send({ headers: { "Content-Type": "text/plain", Origin: srv.origin } })
+  test("non-JSON Content-Type from an ALLOWED origin → 415", async () => {
+    const r = await send({ headers: { "Content-Type": "text/plain", Origin: srv.sameHostOrigin } })
     expect(r.status).toBe(415)
+  })
+
+  test("the same simple content type from a DISALLOWED origin → 403, never 415", async () => {
+    const r = await send({ headers: { "Content-Type": "text/plain", Origin: EVIL } })
+    expect(r.status).toBe(403)
   })
 
   test("cross-origin preflight → 403 instead of a blanket 204", async () => {

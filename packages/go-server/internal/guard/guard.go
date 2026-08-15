@@ -103,11 +103,15 @@ import (
 	"strings"
 )
 
-// GuardedPaths is every route on this server that mutates state or discloses
-// an identifier a cross-origin page could then aim at one of the mutating
-// routes — see "How a route gets into GuardedPaths" in the package comment
-// for the rule, which is method-independent. Mirrors GUARDED_CHAT_PATHS in
-// packages/server/src/guard/paths.ts for the routes the two servers share.
+// GuardedPaths is this server's mutating and identifier-aiming surface: the
+// routes that write state, or hand out an identifier a cross-origin page could
+// then aim at one of the mutating routes. See "How a route gets into
+// GuardedPaths" in the package comment for the classification test, which is
+// method-independent, and for the residue that test does not cover — TS carries
+// two accepted-residue read routes, and this server's exposure differs because
+// divergence 1 means its unguarded routes send no ACAO at all. Mirrors
+// GUARDED_CHAT_PATHS in packages/server/src/guard/paths.ts for the routes the
+// two servers share.
 //
 // A new mutating route is UNGUARDED until it is added here. If its callers do
 // not send a JSON content type, it also belongs in jsonExemptPaths.

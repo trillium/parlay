@@ -132,10 +132,18 @@ origin gets **`403`** with a JSON body of `{"error": "cross-origin request
 rejected"}` and **no CORS headers at all**, so the browser also blocks your
 code from reading that response — in the console it surfaces as a CORS error
 and in your code as a rejected `fetch`, which looks exactly like the server
-being down. It is not: the server answered, and refused. A preflight from
-such an origin is refused the same way, and a `POST` that skips the preflight
-by using a simple content type gets **`415`** instead. Neither is retryable
-and neither reaches a handler.
+being down. It is not: the server answered, and refused. A preflight from such
+an origin is refused the same way, and so is a `POST` that tries to skip the
+preflight by using a simple content type: **the origin check runs first**, so
+that request is a `403` too, not a `415`. Nothing here is retryable and
+nothing reaches a handler.
+
+**`415` is a different failure, and it means your origin was accepted.**
+`{"error": "Content-Type: application/json required"}` on a guarded `POST`/
+`PUT` comes from the content-type gate, which is only reached once the origin
+passed — so if you are getting `415`, fix the request's `Content-Type` (this
+package already sends `application/json`); if you are getting `403`, no header
+you can set will help, and the origin has to be allowed server-side.
 
 **The escape hatch is explicit opt-in, server-side.** Set
 `PARLAY_ALLOWED_ORIGINS` on the parlay server to a comma-separated list of
