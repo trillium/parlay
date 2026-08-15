@@ -180,11 +180,11 @@ sweep leaves unknown alone — but do not lean on that.
 `bootstrap-sandbox.sh` redirects `$HOME` as well as both variables, which is the
 only way to isolate all of these completely.
 
-**One repo-specific trap:** the `bin/parlay` wrapper at the repo root exports
-`PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because this
-fleet serves parlay through Pulse on that port. `PARLAY_SERVER` outranks
-`config.json`, so `bin/parlay` ignores the file this example ships. Build the
-binary directly (step 3 above) and `config.json` decides.
+**One repo-specific trap:** the `bin/parlay` wrapper at the repo root exports a
+`PARLAY_SERVER` of its own, which outranks `config.json` — so `bin/parlay`
+ignores the file this example ships. Build the binary directly (step 3 above)
+and `config.json` decides. Full precedence and rationale:
+[`parlay-state/README.md`](parlay-state/README.md#configjson).
 
 ### The server binds every interface, and has no authentication
 
