@@ -5,8 +5,10 @@ The second kind documents how parlay integrates with the author's own agent flee
 Part of that fleet is public: [**firstmate**](https://github.com/trillium/firstmate),
 the agent-fleet orchestrator that drives crews of coding agents through parlay from
 intake through review to merge, and [**herdr**](https://github.com/trillium/herdr),
-the terminal they run in. The rest is not — **PAI**, the **beads** stores like
-`robots`/`task`/`projects`, and the `mechanic-dispatch` wrapper. Those docs are
+the terminal they run in. The rest is not — **PAI**, the **beads** `bd` binary and
+the `~/data/…` stores its `robots`/`task`/`projects` wrappers drive (the `robots`
+wrapper itself is here, at `tools/robots-emit/robots`; the binary and the stores
+behind it are not), and the `mechanic-dispatch` wrapper. Those docs are
 written for an internal audience, and nothing in them is required to run parlay. They
 are kept because the design reasoning is real and travels with the code — not because
 you are expected to reproduce the setup.
