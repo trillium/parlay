@@ -34,6 +34,9 @@ export function handleDebugRequest(req: Request, pathname: string): Response | n
   const json = (b: unknown, s = 200) =>
     new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json", ...CORS } })
 
+  // Unreachable today: index.ts answers preflight for the whole /api/debug/
+  // prefix before calling this. Kept deliberately, as belt and braces if
+  // /api/debug/* is ever dispatched from somewhere that skips the guard.
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS })
 
   if (req.method === "POST") {

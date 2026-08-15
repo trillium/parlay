@@ -26,6 +26,7 @@ pages watcher, and serves every request through `handleChatRequest`
 | `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events, and the root `src/tts.ts` writes its pronunciation reports into and creates/evicts its clip cache under. |
 | `PARLAY_AGENT_ID` | *(unset)*        | Identifies the calling agent for per-agent context lookups.    |
 | `PARLAY_EVAL_ENGINE_URL` | `http://127.0.0.1:4343` | External eval engine for `/api/chat/eval`; returns 502 until running (Go engine deliberately deferred). |
+| `PARLAY_ALLOWED_ORIGINS` | *(unset)*  | Extra browser origins the guard accepts on guarded routes (comma-separated exact origins; `*` disables the origin check). Same-origin, loopback, `.local` and private-LAN origins are already allowed, and a request with **no** `Origin` — every CLI/curl/hook caller — always is. See `src/guard/` (route set in `src/guard/paths.ts`). |
 
 ## Data files
 
@@ -67,11 +68,17 @@ never inline in the module that uses them.
 ## Tests
 
 ```sh
-cd packages/server && bun test    # 44 tests across link-rewrite + prune + paths
+cd packages/server && bun test    # link-rewrite, prune, paths, router-poll, guard
 ```
 
 Run from inside this package (there is no root `bunfig.toml`; see the repo
 `AGENTS.md`).
+
+`src/guard/*.test.ts` is the origin-guard suite: the `paths`/`origin`/`allow`/
+`reject` files are pure, while each `integration-*.test.ts` file spawns a real
+server (`src/guard/scratch-server.ts`) on a port reserved by binding `:0`,
+with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`/`PARLAY_STATE_HOME` redirected to a
+temp dir — nothing under `~/exchange` or `~/.parlay` is touched.
 
 ## Relationship to Pulse
 

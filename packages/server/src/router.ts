@@ -18,7 +18,7 @@ import { guardChatRequest, isGuardedChatPath, preflightResponse, withGuardedCors
 
 // Entry point. Everything security-relevant happens here, at the one boundary
 // every /api/chat request crosses: OPTIONS gets a real preflight decision,
-// mutating routes are origin/content-type checked before dispatch (guard.ts),
+// guarded routes are origin/content-type checked before dispatch (guard/),
 // and their responses are re-headered so the wildcard ACAO the handlers spread
 // never reaches the wire. Read/SSE routes are unchanged.
 export function handleChatRequest(req: Request, pathname: string): Response | Promise<Response | null> | null {
