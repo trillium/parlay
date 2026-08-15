@@ -1,6 +1,7 @@
 import { connect } from "node:net"
 import { readFileSync, statSync, appendFileSync } from "node:fs"
 import { join } from "node:path"
+import { userInfo } from "node:os"
 import { CORS } from "./sse"
 
 // ── Pronunciation substitutions ─────────────────────────────────────────────
@@ -87,7 +88,20 @@ function diskPut(key: string, wav: Uint8Array): void {
 // daemon reuses its kokoro cache + voice pool; caller is pinned to "parlay"
 // so the panel keeps one consistent voice.
 
-const SOCKET_PATH = `/tmp/speak-${process.env.USER ?? "trilliumsmith"}.sock`
+// The daemon names its socket after the account it runs as. $USER is not set
+// under launchd — where this server actually runs — so fall through $LOGNAME and
+// then the process's own uid rather than a placeholder: a placeholder resolves to
+// a socket nothing is listening on, which reads as "audio is broken", not as
+// "the account could not be determined". userInfo() throws on a uid with no
+// passwd entry, so a failure here degrades the same way an unset account does
+// instead of taking the module down at import time.
+function currentAccount(): string {
+  const fromEnv = process.env.USER || process.env.LOGNAME
+  if (fromEnv) return fromEnv
+  try { return userInfo().username } catch { return "" }
+}
+
+const SOCKET_PATH = `/tmp/speak-${currentAccount()}.sock`
 const SYNTH_TIMEOUT_MS = 30_000
 
 // Small in-memory clip cache — chat replies repeat rarely, but replays are free
