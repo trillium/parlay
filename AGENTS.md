@@ -68,10 +68,10 @@ device is unguarded until you add it to that set — and if its callers do not
 send a JSON content type, adding it breaks them. Test with
 `packages/server/src/guard/{paths,origin,allow,reject}.test.ts` (pure, no side
 effects — `guard/origin.ts` and `guard/paths.ts` deliberately import nothing)
-and `guard/integration-{attack,callers}.test.ts` (each spawns a real server via
-`guard/scratch-server.ts` on a port reserved by binding `:0`, with
-`HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`/`PARLAY_STATE_HOME` redirected to a temp
-dir).
+and `guard/integration-{attack,callers,origin-branches}.test.ts` (each spawns
+a real server via `guard/scratch-server.ts` on a port reserved by binding
+`:0`, with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`/`PARLAY_STATE_HOME` redirected
+to a temp dir).
 
 **The route SET is the part that rots, not the mechanism.** An end-to-end
 verification (task-6ai1, defects D9/D7) found the guard working exactly as

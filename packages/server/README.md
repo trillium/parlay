@@ -59,11 +59,17 @@ never inline in the module that uses them.
 ## Tests
 
 ```sh
-cd packages/server && bun test    # 44 tests across link-rewrite + prune + paths
+cd packages/server && bun test    # link-rewrite, prune, paths, router-poll, guard
 ```
 
 Run from inside this package (there is no root `bunfig.toml`; see the repo
 `AGENTS.md`).
+
+`src/guard/*.test.ts` is the origin-guard suite: the `paths`/`origin`/`allow`/
+`reject` files are pure, while each `integration-*.test.ts` file spawns a real
+server (`src/guard/scratch-server.ts`) on a port reserved by binding `:0`,
+with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`/`PARLAY_STATE_HOME` redirected to a
+temp dir — nothing under `~/exchange` or `~/.parlay` is touched.
 
 ## Relationship to Pulse
 

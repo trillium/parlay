@@ -615,13 +615,16 @@ Full verb semantics are out of scope for this doc — see
 
 ## Open Gaps
 
-1. **Server source is unreadable.** Every handler behind these routes lives
-   under `packages/server/src/`, a broken symlink loop into
-   `~/.claude/PAI/PULSE/modules/chat` as of 2026-08-01 (see project
-   `CLAUDE.md`). Every response shape in this doc except `debug-log.ts`'s is
-   reverse-engineered from what the calling code reads off the response, not
-   read from the handler. Fields a handler sets but no client happens to read
-   are invisible to this document by construction.
+1. **Response shapes here are client-derived, not read from the handlers.**
+   When this doc was written `packages/server/src/` was a broken symlink loop
+   into `~/.claude/PAI/PULSE/modules/chat`, so every response shape except
+   `debug-log.ts`'s was reverse-engineered from what the calling code reads
+   off the response; fields a handler sets but no client happens to read are
+   invisible to it by construction. The loop is fixed — `src/` holds real
+   files again (see the project `AGENTS.md`) — so the shapes below are now
+   checkable against the handlers, but they have not been re-derived from
+   them. Treat a section as client-derived unless it says otherwise;
+   § Origin guard is read from the handlers and the guard packages.
 
 2. **Inconsistent error convention across endpoints.** `register-agent`,
    `reply`, `send`, and `alert` are all consumed via an `{ error?: string }`
@@ -655,8 +658,11 @@ Full verb semantics are out of scope for this doc — see
    site.
 
 8. **Auth/exposure.** No endpoint in this surface performs any
-   authentication. `debug-log.ts`'s comment ("local/tailnet only — do not
-   expose this port publicly") is the only explicit statement of the trust
-   model found anywhere in the codebase; whether it holds for the *whole*
-   `/api/chat` surface (not just debug-log) is an assumption, not a verified
-   invariant.
+   authentication, on either server, and that is deliberate — `debug-log.ts`'s
+   comment ("local/tailnet only — do not expose this port publicly") states
+   the trust model the whole surface assumes. The one part of it that is now
+   enforced rather than assumed is the cross-origin half: see § Origin guard
+   above, and `packages/server/src/guard/` /
+   `packages/go-server/internal/guard` for the policy and its tests. Nothing
+   else about the trust model is verified — a caller that reaches the port at
+   all, with no `Origin` header, is still trusted everywhere.
