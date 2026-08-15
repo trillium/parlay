@@ -239,10 +239,13 @@ jobs:
         working-directory: tools/split-test
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
-  # Only the seven harnesses that were verified to be genuinely side-effect-free
-  # are here. Each was trial-run against a redirected HOME with the live
-  # ~/.parlay/agents and ~/.treehouse snapshotted before and after; all seven
-  # produced zero drift in either. The three excluded harnesses are named in
+  # Only the eight harnesses that were verified to be genuinely side-effect-free
+  # are here. Seven were trial-run against a redirected HOME with the live
+  # ~/.parlay/agents and ~/.treehouse snapshotted before and after, producing
+  # zero drift in either. tools/hooks/hooks.test.sh meets the same bar: it
+  # redirects HOME into its own mktemp scratch dir, stubs bun on PATH so no real
+  # build can run, needs only git and bash, and names neither ~/.parlay nor
+  # ~/.treehouse at all. The three excluded harnesses are named in
   # the "not covered" list in the PR description and in AGENTS.md:
   #
   #   tools/monitor/parlay-monitor.test.sh   — enrols over a relay control
@@ -296,7 +299,8 @@ jobs:
                    bin/parlay-spawn.batch.test.sh \
                    bin/parlay-spawn.worktree.test.sh \
                    bin/parlay-treehouse-guard.test.sh \
-                   tools/mechanic-dispatch/mechanic-dispatch.test.sh; do
+                   tools/mechanic-dispatch/mechanic-dispatch.test.sh \
+                   tools/hooks/hooks.test.sh; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"

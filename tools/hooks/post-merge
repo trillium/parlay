@@ -5,13 +5,14 @@
 # Same guards as post-commit; see that file for the full pipeline map.
 set -uo pipefail  # NOT -e: a delivery failure must never read as a commit
                   # failure. The one deliberate non-zero exit is an unresolvable
-                  # primary checkout below; a build/delivery failure exits 0.
+                  # primary checkout below on a clone that OPTED IN; a
+                  # build/delivery failure exits 0.
 
 # Same per-CLONE opt-in as post-commit: one setting in the shared .git/config
 # covers every linked worktree of the clone, and does not by itself decide where
-# delivery happens. See that file for the rationale.
-#   git config --bool parlay.autobuild true
-[[ "$(git config --bool --get parlay.autobuild 2>/dev/null || true)" == "true" ]] || exit 0
+# delivery happens. Read here, acted on below once this merge is known to be one
+# that would otherwise have delivered. See that file for the rationale.
+AUTOBUILD="$(git config --bool --get parlay.autobuild 2>/dev/null || true)"
 
 # Same primary-checkout derivation (and refusal to resolve an empty or unreadable
 # path, which bash 3.2 would otherwise turn into the hook's cwd) as post-commit;
@@ -25,6 +26,9 @@ else
   MAIN_CHECKOUT="$(resolve_dir "${COMMON_DIR%/.git}")" || MAIN_CHECKOUT=""
 fi
 if [[ -z "$MAIN_CHECKOUT" ]]; then
+  # Opted out, this clone was never going to deliver — say nothing. Opted in,
+  # refuse rather than guess a delivery target. Same split as post-commit.
+  [[ "$AUTOBUILD" == "true" ]] || exit 0
   echo "[post-merge] refusing to deliver: cannot resolve the primary checkout — PARLAY_MAIN_CHECKOUT is unset or unreadable and 'git rev-parse --path-format=absolute --git-common-dir' returned nothing (git older than 2.31?)" >&2
   exit 1
 fi
@@ -41,8 +45,18 @@ fi
 CHANGED="$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null || true)"
 echo "$CHANGED" | grep -qE '^packages/client/(src|src-plugins)/|^packages/client/build\.ts' || exit 0
 
+# Same as post-commit: the opt-in is acted on only for a merge that would have
+# delivered, so an unrelated merge stays completely silent.
+if [[ "$AUTOBUILD" != "true" ]]; then
+  echo "[post-merge] delivery skipped — parlay.autobuild is not set for this clone."
+  echo "[post-merge] enable with: git config --bool parlay.autobuild true"
+  exit 0
+fi
+
+# Absolute fallback kept for hooks fired with a minimal PATH; see post-commit.
+BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
 echo "[post-merge] $(date +%FT%T) delivering $(git log -1 --format='%h %s' | head -c 80)" >> "$LOG"
-if ( cd "$MAIN_CHECKOUT/packages/client" && "$HOME/.bun/bin/bun" build.ts ) >> "$LOG" 2>&1; then
+if ( cd "$MAIN_CHECKOUT/packages/client" && "$BUN" build.ts ) >> "$LOG" 2>&1; then
   echo "[post-merge] delivered" >> "$LOG"
 else
   echo "[post-merge] DELIVERY FAILED — bundle unchanged; fix and run 'bun build.ts' in packages/client" >> "$LOG"

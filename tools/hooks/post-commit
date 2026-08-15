@@ -8,8 +8,9 @@
 # This hook closes the paths pre-commit misses: merges, PA_BUMP=none, --no-verify.
 set -uo pipefail  # NOT -e: a delivery failure must never read as a commit
                   # failure. The one deliberate non-zero exit is an unresolvable
-                  # primary checkout below, where guessing could deliver from the
-                  # wrong tree; a build/delivery failure still exits 0.
+                  # primary checkout below on a clone that OPTED IN, where guessing
+                  # could deliver from the wrong tree; a build/delivery failure
+                  # still exits 0.
 
 # Opt-in, per CLONE — this config lands in the shared .git/config every linked
 # worktree of the clone reads, so setting it once from any checkout enables them
@@ -19,8 +20,9 @@ set -uo pipefail  # NOT -e: a delivery failure must never read as a commit
 # machine that never asked for it. A git config rather than an env var: a hook
 # fires from IDEs, GUIs and cron-like contexts that never sourced a shell
 # profile, and `git config core.hooksPath` is already how these are activated.
-#   git config --bool parlay.autobuild true
-[[ "$(git config --bool --get parlay.autobuild 2>/dev/null || true)" == "true" ]] || exit 0
+# Read here, ACTED ON below — only once this commit is known to be one that would
+# otherwise have delivered, so an unrelated commit never says anything at all.
+AUTOBUILD="$(git config --bool --get parlay.autobuild 2>/dev/null || true)"
 
 # Deploy target = this repo's PRIMARY checkout, never a linked worktree. Derived
 # from git (`--git-common-dir` is shared by every worktree and lives inside the
@@ -38,6 +40,10 @@ else
   MAIN_CHECKOUT="$(resolve_dir "${COMMON_DIR%/.git}")" || MAIN_CHECKOUT=""
 fi
 if [[ -z "$MAIN_CHECKOUT" ]]; then
+  # A clone that never opted in was not going to deliver anyway, so an
+  # unresolvable checkout is not its problem — say nothing. Opted in, this is the
+  # one deliberate non-zero exit: refuse rather than guess a delivery target.
+  [[ "$AUTOBUILD" == "true" ]] || exit 0
   echo "[post-commit] refusing to deliver: cannot resolve the primary checkout — PARLAY_MAIN_CHECKOUT is unset or unreadable and 'git rev-parse --path-format=absolute --git-common-dir' returned nothing (git older than 2.31?)" >&2
   exit 1
 fi
@@ -61,8 +67,20 @@ fi
 
 echo "$CHANGED" | grep -qE '^packages/client/(src|src-plugins)/|^packages/client/build\.ts' || exit 0
 
+# This commit would have delivered, so the opt-in decides — and announces itself,
+# on stdout, exactly here: loud enough that a clone which never enabled delivery
+# knows why nothing was built, silent on every commit the feature never touched.
+if [[ "$AUTOBUILD" != "true" ]]; then
+  echo "[post-commit] delivery skipped — parlay.autobuild is not set for this clone."
+  echo "[post-commit] enable with: git config --bool parlay.autobuild true"
+  exit 0
+fi
+
+# Hooks fire from IDEs, GUIs and cron-like contexts with a minimal PATH, so keep
+# the absolute fallback for the common install location.
+BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
 echo "[post-commit] $(date +%FT%T) delivering $(git log -1 --format='%h %s' | head -c 80)" >> "$LOG"
-if ( cd "$MAIN_CHECKOUT/packages/client" && "$HOME/.bun/bin/bun" build.ts ) >> "$LOG" 2>&1; then
+if ( cd "$MAIN_CHECKOUT/packages/client" && "$BUN" build.ts ) >> "$LOG" 2>&1; then
   echo "[post-commit] delivered" >> "$LOG"
 else
   echo "[post-commit] DELIVERY FAILED — bundle unchanged; fix and run 'bun build.ts' in packages/client" >> "$LOG"
