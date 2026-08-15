@@ -1,5 +1,17 @@
 # Parlay CLI verbs + external-event triggers
 
+> **Reading this from outside?** §1 — how to author a `parlay <verb>` subcommand —
+> describes the **retired TypeScript CLI** under `packages/cli/src/`: its
+> dispatcher, flag parser, help table, and `bun test` step are all the TS
+> surface. The mechanics are sound as a shape, but `bin/parlay` now builds and
+> execs `tools/cli`'s Go binary for every verb except `lavish-import`, so a verb
+> registered the way §1 describes is never reached — read `tools/cli` for the
+> live surface. §2's event-fabric design is
+> motivated by a concrete need in the author's agent fleet (a `robots`
+> bead store firing `mechanic-dispatch` — the wrapper is here, at
+> `tools/mechanic-dispatch/`, but the bead store behind it is not public), so
+> read §2 for the design shape rather than as something you can run.
+
 > **Purpose:** two references needed to build a `robots bead created → run
 > ~/.local/bin/mechanic-dispatch <ticket-id>` trigger, parlay-native.
 > (1) how to author a `parlay <verb>` subcommand; (2) whether parlay has an
