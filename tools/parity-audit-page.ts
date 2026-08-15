@@ -13,6 +13,7 @@ const data = JSON.parse(raw) as {
   rows: Array<{ cap: string; fm: string; parlay: string; verdict: string; built?: boolean; fix?: string; note?: string }>
   problems: string[]
   notEvaluated?: Array<{ cap: string; fm: string; verdict: string; note?: string }>
+  docDerived?: string[]
 }
 
 const VERDICT_META: Record<string, { label: string; cls: string; blurb: string }> = {
@@ -110,13 +111,23 @@ const contractionSection = missing + openBlockers.length
 
 // A dated manual check the auditor ran by hand, so it is reported inside the NOT
 // EVALUATED block and never promoted into the verdict, the headline or any count —
-// it is not derived from this run. Rendered only when the unevaluated set is exactly
-// the two rows it names; any other set means it no longer describes what is here.
-const MANUALLY_CHECKED = ["Away-mode unattended sub-supervision", "Crew-dispatch profiles + quota-balanced"]
-const manualNote =
-  notEvaluated.length === MANUALLY_CHECKED.length && MANUALLY_CHECKED.every(c => notEvaluated.some(r => r.cap === c))
-    ? `<p class="manual"><b>Auditor's manual check, 2026-08-14</b> — not derived from this run and not in the counts: with a copy of the fold doc supplied out-of-band, both rows above did evaluate and neither came back MISSING (<b>Away-mode unattended sub-supervision</b> → COVERED-alternate, landed; <b>Crew-dispatch profiles + quota-balanced</b> → STAYS-FIRSTMATE).</p>`
-    : ""
+// it is not derived from this run. Which rows it can speak for comes from the
+// audit's own `docDerived` flag (the same source that decides what goes
+// unevaluated), not a second list of cap labels here: the note renders only when
+// the unevaluated set is exactly that flagged set AND every row in it has a
+// hand-checked verdict recorded below, so a new doc-derived row retires the note
+// rather than silently extending it to a row nobody checked.
+const MANUAL_VERDICTS: Record<string, string> = {
+  "Away-mode unattended sub-supervision": "COVERED-alternate, landed",
+  "Crew-dispatch profiles + quota-balanced": "STAYS-FIRSTMATE",
+}
+const docDerived = data.docDerived ?? []
+const manualCovers =
+  docDerived.length > 0 && notEvaluated.length === docDerived.length &&
+  docDerived.every(c => notEvaluated.some(r => r.cap === c) && MANUAL_VERDICTS[c])
+const manualNote = manualCovers
+  ? `<p class="manual"><b>Auditor's manual check, 2026-08-14</b> — a one-time snapshot taken by hand on that date, which this tool does not re-verify on later runs; not derived from this run and not in the counts: with a copy of the fold doc supplied out-of-band, ${docDerived.length === 1 ? "the row above did" : "the rows above did"} evaluate and none came back MISSING (${docDerived.map(c => `<b>${esc(c)}</b> → ${esc(MANUAL_VERDICTS[c]!)}`).join("; ")}).</p>`
+  : ""
 
 const notEvalSection = notEvaluated.length ? `
   <h2>Not evaluated — ${notEvaluated.length} of ${total} capabilities</h2>

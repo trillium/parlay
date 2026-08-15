@@ -1257,7 +1257,7 @@ contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
 all five modules), **bun** (tests for `packages/{input,client,server,cli}` and
 `tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
 dependencies — plus typecheck for `packages/input` and `tools/split-test`),
-**shell** (seven hermetic harnesses, preceded by a `jq`/`curl`/`git` presence
+**shell** (eight hermetic harnesses, preceded by a `jq`/`curl`/`git` presence
 check so a binary missing from the rolling runner image fails the step instead
 of letting a harness skip itself green), **hygiene** (conflict markers, 2 MiB
 tracked-file ceiling measured on the tracked *blob* via `git ls-tree -l`, never

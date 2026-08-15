@@ -16,9 +16,11 @@ packages/server/src/parlay-ui.js
 .worktrees/
 tools/cli/bin/
 
-# Compiled Go binaries `go build ./...` drops in each module root. ~28 MB of
-# these were committed once and still weigh on every clone; listed here so no
-# module's output can be re-added. (parlay-bin also has its own .gitignore.)
+# The remaining compiled Go binaries `go build ./...` drops in each module root.
+# ~28 MB of these were committed once and still weigh on every clone; the two
+# module outputs that were not yet covered are listed here so none can be
+# re-added. (packages/eval-engine/eval-engine and tools/relay/relay are already
+# ignored above; tools/parlay-bin also carries its own nested .gitignore, and the
+# entry here keeps every module's binary path visible in this one file.)
 tools/cli/cli
 tools/parlay-bin/parlay-bin
-tools/relay/relay

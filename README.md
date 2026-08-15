@@ -216,13 +216,18 @@ Repo conventions worth knowing:
 
   That setting lands in the clone's shared `.git/config`, so **one `git config`
   covers every linked worktree of that clone** — it does not matter which
-  checkout you run it from, and you never run it per worktree.
+  checkout you run it from, and you never run it per worktree. Opted out, the
+  skip is not silent: on a commit that would otherwise have delivered, the hook
+  prints one line saying delivery was skipped and one giving the command above.
 
   Enabling is not delivering — two different things. Opted in, the hooks still
   deliver only from the repo's primary checkout; a commit in a linked worktree
   logs a skip and delivers nothing. Set `PARLAY_MAIN_CHECKOUT` to point them at
   a different tree. To drop all the hooks including `pre-commit`:
-  `git config --unset core.hooksPath`.
+  `git config --unset core.hooksPath` — but note that escape hatch is not
+  durable, because the `prepare` script above re-runs `git config
+  core.hooksPath tools/hooks` on the next `bun install` and silently puts them
+  back.
 - **250-line file limit** (pre-commit) — split a module into a subfolder + barrel
   index past the limit.
 - **Two version axes** — the repo release `vX.Y.Z` git tag and the panel build

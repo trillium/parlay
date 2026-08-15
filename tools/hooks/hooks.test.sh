@@ -12,8 +12,9 @@
 # The real delivery path is never reached. packages/client/build.ts POSTs to a
 # live Pulse server on 127.0.0.1:31337 and force-reloads whatever panels are
 # connected, so three independent barriers keep it out of this harness:
-#   1. $HOME is redirected into the scratch dir, so the hooks' hardcoded
-#      "$HOME/.bun/bin/bun" cannot resolve the machine's real bun.
+#   1. $HOME is redirected into the scratch dir AND "$HOME/.bun/bin" is prepended
+#      to PATH, so BOTH arms of the hooks' `command -v bun || $HOME/.bun/bin/bun`
+#      resolution land on the scratch dir, never the machine's real bun.
 #   2. That path holds a stub recording "<cwd>|<argv>" and exiting 0 — which is
 #      also how "did the hook reach delivery?" is asserted positively.
 #   3. The scratch repo has packages/client/src/ but no build.ts at all, so even
@@ -22,9 +23,9 @@
 # what the hook actually wrote to (or refused to create on) disk.
 #
 # WHAT A GREEN RUN DOES AND DOES NOT CERTIFY. It certifies the hooks' own control
-# flow — the opt-in gate, primary-checkout resolution, the refusal, and what gets
-# logged — against a stub bun in a redirected $HOME. It is NOT evidence that the
-# delivery works: the real build and the POST to the live Pulse server never
+# flow — the announced opt-in skip, primary-checkout resolution, the refusal, and
+# what gets logged — against a stub bun in a redirected $HOME. It is NOT evidence
+# that the delivery works: the real build and the POST to the live Pulse server never
 # execute here, so nothing in this file has ever observed a panel receive a bundle.
 
 set -uo pipefail
@@ -43,7 +44,7 @@ ok() { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad() { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 — want [$3], got [$2]"; fi; }
 has_line() { if grep -q "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1 — no /$2/ in $3"; fi; }
-no_path() { if [[ -e "$2" ]]; then bad "$1 — $2 exists"; else ok "$1"; fi; }
+no_line() { if grep -q "$2" "$3" 2>/dev/null; then bad "$1 — /$2/ found in $3"; else ok "$1"; fi; }
 
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/parlay-hooks-test.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$SCRATCH"' EXIT
@@ -61,6 +62,20 @@ echo "$PWD|$*" >> "$HOME/bun-calls.log"
 exit 0
 STUB
 chmod +x "$HOME/.bun/bin/bun"
+# Barrier 1: the hooks prefer a bun on PATH and fall back to $HOME/.bun/bin/bun,
+# so the stub has to win BOTH arms or a real bun could reach the real build.ts.
+export PATH="$HOME/.bun/bin:$PATH"
+
+# A git whose --git-common-dir probe answers nothing, used by the two cases that
+# exercise an unresolvable primary checkout (1c opted out, 4 opted in). Prepended
+# to PATH only inside those cases.
+mkdir -p "$SCRATCH/bin"
+cat > "$SCRATCH/bin/git" <<STUB
+#!/bin/bash
+for a in "\$@"; do [[ "\$a" == "--git-common-dir" ]] && exit 0; done
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$SCRATCH/bin/git"
 
 LOG_DIR="$HOME/Library/Logs/parlay"
 LOG="$LOG_DIR/bundle-rebuild.out.log"
@@ -84,17 +99,65 @@ git -C "$MAIN" commit -qm seed
 
 echo "hooks regression harness — $(/bin/bash --version | head -1)"
 
-# ---- 1. opted out: silent, exits 0, creates nothing ------------------------
-echo "1. opted out (no parlay.autobuild)"
+# ---- 1a. opted out, a commit that WOULD have delivered: announces the skip ---
+# The gate sits AFTER the worktree guard and the changed-paths test, so it only
+# ever speaks for a commit that delivery would otherwise have acted on. That is
+# the whole point of the announcement: a contributor whose clone silently stopped
+# rebuilding the panel gets told, in full, how to turn it on.
+echo "1a. opted out, a change delivery would have acted on"
+git -C "$MAIN" checkout -q -b optout-src
+echo 'export const z = 26' > "$MAIN/packages/client/src/z.ts"
+git -C "$MAIN" add -A --force
+git -C "$MAIN" commit -qm "client change on branch"
+git -C "$MAIN" checkout -q main
+git -C "$MAIN" merge -q --no-ff -m "merge optout-src" optout-src
 for hook in "$POST_COMMIT" "$POST_MERGE"; do
   name="$(basename "$hook")"
   run_hook "$hook" "$MAIN"
   eq "$name exits 0" "$RC" "0"
-  eq "$name writes no stdout" "$(cat "$SCRATCH/out")" ""
   eq "$name writes no stderr" "$(cat "$SCRATCH/err")" ""
+  has_line "$name announces the skip on stdout" "delivery skipped" "$SCRATCH/out"
+  has_line "$name prints the whole enable command" "git config --bool parlay.autobuild true" "$SCRATCH/out"
 done
-no_path "opted out creates no log directory" "$LOG_DIR"
 eq "opted out never invokes the build" "$(bun_calls)" "0"
+no_line "opted out logs no delivery" "deliver" "$LOG"
+
+# ---- 1b. opted out, an irrelevant commit: completely silent -----------------
+# The announcement must not become noise on every commit in the repo, so a change
+# outside the panel's build inputs says nothing at all on either stream.
+echo "1b. opted out, a change delivery would have ignored"
+git -C "$MAIN" checkout -q -b optout-docs
+echo doc >> "$MAIN/README.md"
+git -C "$MAIN" add -A --force
+git -C "$MAIN" commit -qm "docs only"
+git -C "$MAIN" checkout -q main
+git -C "$MAIN" merge -q --no-ff -m "merge optout-docs" optout-docs
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  run_hook "$hook" "$MAIN"
+  eq "$name exits 0 on an irrelevant change" "$RC" "0"
+  eq "$name writes no stdout on an irrelevant change" "$(cat "$SCRATCH/out")" ""
+  eq "$name writes no stderr on an irrelevant change" "$(cat "$SCRATCH/err")" ""
+done
+eq "an irrelevant change never invokes the build" "$(bun_calls)" "0"
+
+# ---- 1c. opted out + unresolvable primary checkout: silent, exits 0 ---------
+# Case 4 proves an opted-IN clone refuses loudly here. A clone that never asked
+# for delivery must not inherit that failure: it exits 0 saying nothing, so the
+# feature it declined can never break its commits.
+echo "1c. opted out, unresolvable primary checkout"
+before="$(bun_calls)"
+before_log="$(log_lines)"
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  ( cd "$MAIN" && PATH="$SCRATCH/bin:$PATH" /bin/bash "$hook" ) > "$SCRATCH/out" 2> "$SCRATCH/err"
+  RC=$?
+  eq "$name exits 0 when opted out and the checkout is unresolvable" "$RC" "0"
+  eq "$name writes no stdout when opted out and unresolvable" "$(cat "$SCRATCH/out")" ""
+  eq "$name writes no stderr when opted out and unresolvable" "$(cat "$SCRATCH/err")" ""
+done
+eq "opted out + unresolvable never delivers" "$(bun_calls)" "$before"
+eq "opted out + unresolvable logs nothing" "$(log_lines)" "$before_log"
 
 # ---- 2. opted in, primary checkout: proceeds past the guard ---------------
 echo "2. opted in, primary checkout"
@@ -141,13 +204,6 @@ eq "a linked worktree never delivers" "$(bun_calls)" "$before"
 # Under bash 3.2 an empty path handed to `cd` succeeds, so a hook that resolved
 # it would silently deliver from whatever tree is committing.
 echo "4. unresolvable primary checkout"
-mkdir -p "$SCRATCH/bin"
-cat > "$SCRATCH/bin/git" <<STUB
-#!/bin/bash
-for a in "\$@"; do [[ "\$a" == "--git-common-dir" ]] && exit 0; done
-exec "$REAL_GIT" "\$@"
-STUB
-chmod +x "$SCRATCH/bin/git"
 before="$(bun_calls)"
 before_log="$(log_lines)"
 for hook in "$POST_COMMIT" "$POST_MERGE"; do
