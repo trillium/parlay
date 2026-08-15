@@ -76,7 +76,7 @@ echo "$CHANGED" | grep -qE '^packages/client/(src|src-plugins)/|^packages/client
 # on stdout, exactly here: loud enough that a clone which never enabled delivery
 # knows why nothing was built, silent on every commit the feature never touched.
 if [[ "$AUTOBUILD" != "true" ]]; then
-  echo "[post-commit] delivery skipped — parlay.autobuild is not set for this clone."
+  echo "[post-commit] delivery skipped — parlay.autobuild is not enabled for this clone."
   echo "[post-commit] enable with: git config --bool parlay.autobuild true"
   exit 0
 fi

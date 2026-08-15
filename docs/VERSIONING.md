@@ -78,7 +78,9 @@ no-op. This replaces the manual per-change tagging in the merge-gate policy.
 
 To make tagging fire automatically on any `main` advance without the gate
 remembering, add this line to the **main checkout's** `tools/hooks/post-merge`
-(after the bundle-delivery block; it is already guarded to the main checkout):
+(after the bundle-delivery block; it is already guarded to the main checkout, and
+pasted there it also inherits the delivery opt-in, so it only fires on a clone where
+`git config --bool parlay.autobuild true` has been set):
 
 ```sh
 # Auto-tag the semver bump for this merge (task-prk). Best-effort; never fails the merge.

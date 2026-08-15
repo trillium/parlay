@@ -53,7 +53,7 @@ echo "$CHANGED" | grep -qE '^packages/client/(src|src-plugins)/|^packages/client
 # Same as post-commit: the opt-in is acted on only for a merge that would have
 # delivered, so an unrelated merge stays completely silent.
 if [[ "$AUTOBUILD" != "true" ]]; then
-  echo "[post-merge] delivery skipped — parlay.autobuild is not set for this clone."
+  echo "[post-merge] delivery skipped — parlay.autobuild is not enabled for this clone."
   echo "[post-merge] enable with: git config --bool parlay.autobuild true"
   exit 0
 fi
