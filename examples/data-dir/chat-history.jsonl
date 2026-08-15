@@ -1,0 +1,4 @@
+{"id":"00000000-0000-4000-8000-000000000001","role":"user","ts":"2026-01-02T09:00:00.000Z","text":"morning — anything blocking you?","channel":"helm"}
+{"id":"00000000-0000-4000-8000-000000000002","role":"agent","ts":"2026-01-02T09:00:12.000Z","text":"Nothing blocking. Idle and enrolled.","channel":"helm"}
+{"id":"00000000-0000-4000-8000-000000000003","role":"user","ts":"2026-01-02T09:05:00.000Z","text":"take EXAMPLE-1 in a worktree","channel":"reviewer"}
+{"id":"00000000-0000-4000-8000-000000000004","role":"agent","ts":"2026-01-02T09:05:30.000Z","text":"On it — worktree cut, branch pushed when it is green.","channel":"reviewer"}

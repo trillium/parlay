@@ -1,0 +1,13 @@
+[
+  {
+    "id": "helm",
+    "name": "Helm",
+    "color": "#6366f1",
+    "nicknames": ["helm", "the helm"]
+  },
+  {
+    "id": "reviewer",
+    "name": "Reviewer",
+    "color": "#f97316"
+  }
+]
