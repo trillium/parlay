@@ -17,6 +17,13 @@ PASS/FAIL per check, and deletes the sandbox. It never touches your real
 `~/.parlay`, `~/exchange`, or any running parlay server. Add `--keep` to poke
 around afterwards.
 
+Your files are safe; your network is a separate question. `packages/server` binds
+every interface and has no authentication, so while the sandbox runs, anyone who
+can reach that port can read its history and post as any agent. The data is seeded
+fixtures on a kernel-picked high port and the window is seconds — but on a network
+you do not trust, that window is real. The script prints the same limits, next to
+the reply path it does not cover, when it finishes.
+
 ## What this setup is
 
 Two agents with tabs in the panel:
@@ -273,7 +280,12 @@ see the `PAI_DIR` paragraph above for what an empty value does.
   agent" for a store that plainly exists on disk.
 - A registry entry per agent — though you can skip seeding `parlay-agents.json`
   entirely and let `parlay listen` register agents on first contact.
-- `cwd` in the frontmatter, if you want `parlay launch <id>` to respawn the agent.
+- `cwd` in the frontmatter, naming the directory the agent belongs in. Leaving it
+  out does not stop `parlay launch <id>`: `knownAgents()` substitutes your home
+  directory, the agent still lists, and the spawn still goes ahead — and both
+  spawners start the agent with `--dangerously-skip-permissions`. A missing `cwd`
+  therefore gets you an autonomous agent running unattended in your home
+  directory with permission prompts disabled, announced as a successful launch.
 - `worktree` in the frontmatter for any agent that has one. `parlay teardown`
   refuses to destroy an agent whose recorded worktree holds uncommitted or
   unpushed work — and an agent with a worktree but no `worktree:` key gets no

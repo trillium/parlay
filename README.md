@@ -183,7 +183,8 @@ Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …).
 
 [`examples/`](examples/) is a complete two-agent setup — every file a configured
 parlay actually needs, with notes on what to change. `examples/bootstrap-sandbox.sh`
-instantiates it in a throwaway sandbox and exercises it, touching nothing of yours.
+instantiates it in a throwaway sandbox and exercises it, leaving your own files and
+your running server alone — read its limits in [`examples/`](examples/) before you run it.
 
 ## Development
 

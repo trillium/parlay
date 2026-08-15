@@ -66,7 +66,7 @@ Written by `parlay identity --register …`, read back by `parlay launch <id>`,
 | `name` | for launch + a tab | Display name. |
 | `color` | for launch + a tab | Tab colour. |
 | `model` | no | Model `parlay launch <id>` respawns with. |
-| `cwd` | for launch | **Change this** — the directory the agent is launched in. |
+| `cwd` | in practice, yes | **Change this** — the directory the agent is launched in. Omitting it does not block a launch; it silently redirects one. |
 | `kind` | no | Free-form: `task`, `service`, … Recorded, not interpreted by the CLI. |
 | `task` | no | Ticket id this agent is bound to. |
 | `worktree` | for teardown | Git worktree to remove on teardown. |
@@ -78,6 +78,13 @@ Written by `parlay identity --register …`, read back by `parlay launch <id>`,
 frontmatter is missing `id`, `name`, or `color`, so an agent lacking one of
 them is absent from a bare `parlay launch` listing and `parlay launch <id>`
 exits 2 with "no known agent".
+
+`cwd` is not enforced, and that is the trap. `knownAgents()` substitutes your home
+directory when the key is missing, so the store still lists and `parlay launch
+<id>` still spawns — and both spawners start the agent with
+`--dangerously-skip-permissions`. A missing `cwd` therefore gets you an autonomous
+agent running unattended in your home directory with permission prompts disabled,
+announced as a successful launch.
 
 `worktree` is load-bearing for safety, not cosmetic: `parlay teardown` refuses to
 destroy an agent whose recorded worktree has uncommitted or unpushed work. An agent

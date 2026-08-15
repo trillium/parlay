@@ -177,22 +177,27 @@ cat "$SANDBOX/doctor.log"
 # ── 5. Assert ────────────────────────────────────────────────────────────────
 say "checks"
 fail=0
-check() { if [ "$2" = "ok" ]; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
+run_check() {
+  local label=$1; shift
+  if "$@"; then echo "  PASS  $label"; else echo "  FAIL  $label"; fail=1; fi
+}
 
 registry_served_both_agents() {
   local out; out="$(parlay agents)" || return 1
   printf '%s\n' "$out" | grep -q '^helm ' || return 1
   printf '%s\n' "$out" | grep -q '^reviewer ' || return 1
 }
-registry_served_both_agents &&
-  check "registry served the seeded agents" ok || check "registry served the seeded agents" no
-parlay history 5 --full | grep -q "hello from bootstrap-sandbox.sh" &&
-  check "message round-tripped through the server" ok || check "message round-tripped through the server" no
-grep -q "hello from bootstrap-sandbox.sh" "$SANDBOX/data/chat-history.jsonl" &&
-  check "message persisted to \$PARLAY_DATA_DIR/chat-history.jsonl" ok ||
-  check "message persisted to \$PARLAY_DATA_DIR/chat-history.jsonl" no
-parlay remote | grep -q "source: config" &&
-  check "server URL resolved from config.json" ok || check "server URL resolved from config.json" no
+run_check "registry served the seeded agents" registry_served_both_agents
+
+message_round_tripped() { parlay history 5 --full | grep -q "hello from bootstrap-sandbox.sh"; }
+run_check "message round-tripped through the server" message_round_tripped
+
+message_persisted() { grep -q "hello from bootstrap-sandbox.sh" "$SANDBOX/data/chat-history.jsonl"; }
+run_check "message persisted to \$PARLAY_DATA_DIR/chat-history.jsonl" message_persisted
+
+remote_resolved_from_config() { parlay remote | grep -q "source: config"; }
+run_check "server URL resolved from config.json" remote_resolved_from_config
+
 # Both halves, so a strip regression fails in either direction: the body prose
 # must survive, and no line of the launch-spec frontmatter (its `---` fences or
 # its keys) may reach the agent.
@@ -203,16 +208,14 @@ identity_body_without_frontmatter() {
   if printf '%s\n' "$out" | grep -q '^id: helm'; then return 1; fi
   return 0
 }
-identity_body_without_frontmatter &&
-  check "identity.md read back with frontmatter stripped" ok || check "identity.md read back with frontmatter stripped" no
+run_check "identity.md read back with frontmatter stripped" identity_body_without_frontmatter
+
 launch_specs_for_both() {
   local out; out="$(parlay launch)" || return 1
   printf '%s\n' "$out" | grep -q '^[[:space:]]*helm .*\[live\]' || return 1
   printf '%s\n' "$out" | grep -q '^[[:space:]]*reviewer .*\[live\]' || return 1
 }
-launch_specs_for_both &&
-  check "launch spec discovered for both agents, both reported live" ok ||
-  check "launch spec discovered for both agents, both reported live" no
+run_check "launch spec discovered for both agents, both reported live" launch_specs_for_both
 
 # The four seeded chat-history.jsonl lines are loaded by the server and served
 # back on the channel each one names — two on helm, two on reviewer. `--full`
@@ -223,17 +226,14 @@ seeded_history_on_both_channels() {
   printf '%s' "$out" | grep -q 'id=00000000-0000-4000-8000-000000000001 channel=helm' || return 1
   printf '%s' "$out" | grep -q 'id=00000000-0000-4000-8000-000000000003 channel=reviewer' || return 1
 }
-seeded_history_on_both_channels &&
-  check "seeded history served on both channels" ok || check "seeded history served on both channels" no
+run_check "seeded history served on both channels" seeded_history_on_both_channels
 
 doctor_passes_core_checks() {
   grep -q '^PASS .*identity\.md ok' "$SANDBOX/doctor.log" || return 1
   grep -q '^PASS .*registered as "helm"' "$SANDBOX/doctor.log" || return 1
   grep -q '^PASS .*server reachable' "$SANDBOX/doctor.log" || return 1
 }
-doctor_passes_core_checks &&
-  check "doctor PASSes identity, registry membership, reachability" ok ||
-  check "doctor PASSes identity, registry membership, reachability" no
+run_check "doctor PASSes identity, registry membership, reachability" doctor_passes_core_checks
 
 # The server's persisted WRITES must land in $PARLAY_DATA_DIR and nowhere else.
 # Both halves have to prove a write: the example's own files are copied into
@@ -257,18 +257,26 @@ persisted_only_in_data_dir() {
   done
   return 0
 }
-persisted_only_in_data_dir &&
-  check "server persisted only into \$PARLAY_DATA_DIR" ok || check "server persisted only into \$PARLAY_DATA_DIR" no
+run_check "server persisted only into \$PARLAY_DATA_DIR" persisted_only_in_data_dir
 
 cat <<'EOF'
 
-  UNCOVERED  Every message above is sent with `parlay send` (POST /api/chat/send).
-             The --agent reply path (POST /api/chat/reply) is not exercised by
-             this script, and no check here says anything about it: that path
-             resolves ~/.parlay/agents/<id>/context.json from the SERVER
-             process's own $HOME, so `parlay say --agent <id>` can succeed while
-             the message is filed on the global thread instead of that agent's
-             tab. See "The layout" in examples/README.md.
+  LIMITS of this run — what the PASSes above do not say:
+
+  UNCOVERED  The --agent reply path. Every message above is sent with `parlay
+             send` (POST /api/chat/send); POST /api/chat/reply is never called,
+             and no check here says anything about it. That path resolves
+             ~/.parlay/agents/<id>/context.json from the SERVER process's own
+             $HOME, so `parlay say --agent <id>` can succeed while the message
+             is filed on the global thread instead of that agent's tab. See
+             "The layout" in examples/README.md.
+
+  EXPOSED    While the server above was up it was bound to every interface with
+             no authentication, so anyone who could reach that port could read
+             this sandbox's history and post as any agent. Seeded fixtures, a
+             kernel-picked high port and a few seconds bound the damage — they
+             do not make the port private. On an untrusted network, treat that
+             window as real.
 EOF
 
 if [ "$fail" = "0" ]; then
