@@ -32,13 +32,13 @@ Files: tools/cli/internal/identity/mem.go, tools/cli/internal/commands/claim.go,
 ## 2026-08-04 — herdr contract gate for spawn and pipeline selftest
 
 Files: bin/herdr-contract, bin/parlay-spawn, bin/pipeline-selftest, .changeset/herdr-contract-gate.md
-## 2026-08-04 — `parlay-spawn` and `pipeline-selftest`
+## 2026-08-04 — `parlay-spawn` and `pipeline-selftest` (1)
 
 Files: bin/parlay-spawn, bin/pipeline-selftest
-## 2026-08-04 — `parlay-spawn` and `pipeline-selftest`
+## 2026-08-04 — `parlay-spawn` and `pipeline-selftest` (2)
 
 Files: bin/parlay-spawn, bin/pipeline-selftest
-## 2026-08-04 — `parlay-spawn` and `pipeline-selftest`
+## 2026-08-04 — `parlay-spawn` and `pipeline-selftest` (3)
 
 Files: bin/parlay-spawn, bin/pipeline-selftest
 ## 2026-08-04 — Handoff resolution in the Go and TypeScript CLIs
