@@ -28,7 +28,9 @@
 //      reach the handler at all.
 //
 // Read routes (history, agents, SSE events) are untouched and still
-// world-readable: out of scope here, see the PR body.
+// world-readable. /agents and /events are not inert reads — they are accepted
+// residue, named in ./paths.ts's guarded-route-set comment and tracked as
+// `identifier-disclosure-remains-on-sse`.
 //
 // ── Second pass (task-6ai1, defect D9 of the end-to-end verification) ────────
 // The guard itself was correct; the ROUTE SET was not. An end-to-end verifier

@@ -62,12 +62,26 @@
 //
 // # How a route gets into GuardedPaths
 //
-// THE RULE, the same one stated in packages/server/src/guard/paths.ts: a
-// route is guarded if it mutates server state or discloses an identifier,
-// REGARDLESS OF HTTP METHOD. The verb is not evidence — /subscribers and
-// /poll are both GETs and both guarded, the first because it hands out the
-// device uuid and every agent id, the second because polling registers the
-// channel.
+// THE RULE, the same one stated in packages/server/src/guard/paths.ts:
+// GuardedPaths is the mutating and identifier-aiming surface, and within it
+// membership is decided by what the handler DOES, REGARDLESS OF HTTP METHOD.
+// The verb is not evidence — /subscribers and /poll are both GETs and both
+// guarded, the first because it hands out the device uuid and every agent id,
+// the second because polling registers the channel.
+//
+// As on the TS side, that is a description of the boundary that exists, not a
+// claim that nothing outside it writes or discloses. TS carries two routes of
+// known, accepted, deliberately-unguarded residue (GET /api/chat/events,
+// which stores an attacker-supplied ?device= in its SSE client record and
+// streams tts_event frames carrying that uuid to every client, and GET
+// /api/chat/agents, which returns every registered agent id) — tracked there
+// as identifier-disclosure-remains-on-sse. This server's residue is smaller
+// for two reasons, neither of them a route-set decision: divergence 1 above
+// means its unguarded routes send no ACAO at all, so a foreign page's read
+// still executes but its body stays unreadable, and handleEvents accepts
+// ?device= without storing it (see internal/handlers/events.go). Neither is a
+// guarantee about what those handlers do — only about what a browser will
+// hand back — so classify a new read route here on its own behavior.
 //
 // Apply that rule to THIS server's handlers; do not copy the TS set. The two
 // implementations of a shared route can differ in what they touch, and

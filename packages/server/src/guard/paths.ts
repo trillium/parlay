@@ -8,9 +8,11 @@
 // Still applied to the UNGUARDED routes — the read/SSE surface (history,
 // agents, events, version, pages, plugins manifest) and GET
 // /api/chat/uploads/<name>, which serves content-addressed image bytes an
-// <img> tag must be able to load. It lives here rather than in sse.ts because
-// the CORS policy belongs with the code that decides who gets it. sse.ts
-// re-exports this name so existing importers keep their `from "./sse"` path.
+// <img> tag must be able to load. That surface is NOT purely read-only: see
+// the accepted residue named in the guarded-route-set rule below. It lives
+// here rather than in sse.ts because the CORS policy belongs with the code
+// that decides who gets it. sse.ts re-exports this name so existing importers
+// keep their `from "./sse"` path.
 export const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -18,13 +20,33 @@ export const CORS = {
 }
 
 // ── Guarded route set ───────────────────────────────────────────────────────
-// THE RULE: a route is guarded if it mutates server state or discloses an
-// identifier, REGARDLESS OF HTTP METHOD. "It is a GET" is not evidence of
-// anything — /poll is a GET that writes to the agent registry, and
-// /subscribers is a GET that hands out the ids the rest of the surface is
-// aimed with. Classify by what the handler does, never by the verb or by the
-// route's name. Only a handler that neither writes nor discloses — the
-// read/SSE surface — is left outside.
+// THE RULE, and the exact boundary it describes. This set is the MUTATING and
+// IDENTIFIER-AIMING surface: the routes that write server state, drive a
+// device, or hand out an identifier the rest of the surface can then be aimed
+// with. Within that surface, membership is decided by what the handler DOES,
+// REGARDLESS OF HTTP METHOD. "It is a GET" is not evidence of anything —
+// /poll is a GET that writes to the agent registry, and /subscribers is a GET
+// that hands out the ids the rest of the surface is aimed with. Classify by
+// reading the handler, never by the verb or by the route's name.
+//
+// That is a description of the boundary that exists, and it is narrower than
+// the words "anything that writes or discloses" would suggest. Two routes are
+// KNOWN, ACCEPTED, DELIBERATELY-UNGUARDED RESIDUE — accepted meaning somebody
+// looked and decided, not that nothing is exposed:
+//   - GET /api/chat/events writes `sseClients` from an attacker-supplied
+//     `?device=` (router-events.ts: sseClients.set(clientId, { …, device, ua,
+//     … })), and the tts_event frames its stream carries reach every connected
+//     client with that device uuid in them (router-tts-events.ts builds
+//     { …, device, ...body } and calls broadcastToClients("tts_event", msg)
+//     with no filtering), so a cross-origin EventSource can read it.
+//   - GET /api/chat/agents (the GET in router-messages.ts) returns every
+//     registered agent id under the wildcard CORS above — the same class of
+//     disclosure /subscribers was guarded for.
+// Both are tracked separately as `identifier-disclosure-remains-on-sse`;
+// guarding or redacting them was ruled out of this change's scope, not
+// overlooked. What keeps the residue from chaining into the D9 attack is that
+// every route that AIMS anything — eval, draft, device-cmd, navigate, reload,
+// poll, upload, subscribers — is in the set below.
 export const GUARDED_CHAT_PATHS = new Set([
   // Agent-turn injection and registry mutation (original set).
   "/api/chat/send",

@@ -13,6 +13,11 @@ describe("guarded route set", () => {
     ]) expect(isGuardedChatPath(p)).toBe(true)
   })
 
+  // ACCEPTED RESIDUE, TRACKED SEPARATELY. The DELETE alias is guarded; the GET
+  // is not, and it does disclose every registered agent id under the wildcard
+  // CORS — the same class of disclosure /subscribers was guarded for. Left
+  // outside deliberately, filed as `identifier-disclosure-remains-on-sse`; the
+  // assertion pins the boundary as it actually stands, not as safe.
   test("DELETE /api/chat/agents/:id is guarded but GET /api/chat/agents is not", () => {
     expect(isGuardedChatPath("/api/chat/agents/some-agent")).toBe(true)
     expect(isGuardedChatPath("/api/chat/agents")).toBe(false)
@@ -49,6 +54,8 @@ describe("guarded route set", () => {
     expect(isGuardedChatPath("/api/chat/poll")).toBe(true)
   })
 
+  // /events and /agents are ACCEPTED RESIDUE here too, not proven-inert reads
+  // — see the guarded-route-set comment in ./paths.ts.
   test("read and SSE routes stay unguarded", () => {
     for (const p of [
       "/api/chat/history", "/api/chat/events", "/api/chat/agents",

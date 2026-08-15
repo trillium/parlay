@@ -43,14 +43,16 @@
 
 ### Origin guard (both servers)
 
-Unauthenticated does **not** mean unrestricted: every route that mutates
-state, or that discloses an identifier (device uuid, agent id) a hostile page
-could then aim at a mutating route, sits behind an origin guard —
+Unauthenticated does **not** mean unrestricted: the mutating and
+identifier-aiming surface — the routes that write state, drive a device, or
+hand out an identifier (device uuid, agent id) a hostile page could then aim
+at a mutating route — sits behind an origin guard —
 `packages/server/src/guard/` (route set in `guard/paths.ts`) and
-`packages/go-server/internal/guard`. **A route is guarded by what its handler
-does, not by its HTTP method:** `GET /api/chat/subscribers` and `GET
-/api/chat/poll` are both guarded, the first because it discloses identifiers,
-the second because polling registers the channel. On those routes:
+`packages/go-server/internal/guard`. **Within that surface a route is guarded
+by what its handler does, not by its HTTP method:** `GET
+/api/chat/subscribers` and `GET /api/chat/poll` are both guarded, the first
+because it discloses identifiers, the second because polling registers the
+channel. On those routes:
 
 - A request with **no `Origin` header is allowed.** That is every CLI, curl,
   hook and server-to-server caller, and a browser cannot omit `Origin` on a
@@ -67,9 +69,32 @@ the second because polling registers the channel. On those routes:
 - Allowed responses carry the **exact** origin in
   `Access-Control-Allow-Origin` plus `Vary: Origin` — never `*`.
 
-Read-only routes (`history`, `agents`, `events`, `version`,
+The read/SSE routes (`history`, `agents`, `events`, `version`,
 `GET /api/chat/uploads/<name>`) are outside the guard and behave as documented
 below.
+
+That surface is not purely read-only, and the boundary above is narrower than
+"everything that writes or discloses". Two TS routes are **known, accepted,
+deliberately unguarded residue** — accepted meaning somebody looked and
+decided, not that nothing is exposed:
+
+- `GET /api/chat/events` writes `sseClients` from an attacker-supplied
+  `?device=` (`router-events.ts`), and the `tts_event` frames it streams carry
+  that device uuid to every connected client (`router-tts-events.ts`
+  broadcasts `{ …, device, ...body }` with no filtering), so a cross-origin
+  `EventSource` can read it.
+- `GET /api/chat/agents` (`router-messages.ts`) returns every registered agent
+  id under `Access-Control-Allow-Origin: *` — the same class of disclosure
+  `GET /api/chat/subscribers` was guarded for.
+
+Both are tracked separately as `identifier-disclosure-remains-on-sse`; they
+were ruled out of the guard's scope, not overlooked. What keeps the residue
+from chaining is that every route that *aims* anything (`eval`, `draft`,
+`device-cmd`, `navigate`, `reload`, `poll`, `upload`, `subscribers`) is
+guarded. The Go server does not expose it the same way: its unguarded routes
+send no `Access-Control-Allow-Origin` at all, so a foreign page's read still
+executes but its body stays unreadable, and its `/api/chat/events` accepts
+`?device=` without storing it.
 
 ---
 
