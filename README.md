@@ -84,9 +84,15 @@ parlay-spawn code-reviewer "Code Reviewer" "#c084fc" \
 ## Development
 
 ```sh
-bun test                     # run the suite
+cd packages/<pkg> && bun test        # run a package's suite from its own directory
 cd packages/client && bun build.ts   # build + deploy the panel bundle
 ```
+
+There is no root `bunfig.toml`, so `bun test` at the repo root does not load the
+happy-dom preload some packages need — always run a suite from inside its own
+package. CI (`.github/workflows/ci.yml`) runs on every pull request and on
+pushes to `main`, and does exactly that for the Go modules, the Bun packages,
+and the hermetic shell harnesses.
 
 Repo conventions worth knowing:
 
