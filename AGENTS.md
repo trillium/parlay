@@ -109,10 +109,14 @@ never a JSON content type); and `POST /api/chat/tts/validate-splits` (same
 shape — `await req.json()` in `tts-validate.ts`, a header-documented hand-run
 contract stating no content type, and zero callers anywhere in this repo, so
 the only callers are hand-typed `curl -d`, whose default is
-`application/x-www-form-urlencoded`). Every *other* guarded route has an
-in-repo caller that already sends `Content-Type: application/json`, which is
-why the gate costs it nothing — that caller evidence, not the handler shape,
-is what decides membership. All three stay inside the guarded set; the
+`application/x-www-form-urlencoded`). Caller evidence, not the handler shape,
+is what decides membership: most other guarded routes have an in-repo caller
+already sending `Content-Type: application/json`, so the gate costs them
+nothing. The same sweep escalated five routes and deliberately left them
+unexempt — `/api/chat/tts`, `/api/chat/system`, `/api/chat/clear`,
+`/api/chat/navigate`, `/api/chat/device-cmd` — so do not re-litigate them one
+gate at a time; the per-route reasons are in `guard/paths.ts` next to
+`JSON_EXEMPT_PATHS`. All three exempt routes stay inside the guarded set; the
 exemption drops one layer, not the boundary. `packages/go-server` has no
 `/api/chat/tts*` route at all, so only `/api/chat/upload` is exempt there.
 

@@ -162,6 +162,25 @@ const GUARDED_PREFIXES = ["/api/chat/agents/", "/api/chat/plugin/", "/api/debug/
 //     captain's input box — so the exemption is lower-risk here than on /rpc,
 //     where it was already accepted.
 //
+// Escalated by that same sweep and DELIBERATELY LEFT UNEXEMPT — recorded so
+// the next reader inherits the decision instead of re-litigating it one route
+// per gate: /api/chat/system, /api/chat/clear, /api/chat/navigate,
+// /api/chat/device-cmd and /api/chat/tts. All five read their body with
+// `await req.json()`, so they clear the first leg of the test and nothing
+// else.
+//   - /api/chat/tts fails the caller leg: packages/client/src-plugins/speak/
+//     cache.ts posts it with `Content-Type: application/json`, as do its tts
+//     siblings (pinned by "the tts siblings are NOT exempt" in ./paths.test.ts),
+//     so the gate costs it nothing.
+//   - The other four have no in-repo caller — the shape /rpc and
+//     /validate-splits were exempted on — but they were in the ORIGINAL guarded
+//     set (review-3y3 / task-qg00), so their out-of-repo callers have been held
+//     to this gate since it shipped with no breakage reported. There is no
+//     unmet caller to exempt them for, and each one AIMS something at the
+//     captain (a system line into the live thread, a history wipe, a panel
+//     navigation, a device command), which is exactly the class the
+//     content-type gate exists to keep out of no-preflight reach.
+//
 // For all three, the origin check alone is the defense, and it is sufficient:
 // a browser always sends Origin on a cross-origin request — on a multipart
 // form POST and on a simple-content-type POST alike — so a foreign page cannot
