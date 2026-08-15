@@ -144,8 +144,9 @@ const M: Row[] = [
   { cap: "Durable wake queue", fm: "fm-wake-drain + .wake-queue", parlay: "(rolls into Slice 3 supervise primitive)", verdict: "DEFERRED" },
   { cap: "Worktree-tangle runtime guard", fm: "fm-guard.sh", parlay: "parlay guard — tangle+liveness backstop, wired into variant lifecycle (C4)", verdict: "COVERED-alternate", built: probe.tangleGuardBuilt, note: "runtime banner + non-destructive restore + --beat liveness beacon; anchored on the variant worktree primitive" },
   { cap: "Turn-end guard hooks", fm: "fm-turnend-guard.sh", parlay: "deferred w/ harness primitive (§3.4)", verdict: "DEFERRED" },
-  // C2 (task-eg75): away-mode home is DERIVED from the fold doc, so removing §3.6.2
-  // reverts this row to MISSING and re-fails integrity — genuine re-verification.
+  // C2 (task-eg75): away-mode home is DERIVED from the fold doc, so a doc supplied via
+  // PARLAY_FOLD_DOC that has lost §3.6.2 reverts this row to MISSING and re-fails
+  // integrity — genuine re-verification. No doc at all is NOT EVALUATED, not MISSING.
   { cap: "Away-mode unattended sub-supervision", docDerived: "away-mode", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : foldDocAvailable ? "no home: not in Slice 3 scope, not clearly fm-retained" : "the §3.6.2 home for this capability was stated only in the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
   { cap: "Steer agent (captain→crewmate)", fm: "fm-send.sh", parlay: "parlay send/say --agent + monitor", verdict: "COVERED-same", built: probe.verb("send") && probe.verb("say") },
   { cap: "Peek pane for diagnosis", fm: "fm-peek.sh", parlay: "parlay history + herdr agent get", verdict: "COVERED-alternate", built: probe.verb("history") },

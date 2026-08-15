@@ -1195,8 +1195,8 @@ Same ticket, second half: `teardown --help` advertised "PR patch-id (if
 available) or merge-tree equality" and the TS source claimed "three
 strategies". No patch-id strategy has ever existed in either CLI —
 the fold design doc §3.7 (captain-private, not in this repo) describes the
-firstmate original, not what was folded. When porting a gate, port its test too; a gate with no test
-is indistinguishable from a gate that has never run.
+firstmate original, not what was folded. When porting a gate, port its test
+too; a gate with no test is indistinguishable from a gate that has never run.
 
 ## Every path that removes a worktree must go through `checkWorktreeGitSafety` (robots-cncx)
 
