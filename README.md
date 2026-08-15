@@ -156,11 +156,14 @@ to the internet.
 
 ## Layout
 
-A [Bun](https://bun.sh) workspace monorepo, plus several standalone Go modules:
+A [Bun](https://bun.sh) workspace monorepo, plus several standalone Go modules.
+This table is a newcomer's map of the parts you need first, not a complete index
+of every module in the repo:
 
 | Package | What it is |
 |---|---|
-| `packages/server` | The Bun server that owns `/api/chat/*`: chat history, SSE, long-poll, the per-agent relay, upload/link handling. Runs standalone on `:4242`. |
+| `packages/server` | The Bun server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling. Runs standalone on `:4242`. |
+| `tools/relay` | The standalone per-agent relay daemon — its own Go module, built by `tools/relay/build.sh`. Fans the server's `/api/chat/poll` feed out to enrolled agents; `parlay monitor`/`listen` need it unless you pass `--legacy-poll`. |
 | `packages/go-server` | An in-progress Go rewrite of the same HTTP/SSE surface. See [`docs/api-contract.md`](docs/api-contract.md). |
 | `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, and more. `bin/parlay` builds and execs this binary. |
@@ -178,16 +181,15 @@ cd tools/cli && go test ./...     # the Go CLI
 ```
 
 There is no root `bunfig.toml`, so `bun test` at the repo root does not load the
-happy-dom preload some packages need — always run a suite from inside its own
-package. CI (`.github/workflows/ci.yml`) runs on every pull request and on
-pushes to `main`, and does exactly that for the Go modules, the Bun packages,
-and the hermetic shell harnesses.
+happy-dom preload some packages need: DOM-touching suites fail there with
+`ReferenceError: document is not defined` even though they pass in-package —
+always run a suite from inside its own package. CI
+(`.github/workflows/ci.yml`) runs on every pull request and on pushes to
+`main`, and does exactly that for the Go modules, the Bun packages, and the
+hermetic shell harnesses.
 
 Repo conventions worth knowing:
 
-- **Run `bun test` from inside a package**, not the repo root. There is no root
-  `bunfig.toml`, so DOM-touching suites fail at the root with
-  `ReferenceError: document is not defined` even though they pass in-package.
 - **250-line file limit** (pre-commit) — split a module into a subfolder + barrel
   index past the limit.
 - **Two version axes** — the repo release `vX.Y.Z` git tag and the panel build
