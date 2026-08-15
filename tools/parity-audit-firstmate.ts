@@ -25,7 +25,6 @@
 import { existsSync, readFileSync } from "node:fs"
 import { execSync } from "node:child_process"
 
-const FM = process.env.FM_REPO ?? `${process.env.HOME}/code/firstmate`
 // Default to the checkout this tool lives in (repo root = tools/..) so the audit probes
 // its own source of truth — canonical run and worktree/CI alike. Override with PL_REPO.
 const PL = process.env.PL_REPO ?? `${import.meta.dir}/..`
@@ -36,7 +35,6 @@ const has = (p: string) => existsSync(p)
 // ---- live probes of the parlay CLI surface -------------------------------
 const spawnSrc = read(`${PL}/bin/parlay-spawn`)
 const cliIndex = read(`${PL}/packages/cli/src/index.ts`)
-const cliCmds = read(`${PL}/packages/cli/src/commands.ts`)
 const cliStatusSrc = read(`${PL}/packages/cli/src/commands-status.ts`)
 const cliSuperviseSrc = read(`${PL}/packages/cli/src/commands-supervise.ts`)
 // The fold design doc is captain-private and no longer lives in this repo. Point
@@ -115,7 +113,7 @@ interface Row {
   built?: boolean // for COVERED-alternate: is it landed yet?
   fix?: string // contraction ledger tag, when MISSING
   note?: string
-  docDerived?: true // verdict sourced from the fold doc: unreadable ⇒ NOT EVALUATED, never MISSING
+  docDerived?: "crew-dispatch" | "away-mode" // stable key; verdict sourced from the fold doc: unreadable ⇒ NOT EVALUATED, never MISSING
 }
 
 const M: Row[] = [
@@ -127,7 +125,7 @@ const M: Row[] = [
   { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "parlay-spawn id=repo … --prompt (thin loop, §3.8)", verdict: "COVERED-alternate", built: probe.batchSpawn, note: "C3 RESOLVED (task-ovkq): thin loop re-execs single mode per pair; shared --prompt/--model/--color, name+color derived per id; one failed pair does not stop the rest, batch exits non-zero" },
   { cap: "Multi-harness (codex/opencode/pi/grok)", fm: "fm-harness.sh + adapters", parlay: "deferred primitive, seam scaffolded (§3.4)", verdict: "DEFERRED", note: "built LAST; claude-only until then" },
   { cap: "Runtime backend (tmux/zellij/orca/cmux)", fm: "fm-backend.sh", parlay: "firstmate-retained (herdr-only by design)", verdict: "DROP-justified", note: "decision-3ae does not ask parlay to own backends" },
-  { cap: "Crew-dispatch profiles + quota-balanced", docDerived: true, fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: foldDocAvailable ? "firstmate POLICY, retention stated (§3.4a)" : "— (retention claim not checkable here)", verdict: "STAYS-FIRSTMATE", note: foldDocAvailable ? "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" : "the retention + re-activation statement was sourced from the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
+  { cap: "Crew-dispatch profiles + quota-balanced", docDerived: "crew-dispatch", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: foldDocAvailable ? "firstmate POLICY, retention stated (§3.4a)" : "— (retention claim not checkable here)", verdict: "STAYS-FIRSTMATE", note: foldDocAvailable ? "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" : "the retention + re-activation statement was sourced from the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
 
   // --- brief / meta / identity ---
   { cap: "Structured brief contract", fm: "fm-brief.sh", parlay: "enrollment + appended task contract (§3.1)", verdict: "COVERED-alternate", built: /## Definition of done/.test(spawnSrc) },
@@ -148,7 +146,7 @@ const M: Row[] = [
   { cap: "Turn-end guard hooks", fm: "fm-turnend-guard.sh", parlay: "deferred w/ harness primitive (§3.4)", verdict: "DEFERRED" },
   // C2 (task-eg75): away-mode home is DERIVED from the fold doc, so removing §3.6.2
   // reverts this row to MISSING and re-fails integrity — genuine re-verification.
-  { cap: "Away-mode unattended sub-supervision", docDerived: true, fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : foldDocAvailable ? "no home: not in Slice 3 scope, not clearly fm-retained" : "the §3.6.2 home for this capability was stated only in the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
+  { cap: "Away-mode unattended sub-supervision", docDerived: "away-mode", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : foldDocAvailable ? "no home: not in Slice 3 scope, not clearly fm-retained" : "the §3.6.2 home for this capability was stated only in the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
   { cap: "Steer agent (captain→crewmate)", fm: "fm-send.sh", parlay: "parlay send/say --agent + monitor", verdict: "COVERED-same", built: probe.verb("send") && probe.verb("say") },
   { cap: "Peek pane for diagnosis", fm: "fm-peek.sh", parlay: "parlay history + herdr agent get", verdict: "COVERED-alternate", built: probe.verb("history") },
 
@@ -201,10 +199,12 @@ for (const r of M) {
 }
 // C5 (task-8io0): the crew-dispatch row is only a legitimate STAYS-FIRSTMATE if the
 // fold doc actually states retention + re-activation — assertable only when the doc
-// is readable; otherwise the row is NOT EVALUATED (above), not silently verified.
-if (foldDocAvailable && /Crew-dispatch/.test(M.find(r => /Crew-dispatch/.test(r.cap))?.cap ?? "") && !probe.crewDispatchRetentionStated) {
+// is readable; otherwise it is NOT EVALUATED (above), not silently verified. The row
+// is found by its stable docDerived key, and losing it is itself a problem here.
+const crewRow = M.find(r => r.docDerived === "crew-dispatch")
+if (!crewRow) problems.push(`C5 guard could not locate the row it asserts on — no row carries docDerived "crew-dispatch"`)
+else if (foldDocAvailable && crewRow.verdict === "STAYS-FIRSTMATE" && !probe.crewDispatchRetentionStated)
   problems.push(`Crew-dispatch marked STAYS-FIRSTMATE but fold doc does not state retention + re-activation (see §3.4a)`)
-}
 
 // ---- render --------------------------------------------------------------
 // Unevaluated rows are reported once under NOT EVALUATED — in BOTH output modes —
