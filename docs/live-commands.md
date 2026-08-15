@@ -182,7 +182,10 @@ whole view untrustworthy.
 5. **Drop** — a terminal record is retained briefly (60s) so you can see how a
    command ended, then removed. The removal is broadcast as a `command_update`
    with state `dropped` so a long-lived panel prunes its map instead of growing
-   forever on an append-only stream.
+   forever on an append-only stream. The 500-record cap sheds records the same
+   way and broadcasts the same notice — terminal ones first, oldest-started
+   first, so a flood of finished entries can never evict a running command —
+   because a removal a client never hears about is a record it holds forever.
 
 The registry is **in-memory only**, deliberately, for the same reason
 `PresenceTracker` is: a record that survived a restart would claim a process is
@@ -279,8 +282,10 @@ and must not break the panel when the server does not have it.
   server costs one short timeout, not one per report. A command whose work is
   entirely local still succeeds with no server at all.
 - `parlay commands` against a server without the registry gets a 404, prints
-  that the server does not expose one, and **exits 0**. Only a genuinely
-  unreachable server is an error, matching every other read verb.
+  that the server does not expose one, and **exits 0**. An unreachable server
+  is an error, matching every other read verb — as is `--watch` losing its
+  stream (see [Using it](#using-it)), because follow mode that stops quietly
+  is indistinguishable from an idle fleet.
 - The panel renders the same case as "unavailable" and touches nothing else.
   A dropped or malformed frame is ignored, never thrown.
 
@@ -312,6 +317,20 @@ schema does not change shape with the arguments. They are what distinguishes
 "the fleet is idle" from "nothing matches this filter" — the same distinction
 the human table draws by printing the fleet-wide numbers in parentheses
 whenever the rows are narrower than what the server returned.
+
+`--watch` prints the current state first (the table, or the envelope) and then
+one line per change: `+` for a record that is running, `-` for one that has
+ended. Under `--json` every stdout line is one JSON object, so the opening
+envelope is **compact rather than indented** and each later line is a single
+record — a strict line reader would choke on a pretty-printed first line.
+
+When the stream ends — the server closed it, restarted, or the link dropped —
+the verb says so on stdout and **exits non-zero**; under `--json` that notice
+is `{"ok":false,"error":"stream-ended"}`, and `error` is the key to
+discriminate on, since a record carries neither `ok` nor `error`. *Why* the
+stream ended goes to stderr in both modes and never into that payload: "the
+server closed it" and "a frame was too large to read" call for different
+responses, and the payload must stay free of hosts, ports, and paths.
 
 In the panel: the **▷** button in the drawer header, or **▷ Live commands** in
 the mobile action sheet. Both open a card over the thread listing the same

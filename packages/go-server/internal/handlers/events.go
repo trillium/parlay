@@ -62,8 +62,9 @@ import (
 //	                  /api/chat/commands returns.
 //	command_update    live — one CommandInvocation, broadcast whenever a
 //	                  record starts, ends, or is reaped. State "dropped" means
-//	                  the record has aged out of retention entirely and a
-//	                  client should forget the id.
+//	                  the record has left the registry entirely — aged out of
+//	                  retention, or shed by the record cap — and a client
+//	                  should forget the id.
 //
 // Both are additive: an older client simply has no listener registered for
 // them and ignores the frames, which is why this could be done without
