@@ -15,7 +15,6 @@ export interface CommandInvocation {
   id:          string
   verb:        string
   agent?:      string
-  channel?:    string
   flags?:      string[]
   pid?:        number
   state:       'running' | 'finished' | 'failed' | 'expired' | 'dropped' | string

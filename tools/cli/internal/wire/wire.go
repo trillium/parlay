@@ -55,7 +55,6 @@ type CommandInvocation struct {
 	ID         string   `json:"id"`
 	Verb       string   `json:"verb"`
 	Agent      string   `json:"agent,omitempty"`
-	Channel    string   `json:"channel,omitempty"`
 	Flags      []string `json:"flags,omitempty"`
 	PID        int      `json:"pid,omitempty"`
 	State      string   `json:"state"`

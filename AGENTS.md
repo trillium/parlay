@@ -1205,12 +1205,19 @@ close becomes a permanent zombie, which is the failure this design spends its
 90s staleness reaper avoiding. `PARLAY_COMMAND_REPORT=0` opts out.
 
 **The registry stores no free-form text — keep it that way.** Verb, agent id,
-channel id, pid, flag **names** (max 8), and a short `outcome` token; never
-argv, flag values, positionals, paths, or an error string, because a parlay
-command line routinely carries message bodies and tokens. The CLI strips values
-before sending *and* `internal/store/commands.go` sanitizes again on arrival —
-the report endpoints are unauthenticated, so the storage layer cannot trust its
-callers. Adding a field here means adding it to that whitelist deliberately.
+pid, flag **names** (max 8), and a short `outcome` token; never argv, flag
+values, positionals, paths, or an error string, because a parlay command line
+routinely carries message bodies and tokens. Both enforcement points —
+`commandreport.flagNames` before sending, `internal/store/commands.go`'s
+`sanitizeFlags` on arrival — apply the identical rule: after cutting the token
+at its first `=`, a flag name is one or two dashes, then a letter, then only
+letters, digits, and dashes. **A leading dash is not what makes a token a
+flag** — `-- heads up: the key is …` is a message body, and anything failing
+the shape is dropped WHOLE, never trimmed into conforming shape. Length caps
+are resource bounds on an unauthenticated endpoint, not redaction, and they
+drop rather than truncate. The server repeats the check because the report
+endpoints are unauthenticated and client-side classification is not a security
+boundary. Adding a field here means adding it to that whitelist deliberately.
 The three mutating routes require `Content-Type: application/json` for the same
 CSRF-shaped reason `packages/server/src/guard.ts` does; the read route stays
 world-readable like `/api/chat/agents`.

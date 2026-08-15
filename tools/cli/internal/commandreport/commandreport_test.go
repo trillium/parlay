@@ -219,7 +219,14 @@ func TestServerRejectionDisablesFurtherReports(t *testing.T) {
 // TestFlagNamesNeverCarryValues is the redaction guarantee on the CLI side.
 // The server sanitizes again on arrival, but a value must not leave this
 // process in the first place.
+//
+// A leading dash is NOT what makes a token a flag — the shape is. A parlay
+// command line routinely carries message bodies, and a body that happens to
+// open with punctuation ("-- heads up: …") is still a body. Every case below
+// that is not exactly one-or-two-dashes-then-a-letter-then-word-characters is
+// a positional, and a positional is reported nowhere.
 func TestFlagNamesNeverCarryValues(t *testing.T) {
+	const secret = "sk-live-abcdef"
 	cases := []struct {
 		name string
 		argv []string
@@ -230,9 +237,17 @@ func TestFlagNamesNeverCarryValues(t *testing.T) {
 		{"bare positional", []string{"a whole private message body"}, []string{}},
 		{"short flag", []string{"-h"}, []string{"-h"}},
 		{"lone dash", []string{"-"}, []string{}},
+		{"bare terminator", []string{"--"}, []string{}},
 		{"after --", []string{"--json", "--", "--not-a-flag"}, []string{"--json"}},
+		{"secret after --", []string{"--json", "--", "--token", secret}, []string{"--json"}},
 		{"deduped", []string{"--json", "--json"}, []string{"--json"}},
 		{"path positional", []string{"send", "/home/someone/secrets.txt"}, []string{}},
+		{"message body opening with a terminator", []string{"-- heads up: the key is " + secret}, []string{}},
+		{"flag-shaped prefix then prose", []string{"--flag with space"}, []string{}},
+		{"negative number", []string{"-5"}, []string{}},
+		{"punctuation body", []string{"--!?"}, []string{}},
+		{"three dashes", []string{"---json"}, []string{}},
+		{"empty token", []string{""}, []string{}},
 	}
 	for _, c := range cases {
 		got := flagNames(c.argv)
@@ -240,8 +255,13 @@ func TestFlagNamesNeverCarryValues(t *testing.T) {
 			t.Errorf("%s: flagNames(%v) = %v, want %v", c.name, c.argv, got, c.want)
 		}
 		for _, name := range got {
-			if strings.Contains(name, "s3cr3t") || strings.Contains(name, "/") || strings.Contains(name, " ") {
+			if strings.ContainsAny(name, " \t\n/") {
 				t.Errorf("%s: reported %q, which is not a bare flag name", c.name, name)
+			}
+			for _, leak := range []string{"s3cr3t", secret, "sk-live", "heads"} {
+				if strings.Contains(name, leak) {
+					t.Errorf("%s: reported %q, which carries %q", c.name, name, leak)
+				}
 			}
 		}
 	}
@@ -256,10 +276,15 @@ func TestFlagNamesAreCapped(t *testing.T) {
 
 func TestStartPayloadCarriesNoPositionalsAtAll(t *testing.T) {
 	rc := withRecorder(t)
-	Begin("say", []string{"the quick brown fox", "--agent", "crew-2"})(0)
+	Begin("say", []string{
+		"the quick brown fox",
+		"--agent", "crew-2",
+		"-- heads up: the key is sk-live-abcdef",
+		"--", "--token", "sk-live-abcdef",
+	})(0)
 
 	raw, _ := json.Marshal(rc.first("/api/chat/command-start"))
-	for _, leak := range []string{"quick brown fox", "crew-2"} {
+	for _, leak := range []string{"quick brown fox", "crew-2", "sk-live", "abcdef", "heads up", "--token"} {
 		if strings.Contains(string(raw), leak) {
 			t.Errorf("start payload leaked %q: %s", leak, raw)
 		}

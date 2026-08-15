@@ -43,18 +43,26 @@ export function applyCommandUpdate(rec: CommandInvocation, now = Date.now()) {
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
+/**
+ * One row. `state` becomes a class on the dot via classList rather than being
+ * interpolated into a `class="…"` attribute: esc() escapes `<` and `&` for text
+ * content and does not escape the quote that would end an attribute, so an
+ * attribute is not a context it can make safe. A state carrying whitespace is
+ * not a class token and is left off entirely.
+ */
 export function commandRowEl(rec: CommandInvocation, now = Date.now()): HTMLElement {
   const el = document.createElement('div')
   el.className = `pa-cmd-row ${isRunning(rec) ? 'running' : 'done'}`
   el.dataset.paCmd = rec.id
-  const who = rec.agent || rec.channel || ''
   const detail = commandDetail(rec)
   el.innerHTML = `
-    <span class="pa-cmd-dot ${esc(rec.state)}"></span>
+    <span class="pa-cmd-dot"></span>
     <span class="pa-cmd-verb">${esc(rec.verb)}</span>
-    <span class="pa-cmd-who">${esc(who)}</span>
+    <span class="pa-cmd-who">${esc(rec.agent || '')}</span>
     <span class="pa-cmd-detail">${esc(detail)}</span>
     <span class="pa-cmd-age">${esc(commandAge(liveDurationMs(rec, now)))}</span>`
+  const dot = el.querySelector('.pa-cmd-dot')
+  if (dot && rec.state && !/\s/.test(rec.state)) dot.classList.add(rec.state)
   return el
 }
 

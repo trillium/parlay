@@ -103,7 +103,7 @@ paths. **The registry stores no free-form text at all.** A record holds:
 | --- | --- | --- |
 | `id` | reporter | random per invocation |
 | `verb` | reporter | the subcommand, e.g. `listen` |
-| `agent`, `channel` | `$PARLAY_AGENT_ID` / report | ids only |
+| `agent` | `$PARLAY_AGENT_ID` | an id only |
 | `flags` | reporter | flag **names** only, max 8 |
 | `pid` | reporter | |
 | `state` | server | `running` / `finished` / `failed` / `expired` |
@@ -116,12 +116,26 @@ Never recorded, in either layer: **raw argv, flag values, positional
 arguments, message text, file paths, URLs, environment values, or an error
 string.**
 
-Redaction happens twice. The CLI strips values before sending
-(`--token s3cr3t`, `--token=s3cr3t`, and a bare `s3cr3t` all contribute at most
-`--token`), and the server sanitizes again on arrival — because the report
-endpoints are unauthenticated, so the storage layer cannot trust its callers.
-`outcome` is a token rather than free text for exactly this reason: an error
-*string* is the field that would otherwise carry a path or a secret.
+Redaction happens twice, and **both layers apply the same strict rule: a
+reported flag name is one or two dashes, then a letter, then only letters,
+digits, and dashes** — checked after cutting the token at its first `=`.
+`--token s3cr3t` and `--token=s3cr3t` each contribute `--token`; a bare
+`s3cr3t` contributes **nothing at all**, and neither does a path, a `-5`, or a
+message body that happens to open with a dash (`-- heads up: …`). A leading
+dash is not what makes a token a flag; the shape is. When a token is ambiguous
+it is treated as a positional and dropped.
+
+A non-conforming token is **dropped whole, never trimmed into shape** — a
+truncated secret is still a secret, and it would arrive looking like a
+well-formed flag name. The caps that remain (32 characters per name, 8 names
+per record, 500 records) are resource bounds on an unauthenticated endpoint,
+not redaction, and each of them drops rather than shortens.
+
+The CLI applies the rule before sending and the server applies it again on
+arrival, because the report endpoints are unauthenticated and the storage layer
+cannot trust its callers. `outcome` is a token rather than free text for the
+same reason: an error *string* is the field that would otherwise carry a path
+or a secret.
 
 Pinned by `TestNoFlagValueEverReachesTheWire` (server),
 `TestFlagNamesNeverCarryValues` and `TestStartPayloadCarriesNoPositionalsAtAll`
@@ -185,7 +199,7 @@ empty; `durationMs` is always present.
 
 ### `POST /api/chat/command-start`
 
-Request `{ id, verb, agent?, channel?, flags?, pid? }` →
+Request `{ id, verb, agent?, flags?, pid? }` →
 `{ ok: true, id, state }`. Validation failures answer **200 with
 `{"error": …}`**, matching `register-agent`: a reporter is a fire-and-forget
 side channel and must never turn a working command into a failing one.
@@ -265,6 +279,22 @@ parlay commands --verb <verb>      # narrow to one verb
 parlay commands --json             # machine-readable, same state
 parlay commands --watch            # follow over SSE (one connection, no polling)
 ```
+
+`--json` re-emits the server's envelope over the records that survived the
+filters, plus three fields the server does not send:
+
+| Field | Meaning |
+| --- | --- |
+| `running` | running records **in `commands`** — the filtered count |
+| `shown` | how many records are in `commands` |
+| `totalRunning` | running records server-wide, before this verb's filters |
+| `totalTracked` | records the server returned, before this verb's filters |
+
+The three totals are emitted on every `--json` run, filtered or not, so the
+schema does not change shape with the arguments. They are what distinguishes
+"the fleet is idle" from "nothing matches this filter" — the same distinction
+the human table draws by printing the fleet-wide numbers in parentheses
+whenever the rows are narrower than what the server returned.
 
 In the panel: the **▷** button in the drawer header, or **▷ Live commands** in
 the mobile action sheet. Both open a card over the thread listing the same

@@ -62,6 +62,15 @@ func sweepCommands(st *store.Store, hub *Hub) {
 	for _, rec := range expired {
 		hub.broadcast(eventCommandUpdate, rec)
 	}
+	broadcastDroppedCommands(hub, dropped)
+}
+
+// broadcastDroppedCommands tells every client to forget these ids. Removal has
+// two causes — a terminal record aging out during a sweep, and the record cap
+// evicting the oldest to make room for a new one — and a client cannot tell
+// them apart, nor should it: both mean the registry no longer holds the id, and
+// a removal nobody hears about is a row that never leaves the panel.
+func broadcastDroppedCommands(hub *Hub, dropped []string) {
 	for _, id := range dropped {
 		hub.broadcast(eventCommandUpdate, store.CommandInvocation{ID: id, State: commandStateDropped})
 	}
@@ -145,12 +154,11 @@ func isJSONContentType(ct string) bool {
 }
 
 type commandStartRequest struct {
-	ID      string   `json:"id"`
-	Verb    string   `json:"verb"`
-	Agent   string   `json:"agent"`
-	Channel string   `json:"channel"`
-	Flags   []string `json:"flags"`
-	PID     int      `json:"pid"`
+	ID    string   `json:"id"`
+	Verb  string   `json:"verb"`
+	Agent string   `json:"agent"`
+	Flags []string `json:"flags"`
+	PID   int      `json:"pid"`
 }
 
 type commandReportResponse struct {
@@ -177,13 +185,12 @@ func handleCommandStart(st *store.Store, hub *Hub) http.HandlerFunc {
 			writeAppError(w, "id is required")
 			return
 		}
-		rec, changed := st.Commands.Start(store.CommandStart{
-			ID:      req.ID,
-			Verb:    req.Verb,
-			Agent:   req.Agent,
-			Channel: req.Channel,
-			Flags:   req.Flags,
-			PID:     req.PID,
+		rec, changed, dropped := st.Commands.Start(store.CommandStart{
+			ID:    req.ID,
+			Verb:  req.Verb,
+			Agent: req.Agent,
+			Flags: req.Flags,
+			PID:   req.PID,
 		})
 		if rec.ID == "" {
 			writeAppError(w, "id is required")
@@ -192,6 +199,7 @@ func handleCommandStart(st *store.Store, hub *Hub) http.HandlerFunc {
 		if changed {
 			hub.broadcast(eventCommandUpdate, rec)
 		}
+		broadcastDroppedCommands(hub, dropped)
 		writeJSON(w, commandReportResponse{OK: true, ID: rec.ID, State: rec.State})
 	}
 }
@@ -249,7 +257,7 @@ func handleCommandEnd(st *store.Store, hub *Hub) http.HandlerFunc {
 			writeAppError(w, "id is required")
 			return
 		}
-		rec, changed := st.Commands.End(store.CommandEnd{
+		rec, changed, dropped := st.Commands.End(store.CommandEnd{
 			ID:       req.ID,
 			State:    req.State,
 			ExitCode: req.ExitCode,
@@ -262,6 +270,7 @@ func handleCommandEnd(st *store.Store, hub *Hub) http.HandlerFunc {
 		if changed {
 			hub.broadcast(eventCommandUpdate, rec)
 		}
+		broadcastDroppedCommands(hub, dropped)
 		writeJSON(w, commandReportResponse{OK: true, ID: rec.ID, State: rec.State})
 	}
 }

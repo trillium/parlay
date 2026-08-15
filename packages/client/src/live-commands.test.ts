@@ -44,7 +44,6 @@ describe('the golden fixture is the same state the CLI renders', () => {
     const listen = liveCommands.get('cmd-5') as CommandInvocation
     expect(listen.verb).toBe('listen')
     expect(listen.agent).toBe('crew-1')
-    expect(listen.channel).toBe('c1')
     expect(listen.flags).toEqual(['--agent', '--caps'])
     expect(listen.pid).toBe(4242)
 

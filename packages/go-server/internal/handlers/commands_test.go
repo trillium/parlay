@@ -87,7 +87,7 @@ func findRecord(list []store.CommandInvocation, id string) (store.CommandInvocat
 func TestStartedCommandAppearsOnTheReadEndpoint(t *testing.T) {
 	st := newTestStore(t)
 	postCommandJSON(t, handleCommandStart(st, nil), map[string]any{
-		"id": "c-1", "verb": "listen", "agent": "crew-1", "channel": "c1", "pid": 4242,
+		"id": "c-1", "verb": "listen", "agent": "crew-1", "pid": 4242,
 	})
 
 	got := readCommands(t, st, nil)
@@ -208,6 +208,66 @@ func TestSweepBroadcastsExpiryThenDrop(t *testing.T) {
 	rec := ev.data.(store.CommandInvocation)
 	if rec.State != commandStateDropped || rec.ID != "c-1" {
 		t.Errorf("second sweep event = %#v, want a dropped notice for c-1", ev.data)
+	}
+}
+
+// withCommandCap installs a registry whose record cap is small enough that a
+// short burst overflows it, so the eviction path is reachable through the real
+// handlers without posting hundreds of records.
+func withCommandCap(st *store.Store, max int) *testClock {
+	clk := &testClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
+	st.Commands = store.NewCommandRegistry(store.CommandRegistryConfig{
+		Now:        clk.Now,
+		MaxRecords: max,
+	})
+	return clk
+}
+
+// Eviction is the OTHER way a record leaves the registry, and a client has to
+// hear about it for the same reason it hears about a sweep's drops: on an
+// append-only stream, an id nobody is told to forget is shown forever.
+func TestEvictionBroadcastsADropForEveryRecordItSheds(t *testing.T) {
+	st := newTestStore(t)
+	clk := withCommandCap(st, 2)
+	hub := newHub(newBroker())
+	sub, cancel := hub.subscribe()
+	defer cancel()
+
+	ids := []string{"c-1", "c-2", "c-3", "c-4"}
+	for _, id := range ids {
+		clk.advance(time.Second)
+		postCommandJSON(t, handleCommandStart(st, hub), map[string]any{"id": id, "verb": "send"})
+		postCommandJSON(t, handleCommandEnd(st, hub), map[string]any{
+			"id": id, "state": "finished", "outcome": "ok",
+		})
+	}
+
+	announced := map[string]bool{}
+drain:
+	for {
+		select {
+		case ev := <-sub:
+			rec, ok := ev.data.(store.CommandInvocation)
+			if ok && ev.name == eventCommandUpdate && rec.State == commandStateDropped {
+				announced[rec.ID] = true
+			}
+		default:
+			break drain
+		}
+	}
+
+	held := readCommands(t, st, hub).Commands
+	if len(held) > 2 {
+		t.Fatalf("registry grew past the cap: %+v", held)
+	}
+	for _, id := range ids {
+		_, stillHeld := findRecord(held, id)
+		if !stillHeld && !announced[id] {
+			t.Errorf("record %q was evicted with no dropped broadcast; announced = %v", id, announced)
+		}
+		if stillHeld && announced[id] {
+			t.Errorf("record %q was announced dropped but is still in the registry", id)
+		}
 	}
 }
 
@@ -419,8 +479,12 @@ func TestReportRoutesAcceptAParameterizedJSONContentType(t *testing.T) {
 // TestNoFlagValueEverReachesTheWire is the redaction guarantee, checked at
 // the HTTP boundary rather than only in the store: a reporter that hands the
 // server a flag with its value attached must not be able to publish that
-// value to every connected panel.
+// value to every connected panel. The endpoint is unauthenticated, so the
+// hostile tokens below are exactly what a caller may send — the server's own
+// shape check, not the CLI's, is what has to reject them, and reject is the
+// word: a trimmed token would still carry the head of the secret.
 func TestNoFlagValueEverReachesTheWire(t *testing.T) {
+	const secret = "sk-live-abcdef"
 	st := newTestStore(t)
 	postCommandJSON(t, handleCommandStart(st, nil), map[string]any{
 		"id":   "c-1",
@@ -429,6 +493,12 @@ func TestNoFlagValueEverReachesTheWire(t *testing.T) {
 			"--token=s3cr3t-value",
 			"--message", "the whole body of a private message",
 			"/home/someone/private/path",
+			"-- heads up: the key is " + secret,
+			"--flag with space",
+			"-5",
+			"-",
+			"--",
+			"--" + strings.Repeat("z", 200),
 		},
 	})
 
@@ -437,7 +507,7 @@ func TestNoFlagValueEverReachesTheWire(t *testing.T) {
 	handleCommands(st, nil)(rec, req)
 
 	body := rec.Body.String()
-	for _, leak := range []string{"s3cr3t", "whole body", "private/path"} {
+	for _, leak := range []string{"s3cr3t", "whole body", "private/path", secret, "sk-live", "sk-", "heads", "zzz"} {
 		if strings.Contains(body, leak) {
 			t.Errorf("response leaked %q; got:\n%s", leak, body)
 		}
@@ -531,7 +601,7 @@ func TestReadEndpointMatchesGoldenShape(t *testing.T) {
 	})
 	clk.advance(91 * time.Second) // c-1 is now past staleAfter and never heartbeated
 	postCommandJSON(t, handleCommandStart(st, nil), map[string]any{
-		"id": "c-2", "verb": "send", "agent": "crew-1", "channel": "c1", "pid": 4300,
+		"id": "c-2", "verb": "send", "agent": "crew-1", "pid": 4300,
 	})
 	postCommandJSON(t, handleCommandEnd(st, nil), map[string]any{
 		"id": "c-2", "state": "finished", "exitCode": 0, "outcome": "ok",
@@ -547,7 +617,7 @@ func TestReadEndpointMatchesGoldenShape(t *testing.T) {
 	postCommandJSON(t, handleCommandStart(st, nil), map[string]any{"id": "c-4", "verb": "history"})
 	clk.advance(2 * time.Second)
 	postCommandJSON(t, handleCommandStart(st, nil), map[string]any{
-		"id": "c-5", "verb": "listen", "agent": "crew-1", "channel": "c1",
+		"id": "c-5", "verb": "listen", "agent": "crew-1",
 		"flags": []string{"--agent", "--caps"}, "pid": 4242,
 	})
 

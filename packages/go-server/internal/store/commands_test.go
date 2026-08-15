@@ -54,7 +54,7 @@ func TestStartedCommandAppears(t *testing.T) {
 	clock := newFakeClock()
 	cr := newTestRegistry(clock)
 
-	rec, created := cr.Start(CommandStart{ID: "inv-1", Verb: "listen", Agent: "scout", PID: 4242})
+	rec, created, _ := cr.Start(CommandStart{ID: "inv-1", Verb: "listen", Agent: "scout", PID: 4242})
 	if !created {
 		t.Fatal("Start reported no new record")
 	}
@@ -86,7 +86,7 @@ func TestFinishedCommandLeaves(t *testing.T) {
 	clock.Advance(2 * time.Second)
 
 	code := 0
-	rec, ok := cr.End(CommandEnd{ID: "inv-1", State: CommandFinished, ExitCode: &code, Outcome: "ok"})
+	rec, ok, _ := cr.End(CommandEnd{ID: "inv-1", State: CommandFinished, ExitCode: &code, Outcome: "ok"})
 	if !ok {
 		t.Fatal("End reported no transition")
 	}
@@ -184,7 +184,7 @@ func TestEndBeforeStartStillRecordsATerminalRecord(t *testing.T) {
 	cr := newTestRegistry(clock)
 
 	code := 1
-	rec, ok := cr.End(CommandEnd{ID: "raced", State: CommandFailed, ExitCode: &code, Outcome: "error"})
+	rec, ok, _ := cr.End(CommandEnd{ID: "raced", State: CommandFailed, ExitCode: &code, Outcome: "error"})
 	if !ok {
 		t.Fatal("End dropped an unknown-id report")
 	}
@@ -193,7 +193,7 @@ func TestEndBeforeStartStillRecordsATerminalRecord(t *testing.T) {
 	}
 
 	// The late start must not resurrect it as running.
-	after, created := cr.Start(CommandStart{ID: "raced", Verb: "send"})
+	after, created, _ := cr.Start(CommandStart{ID: "raced", Verb: "send"})
 	if created {
 		t.Fatal("late Start resurrected a terminal record")
 	}
@@ -209,9 +209,9 @@ func TestRepeatedStartActsAsAHeartbeatNotADuplicate(t *testing.T) {
 	clock := newFakeClock()
 	cr := newTestRegistry(clock)
 
-	first, _ := cr.Start(CommandStart{ID: "inv", Verb: "listen"})
+	first, _, _ := cr.Start(CommandStart{ID: "inv", Verb: "listen"})
 	clock.Advance(80 * time.Second)
-	second, _ := cr.Start(CommandStart{ID: "inv", Verb: "listen"})
+	second, _, _ := cr.Start(CommandStart{ID: "inv", Verb: "listen"})
 
 	if len(cr.List()) != 1 {
 		t.Fatalf("re-start created a duplicate: %+v", cr.List())
@@ -233,7 +233,7 @@ func TestFirstTerminalVerdictWins(t *testing.T) {
 	cr.Start(CommandStart{ID: "inv", Verb: "send"})
 
 	cr.End(CommandEnd{ID: "inv", State: CommandFailed, Outcome: "error"})
-	if _, ok := cr.End(CommandEnd{ID: "inv", State: CommandFinished, Outcome: "ok"}); ok {
+	if _, ok, _ := cr.End(CommandEnd{ID: "inv", State: CommandFinished, Outcome: "ok"}); ok {
 		t.Fatal("a second End rewrote a terminal record")
 	}
 	rec, _ := findCommand(cr.List(), "inv")
@@ -246,7 +246,7 @@ func TestFirstTerminalVerdictWins(t *testing.T) {
 // callers — this endpoint is unauthenticated like every other route here.
 func TestFlagValuesAreNeverStored(t *testing.T) {
 	cr := newTestRegistry(newFakeClock())
-	rec, _ := cr.Start(CommandStart{
+	rec, _, _ := cr.Start(CommandStart{
 		ID:    "inv",
 		Verb:  "send",
 		Flags: []string{"--json", "sk-live-super-secret", "--token=abcdef", "--message", "hi there"},
@@ -273,11 +273,10 @@ func TestFlagValuesAreNeverStored(t *testing.T) {
 
 func TestHostileTokensAreSanitized(t *testing.T) {
 	cr := newTestRegistry(newFakeClock())
-	rec, _ := cr.Start(CommandStart{
-		ID:      "inv-2",
-		Verb:    "<script>alert(1)</script>",
-		Agent:   "scout; rm -rf /",
-		Channel: strings.Repeat("x", 500),
+	rec, _, _ := cr.Start(CommandStart{
+		ID:    "inv-2",
+		Verb:  "<script>alert(1)</script>",
+		Agent: "scout; rm -rf /" + strings.Repeat("x", 500),
 	})
 
 	if strings.ContainsAny(rec.Verb, "<>/() ") {
@@ -286,14 +285,89 @@ func TestHostileTokensAreSanitized(t *testing.T) {
 	if strings.ContainsAny(rec.Agent, "; /") {
 		t.Fatalf("agent not sanitized: %q", rec.Agent)
 	}
-	if len(rec.Channel) > 64 {
-		t.Fatalf("channel not length-capped: %d chars", len(rec.Channel))
+	if len(rec.Agent) > 64 {
+		t.Fatalf("agent not length-capped: %d chars", len(rec.Agent))
+	}
+}
+
+// A token that does not have a flag's SHAPE is dropped whole. Trimming it into
+// the length limit would be the actual defect: `-- the key is sk-live-…` cut
+// short still carries the start of the secret, and now looks like a flag name
+// that passed a check.
+func TestNonConformingFlagsAreRejectedNotTruncated(t *testing.T) {
+	const secret = "sk-live-abcdef"
+	cr := newTestRegistry(newFakeClock())
+	rec, _, _ := cr.Start(CommandStart{
+		ID:   "inv-3",
+		Verb: "say",
+		Flags: []string{
+			"-- heads up: the key is " + secret,
+			"--flag with space",
+			"-5",
+			"-",
+			"--",
+			"--!?",
+			"---json",
+			"--" + strings.Repeat("a", 200),
+			"/home/someone/secrets.txt",
+			"--json",
+		},
+	})
+
+	if len(rec.Flags) != 1 || rec.Flags[0] != "--json" {
+		t.Fatalf("flags = %v, want only the one conforming name", rec.Flags)
+	}
+	for _, f := range rec.Flags {
+		for _, leak := range []string{"sk-live", "heads", "secrets", "aaa"} {
+			if strings.Contains(f, leak) {
+				t.Fatalf("stored %q, which carries %q — a non-conforming token was trimmed, not dropped", f, leak)
+			}
+		}
+	}
+}
+
+// Eviction is a removal like any other: a caller that never learns an id is
+// gone shows it forever. Sweep already reports its drops; the cap must too.
+func TestEvictionReportsTheIDsItDropped(t *testing.T) {
+	clock := newFakeClock()
+	cr := NewCommandRegistry(CommandRegistryConfig{Now: clock.Now, MaxRecords: 2})
+
+	var dropped []string
+	for _, id := range []string{"a", "b", "c", "d"} {
+		clock.Advance(time.Second)
+		_, _, fromStart := cr.Start(CommandStart{ID: id, Verb: "send"})
+		dropped = append(dropped, fromStart...)
+		_, _, fromEnd := cr.End(CommandEnd{ID: id, State: CommandFinished, Outcome: "ok"})
+		dropped = append(dropped, fromEnd...)
+	}
+
+	if len(dropped) == 0 {
+		t.Fatal("filled past MaxRecords and no id was reported dropped")
+	}
+	for _, id := range dropped {
+		if _, ok := findCommand(cr.List(), id); ok {
+			t.Fatalf("id %q was reported dropped but is still in the registry", id)
+		}
+	}
+	if len(cr.List()) > 2 {
+		t.Fatalf("registry grew past MaxRecords: %d", len(cr.List()))
+	}
+	for _, want := range []string{"a", "b"} {
+		found := false
+		for _, id := range dropped {
+			if id == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("oldest id %q was evicted silently; dropped = %v", want, dropped)
+		}
 	}
 }
 
 func TestStartWithNoUsableVerbIsLabelledUnknown(t *testing.T) {
 	cr := newTestRegistry(newFakeClock())
-	rec, created := cr.Start(CommandStart{ID: "inv", Verb: "!!!"})
+	rec, created, _ := cr.Start(CommandStart{ID: "inv", Verb: "!!!"})
 	if !created || rec.Verb != "unknown" {
 		t.Fatalf("verb = %q (created=%v), want %q", rec.Verb, created, "unknown")
 	}
@@ -301,7 +375,7 @@ func TestStartWithNoUsableVerbIsLabelledUnknown(t *testing.T) {
 
 func TestStartWithNoUsableIDIsRejected(t *testing.T) {
 	cr := newTestRegistry(newFakeClock())
-	if _, ok := cr.Start(CommandStart{ID: "!!!", Verb: "send"}); ok {
+	if _, ok, _ := cr.Start(CommandStart{ID: "!!!", Verb: "send"}); ok {
 		t.Fatal("Start accepted an unusable id")
 	}
 	if len(cr.List()) != 0 {

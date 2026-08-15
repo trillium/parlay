@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -57,6 +58,33 @@ type commandFilter struct {
 	verb  string // only this verb
 }
 
+// narrowing reports whether --agent/--verb were given. Distinct from "fewer
+// records than the server sent", which the default running-only view is too:
+// an empty result means something different when the operator asked a narrower
+// question than the fleet.
+func (f commandFilter) narrowing() bool { return f.agent != "" || f.verb != "" }
+
+// commandsEnvelope is the --json payload. The first five fields are the
+// server's CommandsResponse, name for name and in its order, so a script reads
+// the same keys the panel does; `running` is the count of the records in
+// `commands`, which is what the rows describe.
+//
+// The three total fields describe what the server returned BEFORE this verb's
+// filters, so a consumer can tell "the fleet is idle" from "nothing matches
+// this filter" — a distinction the filtered count alone erases. They are
+// emitted on every --json run, filtered or not, so the schema does not change
+// shape depending on the arguments.
+type commandsEnvelope struct {
+	OK           bool                     `json:"ok"`
+	Now          string                   `json:"now"`
+	Running      int                      `json:"running"`
+	StaleAfterMs int64                    `json:"staleAfterMs"`
+	Commands     []wire.CommandInvocation `json:"commands"`
+	Shown        int                      `json:"shown"`
+	TotalRunning int                      `json:"totalRunning"`
+	TotalTracked int                      `json:"totalTracked"`
+}
+
 // Commands implements `parlay commands [--json] [--all] [--watch] [--agent <id>] [--verb <verb>]`.
 func Commands(argv []string) {
 	if helpWanted("commands", argv) {
@@ -91,12 +119,15 @@ func Commands(argv []string) {
 		// this is a document; compact under --watch, where it is the first
 		// line of a stream whose every later line is one JSON object and a
 		// strict line reader would choke on an indented one.
-		envelope := wire.CommandsResponse{
+		envelope := commandsEnvelope{
 			OK:           resp.OK,
 			Now:          resp.Now,
 			Running:      countRunning(shown),
 			StaleAfterMs: resp.StaleAfterMs,
 			Commands:     shown,
+			Shown:        len(shown),
+			TotalRunning: resp.Running,
+			TotalTracked: len(resp.Commands),
 		}
 		var out []byte
 		if watch {
@@ -224,20 +255,36 @@ func dashIfEmpty(s string) string {
 
 // renderCommandTable produces the human-readable view. Returns a string
 // (rather than printing) so tests assert on the rendering itself.
+//
+// The counts on the summary line describe the rows printed under them, never
+// the fleet: a count that disagreed with the visible rows is the one number in
+// this view an operator cannot check. When the rows are narrower than what the
+// server returned, the server-wide totals follow in parentheses, labelled
+// fleet-wide, so the narrowing is visible rather than implied. Nothing is
+// narrowed, nothing extra is said.
 func renderCommandTable(resp wire.CommandsResponse, shown []wire.CommandInvocation, f commandFilter) string {
 	var b strings.Builder
 
 	if len(shown) == 0 {
-		if f.all {
+		switch {
+		case f.narrowing():
+			fmt.Fprintf(&b, "No commands match this filter (%d running, %d tracked fleet-wide).\n",
+				resp.Running, len(resp.Commands))
+		case f.all:
 			fmt.Fprintf(&b, "No commands tracked.\n")
-		} else {
+		default:
 			fmt.Fprintf(&b, "No commands are running.\n")
 		}
 		fmt.Fprintf(&b, "%s\n", coverageNote)
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "%d running (%d tracked)\n\n", resp.Running, len(resp.Commands))
+	if len(shown) < len(resp.Commands) {
+		fmt.Fprintf(&b, "%d running of %d shown (%d running, %d tracked fleet-wide)\n\n",
+			countRunning(shown), len(shown), resp.Running, len(resp.Commands))
+	} else {
+		fmt.Fprintf(&b, "%d running (%d tracked)\n\n", countRunning(shown), len(shown))
+	}
 
 	rows := make([][]string, 0, len(shown)+1)
 	rows = append(rows, []string{"STATE", "AGE", "VERB", "AGENT", "PID", "DETAIL"})
@@ -288,7 +335,11 @@ func renderCommandTable(resp wire.CommandsResponse, shown []wire.CommandInvocati
 // scrollable log survives being piped, and needs no terminal control codes.
 func watchCommands(f commandFilter, asJSON bool) {
 	base := config.ServerURL()
-	resp, err := httpc.Client.Get(base + "/api/chat/events")
+	target := base + "/api/chat/events"
+	if after := newestMessageID(); after != "" {
+		target += "?after=" + url.QueryEscape(after)
+	}
+	resp, err := httpc.Client.Get(target)
 	if err != nil {
 		httpc.Die(fmt.Sprintf("Cannot reach Parlay server at %s — %v", base, err), config.ExitRuntime)
 		return
@@ -304,8 +355,9 @@ func watchCommands(f commandFilter, asJSON bool) {
 	}
 
 	state := newWatchState()
+	events, streamErr := sseEvents(resp.Body)
 
-	for ev := range sseEvents(resp.Body) {
+	for ev := range events {
 		switch ev.name {
 		case "commands":
 			var list []wire.CommandInvocation
@@ -345,6 +397,14 @@ func watchCommands(f commandFilter, asJSON bool) {
 	// here, or `ok` to a record, would end that. The payload carries no argv,
 	// path, host, or port — `stream-ended` is the whole machine-readable
 	// message.
+	//
+	// WHY the stream ended goes to stderr in both modes, never into that
+	// payload: "the server closed it" and "a frame was too large to read" call
+	// for different responses, and an operator who cannot see which one
+	// happened has to guess. stdout's contract is unchanged by it.
+	if err := streamErr(); err != nil {
+		fmt.Fprintf(os.Stderr, "watch: event stream read failed — %v\n", err)
+	}
 	if asJSON {
 		out, _ := json.Marshal(watchStreamEnded{Error: "stream-ended"})
 		fmt.Println(string(out))
@@ -463,16 +523,59 @@ type sseEvent struct {
 	data json.RawMessage
 }
 
+// sseMaxLineBytes bounds one `data:` line. A cap is what keeps a hostile or
+// merely enormous frame from being read into memory unbounded; it is a var
+// rather than a const only so a test can shrink it and exercise the
+// over-long path without allocating megabytes.
+var sseMaxLineBytes = 4 * 1024 * 1024
+
+// historyProbeTimeout bounds the cursor probe. Short, because failing it costs
+// nothing but a fuller connect burst.
+const historyProbeTimeout = 2 * time.Second
+
+// newestMessageID is the cursor --watch opens the event stream at. Without
+// one the server replays its entire retained history in the connect burst as a
+// single `data:` line, which is the thing sseMaxLineBytes then has to refuse —
+// and this verb wants none of that history, only the command frames that
+// follow it.
+//
+// It must be a REAL message id: the server sends the whole ring for an empty
+// `after` AND for one it does not recognize, so an invented sentinel would
+// change nothing.
+//
+// Best effort in every direction — an unreachable server, a non-200, a
+// garbage body, or an empty history all yield "" and the stream opens exactly
+// as it did before. An optimization must never be able to fail the thing it
+// optimizes (robots-dcag), which is why this uses httpc's non-dying probe
+// rather than its fail-loud GetJSON.
+func newestMessageID() string {
+	msgs, ok := httpc.TryGetJSON[[]wire.ChatMessage]("/api/chat/history?limit=1", historyProbeTimeout)
+	if !ok || len(msgs) == 0 {
+		return ""
+	}
+	return msgs[len(msgs)-1].ID
+}
+
 // sseEvents parses a text/event-stream into frames. Only the two fields this
 // server actually emits (`event:` and `data:`) are interpreted; comment
 // keep-alive lines and any other field are skipped, which is exactly what
 // the spec asks an unrecognized field to do.
-func sseEvents(body io.Reader) <-chan sseEvent {
+//
+// The second return value reports why the stream ended, and is valid only
+// after the frame channel has closed. A read error — a dropped connection, or
+// a line over sseMaxLineBytes — is otherwise indistinguishable from the server
+// closing a healthy stream, which leaves the caller announcing an end it
+// cannot explain.
+func sseEvents(body io.Reader) (<-chan sseEvent, func() error) {
 	out := make(chan sseEvent)
+	var readErr error
 	go func() {
-		defer close(out)
 		scanner := bufio.NewScanner(body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		start := 64 * 1024
+		if sseMaxLineBytes < start {
+			start = sseMaxLineBytes
+		}
+		scanner.Buffer(make([]byte, 0, start), sseMaxLineBytes)
 
 		name := ""
 		var data []string
@@ -492,6 +595,8 @@ func sseEvents(body io.Reader) <-chan sseEvent {
 				data = append(data, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 			}
 		}
+		readErr = scanner.Err()
+		close(out)
 	}()
-	return out
+	return out, func() error { return readErr }
 }

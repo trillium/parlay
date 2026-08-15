@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -224,10 +225,22 @@ func enabled(verb string) bool {
 	return verb != "" && !unreportedVerbs[verb]
 }
 
-// flagNames extracts the flag NAMES from argv and nothing else. `--token
-// s3cr3t` contributes "--token"; `--token=s3cr3t` contributes "--token";
-// `s3cr3t` on its own contributes nothing. A value can therefore never be
-// reported, whichever of the three shapes it was written in.
+// flagNameShape is what a reportable flag name has to look like: one or two
+// leading dashes, then a LETTER, then only letters, digits, and dashes. It is
+// applied after cutting the token at its first `=`.
+var flagNameShape = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9-]*$`)
+
+// flagNames extracts the flag NAMES from argv and nothing else. A token is a
+// flag only if it matches flagNameShape once cut at its first `=`; everything
+// else is positional and is reported NOWHERE. So `--token s3cr3t` and
+// `--token=s3cr3t` both contribute "--token", while `s3cr3t` on its own, a
+// message body that happens to open with a dash (`-- heads up: …`), a path,
+// and `-5` all contribute nothing at all.
+//
+// A leading dash is not what makes something a flag — the shape is. That
+// distinction is the whole point: a parlay command line routinely carries
+// message bodies, and a body is not made safe to publish by starting with
+// punctuation. When a token is ambiguous it is treated as positional.
 //
 // A bare "--" ends flag parsing in every convention this CLI follows, so
 // everything after it is positional and skipped wholesale.
@@ -238,10 +251,13 @@ func flagNames(argv []string) []string {
 		if tok == "--" {
 			break
 		}
-		if !strings.HasPrefix(tok, "-") || tok == "-" {
-			continue
+		if strings.ContainsAny(tok, " \t\r\n\v\f") {
+			continue // whitespace means prose, never a flag name
 		}
 		name, _, _ := strings.Cut(tok, "=")
+		if !flagNameShape.MatchString(name) {
+			continue
+		}
 		if seen[name] {
 			continue
 		}

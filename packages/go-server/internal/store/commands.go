@@ -1,6 +1,7 @@
 package store
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -23,7 +24,7 @@ import (
 // EVERY string that reaches this registry is sanitized on the way in (see
 // sanitizeToken / sanitizeFlags). The registry stores no free-form text at
 // all: not argv, not message bodies, not paths. A caller may report a verb,
-// an agent/channel id, and the NAMES of the flags it was passed — never a
+// an agent id, and the NAMES of the flags it was passed — never a
 // flag's value. That is the whole redaction policy, enforced here at the
 // storage layer rather than trusted to callers, since the HTTP endpoint in
 // front of it is unauthenticated.
@@ -68,7 +69,6 @@ type CommandInvocation struct {
 	ID        string   `json:"id"`
 	Verb      string   `json:"verb"`
 	Agent     string   `json:"agent,omitempty"`
-	Channel   string   `json:"channel,omitempty"`
 	Flags     []string `json:"flags,omitempty"`
 	PID       int      `json:"pid,omitempty"`
 	State     string   `json:"state"`
@@ -91,12 +91,11 @@ type CommandInvocation struct {
 
 // CommandStart is the sanitized input for reporting an invocation's start.
 type CommandStart struct {
-	ID      string
-	Verb    string
-	Agent   string
-	Channel string
-	Flags   []string
-	PID     int
+	ID    string
+	Verb  string
+	Agent string
+	Flags []string
+	PID   int
 }
 
 // CommandEnd is the sanitized input for reporting an invocation's end.
@@ -143,7 +142,10 @@ func NewCommandRegistry(cfg CommandRegistryConfig) *CommandRegistry {
 }
 
 // Start records (or re-records) an invocation as running and returns the
-// stored record.
+// stored record, whether it changed anything, and the ids this write evicted
+// (see evictLocked) so the caller can tell clients to forget them — the same
+// contract Sweep has, for the same reason: a record removed without notice
+// leaves every long-lived panel and `--watch` session holding it forever.
 //
 // Idempotent and order-independent by design, because the reporter is a
 // separate short-lived process whose two POSTs can race or arrive out of
@@ -153,10 +155,10 @@ func NewCommandRegistry(cfg CommandRegistryConfig) *CommandRegistry {
 // moving StartedAt. That is what lets a reporter fire start and end without
 // sequencing them, and what lets a long-running command re-create its own
 // record after a server restart.
-func (cr *CommandRegistry) Start(in CommandStart) (CommandInvocation, bool) {
+func (cr *CommandRegistry) Start(in CommandStart) (CommandInvocation, bool, []string) {
 	id := sanitizeToken(in.ID, 64)
 	if id == "" {
-		return CommandInvocation{}, false
+		return CommandInvocation{}, false, nil
 	}
 
 	cr.mu.Lock()
@@ -167,18 +169,17 @@ func (cr *CommandRegistry) Start(in CommandStart) (CommandInvocation, bool) {
 
 	if existing, ok := cr.byID[id]; ok {
 		if existing.State != CommandRunning {
-			return cr.decorate(existing, now), false
+			return cr.decorate(existing, now), false, nil
 		}
 		existing.UpdatedAt = ts
 		cr.byID[id] = existing
-		return cr.decorate(existing, now), true
+		return cr.decorate(existing, now), true, nil
 	}
 
 	rec := CommandInvocation{
 		ID:        id,
 		Verb:      fallbackToken(sanitizeToken(in.Verb, 32), "unknown"),
 		Agent:     sanitizeToken(in.Agent, 64),
-		Channel:   sanitizeToken(in.Channel, 64),
 		Flags:     sanitizeFlags(in.Flags),
 		PID:       in.PID,
 		State:     CommandRunning,
@@ -189,8 +190,8 @@ func (cr *CommandRegistry) Start(in CommandStart) (CommandInvocation, bool) {
 		rec.PID = 0
 	}
 	cr.byID[id] = rec
-	cr.evictLocked()
-	return cr.decorate(rec, now), true
+	dropped := cr.evictLocked()
+	return cr.decorate(rec, now), true, dropped
 }
 
 // Heartbeat refreshes a running record's UpdatedAt so the reaper leaves it
@@ -222,10 +223,12 @@ func (cr *CommandRegistry) Heartbeat(id string) (CommandInvocation, bool) {
 // invisible. An end for an ALREADY-terminal id is a no-op returning the
 // stored record: the first terminal verdict wins, so a late duplicate cannot
 // rewrite an outcome.
-func (cr *CommandRegistry) End(in CommandEnd) (CommandInvocation, bool) {
+//
+// Returns the evicted ids alongside the record, exactly as Start does.
+func (cr *CommandRegistry) End(in CommandEnd) (CommandInvocation, bool, []string) {
 	id := sanitizeToken(in.ID, 64)
 	if id == "" {
-		return CommandInvocation{}, false
+		return CommandInvocation{}, false, nil
 	}
 
 	state := in.State
@@ -248,7 +251,7 @@ func (cr *CommandRegistry) End(in CommandEnd) (CommandInvocation, bool) {
 		}
 	}
 	if ok && rec.State != CommandRunning {
-		return cr.decorate(rec, now), false
+		return cr.decorate(rec, now), false, nil
 	}
 
 	rec.State = state
@@ -257,8 +260,8 @@ func (cr *CommandRegistry) End(in CommandEnd) (CommandInvocation, bool) {
 	rec.ExitCode = in.ExitCode
 	rec.Outcome = sanitizeToken(in.Outcome, 32)
 	cr.byID[id] = rec
-	cr.evictLocked()
-	return cr.decorate(rec, now), true
+	dropped := cr.evictLocked()
+	return cr.decorate(rec, now), true, dropped
 }
 
 // Sweep is the reaper. It marks every running record whose last heartbeat is
@@ -366,9 +369,13 @@ func (cr *CommandRegistry) decorate(rec CommandInvocation, now time.Time) Comman
 // Terminal records are shed first, oldest-started first, so a flood of
 // finished entries can never push a genuinely running command out of the
 // view. Caller must hold the write lock.
-func (cr *CommandRegistry) evictLocked() {
+//
+// Returns the ids it removed, sorted, so the caller can broadcast the same
+// "forget this id" notice Sweep's drops get. An eviction is a removal like any
+// other; a client that never hears about it holds the record forever.
+func (cr *CommandRegistry) evictLocked() []string {
 	if len(cr.byID) <= cr.maxRecords {
-		return
+		return nil
 	}
 	all := make([]CommandInvocation, 0, len(cr.byID))
 	for _, rec := range cr.byID {
@@ -385,13 +392,17 @@ func (cr *CommandRegistry) evictLocked() {
 		}
 		return all[i].ID < all[j].ID
 	})
+	var dropped []string
 	for i := 0; i < len(all) && len(cr.byID) > cr.maxRecords; i++ {
 		delete(cr.byID, all[i].ID)
+		dropped = append(dropped, all[i].ID)
 	}
+	sort.Strings(dropped)
+	return dropped
 }
 
 // sanitizeToken is the registry's one input filter: keep only characters that
-// can appear in an id/verb/channel slug, cap the length, drop everything
+// can appear in an id, verb, or outcome slug, cap the length, drop everything
 // else. It is a whitelist rather than an escape pass on purpose — these
 // values are rendered into a terminal table and into panel HTML, and the only
 // safe assumption about an unauthenticated POST body is that it is hostile.
@@ -423,12 +434,31 @@ func fallbackToken(s, fallback string) string {
 	return s
 }
 
-// sanitizeFlags keeps flag NAMES and discards everything else — the redaction
-// rule that makes this registry safe to expose. `--json` is kept; `--message
-// "the api key is ..."` reaches here as at most `--message`, and a bare value
-// token is dropped entirely. Anything after an `=` is cut, so `--token=abc`
-// records `--token`. Capped at 8 entries so a caller cannot smuggle a payload
-// past the per-token length limit by sending hundreds of fragments.
+// commandFlagShape is what the body of a flag name (everything after its one
+// or two leading dashes) has to look like: a letter, then only letters,
+// digits, and dashes.
+var commandFlagShape = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`)
+
+// maxCommandFlagName bounds one flag name. It is a resource bound, not a
+// redaction one — a name longer than this is DROPPED, never shortened.
+const maxCommandFlagName = 32
+
+// sanitizeFlags keeps flag NAMES and discards everything else. What makes it
+// safe is the SHAPE a name must have: after cutting at the first `=`, one or
+// two dashes followed by commandFlagShape. `--json` is kept and `--token=abc`
+// records `--token`; a bare value token, a path, and a message body that
+// happens to open with a dash are each dropped WHOLE.
+//
+// Nothing here is ever trimmed into conforming shape. A trimmed payload is
+// still a payload — `-- the key is sk-live-…` shortened to its first 24
+// characters would look like a flag name and would still carry the secret's
+// first characters, so a non-conforming token is rejected outright.
+//
+// Both caps — maxCommandFlagName per name, 8 names per record — are resource
+// bounds on an unauthenticated endpoint, and both drop rather than truncate.
+// The CLI applies the same shape rule before sending (see
+// tools/cli/internal/commandreport's flagNames); this layer repeats it
+// because client-side classification is not a security boundary.
 func sanitizeFlags(in []string) []string {
 	if len(in) == 0 {
 		return nil
@@ -447,8 +477,8 @@ func sanitizeFlags(in []string) []string {
 		if dashes > 2 {
 			continue
 		}
-		name := sanitizeToken(raw[dashes:], 24)
-		if name == "" {
+		name := raw[dashes:]
+		if len(name) > maxCommandFlagName || !commandFlagShape.MatchString(name) {
 			continue
 		}
 		flag := strings.Repeat("-", dashes) + name
