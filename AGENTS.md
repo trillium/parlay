@@ -1297,9 +1297,8 @@ instance — and read it before writing one, because it encodes the isolation
 recipe: redirect **`$HOME`** as well as `PARLAY_DATA_DIR`/`PARLAY_STATE_HOME`/
 `PARLAY_AGENT_HOME`, since `launch`/`teardown`/`variant`/`guard` resolve
 `~/.parlay/agents` from `$HOME` and ignore `PARLAY_AGENT_HOME` (see the B4/B9
-notes above). `PAI_DIR` too: it is read *unconditionally*, not covered by
-`PARLAY_DATA_DIR`, by both tailers, the boot-time session-channel backfill, and
-`tts.ts`'s writes under `$PAI_DIR/MEMORY/`.
+notes above). `PAI_DIR` too — see the `PARLAY_DATA_DIR` section above for why it
+is not covered.
 
 `sweep` is the sharpest case, because it straddles that split: a half-redirected
 `sweep --apply` judges the REAL agent store against a redirected keep-list, and
