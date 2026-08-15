@@ -96,13 +96,25 @@ client and nothing in `packages/client` polls at all. Two structural notes:
 `/api/debug/*` is dispatched in `index.ts`
 *ahead of* `handleChatRequest`, so it runs the guard itself — anything else
 added there must too; and `JSON_EXEMPT_PATHS` is how a route keeps the origin
-check without the JSON content-type gate. It has two members, each for its own
-reason: `/api/chat/upload` (multipart by contract) and `POST
+check without the JSON content-type gate. It is a CLOSED three-member list,
+decided by one sweep of the whole guarded set against a three-part test — the
+handler parses the body regardless of Content-Type, the contract is JSON by
+*semantics* rather than by header, and no in-repo caller depends on the strict
+header — rather than a queue that grows one route per bug report. The members:
+`/api/chat/upload` (multipart by contract); `POST
 /api/chat/plugin/cursorless/rpc` (its handler is `await req.json()`, which
 parses the body whatever the header says, and its only caller is an
 out-of-repo Talon script — so its contract has always been a JSON *body*,
-never a JSON content type). Both stay inside the guarded set; the exemption
-drops one layer, not the boundary.
+never a JSON content type); and `POST /api/chat/tts/validate-splits` (same
+shape — `await req.json()` in `tts-validate.ts`, a header-documented hand-run
+contract stating no content type, and zero callers anywhere in this repo, so
+the only callers are hand-typed `curl -d`, whose default is
+`application/x-www-form-urlencoded`). Every *other* guarded route has an
+in-repo caller that already sends `Content-Type: application/json`, which is
+why the gate costs it nothing — that caller evidence, not the handler shape,
+is what decides membership. All three stay inside the guarded set; the
+exemption drops one layer, not the boundary. `packages/go-server` has no
+`/api/chat/tts*` route at all, so only `/api/chat/upload` is exempt there.
 
 `packages/go-server` now has its own guard: `internal/guard`, wrapped once
 around the whole mux in `cmd/parlay-server/main.go` so a route registered

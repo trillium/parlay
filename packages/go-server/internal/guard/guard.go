@@ -147,12 +147,14 @@ var GuardedPaths = map[string]bool{
 // The origin check alone is sufficient there: a browser always sends Origin
 // on a cross-origin request, including a multipart form POST.
 //
-// TS's JSON_EXEMPT_PATHS has a second member, POST
-// /api/chat/plugin/cursorless/rpc, whose out-of-repo Talon caller sends a JSON
-// body under whatever content type Python gave it. That is not a divergence:
-// this server implements no /api/chat/plugin/ route at all (see the package
-// comment's route-set note). If one is ever added here, classify it on its own
-// handler, exactly as with GuardedPaths.
+// TS's JSON_EXEMPT_PATHS has two further members, POST
+// /api/chat/plugin/cursorless/rpc (whose out-of-repo Talon caller sends a JSON
+// body under whatever content type Python gave it) and POST
+// /api/chat/tts/validate-splits (same shape, and its only callers are hand-run
+// curl). Neither absence is a divergence: this server implements no
+// /api/chat/plugin/ and no /api/chat/tts* route at all (see the package
+// comment's route-set note). If either is ever added here, classify it on its
+// own handler, exactly as with GuardedPaths — never by copying the TS list.
 var jsonExemptPaths = map[string]bool{
 	"/api/chat/upload": true,
 }

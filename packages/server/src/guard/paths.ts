@@ -88,7 +88,8 @@ export const GUARDED_CHAT_PATHS = new Set([
   "/api/chat/tts-correction",    // POST persists a pronunciation override
   "/api/chat/tts-report",        // POST appends to the TTS report log
   "/api/chat/tts-event",         // POST broadcasts a tts_event to every client
-  "/api/chat/tts/validate-splits",
+  "/api/chat/tts/validate-splits", // POST scores a split against a local model
+                                  // — origin-guarded, see JSON_EXEMPT_PATHS
 
   // A GET that mutates. router-poll.ts registers an unknown `channel` on
   // first poll: it inserts into `agents`, broadcasts `agent_register` to
@@ -128,9 +129,16 @@ export const GUARDED_CHAT_PATHS = new Set([
 const GUARDED_PREFIXES = ["/api/chat/agents/", "/api/chat/plugin/", "/api/debug/"]
 
 // Guarded paths that must NOT be held to `Content-Type: application/json`.
-// Two members, each for its own stated reason — this is a deliberate list, not
-// a special case with an exception bolted on. Both stay INSIDE the guarded set
-// above: the exemption drops one layer on one route, never the boundary.
+// Three members, each for its own stated reason — this is a deliberate list,
+// not a special case with an exception bolted on. All three stay INSIDE the
+// guarded set above: the exemption drops one layer on one route, never the
+// boundary. Membership was decided by one sweep of the whole guarded set
+// against a three-part test — the handler parses the body regardless of
+// Content-Type, the contract is JSON by SEMANTICS rather than by header, and
+// no in-repo caller depends on the strict header contract — so this is a
+// closed list rather than a queue that grows one route per bug report. Every
+// other guarded route has an in-repo caller that already sends
+// `Content-Type: application/json`, which is why the gate costs it nothing.
 //
 //   /api/chat/upload — multipart/form-data by contract (the panel posts a
 //     FormData), so the gate would 415 every legitimate upload.
@@ -141,15 +149,29 @@ const GUARDED_PREFIXES = ["/api/chat/agents/", "/api/chat/plugin/", "/api/debug/
 //     application/x-www-form-urlencoded, and that worked before this guard
 //     existed; holding the route to the header would break voice editing at
 //     runtime on the captain's box, with no caller in this repo to catch it.
+//   /api/chat/tts/validate-splits — same shape as /rpc. Its handler is
+//     `await req.json()` (../tts-validate.ts), which parses the body whatever
+//     the header says; its documented contract (that file's header) is a
+//     hand-run request stating a JSON BODY and no content type at all; and it
+//     has zero callers anywhere in this repo, so the only callers that exist
+//     are hand-typed `curl -d` — which defaults to
+//     application/x-www-form-urlencoded — and out-of-repo scripts nothing here
+//     would catch breaking. What the route DOES: it splits a supplied string
+//     and asks a local Ollama model to score the split boundaries. It aims
+//     nothing at the captain — unlike /rpc, which drives text into the
+//     captain's input box — so the exemption is lower-risk here than on /rpc,
+//     where it was already accepted.
 //
-// For both, the origin check alone is the defense, and it is sufficient: a
-// browser always sends Origin on a cross-origin request — on a multipart form
-// POST and on a simple-content-type POST alike — so a foreign page cannot
-// reach either handler. The content-type gate is defence-in-depth on the other
-// paths (it forces a preflight, which is then refused), not the primary check.
+// For all three, the origin check alone is the defense, and it is sufficient:
+// a browser always sends Origin on a cross-origin request — on a multipart
+// form POST and on a simple-content-type POST alike — so a foreign page cannot
+// reach any of these handlers. The content-type gate is defence-in-depth on
+// the other paths (it forces a preflight, which is then refused), not the
+// primary check.
 export const JSON_EXEMPT_PATHS = new Set([
   "/api/chat/upload",
   "/api/chat/plugin/cursorless/rpc",
+  "/api/chat/tts/validate-splits",
 ])
 
 export function isGuardedChatPath(pathname: string): boolean {

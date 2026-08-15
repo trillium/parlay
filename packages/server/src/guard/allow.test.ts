@@ -54,6 +54,33 @@ describe("D9: the panel and the CLI still work on every newly guarded route", ()
     }
   })
 
+  test("a hand-run curl to /tts/validate-splits is not 415'd on a non-JSON content type", () => {
+    // Same three-part shape as /rpc above: the handler is `await req.json()`
+    // (../tts-validate.ts), its documented contract (that file's header) is a
+    // JSON body under no stated content type, and no caller in this repo posts
+    // to it — so the only callers are hand-typed curl, whose -d default is
+    // application/x-www-form-urlencoded. Drop the path from JSON_EXEMPT_PATHS
+    // and every case here becomes a 415.
+    const p = "/api/chat/tts/validate-splits"
+    for (const ct of [
+      "text/plain",
+      "application/x-www-form-urlencoded",           // curl -d '{"text":"…"}'
+      "application/x-www-form-urlencoded; charset=utf-8",
+      null,                                          // no Content-Type at all
+    ] as const) {
+      expect({ ct, resp: guardChatRequest(noOrigin("POST", p, ct), p) }).toEqual({ ct, resp: null })
+    }
+  })
+
+  test("…and the exemption is that one route, not the tts family", () => {
+    // The siblings all have panel callers that send application/json, so the
+    // gate costs them nothing and they keep it. This is what proves the
+    // exemption above is scoped rather than a hole in the gate itself.
+    for (const p of ["/api/chat/tts", "/api/chat/tts-correction", "/api/chat/tts-report", "/api/chat/tts-event"]) {
+      expect({ p, status: guardChatRequest(noOrigin("POST", p, "text/plain"), p)?.status }).toEqual({ p, status: 415 })
+    }
+  })
+
   test("a panel behind a Host-forwarding tunnel can still write, on the same-host branch alone", () => {
     // TUNNEL_ORIGIN's hostname is not loopback, private-LAN, .local or
     // allow-listed, so ./origin.ts's same-host comparison is the only thing

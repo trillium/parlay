@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { CORS, guardChatRequest, guardedCorsHeaders, preflightResponse, withGuardedCors } from "./index"
+import { CORS, JSON_EXEMPT_PATHS, guardChatRequest, guardedCorsHeaders, preflightResponse, withGuardedCors } from "./index"
 import { EVIL, OTHER_HOST, SAME_ORIGIN, TUNNEL_ORIGIN, req } from "./test-helpers"
 
 // What the guard REFUSES. ./allow.test.ts is the other half — every refusal
@@ -104,17 +104,28 @@ describe("D9 neighbours: mutating routes found while auditing the route table", 
     })
   }
 
-  test("/rpc's JSON exemption does not open it cross-origin", () => {
-    // The exemption drops the content-type layer, not the boundary: /rpc stays
-    // in the guarded set, so the origin check refuses a foreign page under
-    // every simple content type — the shapes that reach a handler without a
-    // preflight — as well as with no Content-Type at all.
-    const p = "/api/chat/plugin/cursorless/rpc"
-    for (const ct of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data", null] as const) {
-      const r = req("POST", p, { origin: EVIL, contentType: ct })
-      expect(guardChatRequest(r, p)?.status).toBe(403)
-      expect(guardedCorsHeaders(r)["Access-Control-Allow-Origin"]).toBeUndefined()
-    }
+  // Every JSON-exempt route, not just /rpc: the exemption drops the
+  // content-type layer, not the boundary. Each stays in the guarded set, so
+  // the origin check refuses a foreign page under every simple content type —
+  // the shapes that reach a handler without a preflight — as well as with no
+  // Content-Type at all. Add a member to JSON_EXEMPT_PATHS and it is asserted
+  // here automatically.
+  for (const p of ["/api/chat/plugin/cursorless/rpc", "/api/chat/tts/validate-splits"]) {
+    test(`the JSON exemption does not open ${p} cross-origin`, () => {
+      expect(JSON_EXEMPT_PATHS.has(p)).toBe(true)
+      for (const ct of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data", null] as const) {
+        const r = req("POST", p, { origin: EVIL, contentType: ct })
+        expect({ p, ct, status: guardChatRequest(r, p)?.status }).toEqual({ p, ct, status: 403 })
+        expect(guardedCorsHeaders(r)["Access-Control-Allow-Origin"]).toBeUndefined()
+      }
+    })
+  }
+
+  test("a JSON content type does not open an exempt route cross-origin either", () => {
+    // The gate the exemption lifts was never the thing refusing a foreign
+    // page; the origin check is, and it runs first.
+    const p = "/api/chat/tts/validate-splits"
+    expect(guardChatRequest(req("POST", p, { origin: EVIL }), p)?.status).toBe(403)
   })
 })
 
@@ -136,9 +147,9 @@ describe("non-JSON Content-Type is rejected with 415", () => {
   })
 
   test("the panel's /response POST is NOT exempt — a non-JSON body still 415s", () => {
-    // Only /rpc is exempt. /response's caller is in this repo and sends an
-    // explicit JSON header (packages/client/src-plugins/cursorless.ts), so it
-    // keeps both layers and the exemption stays a two-member list.
+    // /response's caller is in this repo and sends an explicit JSON header
+    // (packages/client/src-plugins/cursorless.ts), so it keeps both layers —
+    // the exemption is a closed three-member list, not the plugin prefix.
     const p = "/api/chat/plugin/cursorless/response"
     expect(guardChatRequest(req("POST", p, { origin: SAME_ORIGIN, contentType: "text/plain" }), p)?.status).toBe(415)
   })

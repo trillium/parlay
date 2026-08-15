@@ -105,6 +105,23 @@ describe("live server: the panel and the CLI are unaffected", () => {
     })
   }
 
+  // A hand-run `curl -d` against /tts/validate-splits: same shape as /rpc, and
+  // curl's -d default IS application/x-www-form-urlencoded. An empty `text`
+  // makes the handler answer 400 "text required" before it ever reaches the
+  // local Ollama model, so this asserts the request reached the HANDLER — the
+  // guard would have answered 415 — without depending on a model being up.
+  for (const ct of ["text/plain", "application/x-www-form-urlencoded", "application/json"]) {
+    test(`no-Origin POST /tts/validate-splits under ${ct} reaches the handler`, async () => {
+      const r = await fetch(`${base}/api/chat/tts/validate-splits`, {
+        method: "POST",
+        headers: { "Content-Type": ct },
+        body: JSON.stringify({ text: "" }),
+      })
+      expect(r.status).toBe(400)
+      expect(await r.json()).toEqual({ error: "text required" })
+    })
+  }
+
   test("panel: same-origin POST /api/chat/eval reaches the handler", async () => {
     // PARLAY_EVAL_ENGINE_URL points at a dead port (see ./scratch-server), so
     // the handler answers 502 "engine unreachable" — which only the handler can

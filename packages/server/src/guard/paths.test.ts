@@ -52,6 +52,27 @@ describe("guarded route set", () => {
     expect(JSON_EXEMPT_PATHS.has("/api/chat/plugin/cursorless/rpc")).toBe(true)
   })
 
+  // Same classification, reached by the same three-part test: the handler is
+  // `await req.json()` (../tts-validate.ts), the documented contract is a JSON
+  // body under no stated content type, and no caller in this repo posts to it.
+  // Both halves pinned for the same reason as /rpc above — dropping it from
+  // the guarded set opens it cross-origin, dropping it from the exempt set
+  // 415s a hand-run `curl -d`.
+  test("POST /api/chat/tts/validate-splits is guarded AND JSON-exempt", () => {
+    expect(isGuardedChatPath("/api/chat/tts/validate-splits")).toBe(true)
+    expect(JSON_EXEMPT_PATHS.has("/api/chat/tts/validate-splits")).toBe(true)
+  })
+
+  // The exemption is one route deep, not the whole tts family: its siblings
+  // all have in-repo panel callers that send Content-Type: application/json
+  // (packages/client/src-plugins/speak/*), so they keep both layers.
+  test("the tts siblings are NOT exempt", () => {
+    for (const p of [
+      "/api/chat/tts", "/api/chat/tts-correction",
+      "/api/chat/tts-report", "/api/chat/tts-event",
+    ]) expect(JSON_EXEMPT_PATHS.has(p)).toBe(false)
+  })
+
   test("the panel's /response POST keeps both layers", () => {
     // It sends Content-Type: application/json explicitly, so there is nothing
     // to exempt — see packages/client/src-plugins/cursorless.ts.
