@@ -1,5 +1,15 @@
 # Parlay Panel Redesign — Agent Build Brief
 
+> **Historical build brief, kept for its design record — not current build
+> instructions.** Written 2026-07-13, before the panel and chat-server sources were
+> consolidated into this repository. The two external checkouts and the machine-local
+> paths it names below (`~/.claude/PAI/PULSE/modules/chat/`,
+> `~/pulse-pages/annotate/src/`) are the author's own; the code now lives at
+> `packages/client/` and `packages/server/` here, and the workflow it describes
+> (restarting Pulse, verifying through a private `interceptor` tool) assumes tooling
+> that does not ship with this repo. Read it for the diagnosis and the decisions.
+> See [`../../README.md`](../../README.md) for how to build and run the panel today.
+
 > Hand-off task. Author diagnosed the problem and specced the build against the live
 > code; the executing agent implements + verifies. **Do NOT re-litigate the design
 > decisions in §Decisions — they are made.** Grounded in files read 2026-07-13.

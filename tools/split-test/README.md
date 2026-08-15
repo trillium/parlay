@@ -1,5 +1,13 @@
 # parlay-split — Parlay split-testing tool
 
+> **This is a dated investigation record, not a description of the repository as
+> it stands today.** Written 2026-07-18, last revised 2026-08-04. The modes and
+> the safety model describe the tool; the "Isolation gaps found" section below
+> records what was true of *this repository* when each gap was discovered.
+> Several have since been closed — each of those is marked **RESOLVED** in place,
+> with what closed it, rather than rewritten, so the record of the gap survives
+> alongside its resolution.
+
 A standalone tool for testing Parlay code and topology **without touching the
 production stack**. It boots fully isolated Parlay sandboxes, compares two front
 doors against one backing store, and split-tests two code checkouts side by side.
@@ -42,9 +50,11 @@ exits non-zero. A half-booted sandbox is never left running.
 Boots a complete, isolated Parlay stack:
 
 - **server** — `bun packages/server/src/index.ts` on a free port, with its own
-  `PARLAY_DATA_DIR` and `PAI_DIR`. `src/*` are symlinks into the live Pulse
-  chat module, so this always runs the same external source, not
-  branch-dir-specific code (see Isolation gaps).
+  `PARLAY_DATA_DIR` and `PAI_DIR`. *(As recorded here at the time: `src/*` are
+  symlinks into the live Pulse chat module, so this always runs the same
+  external source, not branch-dir-specific code. **RESOLVED** by PR #42
+  (`15bd487`, 2026-08-04), which replaced the symlink farm with real tracked
+  files — see gap #3.)*
 - **relay** — built from the branch-dir's own Go source into a sandbox-local
   binary, run as a background process with its own `--runtime-dir`.
 - **eval-engine** — optional (`--with-engine`), built from source, on a free port
@@ -139,12 +149,17 @@ branch) — and runs the same probe suite against each. Each sandbox builds its
 own relay/engine from its own source, so relay/engine differences are
 attributable to the **code**, not the environment. Zero prod contact.
 
-> **Server is no longer split-tested in isolation.** `packages/server/src/*`
-> are now symlinks into the live Pulse chat module
+> **RESOLVED — the limitation recorded here no longer applies.** As found:
+> "Server is no longer split-tested in isolation. `packages/server/src/*` are
+> now symlinks into the live Pulse chat module
 > (`~/.claude/PAI/PULSE/modules/chat` — see `packages/server/README.md`), so
 > every sandbox's `bun packages/server/src/index.ts` resolves to the **same**
 > external source regardless of `--branch-dir`. `two-stack` can no longer
-> attribute server-side behavioral differences to the branch under test.
+> attribute server-side behavioral differences to the branch under test."
+> PR #42 (`15bd487`, 2026-08-04) replaced those symlinks with real tracked
+> files — `git ls-files -s packages/server/src/` now returns 44 regular
+> (`100644`) entries and no symlinks — so each `--branch-dir` resolves its own
+> server source again and `two-stack` covers server code once more. See gap #3.
 
 ```bash
 # Baseline (main checkout) vs a feature worktree
@@ -183,8 +198,14 @@ That workaround was not enough for everyone: Pulse's `boot-smoke.test.ts` cannot
 redirect `PAI_DIR` (its other modules need the real one), so it booted against
 the live registry and the startup prune sweep deleted two real agent channels
 (robots-jcjj). The gap is now closed at the source — `packages/server/src/paths.ts`
-resolves **every** persisted path, and `PARLAY_DATA_DIR` alone redirects all of
-them, registry included.
+resolves every persisted path that is routed through it, registry included, and
+`PARLAY_DATA_DIR` redirects all of those. One module sits outside that routing and
+`PARLAY_DATA_DIR` does not reach it: `packages/server/src/tts.ts` resolves `PAI_DIR`
+itself (`tts.ts:39`, `process.env.PAI_DIR ?? ~/.claude/PAI`), then **appends** to
+`$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl` (`:153`, `:178`),
+**creates** `$PAI_DIR/MEMORY/STATE/tts-cache/` (`:70`), and **`unlinkSync`-deletes**
+clips out of that cache once it exceeds `DISK_CACHE_MAX` (100) (`:77-78`) — writing
+into and deleting out of the real `$PAI_DIR` unless `PAI_DIR` is redirected too.
 
 **Handling here is unchanged and still correct:** the sandbox sets both
 `PARLAY_DATA_DIR` and `PAI_DIR` (the latter still covers the tts cache/reports
@@ -192,7 +213,9 @@ and the tool/hook tailers, which are not persistence paths and still key off
 `PAI_DIR`). `sandbox up`'s assertion is behavioral — the sandbox registry must be
 **empty** on first boot — so it holds either way.
 
-### 2. `parlay-ui.{ts,js}` are untracked runtime-required working files
+### 2. `parlay-ui.{ts,js}` are untracked runtime-required working files — RESOLVED in part
+
+*The original finding, kept verbatim:*
 
 `packages/server/src/router.ts` imports `./parlay-ui`, but `parlay-ui.ts` and
 `parlay-ui.js` are **untracked** (never committed) working files present only in
@@ -208,7 +231,20 @@ is respected (never overwritten).
 server without these untracked files. They should probably be committed or
 generated by a build step.
 
-### 3. `packages/server/src/*` are symlinks to a single external, unbranched source
+**RESOLVED in part — the boot consequence stated above is no longer true.**
+Verified against the current tree: `git ls-files packages/server/src/` lists
+`parlay-ui.ts` as a tracked regular file, so the `./parlay-ui` import resolves
+from a clean checkout. `parlay-ui.js` is genuinely still untracked — it does not
+appear in `git ls-files` — but `packages/server/src/parlay-ui.ts:10-11` reads it
+inside a `try`/`catch` that falls back to the string
+`"// parlay-ui.js missing from server bundle"`, so its absence degrades one
+served asset and does not stop the server booting. The accurate statement today:
+`parlay-ui.ts` is tracked, `parlay-ui.js` is not, and a clean checkout boots
+regardless.
+
+### 3. `packages/server/src/*` are symlinks to a single external, unbranched source — RESOLVED
+
+*The original finding, kept verbatim:*
 
 `packages/server/src/*` (all files except `package.json`) are symlinks into
 `~/.claude/PAI/PULSE/modules/chat`, the live Pulse install (see
@@ -222,6 +258,15 @@ writing into the external PULSE checkout or hardcoding a path outside this
 repo, both out of scope for this tool. Treat `two-stack` results as covering
 relay/eval-engine behavior only; it no longer proves anything about
 branch-specific server changes.
+
+**RESOLVED — the symlink farm is gone.** PR #42 (`15bd487`, 2026-08-04) recovered
+the real source from git history and replaced every loop symlink with a real
+tracked file; `packages/server/README.md` records the same. Verified against the
+current tree: `git ls-files -s packages/server/src/` returns 44 entries, all mode
+`100644`, and no mode `120000` symlink entries at all. Each `--branch-dir` now
+resolves its own `packages/server/src/index.ts`, so `sandbox up` and `two-stack`
+run branch-specific server code again and `two-stack` covers server changes once
+more.
 
 ## Environment overrides
 

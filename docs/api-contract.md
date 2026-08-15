@@ -1,22 +1,23 @@
 # Parlay HTTP API contract
 
-> Ground truth for this doc is the **client** (`packages/client/src/*`) and
-> **CLI** (`packages/cli/src/*`) call sites, plus the one standalone server
-> file that exists outside the broken symlink farm
-> (`packages/server/src/debug-log.ts`). Every other server-side handler
-> (`router.ts`, `router-poll.ts`, `router-device-cmd.ts`, `sse.ts`,
-> `eval-relay.ts`, …) lives under `packages/server/src/`, which — as of
-> 2026-08-01 — is a broken self-referential symlink loop into
-> `~/.claude/PAI/PULSE/modules/chat` and cannot be read from this checkout
-> (see the project `CLAUDE.md`). **Response shapes below are reconstructed
-> from how callers consume them, not read from the handler source** — see
-> [Open Gaps](#open-gaps) for exactly what that means per endpoint.
+> **How this doc was written, and what that means for trusting it.** It was
+> reconstructed from the **client** (`packages/client/src/*`) and **CLI** call
+> sites at a time when `packages/server/src/` could not be read from a checkout —
+> the directory was a broken self-referential symlink loop (fixed since; see the
+> project `CLAUDE.md`). So **response shapes below are inferred from how callers
+> consume them, not read from the handler source.** They have held up in practice
+> and this is the spec both server implementations are built against, but where a
+> shape is under-determined it is called out in [Open Gaps](#open-gaps) rather
+> than guessed at. The handler source is readable again — prefer it when the two
+> disagree, and correct this doc when they do.
 >
 > Base path for all REST/SSE routes: `/api/chat`. `CHAT_BASE` in
 > `packages/client/src/config.ts` is the single client-side constant; the CLI
-> resolves the server origin via `serverUrl()` in `packages/cli/src/config.ts`
-> (`PARLAY_SERVER` env → persisted `~/.parlay/config.json` `"server"` key →
-> `http://localhost:4242`). All request/response bodies are JSON unless noted.
+> resolves the server origin via `config.ServerURL()`
+> (`tools/cli/internal/config/config.go`, and its retired TS predecessor
+> `serverUrl()` in `packages/cli/src/config.ts`): `PARLAY_SERVER` env →
+> persisted `~/.parlay/config.json` `"server"` key → `http://localhost:4242`.
+> All request/response bodies are JSON unless noted.
 
 ## Conventions
 
@@ -373,9 +374,10 @@ devtools) can be diagnosed via a tailed log file.
 Caller: `packages/client/src/debug-log.ts`.
 
 **Server-side status: NOT WIRED.** The handler exists at
-`packages/server/src/debug-log.ts` (`handleDebugLog`) but per its own header
-comment, `router.ts` (where it would be registered) is unreachable through the
-broken symlink loop, so it has never been connected. The client treats a 404
+`packages/server/src/debug-log.ts` (`handleDebugLog`) and has never been
+registered in `router.ts`: per its own header comment, that file was
+unreachable through the broken symlink loop when the handler was written, and
+nothing has wired it since. The client treats a 404
 response as "permanent no-op for the session" and stops sending — this is
 confirmed, working degradation, not a bug.
 
@@ -459,8 +461,9 @@ header: *"Agents POST /api/chat/device-cmd to drive the client"*) and in
 `docs/CLI_VERBS_AND_EVENTS.md` (`router-device-cmd.ts`, "server → browser").
 **No call site exists anywhere under `packages/cli/` or `bin/`** — agents are
 presumably expected to `curl` this directly, or a wrapper exists only inside
-the still-unreadable `packages/server`/Pulse tree. Treat the request shape
-below as inferred from the consuming SSE handler, not confirmed:
+the `packages/server`/Pulse tree, which could not be read when this was
+written. Treat the request shape below as inferred from the consuming SSE
+handler, not confirmed:
 ```jsonc
 {
   "cmd": "reload" | "reset-tts" | "ping" | "switch-channel" | "list-channels" | "set-hands-free",
@@ -558,10 +561,12 @@ Full verb semantics are out of scope for this doc — see
 
 ## Open Gaps
 
-1. **Server source is unreadable.** Every handler behind these routes lives
-   under `packages/server/src/`, a broken symlink loop into
-   `~/.claude/PAI/PULSE/modules/chat` as of 2026-08-01 (see project
-   `CLAUDE.md`). Every response shape in this doc except `debug-log.ts`'s is
+1. **Response shapes were reconstructed, not read.** Every handler behind these
+   routes lives under `packages/server/src/`, which was a broken symlink loop
+   into `~/.claude/PAI/PULSE/modules/chat` when this doc was written on
+   2026-08-01 (see project `CLAUDE.md`). That loop is fixed and the source is
+   readable now, but nothing here has been re-verified against it: every
+   response shape in this doc except `debug-log.ts`'s is still
    reverse-engineered from what the calling code reads off the response, not
    read from the handler. Fields a handler sets but no client happens to read
    are invisible to this document by construction.
@@ -583,8 +588,8 @@ Full verb semantics are out of scope for this doc — see
 
 4. **`POST /api/chat/device-cmd` has no in-repo caller.** It's documented from
    the *consuming* SSE handler and a code comment only; the actual POST call
-   site (an agent's `curl`, or code inside the still-unreadable server/Pulse
-   tree) was not found. Request shape above is inferred, not confirmed.
+   site (an agent's `curl`, or code inside the server/Pulse tree, unreadable at
+   the time) was not found. Request shape above is inferred, not confirmed.
 
 5. **`POST /api/chat/message`'s response is unparsed** (`commands-supervise.ts`
    only checks `res.ok`) — its response shape is entirely unknown.

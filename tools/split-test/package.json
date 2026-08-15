@@ -2,6 +2,7 @@
   "name": "parlay-split",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Standalone split-testing tool for Parlay: isolated sandboxes, two-door and two-stack probe suites. Zero prod contact.",
   "bin": {
     "parlay-split": "./bin/parlay-split"

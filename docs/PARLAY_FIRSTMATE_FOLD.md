@@ -1,5 +1,16 @@
 # Migrating firstmate's setup mechanics down into parlay (the "fold")
 
+> **Reading this from outside?** This document is internal design work about
+> integrating parlay with [**firstmate**](https://github.com/trillium/firstmate), a
+> public sibling project: parlay is the chat and relay layer, firstmate is the
+> agent-fleet orchestrator that drives crews of coding agents through it, from intake
+> through review to merge. It also assumes
+> [herdr](https://github.com/trillium/herdr), which is public, plus **PAI** and the
+> `beads` stores, which are not. Nothing described here is required to run parlay —
+> see [`../README.md`](../README.md) for that. It is kept in the open because the
+> reasoning about agent supervision is real, not because you are expected to
+> reproduce the setup.
+
 > **Status:** DESIGN — awaiting review. No code written yet.
 > **Ownership direction (decision-3ae, §0):** parlay OWNS the agent-setup MECHANICS
 > as native primitives (spawn / identity / channel / status+supervision / worktree /

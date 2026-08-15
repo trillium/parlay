@@ -22,15 +22,17 @@ pages watcher, and serves every request through `handleChatRequest`
 | Env var           | Default          | Purpose                                                        |
 | ----------------- | ---------------- | -------------------------------------------------------------- |
 | `PARLAY_PORT`     | `4242`           | TCP port the server listens on.                                |
-| `PARLAY_DATA_DIR` | *(unset)*        | Redirects **every** persisted file into one directory (`paths.ts`). Unset ⇒ the production locations below. |
-| `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events.            |
+| `PARLAY_DATA_DIR` | *(unset)*        | Redirects every persisted file resolved through `paths.ts` into one directory. Unset ⇒ the production locations below. Does not cover `src/tts.ts` — see Data files. |
+| `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events, and the root `src/tts.ts` writes its pronunciation reports into and creates/evicts its clip cache under. |
 | `PARLAY_AGENT_ID` | *(unset)*        | Identifies the calling agent for per-agent context lookups.    |
 | `PARLAY_EVAL_ENGINE_URL` | `http://127.0.0.1:4343` | External eval engine for `/api/chat/eval`; returns 502 until running (Go engine deliberately deferred). |
 
 ## Data files
 
-Every path the server writes is resolved in `src/paths.ts`. With
-`PARLAY_DATA_DIR` unset they sit in their production locations:
+Every persisted path is resolved in `src/paths.ts` — with one exception,
+`src/tts.ts`, which resolves `PAI_DIR` itself and writes outside that routing
+(see below). With `PARLAY_DATA_DIR` unset the `paths.ts` files sit in their
+production locations:
 
 - `~/exchange/chat-history.jsonl` — message log (rotates at 5 MB).
   **Live data — do not move or clobber it.**
@@ -47,8 +49,15 @@ Every path the server writes is resolved in `src/paths.ts`. With
 affected by `PARLAY_DATA_DIR`.
 
 Set `PARLAY_DATA_DIR` to a scratch directory and **all** of the above relocate
-into it, flat — nothing under `~/exchange` or `$PAI_DIR` is read or written.
-Any test or local run that imports this module must do this. Importing the
+into it, flat — nothing under `~/exchange` or `$PAI_DIR` is read or written by
+those paths. `src/tts.ts` is the exception and is not redirected by
+`PARLAY_DATA_DIR` at all: it resolves its own `PAI_DIR`
+(`process.env.PAI_DIR ?? ~/.claude/PAI`) and then **appends** to
+`$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl`, **creates**
+`$PAI_DIR/MEMORY/STATE/tts-cache/`, and **`unlinkSync`-deletes** clips out of
+that cache whenever it exceeds `DISK_CACHE_MAX` (100). Set `PAI_DIR` to a
+scratch directory as well, or the run writes into and deletes out of the real
+one. Any test or local run that imports this module must do both. Importing the
 module and calling `startChat()` runs a startup prune sweep against whatever
 registry `paths.ts` resolves; against the live one it permanently removes real
 agent channels (robots-jcjj). `src/paths.test.ts` pins the guarantee that no
