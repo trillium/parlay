@@ -1,0 +1,396 @@
+name: CI
+
+# Parlay's first CI. Before this, the only check on a pull request was
+# CodeRabbit, which reports the check conclusion "pass" even when its
+# account-wide rate limit meant it never reviewed the diff at all. A triage of
+# the open-PR backlog found 23/23 PRs showing a green check while 3 were
+# provably broken (committed conflict markers, a clean merge that broke main's
+# build, and a 9.6 MB committed binary). Every one of those three is caught by
+# a job below.
+
+on:
+  # No branch filter: contributions arrive from forks and long-lived branches.
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege. Nothing here writes to the repo, comments on a PR, or
+# publishes an artifact, so read access to the contents is the entire need.
+#
+# Deliberately NOT pull_request_target: this repo is about to go public and
+# accept PRs from strangers. That trigger runs the workflow definition from the
+# base branch but with a writable token and repository secrets in scope, while
+# checking out untrusted code — the standard way public repos leak credentials.
+# Everything below runs with the fork's read-only token and no secrets.
+permissions:
+  contents: read
+
+# Pull-request runs are grouped by ref and a superseded one is cancelled: the
+# newest commit on a branch is the only one whose answer matters, and there is
+# no reason to keep burning a runner on an answer nobody will read.
+#
+# Push runs are deliberately given a group key unique per run (github.run_id),
+# which puts each of them in a group of one. `cancel-in-progress: false` alone
+# would not be enough: runs sharing a group key also evict each other while
+# still *pending*, and every push to main shares refs/heads/main — so a burst of
+# landings would silently drop the middle commits' runs before they ever start.
+# A unique key is the only way no landed commit loses its verdict, which is the
+# ambiguous-green state this workflow exists to remove.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/eval-engine,
+  #    packages/go-server ───────────────────────────────────────────────────
+  # Five separate modules, no root go.work, so each is entered on its own.
+  # All five are pure standard library (no go.sum, no external requires), which
+  # is why the whole suite runs in seconds.
+  go:
+    name: Go (build, vet, test, gofmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The module list, consumed unquoted by gofmt/build/vet/test below so the
+    # shell splits it on whitespace. A sixth module is added here and in
+    # cache-dependency-path, and every step picks it up; a per-step list would
+    # let one step drift and leave a module silently unchecked.
+    env:
+      GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/eval-engine packages/go-server
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # Matches the `go 1.26` directive every module declares.
+          go-version: '1.26'
+          # No module has a go.sum (zero external dependencies), so the cache
+          # key is keyed off the go.mod files instead. The value here is the
+          # build cache, not a download cache.
+          cache-dependency-path: |
+            tools/cli/go.mod
+            tools/relay/go.mod
+            tools/parlay-bin/go.mod
+            packages/eval-engine/go.mod
+            packages/go-server/go.mod
+
+      # Pin the Go cache/GOPATH locations as explicit environment variables
+      # BEFORE any step redirects HOME. Go derives GOCACHE and GOMODCACHE from
+      # $HOME by default, so without this the HOME redirect below would silently
+      # move them to an empty directory and discard the cache restored above.
+      - name: Pin Go cache paths against the HOME redirect
+        run: |
+          {
+            echo "GOCACHE=$(go env GOCACHE)"
+            echo "GOMODCACHE=$(go env GOMODCACHE)"
+            echo "GOPATH=$(go env GOPATH)"
+          } >> "$GITHUB_ENV"
+
+      # gofmt across every module.
+      #
+      # tools/cli already guards itself with TestGofmtClean
+      # (tools/cli/internal/commands/gofmt_test.go), which runs as part of
+      # `go test` below — but that test resolves its root to the tools/cli
+      # module and therefore covers exactly one of the five modules. This step
+      # is what covers the other four; it is not a duplicate of that guard, it
+      # is the other 80%.
+      - name: gofmt
+        run: |
+          dirty="$(gofmt -l $GO_MODULES)"
+          if [ -n "$dirty" ]; then
+            echo "::error::these files are not gofmt-clean:"
+            echo "$dirty"
+            echo "Inspect with 'gofmt -d <file>' before running 'gofmt -w': gofmt"
+            echo "reformats doc comments and can rewrite documented prose."
+            exit 1
+          fi
+          echo "all five modules are gofmt-clean"
+
+      - name: Build
+        run: |
+          for m in $GO_MODULES; do
+            echo "::group::go build ./... ($m)"
+            ( cd "$m" && go build ./... )
+            echo "::endgroup::"
+          done
+
+      - name: Vet
+        run: |
+          for m in $GO_MODULES; do
+            echo "::group::go vet ./... ($m)"
+            ( cd "$m" && go vet ./... )
+            echo "::endgroup::"
+          done
+
+      # HOME is redirected for the test run. Several Go tests write under
+      # $HOME (observed: ~/.parlay, ~/.config/bd, ~/.beads) because the code
+      # they cover resolves ~/.parlay/agents directly rather than honouring
+      # $PARLAY_AGENT_HOME — see the AGENTS.md notes on guard/teardown/variant
+      # and on the ~/.parlay/agents/status-agent pollution incident. On a
+      # hosted runner $HOME is thrown away with the VM, but this workflow must
+      # also be safe on a self-hosted runner, where $HOME persists and is a
+      # real developer's state. AGENTS.md records a smoke test permanently
+      # deleting a live ~/.parlay; nothing in this file gets the chance.
+      - name: Test
+        env:
+          HOME: ${{ runner.temp }}/go-home
+        run: |
+          mkdir -p "$HOME"
+          for m in $GO_MODULES; do
+            echo "::group::go test ./... ($m)"
+            ( cd "$m" && go test ./... )
+            echo "::endgroup::"
+          done
+
+      # `go build ./...` writes a binary next to any main package that is not
+      # gitignored. tools/relay/relay is 9.6 MB and was exactly that — the
+      # committed-binary PR the triage found. This asserts the working tree is
+      # still clean after a full build, so a newly added main package cannot
+      # reintroduce it: the check fixes itself as modules are added, which a
+      # hardcoded filename list would not.
+      - name: No build artifact may be left untracked
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::go build ./... produced files that are neither tracked nor gitignored:"
+            git status --porcelain
+            echo "Add the binary to .gitignore (see the existing"
+            echo "packages/eval-engine/eval-engine and tools/cli/bin/ entries)."
+            exit 1
+          fi
+          echo "working tree clean after a full build"
+
+  # ── Bun workspace: packages/input, packages/client, packages/server,
+  #    packages/cli, plus tools/gate-tag ─────────────────────────────────────
+  # packages/server and packages/cli have real test files but no "test" script
+  # in package.json, so `bun test` is invoked directly. Every package is run
+  # from inside its own directory: there is no root bunfig.toml, so the
+  # happy-dom preload that packages/client and packages/input need is only
+  # picked up from the package directory (see AGENTS.md).
+  #
+  # Known gap, deliberately NOT enforced here: tools/hooks/pre-commit imposes a
+  # 250-line ceiling on staged .ts files. It is a staged-diff check rather than
+  # a whole-tree one, so it does not map cleanly onto a CI job — a PR can be
+  # perfectly mergeable while files it never touched sit over the limit. It is
+  # named here (and in AGENTS.md) so that a contributor whose commit is rejected
+  # by a hook they never installed on purpose can find the rule written down
+  # instead of discovering it as an ambush.
+  bun:
+    name: Bun (test, typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.11'
+
+      - name: Cache Bun install cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'tools/split-test/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      # The root workspaces glob is packages/* only, so tools/split-test has
+      # its own lockfile and needs its own install.
+      - name: Install (workspace root)
+        run: bun install --frozen-lockfile
+
+      - name: Install (tools/split-test)
+        run: bun install --frozen-lockfile
+        working-directory: tools/split-test
+
+      # HOME is redirected for the same reason as the Go job, and here it is
+      # load-bearing rather than defensive: packages/cli's own tests resolve
+      # join(homedir(), ".parlay", "agents", <test agent>) directly
+      # (commands-crew-state.test.ts, commands-supervise.test.ts,
+      # commands-status.test.ts) and genuinely create that directory. Verified
+      # locally: a sandboxed run leaves .parlay/agents/unit-test-agent behind.
+      # Without this redirect the suite writes into a real developer's
+      # ~/.parlay on any self-hosted runner.
+      #
+      # tools/gate-tag is in this loop but deliberately absent from the install
+      # steps above: it has no package.json and no dependencies, so
+      # `bun install --frozen-lockfile` there would fail. `bun test` in that
+      # directory is the whole requirement — semver.test.ts imports only
+      # `bun:test` and `./semver`.
+      - name: Test
+        env:
+          HOME: ${{ runner.temp }}/bun-home
+        run: |
+          mkdir -p "$HOME"
+          for p in packages/input packages/client packages/server packages/cli \
+                   tools/gate-tag; do
+            echo "::group::bun test ($p)"
+            ( cd "$p" && bun test )
+            echo "::endgroup::"
+          done
+
+      # Typecheck only where a tsconfig actually exists and resolves. Both use
+      # the locked, package-local tsc rather than `bunx tsc`, which would fetch
+      # TypeScript from the network at run time instead of using the pinned
+      # version in the lockfile.
+      - name: Typecheck (packages/input)
+        run: ./node_modules/.bin/tsc --noEmit
+        working-directory: packages/input
+
+      - name: Typecheck (tools/split-test)
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+        working-directory: tools/split-test
+
+  # ── Hermetic shell harnesses ──────────────────────────────────────────────
+  # Only the seven harnesses that were verified to be genuinely side-effect-free
+  # are here. Each was trial-run against a redirected HOME with the live
+  # ~/.parlay/agents and ~/.treehouse snapshotted before and after; all seven
+  # produced zero drift in either. The three excluded harnesses are named in
+  # the "not covered" list in the PR description and in AGENTS.md:
+  #
+  #   tools/monitor/parlay-monitor.test.sh   — enrols over a relay control
+  #       socket and spawns relay processes; touches live relay state.
+  #   tools/relay/deploy/ensure-up.test.sh   — drives launchctl (macOS launchd).
+  #   tools/relay/deploy/install.test.sh     — launchctl + plist/PlistBuddy.
+  #
+  # HOME is redirected here too, and PARLAY_SERVER is pointed at a closed port
+  # so that any spawn path which somehow reached a network call fails fast
+  # instead of registering against a live Pulse instance.
+  shell:
+    name: Shell harnesses (hermetic only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # HOME is set on this step rather than on the job, so that the checkout
+      # above still runs with a real home directory.
+      - name: Run hermetic harnesses
+        env:
+          HOME: ${{ runner.temp }}/shell-home
+          PARLAY_SERVER: http://127.0.0.1:1
+        run: |
+          # bin/parlay-treehouse-guard.test.sh opens with a `command -v jq ||
+          # exit 0` skip, which is right on a developer laptop and wrong here:
+          # if jq ever left the runner image the harness would report success
+          # having asserted nothing, and the gate would read green. The other
+          # harnesses lean on git and curl the same way. ubuntu-latest is a
+          # rolling image, so assert the dependencies rather than assume them —
+          # a missing one must fail loudly, not silently pass.
+          missing=""
+          for b in git jq curl; do
+            command -v "$b" >/dev/null 2>&1 || missing="$missing $b"
+          done
+          if [ -n "$missing" ]; then
+            for b in $missing; do
+              echo "::error::required binary '$b' is not on PATH; the shell harnesses would skip or fail vacuously without it"
+            done
+            exit 1
+          fi
+
+          mkdir -p "$HOME"
+          # These build real throwaway git repositories; git refuses to commit
+          # without an identity, and the redirected HOME has no gitconfig.
+          git config --global user.email ci@example.invalid
+          git config --global user.name  "parlay ci"
+          for t in bin/parlay-spawn.templates.test.sh \
+                   bin/parlay-spawn.integration.test.sh \
+                   bin/parlay-spawn.quoting.test.sh \
+                   bin/parlay-spawn.batch.test.sh \
+                   bin/parlay-spawn.worktree.test.sh \
+                   bin/parlay-treehouse-guard.test.sh \
+                   tools/mechanic-dispatch/mechanic-dispatch.test.sh; do
+            echo "::group::$t"
+            bash "$t"
+            echo "::endgroup::"
+          done
+
+  # ── Repository hygiene ────────────────────────────────────────────────────
+  # No toolchain needed, so this answers in seconds and catches two of the
+  # three breakages the open-PR triage found on its own.
+  hygiene:
+    name: Hygiene (conflict markers, large files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # One of the open PRs committed conflict markers and did not compile.
+      # This file is deliberately NOT excluded from its own scan — the workflow
+      # must not be the one place the gate cannot see. The pattern below is
+      # written so it cannot self-match: the regex source contains no run of
+      # seven markers at the start of a line.
+      #
+      # git grep's three exit statuses are distinguished rather than collapsed
+      # into if/else: 0 is "matches found", 1 is "clean", and anything else is
+      # git itself failing. Treating that third case as clean is how a gate goes
+      # vacuously green — the whole failure mode this workflow exists to remove.
+      - name: No committed conflict markers
+        run: |
+          markers="$(mktemp)"
+          set +e
+          git grep -nIE '^(<{7}|={7}|>{7})( |$)' > "$markers"
+          status=$?
+          set -e
+          case "$status" in
+            0)
+              echo "::error::committed merge-conflict markers:"
+              cat "$markers"
+              exit 1
+              ;;
+            1)
+              echo "no conflict markers"
+              ;;
+            *)
+              echo "::error::git grep exited $status: the conflict-marker scan did not run"
+              cat "$markers"
+              exit 1
+              ;;
+          esac
+
+      # A 9.6 MB Go binary was committed on one of the open PRs. The largest
+      # legitimately tracked file in this repo is AGENTS.md at ~75 KB, so a
+      # 2 MiB ceiling is far above anything real and still catches a binary.
+      #
+      # Sizes come from `git ls-tree -l`, i.e. the tracked blob, not `stat` on
+      # the worktree path. This repo tracks symlinks (CLAUDE.md,
+      # packages/eval-engine/commands.json); `stat` follows them, so it would
+      # measure whatever they point at — and under `set -e` a symlink whose
+      # target is missing after checkout would abort the step with an opaque
+      # "cannot stat" rather than a size verdict. A symlink's blob is just its
+      # target string, which is what should be measured.
+      #
+      # The listing is written to a file rather than piped in from a process
+      # substitution, whose exit status the `while ... done < <(...)` form never
+      # consumes: a failing git ls-tree would feed the loop nothing and the gate
+      # would announce a clean tree it never read. The scanned count is asserted
+      # for the same reason — an empty listing is an unanswered question, not a
+      # pass.
+      - name: No oversized tracked files
+        run: |
+          limit=$((2 * 1024 * 1024))
+          listing="$(mktemp)"
+          if ! git ls-tree -r -l -z --full-tree HEAD > "$listing"; then
+            echo "::error::git ls-tree failed: the tracked-file size scan did not run"
+            exit 1
+          fi
+          fail=0
+          scanned=0
+          while IFS= read -r -d '' entry; do
+            meta=${entry%%$'\t'*}
+            path=${entry#*$'\t'}
+            size=${meta##* }
+            scanned=$((scanned + 1))
+            # Gitlinks (submodule commits) report "-" instead of a byte count.
+            [ "$size" = "-" ] && continue
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error file=$path::$path is $size bytes, over the $limit byte limit"
+              fail=1
+            fi
+          done < "$listing"
+          if [ "$fail" -ne 0 ]; then
+            echo "Committed build artifacts belong in .gitignore, not in git."
+            exit 1
+          fi
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::git ls-tree listed no tracked files at HEAD: the size scan proved nothing"
+            exit 1
+          fi
+          echo "no tracked file exceeds $limit bytes ($scanned scanned)"

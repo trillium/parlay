@@ -8,6 +8,7 @@ packages/client/plugins/
 *.log
 *.bak-*
 packages/eval-engine/eval-engine
+tools/relay/relay
 interceptor-screenshot-*.png
 packages/server/server.js
 packages/server/src/parlay-ui.js
