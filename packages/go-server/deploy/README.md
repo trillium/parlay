@@ -26,6 +26,16 @@ The installed binary shares the relay's `.../parlay/bin` directory (distinct
 filenames avoid collision), but `uninstall.sh` only ever removes this
 service's own two files there — never the shared directory itself.
 
+`parlay-server` also serves every route through its origin guard
+(`internal/guard`; policy in `docs/api-contract.md` § Origin guard), which
+reads `PARLAY_ALLOWED_ORIGINS` to admit extra browser origins. **The installed
+LaunchAgent cannot see it**: the rendered plist passes only `-addr` and
+`-state-dir`, and launchd does not inherit the shell environment, so the
+service always runs with the built-in origin policy (no `Origin` header,
+same-origin, loopback, `.local` and private-LAN are allowed regardless — that
+covers the CLI, hooks and the panel). Setting the variable in a shell affects
+only a server started from that shell, not the launchd one.
+
 ## Install
 
 ```sh

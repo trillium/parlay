@@ -29,25 +29,109 @@ production changes made outside this repo (never edit `~/.claude` from here).
 
 ### Adding a mutating `/api/chat` route? Add it to `GUARDED_CHAT_PATHS`
 
-`packages/server/src/guard.ts` is the one security boundary for the chat API
-(which still has **no authentication**). `handleChatRequest` in `router.ts`
-runs it before dispatch: paths listed in `GUARDED_CHAT_PATHS` require an
+`packages/server/src/guard/` is the one security boundary for the chat API
+(which still has **no authentication**) — `guard/paths.ts` is the route set,
+`guard/origin.ts` the origin/content-type predicates, `guard/index.ts` the
+policy that applies them. `handleChatRequest` in `router.ts` runs it before
+dispatch: paths listed in `GUARDED_CHAT_PATHS` require an
 allowed `Origin` (missing Origin = allowed, which is how the CLI/hooks/curl
 keep working) and `Content-Type: application/json` (415 otherwise — this is
 what stops a cross-origin CORS *simple request* from reaching a handler
 without a preflight, and preflight on those paths is refused). Their
 responses are re-headered by `withGuardedCors` so the wildcard `CORS` the
-handlers spread never reaches the wire. Read/SSE/upload routes keep the old
-wildcard and stay world-readable.
+handlers spread never reaches the wire. The rest — history, agents, events,
+version, pages, and `GET /api/chat/uploads/<name>`, which an `<img src>` must
+load — keeps the old wildcard and stays world-readable.
+
+**The rule, on both servers: inside the mutating and identifier-aiming
+surface, a route is guarded by what its handler DOES, REGARDLESS OF HTTP
+METHOD.** The verb is not evidence — `GET /subscribers` is guarded because it
+hands out identifiers, and `GET /poll` because it registers the channel it is
+polling for. Classify by reading the handler.
+
+That is the boundary that exists, and it is narrower than "everything that
+writes or discloses". Two TS routes are known, accepted, deliberately
+unguarded residue — accepted meaning somebody looked and decided, not that
+nothing is exposed. `GET /api/chat/events` writes `sseClients` from an
+attacker-supplied `?device=` (`router-events.ts`), and the `tts_event` frames
+it streams carry that device uuid to every connected client
+(`router-tts-events.ts` broadcasts `{ …, device, ...body }` unfiltered), so a
+cross-origin `EventSource` can read it; `GET /api/chat/agents`
+(`router-messages.ts`) hands any origin every registered agent id under the
+wildcard `CORS` — the same class of disclosure `/subscribers` was guarded for.
+Both are tracked as `identifier-disclosure-remains-on-sse`, ruled out of that
+change's scope rather than overlooked. What keeps the residue from chaining is
+that every route that AIMS anything (eval, draft, device-cmd, navigate,
+reload, poll, upload, subscribers) is guarded. The Go server's unguarded
+routes send no ACAO at all, so a foreign page cannot read their bodies.
 
 A new route that injects into an agent turn, mutates the registry, or drives a
 device is unguarded until you add it to that set — and if its callers do not
 send a JSON content type, adding it breaks them. Test with
-`packages/server/src/guard.test.ts` (pure, no side effects — `guard.ts`
-deliberately imports nothing) and `guard.integration.test.ts` (spawns a real
-server on a random 45xxx port with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`
-redirected to a temp dir). `packages/go-server` has the same unauthenticated
-write surface and no equivalent guard yet.
+`packages/server/src/guard/{paths,origin,allow,reject}.test.ts` (pure, no side
+effects — `guard/origin.ts` and `guard/paths.ts` deliberately import nothing)
+and `guard/integration-{attack,callers,origin-branches}.test.ts` (each spawns
+a real server via `guard/scratch-server.ts` on a port reserved by binding
+`:0`, with `HOME`/`PARLAY_DATA_DIR`/`PAI_DIR`/`PARLAY_STATE_HOME` redirected
+to a temp dir).
+
+**The route SET is the part that rots, not the mechanism.** An end-to-end
+verification (task-6ai1, defects D9/D7) found the guard working exactly as
+documented while `/eval`, `PUT /draft`, `/upload`, `/parlay/settings`, the tts
+family, the cursorless plugin RPC and `/api/debug/input-timing` all sat
+outside it — and `GET /subscribers` handed any origin the connected device
+uuid plus every registered agent id, which is what made the rest aimable
+(read the device id → `input_action` into the panel → set the captain's draft
+→ submit attacker text as the captain). All of them are guarded now.
+`/subscribers` was **guarded rather than redacted**: its only panel caller is
+same-origin (`packages/client/src/tab-online.ts`, a relative `fetch` for the
+per-tab online check), and every caller outside the panel (`parlay
+doctor`/`subscribers`/crew-state, the Go CLI, `tools/split-test`) is a
+no-Origin HTTP client, so guarding costs them nothing. `GET /poll` was added
+for the same reason a round later — on the TS side it auto-registers an
+unknown `channel` in the agent registry, broadcasts `agent_register` and calls
+`persistAgents()`, so a cross-origin CORS-simple GET could create an agent and
+write it to disk; the Go handler only takes a Presence poller slot, and is
+guarded on that (see its package comment — the Go set is derived from Go
+handlers, never copied from TS). Every poller in this repo is a no-Origin HTTP
+client and nothing in `packages/client` polls at all. Two structural notes:
+`/api/debug/*` is dispatched in `index.ts`
+*ahead of* `handleChatRequest`, so it runs the guard itself — anything else
+added there must too; and `JSON_EXEMPT_PATHS` is how a route keeps the origin
+check without the JSON content-type gate. It is a CLOSED three-member list,
+decided by one sweep of the whole guarded set against a three-part test — the
+handler parses the body regardless of Content-Type, the contract is JSON by
+*semantics* rather than by header, and no in-repo caller depends on the strict
+header — rather than a queue that grows one route per bug report. The members:
+`/api/chat/upload` (multipart by contract); `POST
+/api/chat/plugin/cursorless/rpc` (its handler is `await req.json()`, which
+parses the body whatever the header says, and its only caller is an
+out-of-repo Talon script — so its contract has always been a JSON *body*,
+never a JSON content type); and `POST /api/chat/tts/validate-splits` (same
+shape — `await req.json()` in `tts-validate.ts`, a header-documented hand-run
+contract stating no content type, and zero callers anywhere in this repo, so
+the only callers are hand-typed `curl -d`, whose default is
+`application/x-www-form-urlencoded`). Caller evidence, not the handler shape,
+is what decides membership: most other guarded routes have an in-repo caller
+already sending `Content-Type: application/json`, so the gate costs them
+nothing. The same sweep escalated five routes and deliberately left them
+unexempt — `/api/chat/tts`, `/api/chat/system`, `/api/chat/clear`,
+`/api/chat/navigate`, `/api/chat/device-cmd` — so do not re-litigate them one
+gate at a time; the per-route reasons are in `guard/paths.ts` next to
+`JSON_EXEMPT_PATHS`. All three exempt routes stay inside the guarded set; the
+exemption drops one layer, not the boundary. `packages/go-server` has no
+`/api/chat/tts*` route at all, so only `/api/chat/upload` is exempt there.
+
+`packages/go-server` now has its own guard: `internal/guard`, wrapped once
+around the whole mux in `cmd/parlay-server/main.go` so a route registered
+later cannot land outside it. Same semantics — missing Origin allowed,
+same-origin/loopback/LAN/`PARLAY_ALLOWED_ORIGINS` allowed, 403 with no CORS
+headers otherwise, 415 on non-JSON POST/PUT, reflected ACAO plus `Vary:
+Origin`. Its package comment is the authoritative statement of the two
+deliberate divergences (its unguarded routes send no ACAO at all, where the
+TS side still wildcards; no blanket OPTIONS answer) — both stricter, because
+this server has never sent CORS headers and matching TS exactly would newly
+*open* read access.
 
 `packages/server/src/debug-log.ts` was written during the loop outage as a
 standalone, not-yet-wired handler (Write could still create files whose names

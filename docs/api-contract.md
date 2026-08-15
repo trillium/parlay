@@ -42,6 +42,69 @@
   than authenticating requests."* Treat this as true for the whole surface
   unless proven otherwise.
 
+### Origin guard (both servers)
+
+Unauthenticated does **not** mean unrestricted: the mutating and
+identifier-aiming surface — the routes that write state, drive a device, or
+hand out an identifier (device uuid, agent id) a hostile page could then aim
+at a mutating route — sits behind an origin guard —
+`packages/server/src/guard/` (route set in `guard/paths.ts`) and
+`packages/go-server/internal/guard`. **Within that surface a route is guarded
+by what its handler does, not by its HTTP method:** `GET
+/api/chat/subscribers` and `GET /api/chat/poll` are both guarded, the first
+because it discloses identifiers, the second because polling registers the
+channel. On those routes:
+
+- A request with **no `Origin` header is allowed.** That is every CLI, curl,
+  hook and server-to-server caller, and a browser cannot omit `Origin` on a
+  cross-site request. Nothing in this document changes for those callers.
+- A request **with** an `Origin` must be same-origin, a loopback / `.local` /
+  private-LAN origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
+  `*` opts out). Otherwise: **403** with no CORS headers at all, and the
+  handler is never reached. Preflight from such an origin is refused the same
+  way.
+- `POST`/`PUT` must carry `Content-Type: application/json`, else **415** —
+  this is what forces a preflight instead of letting a CORS *simple request*
+  through. Three routes are exempt from this gate and this gate only —
+  `POST /api/chat/upload` (multipart by contract), `POST
+  /api/chat/plugin/cursorless/rpc` (its handler parses the body with
+  `req.json()` regardless of the header, for an out-of-repo Talon caller), and
+  `POST /api/chat/tts/validate-splits` (same shape, and its only callers are
+  hand-run `curl -d`, whose default content type is
+  `application/x-www-form-urlencoded`) — and on those the origin check alone
+  applies; they stay guarded. **The origin check runs first**, so a
+  disallowed origin sending a simple content type gets 403, not 415; a 415 is
+  only ever reachable from an origin that was already allowed.
+- Allowed responses carry the **exact** origin in
+  `Access-Control-Allow-Origin` plus `Vary: Origin` — never `*`.
+
+The read/SSE routes (`history`, `agents`, `events`, `version`,
+`GET /api/chat/uploads/<name>`) are outside the guard and behave as documented
+below.
+
+That surface is not purely read-only, and the boundary above is narrower than
+"everything that writes or discloses". Two TS routes are **known, accepted,
+deliberately unguarded residue** — accepted meaning somebody looked and
+decided, not that nothing is exposed:
+
+- `GET /api/chat/events` writes `sseClients` from an attacker-supplied
+  `?device=` (`router-events.ts`), and the `tts_event` frames it streams carry
+  that device uuid to every connected client (`router-tts-events.ts`
+  broadcasts `{ …, device, ...body }` with no filtering), so a cross-origin
+  `EventSource` can read it.
+- `GET /api/chat/agents` (`router-messages.ts`) returns every registered agent
+  id under `Access-Control-Allow-Origin: *` — the same class of disclosure
+  `GET /api/chat/subscribers` was guarded for.
+
+Both are tracked separately as `identifier-disclosure-remains-on-sse`; they
+were ruled out of the guard's scope, not overlooked. What keeps the residue
+from chaining is that every route that *aims* anything (`eval`, `draft`,
+`device-cmd`, `navigate`, `reload`, `poll`, `upload`, `subscribers`) is
+guarded. The Go server does not expose it the same way: its unguarded routes
+send no `Access-Control-Allow-Origin` at all, so a foreign page's read still
+executes but its body stays unreadable, and its `/api/chat/events` accepts
+`?device=` without storing it.
+
 ---
 
 ## Messaging
@@ -569,7 +632,9 @@ Full verb semantics are out of scope for this doc — see
    response shape in this doc except `debug-log.ts`'s is still
    reverse-engineered from what the calling code reads off the response, not
    read from the handler. Fields a handler sets but no client happens to read
-   are invisible to this document by construction.
+   are invisible to this document by construction. The one exception is
+   § Origin guard, which is read from the handlers and the guard packages —
+   treat every other section as client-derived unless it says otherwise.
 
 2. **Inconsistent error convention across endpoints.** `register-agent`,
    `reply`, `send`, and `alert` are all consumed via an `{ error?: string }`
@@ -603,8 +668,11 @@ Full verb semantics are out of scope for this doc — see
    site.
 
 8. **Auth/exposure.** No endpoint in this surface performs any
-   authentication. `debug-log.ts`'s comment ("local/tailnet only — do not
-   expose this port publicly") is the only explicit statement of the trust
-   model found anywhere in the codebase; whether it holds for the *whole*
-   `/api/chat` surface (not just debug-log) is an assumption, not a verified
-   invariant.
+   authentication, on either server, and that is deliberate — `debug-log.ts`'s
+   comment ("local/tailnet only — do not expose this port publicly") states
+   the trust model the whole surface assumes. The one part of it that is now
+   enforced rather than assumed is the cross-origin half: see § Origin guard
+   above, and `packages/server/src/guard/` /
+   `packages/go-server/internal/guard` for the policy and its tests. Nothing
+   else about the trust model is verified — a caller that reaches the port at
+   all, with no `Origin` header, is still trusted everywhere.

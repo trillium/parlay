@@ -22,6 +22,22 @@ let _settleTimer: ReturnType<typeof setTimeout> | null = null
 // (init.ts) is served BY the parlay server, so a relative '/api/chat/eval' is
 // correct there. External hosts (e.g. herdr-web importing this as a library)
 // run on a different origin and must point this at the running parlay server.
+//
+// Pointing at it is necessary but not sufficient: /api/chat/eval is behind the
+// server's origin guard, and this POST sends Content-Type: application/json,
+// so from a cross-origin host it PREFLIGHTS and the preflight is refused with
+// 403 unless the host's origin is same-origin, loopback, .local, private-LAN,
+// or listed in PARLAY_ALLOWED_ORIGINS on the server. The refusal carries no
+// CORS headers, so it surfaces here as a rejected fetch that looks exactly
+// like the server being down. There is no client-side opt-in, by design — see
+// packages/input/README.md and docs/api-contract.md § Origin guard.
+//
+// In practice the hosts that import this today are local: herdr-web is a
+// Capacitor app whose PARLAY_SERVER_URL is derived from its own
+// window.location.hostname, so its origin is already loopback or private-LAN
+// and passes. A host served from a PUBLIC origin is the case that needs
+// action, and the action is on the SERVER, not here: add that exact origin to
+// PARLAY_ALLOWED_ORIGINS on the parlay server.
 let _baseUrl = ''
 export function setEvalServerBaseUrl(url: string): void { _baseUrl = url.replace(/\/+$/, '') }
 
