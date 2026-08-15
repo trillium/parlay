@@ -137,8 +137,9 @@ you a live enrolled agent on a fresh clone too.
 neither `bun install` nor `bin/parlay` builds; run `tools/relay/build.sh` first or they
 exit 1 with `relay is not up and could not be started`. Mind bare `listen` especially:
 it registers and announces with the server *before* it starts the relay, so on a fresh
-clone it leaves an agent that looks enrolled and healthy but can never receive
-anything.
+clone it leaves an agent that can never receive anything — it posts a `monitor DOWN`
+notice to that agent's own channel on the way out, but the registry entry survives it,
+so the agent stays enrolled and deaf.
 
 Launch a background agent that shows up as a live tab (needs a
 [Claude Code](https://claude.com/claude-code) install and the

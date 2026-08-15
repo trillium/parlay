@@ -8,8 +8,9 @@
 > registered the way §1 describes is never reached — read `tools/cli` for the
 > live surface. §2's event-fabric design is
 > motivated by a concrete need in the author's agent fleet (a `robots`
-> bead store firing `mechanic-dispatch`); those two are not public, so read §2
-> for the design shape rather than as something you can run.
+> bead store firing `mechanic-dispatch` — the wrapper is here, at
+> `tools/mechanic-dispatch/`, but the bead store behind it is not public), so
+> read §2 for the design shape rather than as something you can run.
 
 > **Purpose:** two references needed to build a `robots bead created → run
 > ~/.local/bin/mechanic-dispatch <ticket-id>` trigger, parlay-native.

@@ -8,7 +8,8 @@ intake through review to merge, and [**herdr**](https://github.com/trillium/herd
 the terminal they run in. The rest is not — **PAI**, the **beads** `bd` binary and
 the `~/data/…` stores its `robots`/`task`/`projects` wrappers drive (the `robots`
 wrapper itself is here, at `tools/robots-emit/robots`; the binary and the stores
-behind it are not), and the `mechanic-dispatch` wrapper. Those docs are
+behind it are not), and the private robots store `mechanic-dispatch` fires from
+(that wrapper is here too, at `tools/mechanic-dispatch/`). Those docs are
 written for an internal audience, and nothing in them is required to run parlay. They
 are kept because the design reasoning is real and travels with the code — not because
 you are expected to reproduce the setup.
