@@ -1,6 +1,8 @@
 package store
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -322,6 +324,59 @@ func TestNonConformingFlagsAreRejectedNotTruncated(t *testing.T) {
 			if strings.Contains(f, leak) {
 				t.Fatalf("stored %q, which carries %q — a non-conforming token was trimmed, not dropped", f, leak)
 			}
+		}
+	}
+}
+
+// crossLayerFlagCases is the shared table behind the two-layer redaction
+// contract: each token must be classified identically by this layer and by
+// the CLI reporter's flagNames. An empty want means the token is stored
+// nowhere.
+//
+// The two layers are separate Go modules — parlay/go-server and tools/cli,
+// with no dependency in either direction — so no single test can drive both
+// implementations. The table is therefore duplicated verbatim in
+// TestFlagNamesAgreeWithTheServersSanitizer
+// (tools/cli/internal/commandreport/commandreport_test.go), which asserts the
+// same wants against the reporter. A change to one layer's rule fails
+// whichever copy was not updated with it.
+var crossLayerFlagCases = []struct {
+	token string
+	want  string
+}{
+	{"--json", "--json"},
+	{"-h", "-h"},
+	{"--agent=crew-1", "--agent"},
+	{"--token=sk-live-abcdef", "--token"},
+	{"--dry-run", "--dry-run"},
+	{"crew-1", ""},
+	{"/home/someone/secrets.txt", ""},
+	{"-5", ""},
+	{"-", ""},
+	{"--!?", ""},
+	{"---json", ""},
+	{"--flag with space", ""},
+	{"", ""},
+	{"--" + strings.Repeat("a", maxCommandFlagName), "--" + strings.Repeat("a", maxCommandFlagName)},
+	{"--" + strings.Repeat("a", maxCommandFlagName+1), ""},
+	{"--" + strings.Repeat("a", 43), ""},
+	{"--" + strings.Repeat("a", 200), ""},
+}
+
+func TestFlagsAgreeWithTheCLIReporter(t *testing.T) {
+	cr := newTestRegistry(newFakeClock())
+	for i, c := range crossLayerFlagCases {
+		var want []string
+		if c.want != "" {
+			want = []string{c.want}
+		}
+		rec, _, _ := cr.Start(CommandStart{
+			ID:    fmt.Sprintf("cross-%d", i),
+			Verb:  "send",
+			Flags: []string{c.token},
+		})
+		if !reflect.DeepEqual(rec.Flags, want) {
+			t.Errorf("stored flags for %q = %v, want %v — the two redaction layers have drifted", c.token, rec.Flags, want)
 		}
 	}
 }

@@ -1211,11 +1211,17 @@ routinely carries message bodies and tokens. Both enforcement points —
 `commandreport.flagNames` before sending, `internal/store/commands.go`'s
 `sanitizeFlags` on arrival — apply the identical rule: after cutting the token
 at its first `=`, a flag name is one or two dashes, then a letter, then only
-letters, digits, and dashes. **A leading dash is not what makes a token a
-flag** — `-- heads up: the key is …` is a message body, and anything failing
-the shape is dropped WHOLE, never trimmed into conforming shape. Length caps
-are resource bounds on an unauthenticated endpoint, not redaction, and they
-drop rather than truncate. The server repeats the check because the report
+letters, digits, and dashes, and is at most 32 characters — `maxReportedFlagName`
+and `maxCommandFlagName` are twins whose comments each name the other, since
+separate Go modules cannot share the constant. **A leading dash is not what
+makes a token a flag** — `-- heads up: the key is …` is a message body, and
+anything failing the shape or the length is dropped WHOLE, never trimmed into
+conforming shape: a trimmed name arrives looking like a legitimate flag. That
+rule is about flag NAMES only. The identifier fields (`id`, `verb`, `agent`,
+`outcome`) are clamped in place instead — whitelisted characters up to a
+length bound — because they carry no caller prose and dropping one would
+render an unattributed row or, for `id`, no row at all. The 500-record cap
+bounds the whole registry and is therefore server-only. The server repeats the check because the report
 endpoints are unauthenticated and client-side classification is not a security
 boundary. Adding a field here means adding it to that whitelist deliberately.
 The three mutating routes require `Content-Type: application/json` for the same

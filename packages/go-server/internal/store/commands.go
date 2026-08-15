@@ -437,10 +437,25 @@ func fallbackToken(s, fallback string) string {
 // commandFlagShape is what the body of a flag name (everything after its one
 // or two leading dashes) has to look like: a letter, then only letters,
 // digits, and dashes.
+//
+// Its twin on the CLI side is flagNameShape in
+// tools/cli/internal/commandreport/commandreport.go, which expresses the same
+// pattern with the leading dashes still attached. The two must keep
+// classifying the same token the same way; the agreement is pinned by
+// TestFlagsAgreeWithTheCLIReporter here and
+// TestFlagNamesAgreeWithTheServersSanitizer there.
 var commandFlagShape = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`)
 
-// maxCommandFlagName bounds one flag name. It is a resource bound, not a
-// redaction one — a name longer than this is DROPPED, never shortened.
+// maxCommandFlagName bounds one flag name, measured with its leading dashes
+// stripped. It is a resource bound, not a redaction one — a name longer than
+// this is DROPPED, never shortened.
+//
+// This MUST stay equal to maxReportedFlagName in
+// tools/cli/internal/commandreport/commandreport.go, its twin on the CLI
+// side. The two layers are separate Go modules and cannot share a constant,
+// so a change to either one has to be made to both: a client bound looser
+// than this one publishes names this layer will not store, which is the drift
+// this pair exists to prevent.
 const maxCommandFlagName = 32
 
 // sanitizeFlags keeps flag NAMES and discards everything else. What makes it
@@ -456,9 +471,10 @@ const maxCommandFlagName = 32
 //
 // Both caps — maxCommandFlagName per name, 8 names per record — are resource
 // bounds on an unauthenticated endpoint, and both drop rather than truncate.
-// The CLI applies the same shape rule before sending (see
-// tools/cli/internal/commandreport's flagNames); this layer repeats it
-// because client-side classification is not a security boundary.
+// The CLI applies the same shape rule and the same per-name bound before
+// sending (see tools/cli/internal/commandreport's flagNames and
+// maxReportedFlagName); this layer repeats them because client-side
+// classification is not a security boundary.
 func sanitizeFlags(in []string) []string {
 	if len(in) == 0 {
 		return nil

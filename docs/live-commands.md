@@ -127,9 +127,26 @@ it is treated as a positional and dropped.
 
 A non-conforming token is **dropped whole, never trimmed into shape** — a
 truncated secret is still a secret, and it would arrive looking like a
-well-formed flag name. The caps that remain (32 characters per name, 8 names
-per record, 500 records) are resource bounds on an unauthenticated endpoint,
-not redaction, and each of them drops rather than shortens.
+well-formed flag name. The per-name and per-record caps (32 characters per
+name, 8 names per record) are resource bounds on an unauthenticated endpoint,
+not redaction, and both drop rather than shorten. Both layers apply both of
+them: the 32-character bound is `maxReportedFlagName` in the CLI reporter and
+`maxCommandFlagName` in the server's store, and each constant's comment names
+the other as the value it must stay equal to. The 500-record cap is a
+different kind of limit — it bounds the whole registry, which only the server
+has — so it is enforced on arrival and has no client-side half.
+
+**Drop-never-trim governs flag names. The identifier fields do not follow
+it.** `id`, `verb`, `agent`, and `outcome` are instead clamped in place: the
+server keeps only whitelisted characters and stops at the field's length
+bound, so an over-long or hostile value arrives shortened rather than
+discarded. The two rules differ because the failure modes do. A trimmed
+*flag name* is indistinguishable from a legitimate one, so a mangled secret
+would be published as if it were a real flag — dropping is the only safe
+answer. These four fields carry no caller prose: they are display and lookup
+values, and dropping one is worse than clamping it, because an empty `agent`
+renders as an unattributed row and an empty `id` removes the invocation from
+the view entirely.
 
 The CLI applies the rule before sending and the server applies it again on
 arrival, because the report endpoints are unauthenticated and the storage layer

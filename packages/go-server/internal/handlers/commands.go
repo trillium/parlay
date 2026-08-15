@@ -92,6 +92,21 @@ type commandsResponse struct {
 	Commands     []store.CommandInvocation `json:"commands"`
 }
 
+// countRunning counts the in-flight records of one snapshot. The response's
+// `running` is derived from the very array it ships rather than read back out
+// of the registry, so the two halves of a reply always describe the same
+// moment: a Start, End, or sweep landing between two separate reads would
+// otherwise emit a count the accompanying `commands` array contradicts.
+func countRunning(list []store.CommandInvocation) int {
+	n := 0
+	for _, rec := range list {
+		if rec.State == store.CommandRunning {
+			n++
+		}
+	}
+	return n
+}
+
 // handleCommands implements GET /api/chat/commands — the one read endpoint
 // both the CLI verb and the panel view are built on.
 func handleCommands(st *store.Store, hub *Hub) http.HandlerFunc {
@@ -105,7 +120,7 @@ func handleCommands(st *store.Store, hub *Hub) http.HandlerFunc {
 		writeJSON(w, commandsResponse{
 			OK:           true,
 			Now:          time.Now().UTC().Format(time.RFC3339Nano),
-			Running:      st.Commands.Running(),
+			Running:      countRunning(list),
 			StaleAfterMs: store.DefaultCommandStaleAfter.Milliseconds(),
 			Commands:     list,
 		})

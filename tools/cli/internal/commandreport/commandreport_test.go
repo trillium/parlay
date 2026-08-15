@@ -248,6 +248,10 @@ func TestFlagNamesNeverCarryValues(t *testing.T) {
 		{"punctuation body", []string{"--!?"}, []string{}},
 		{"three dashes", []string{"---json"}, []string{}},
 		{"empty token", []string{""}, []string{}},
+		{"name at the length bound", []string{"--" + strings.Repeat("a", maxReportedFlagName)}, []string{"--" + strings.Repeat("a", maxReportedFlagName)}},
+		{"name one over the bound", []string{"--" + strings.Repeat("a", maxReportedFlagName+1)}, []string{}},
+		{"name far over the bound", []string{"--" + strings.Repeat("a", 43)}, []string{}},
+		{"over-long name with a value", []string{"--" + strings.Repeat("a", 43) + "=" + secret}, []string{}},
 	}
 	for _, c := range cases {
 		got := flagNames(c.argv)
@@ -263,6 +267,53 @@ func TestFlagNamesNeverCarryValues(t *testing.T) {
 					t.Errorf("%s: reported %q, which carries %q", c.name, name, leak)
 				}
 			}
+		}
+	}
+}
+
+// crossLayerFlagCases is the shared table behind the two-layer redaction
+// contract: each token must be classified identically by this package's
+// flagNames and by the server's sanitizeFlags. An empty want means the token
+// is reported nowhere.
+//
+// The two layers are separate Go modules — tools/cli and parlay/go-server,
+// with no dependency in either direction — so no single test can drive both
+// implementations. The table is therefore duplicated verbatim in
+// TestFlagsAgreeWithTheCLIReporter
+// (packages/go-server/internal/store/commands_test.go), which asserts the
+// same wants against the server's registry. A change to one layer's rule
+// fails whichever copy was not updated with it.
+var crossLayerFlagCases = []struct {
+	token string
+	want  string
+}{
+	{"--json", "--json"},
+	{"-h", "-h"},
+	{"--agent=crew-1", "--agent"},
+	{"--token=sk-live-abcdef", "--token"},
+	{"--dry-run", "--dry-run"},
+	{"crew-1", ""},
+	{"/home/someone/secrets.txt", ""},
+	{"-5", ""},
+	{"-", ""},
+	{"--!?", ""},
+	{"---json", ""},
+	{"--flag with space", ""},
+	{"", ""},
+	{"--" + strings.Repeat("a", maxReportedFlagName), "--" + strings.Repeat("a", maxReportedFlagName)},
+	{"--" + strings.Repeat("a", maxReportedFlagName+1), ""},
+	{"--" + strings.Repeat("a", 43), ""},
+	{"--" + strings.Repeat("a", 200), ""},
+}
+
+func TestFlagNamesAgreeWithTheServersSanitizer(t *testing.T) {
+	for _, c := range crossLayerFlagCases {
+		want := []string{}
+		if c.want != "" {
+			want = []string{c.want}
+		}
+		if got := flagNames([]string{c.token}); !reflect.DeepEqual(got, want) {
+			t.Errorf("flagNames([%q]) = %v, want %v — the two redaction layers have drifted", c.token, got, want)
 		}
 	}
 }

@@ -69,6 +69,18 @@ const (
 	// maxReportedFlags caps how many flag names travel, so a pathological
 	// argv cannot turn one invocation into a large payload.
 	maxReportedFlags = 8
+
+	// maxReportedFlagName bounds one flag name, measured on the name itself
+	// with its leading dashes stripped. A longer name is DROPPED, never
+	// shortened — see flagNames.
+	//
+	// This MUST stay equal to maxCommandFlagName in
+	// packages/go-server/internal/store/commands.go, its twin on the server
+	// side. The two layers are separate Go modules and cannot share a
+	// constant, so a change to either one has to be made to both: a client
+	// bound looser than the server's publishes names the server will not
+	// store, which is the drift this pair exists to prevent.
+	maxReportedFlagName = 32
 )
 
 // unreportedVerbs never report themselves.
@@ -228,6 +240,13 @@ func enabled(verb string) bool {
 // flagNameShape is what a reportable flag name has to look like: one or two
 // leading dashes, then a LETTER, then only letters, digits, and dashes. It is
 // applied after cutting the token at its first `=`.
+//
+// Its twin on the server side is commandFlagShape in
+// packages/go-server/internal/store/commands.go, which expresses the same
+// pattern over the name with its dashes already stripped. The two must keep
+// classifying the same token the same way; the agreement is pinned by
+// TestFlagNamesAgreeWithTheServersSanitizer here and
+// TestFlagsAgreeWithTheCLIReporter there.
 var flagNameShape = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9-]*$`)
 
 // flagNames extracts the flag NAMES from argv and nothing else. A token is a
@@ -244,6 +263,10 @@ var flagNameShape = regexp.MustCompile(`^--?[A-Za-z][A-Za-z0-9-]*$`)
 //
 // A bare "--" ends flag parsing in every convention this CLI follows, so
 // everything after it is positional and skipped wholesale.
+//
+// A name longer than maxReportedFlagName is dropped WHOLE rather than
+// trimmed: a shortened token still carries the start of whatever it was, and
+// it would arrive looking like a well-formed flag name.
 func flagNames(argv []string) []string {
 	out := make([]string, 0, maxReportedFlags)
 	seen := map[string]bool{}
@@ -255,6 +278,9 @@ func flagNames(argv []string) []string {
 			continue // whitespace means prose, never a flag name
 		}
 		name, _, _ := strings.Cut(tok, "=")
+		if len(strings.TrimLeft(name, "-")) > maxReportedFlagName {
+			continue // over long: dropped whole, never trimmed to fit
+		}
 		if !flagNameShape.MatchString(name) {
 			continue
 		}

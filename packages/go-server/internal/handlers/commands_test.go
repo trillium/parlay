@@ -103,6 +103,49 @@ func TestStartedCommandAppearsOnTheReadEndpoint(t *testing.T) {
 	}
 }
 
+// One reply, one moment. `running` and `commands` are two halves of the same
+// response, so a reader must never be able to see a count its own rows
+// contradict — a header saying "2 running" above three running rows makes the
+// whole view untrustworthy. Driven over a registry holding every state at
+// once, since the count is only interesting when something is NOT running.
+func TestRunningCountAlwaysMatchesTheListedRecords(t *testing.T) {
+	st := newTestStore(t)
+	clk := withCommandClock(st, 90*time.Second, time.Hour)
+
+	for _, id := range []string{"run-1", "run-2", "done-1", "fail-1", "gone-1"} {
+		postCommandJSON(t, handleCommandStart(st, nil), map[string]any{"id": id, "verb": "send"})
+	}
+	postCommandJSON(t, handleCommandEnd(st, nil), map[string]any{
+		"id": "done-1", "state": "finished", "exitCode": 0, "outcome": "ok",
+	})
+	postCommandJSON(t, handleCommandEnd(st, nil), map[string]any{
+		"id": "fail-1", "state": "failed", "exitCode": 3, "outcome": "error",
+	})
+
+	// gone-1 stops reporting; the two live ones keep heartbeating across the
+	// staleness line, so the next read expires exactly one record.
+	clk.advance(95 * time.Second)
+	for _, id := range []string{"run-1", "run-2"} {
+		postCommandJSON(t, handleCommandHeartbeat(st), map[string]any{"id": id})
+	}
+
+	got := readCommands(t, st, nil)
+
+	states := map[string]int{}
+	for _, rec := range got.Commands {
+		states[rec.State]++
+	}
+	for _, want := range []string{store.CommandRunning, store.CommandFinished, store.CommandFailed, store.CommandExpired} {
+		if states[want] == 0 {
+			t.Fatalf("no %s record in %+v — the invariant would be vacuous", want, got.Commands)
+		}
+	}
+	if got.Running != states[store.CommandRunning] {
+		t.Errorf("running = %d, but the emitted commands hold %d running records: %+v",
+			got.Running, states[store.CommandRunning], got.Commands)
+	}
+}
+
 func TestFinishedCommandLeavesTheRunningSet(t *testing.T) {
 	st := newTestStore(t)
 	postCommandJSON(t, handleCommandStart(st, nil), map[string]any{"id": "c-1", "verb": "send"})
