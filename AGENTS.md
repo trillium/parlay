@@ -1194,9 +1194,9 @@ reproduced this bug instead of catching it.
 Same ticket, second half: `teardown --help` advertised "PR patch-id (if
 available) or merge-tree equality" and the TS source claimed "three
 strategies". No patch-id strategy has ever existed in either CLI —
-`docs/PARLAY_FIRSTMATE_FOLD.md` §3.7 describes the firstmate original, not
-what was folded. When porting a gate, port its test too; a gate with no test
-is indistinguishable from a gate that has never run.
+the fold design doc §3.7 (captain-private, not in this repo) describes the
+firstmate original, not what was folded. When porting a gate, port its test
+too; a gate with no test is indistinguishable from a gate that has never run.
 
 ## Every path that removes a worktree must go through `checkWorktreeGitSafety` (robots-cncx)
 
@@ -1257,7 +1257,7 @@ contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
 all five modules), **bun** (tests for `packages/{input,client,server,cli}` and
 `tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
 dependencies — plus typecheck for `packages/input` and `tools/split-test`),
-**shell** (seven hermetic harnesses, preceded by a `jq`/`curl`/`git` presence
+**shell** (eight hermetic harnesses, preceded by a `jq`/`curl`/`git` presence
 check so a binary missing from the rolling runner image fails the step instead
 of letting a harness skip itself green), **hygiene** (conflict markers, 2 MiB
 tracked-file ceiling measured on the tracked *blob* via `git ls-tree -l`, never
@@ -1301,9 +1301,9 @@ Four things worth knowing before editing it:
   `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a
   staged-diff check, not a whole-tree one, so it does not map onto a CI job; it
   is named here so a contributor whose commit the hook rejects can find the
-  rule written down. The other seven shell harnesses were each trial-run with
-  `~/.parlay` and `~/.treehouse` snapshotted before and after and produced zero
-  drift; that is the bar for adding one.
+  rule written down. Every shell harness in the job cleared a hermeticity bar
+  before it was added — see the `shell` job's own comment in `ci.yml` for what
+  each one had to show; that is the bar for adding another.
 
 The `go` job's artifact guard is `git status --porcelain` being empty after
 a full `go build ./...`, not a filename list, so a newly added main package

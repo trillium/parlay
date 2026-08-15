@@ -27,24 +27,24 @@ afterEach(() => {
 
 describe("rewriteLocalhostLinks — with PARLAY_PUBLIC_HOST set", () => {
   test("rewrites localhost host, preserving port and path", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     expect(rewriteLocalhostLinks("http://localhost:31337/notes/")).toBe(
-      "http://100.74.138.74:31337/notes/",
+      "http://100.100.100.100:31337/notes/",
     )
   })
 
   test("rewrites 127.0.0.1 identically to localhost", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     expect(rewriteLocalhostLinks("http://127.0.0.1:31337/notes/")).toBe(
-      "http://100.74.138.74:31337/notes/",
+      "http://100.100.100.100:31337/notes/",
     )
   })
 
   test("preserves the full path and query string exactly", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     const input = "http://localhost:31337/status/?tab=plans&open=1#frag"
     expect(rewriteLocalhostLinks(input)).toBe(
-      "http://100.74.138.74:31337/status/?tab=plans&open=1#frag",
+      "http://100.100.100.100:31337/status/?tab=plans&open=1#frag",
     )
   })
 
@@ -56,37 +56,37 @@ describe("rewriteLocalhostLinks — with PARLAY_PUBLIC_HOST set", () => {
   })
 
   test("rewrites every localhost link in a multi-link message", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     const input =
       "see http://localhost:31337/a and http://127.0.0.1:31337/b plus http://localhost:9000/c"
     expect(rewriteLocalhostLinks(input)).toBe(
-      "see http://100.74.138.74:31337/a and http://100.74.138.74:31337/b plus http://100.74.138.74:9000/c",
+      "see http://100.100.100.100:31337/a and http://100.100.100.100:31337/b plus http://100.100.100.100:9000/c",
     )
   })
 
   test("leaves a non-localhost URL untouched", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     const input = "check https://github.com/trillium/parlay/pull/1"
     expect(rewriteLocalhostLinks(input)).toBe(input)
   })
 
   test("does not match a hostname that merely starts with localhost", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     // No port immediately after the host token → not a Parlay localhost link.
     const input = "http://localhost.evil.example/phish"
     expect(rewriteLocalhostLinks(input)).toBe(input)
   })
 
   test("does not touch an https localhost link (only http is rewritten)", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     const input = "https://localhost:31337/secure"
     expect(rewriteLocalhostLinks(input)).toBe(input)
   })
 
   test("rewrites a bare localhost link with no trailing path", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     expect(rewriteLocalhostLinks("http://localhost:31337")).toBe(
-      "http://100.74.138.74:31337",
+      "http://100.100.100.100:31337",
     )
   })
 
@@ -128,9 +128,9 @@ describe("rewriteLocalhostLinks — hostname config values", () => {
   })
 
   test("accepts a full tailnet FQDN", () => {
-    setHost("macbook.hippo-tilapia.ts.net")
+    setHost("macbook.example-tailnet.ts.net")
     expect(rewriteLocalhostLinks("http://127.0.0.1:31337/x")).toBe(
-      "http://macbook.hippo-tilapia.ts.net:31337/x",
+      "http://macbook.example-tailnet.ts.net:31337/x",
     )
   })
 })
@@ -221,25 +221,25 @@ describe("rewriteMessagesForServe", () => {
 
 describe("rewriteLocalhostLinks — resilience", () => {
   test("empty string in returns empty string out", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     expect(rewriteLocalhostLinks("")).toBe("")
   })
 
   test("text with no http:// scheme is returned unchanged", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     const input = "just some plain text, no links here"
     expect(rewriteLocalhostLinks(input)).toBe(input)
   })
 
   test("caches the resolved host across calls within a process", () => {
-    setHost("100.74.138.74")
+    setHost("100.100.100.100")
     expect(rewriteLocalhostLinks("http://localhost:31337/a")).toBe(
-      "http://100.74.138.74:31337/a",
+      "http://100.100.100.100:31337/a",
     )
     // Change the env WITHOUT resetting the cache: the first value must stick.
     process.env.PARLAY_PUBLIC_HOST = "10.0.0.9"
     expect(rewriteLocalhostLinks("http://localhost:31337/b")).toBe(
-      "http://100.74.138.74:31337/b",
+      "http://100.100.100.100:31337/b",
     )
   })
 })

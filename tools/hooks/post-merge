@@ -3,22 +3,66 @@
 # fast-forwards — the exact path that shipped a stale bundle on 2026-07-18,
 # when main advanced past the built 4.17.5 with no rebuild trigger).
 # Same guards as post-commit; see that file for the full pipeline map.
-set -uo pipefail
+set -uo pipefail  # NOT -e: a delivery failure must never read as a commit
+                  # failure. The one deliberate non-zero exit is an unresolvable
+                  # primary checkout below on a clone that OPTED IN; a
+                  # build/delivery failure exits 0.
 
-MAIN_CHECKOUT="/Users/trilliumsmith/code/parlay"
-LOG="$HOME/Library/Logs/parlay/bundle-rebuild.out.log"
-TOP="$(git rev-parse --show-toplevel)"
+# Same per-CLONE opt-in as post-commit: one setting in the shared .git/config
+# covers every linked worktree of the clone, and does not by itself decide where
+# delivery happens. Read here, acted on below once this merge is known to be one
+# that would otherwise have delivered. See that file for the rationale.
+AUTOBUILD="$(git config --bool --get parlay.autobuild 2>/dev/null || true)"
+
+# Same primary-checkout derivation (and refusal to resolve an empty or unreadable
+# path, which bash 3.2 would otherwise turn into the hook's cwd) as post-commit;
+# see that file for the rationale.
+resolve_dir() { [[ -n "${1:-}" ]] || return 1; (cd "$1" 2>/dev/null && pwd -P); }
+if [[ -n "${PARLAY_MAIN_CHECKOUT:-}" ]]; then
+  MAIN_CHECKOUT="$(resolve_dir "$PARLAY_MAIN_CHECKOUT")" || MAIN_CHECKOUT=""
+else
+  COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  COMMON_DIR="$(resolve_dir "$COMMON_DIR")" || COMMON_DIR=""
+  MAIN_CHECKOUT="$(resolve_dir "${COMMON_DIR%/.git}")" || MAIN_CHECKOUT=""
+fi
+if [[ -z "$MAIN_CHECKOUT" ]]; then
+  # Opted out, this clone was never going to deliver — say nothing. Opted in,
+  # refuse rather than guess a delivery target. Same split as post-commit.
+  [[ "$AUTOBUILD" == "true" ]] || exit 0
+  echo "[post-merge] refusing to deliver: cannot resolve the primary checkout — PARLAY_MAIN_CHECKOUT is unset or unreadable and 'git rev-parse --path-format=absolute --git-common-dir' returned nothing (git older than 2.31?)" >&2
+  exit 1
+fi
+
+# Same as post-commit: naming the log file is not writing to it, and the
+# directory is created only on a path that is about to write, so an opted-out
+# clone leaves nothing on disk.
+LOG="${PARLAY_HOOK_LOG:-$HOME/Library/Logs/parlay/bundle-rebuild.out.log}"
+TOP="$(resolve_dir "$(git rev-parse --show-toplevel)")" || TOP=""
 
 if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
-  echo "[post-merge] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  if [[ "$AUTOBUILD" == "true" ]]; then
+    mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+    echo "[post-merge] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  fi
   exit 0
 fi
 
 CHANGED="$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null || true)"
 echo "$CHANGED" | grep -qE '^packages/client/(src|src-plugins)/|^packages/client/build\.ts' || exit 0
 
+# Same as post-commit: the opt-in is acted on only for a merge that would have
+# delivered, so an unrelated merge stays completely silent.
+if [[ "$AUTOBUILD" != "true" ]]; then
+  echo "[post-merge] delivery skipped — parlay.autobuild is not enabled for this clone."
+  echo "[post-merge] enable with: git config --bool parlay.autobuild true"
+  exit 0
+fi
+
+# Absolute fallback kept for hooks fired with a minimal PATH; see post-commit.
+BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 echo "[post-merge] $(date +%FT%T) delivering $(git log -1 --format='%h %s' | head -c 80)" >> "$LOG"
-if ( cd "$MAIN_CHECKOUT/packages/client" && "$HOME/.bun/bin/bun" build.ts ) >> "$LOG" 2>&1; then
+if ( cd "$MAIN_CHECKOUT/packages/client" && "$BUN" build.ts ) >> "$LOG" 2>&1; then
   echo "[post-merge] delivered" >> "$LOG"
 else
   echo "[post-merge] DELIVERY FAILED — bundle unchanged; fix and run 'bun build.ts' in packages/client" >> "$LOG"
