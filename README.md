@@ -89,9 +89,13 @@ instance with unrelated live agent turns. Setting both variables, as the command
 does, is what fully protects the real directory. See
 [`packages/server/README.md`](packages/server/README.md) for the full config surface.
 
-**2. Point the CLI at it**, in another shell:
+**2. Point the CLI at it**, in another shell. Every command from here on is written
+relative to the **root of the clone** — step 1 left the first shell inside
+`packages/server`, and a brand-new shell starts in your home directory, so `cd` to the
+clone first:
 
 ```sh
+cd /path/to/parlay                         # the directory you cloned into above
 export PARLAY_SERVER=http://localhost:4242
 ```
 
