@@ -104,12 +104,15 @@ The reply-attribution record, and the one place in this directory where whose
 (`packages/server/src/agent-context.ts`, called on every `POST /api/chat/reply`)
 resolves `~/.parlay/agents/<id>/context.json` against the **server process's**
 own `$HOME` — not `PARLAY_AGENT_HOME`, and not the home of the CLI that sent the
-message. So `parlay say --agent helm` reaches the helm tab only when the server
-can see this file under the home *it* is running with. When it cannot, the reply
-still succeeds and the CLI still prints `said as helm`, but the server drops the
-channel and files the message on the global thread. The fix is to run the server
-under the same `$HOME` as the agent store — not to copy this directory into a
-live `~/.parlay`.
+message. The id in the request is what routes; this file is one of two
+independent ways the server will accept it, the other being a non-empty
+`PARLAY_AGENT_ID` in the server's own environment — any value, it is a presence
+check rather than a match, so a server started in some other agent's shell still
+routes `say --agent helm` to helm. With neither, the reply still succeeds and the
+CLI still prints `said as helm`, but the server drops the channel and files the
+message on the global thread. The fix that does not depend on the server's
+environment is to run it under the same `$HOME` as the agent store — not to copy
+this directory into a live `~/.parlay`.
 
 ### `status`
 
