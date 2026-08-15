@@ -90,6 +90,14 @@ const (
 // well as stderr, a signalled death is named, and a give-up posts the outage
 // to the agent's own channel so the announce that said "listening" is
 // retracted where the captain can see it.
+//
+// Every terminal path here leaves through httpc.Exit rather than os.Exit: it
+// is the CLI's one exit hook, so it is where commandreport's
+// end-of-invocation report is wired (and where testsupport.RecordingExit
+// substitutes in tests). A bare os.Exit would leave `parlay monitor` — one of
+// the longest-lived verbs there is — permanently "running" in the
+// live-command registry until the server's reaper noticed, instead of ending
+// cleanly the moment the relay script exits.
 func runRelayMonitor(agent string, notifySafe bool) {
 	script, err := scriptPath()
 	if err != nil {

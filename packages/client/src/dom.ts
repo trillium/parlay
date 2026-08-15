@@ -3,11 +3,12 @@ import { CSS_LAYOUT } from './css-layout'
 import { CSS_THREAD } from './css-thread'
 import { CSS_FEATURES } from './css-features'
 import { CSS_DEBUG } from './css-debug'
+import { CSS_COMMANDS } from './css-commands'
 import { CSS_SPEECH } from './css-speech'
 import { CSS_SETTINGS } from './css-settings'
 import { CSS_PAGENAV } from './css-pagenav'
 
-export const STYLE = CSS_LAYOUT + CSS_THREAD + CSS_FEATURES + CSS_DEBUG + CSS_SPEECH + CSS_SETTINGS + CSS_PAGENAV
+export const STYLE = CSS_LAYOUT + CSS_THREAD + CSS_FEATURES + CSS_DEBUG + CSS_COMMANDS + CSS_SPEECH + CSS_SETTINGS + CSS_PAGENAV
 
 // ── HTML template ─────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ export const DRAWER_HTML = `
       <button id="pa-tts-btn" title="Toggle text-to-speech">TTS</button>
       <button id="pa-mute-btn" title="Mute audio">🔕</button>
       <button id="pa-log-btn" title="Toggle tool activity log">⚡</button>
+      <button id="pa-cmd-btn" title="Live commands — what parlay is running now">▷</button>
       <button id="pa-nav-btn" title="Jump to page">🧭</button>
       <button id="pa-settings-btn-gear" title="Parlay settings">⚙</button>
       <button id="pa-close">✕</button>
@@ -44,6 +46,7 @@ export const DRAWER_HTML = `
     </div>
 
     <div id="pa-toollog"></div>
+    <div id="pa-cmdlog"></div>
     <div id="pa-thread">
       <div id="pa-empty">
         <div class="pa-empty-dot"></div>
@@ -72,6 +75,7 @@ export const DRAWER_HTML = `
         <button class="pa-sheet-act" data-proxy="pa-tts-btn">🔊 TTS</button>
         <button class="pa-sheet-act" data-proxy="pa-mute-btn">🔕 Mute audio</button>
         <button class="pa-sheet-act" data-proxy="pa-log-btn">⚡ Tool log</button>
+        <button class="pa-sheet-act" data-proxy="pa-cmd-btn">▷ Live commands</button>
         <button class="pa-sheet-act" data-proxy="pa-nav-btn">🧭 Pages</button>
         <button class="pa-sheet-act" data-proxy="pa-settings-btn-gear">⚙ Settings</button>
         <button class="pa-sheet-act" data-proxy="pa-ann-btn">✎ Annotate</button>
@@ -145,6 +149,8 @@ export let sendBtn!: HTMLButtonElement
 export let connBanner!: HTMLElement
 export let toolLog!: HTMLElement
 export let logBtn!: HTMLElement
+export let cmdLog!: HTMLElement
+export let cmdBtn!: HTMLElement
 export let settingsGearBtn!: HTMLElement
 export let versionEl!: HTMLElement
 export let urlsEl!: HTMLElement
@@ -174,6 +180,8 @@ export function bindDOMRefs() {
   connBanner = document.getElementById('pa-conn-banner')!
   toolLog        = document.getElementById('pa-toollog')!
   logBtn         = document.getElementById('pa-log-btn')!
+  cmdLog         = document.getElementById('pa-cmdlog')!
+  cmdBtn         = document.getElementById('pa-cmd-btn')!
   settingsGearBtn = document.getElementById('pa-settings-btn-gear')!
   versionEl      = document.getElementById('pa-version')!
   urlsEl         = document.getElementById('pa-agent-urls')!

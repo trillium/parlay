@@ -509,6 +509,12 @@ Plugins may subscribe to arbitrary additional event names via the client's
 covers every event name with a **first-party** subscriber in this repo, not
 the full space of names the server could theoretically emit.
 
+The live-command registry adds two further first-party event names
+(`commands`, `command_update`) on this same stream, alongside its own
+`/api/chat/commands` read route and three report routes. Both are additive —
+an older client ignores unknown frames — and are documented in
+[`docs/live-commands.md`](./live-commands.md), which owns that contract.
+
 #### `input_action` envelope shape
 ```ts
 interface ActionEnvelope {

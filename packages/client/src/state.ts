@@ -92,6 +92,18 @@ export const tlEntries: any[] = []
 export function setToolLogVisible(v: boolean) { toolLogVisible = v }
 export function setTlAtBottom(v: boolean) { tlAtBottom = v }
 
+// Live-command registry state (see live-commands/). Transient by the
+// doctrine above: the server owns the registry, this is only the local mirror
+// of it, and the view's open/closed state is per-visit like the tool log's.
+// `liveCommandsSupported` is null until the server has told us either way —
+// an older server (no registry) is a supported, quiet state, not an error.
+export const liveCommands = new Map<string, any>()
+export let liveCommandsVisible = false
+export let liveCommandsSupported: boolean | null = null
+
+export function setLiveCommandsVisible(v: boolean) { liveCommandsVisible = v }
+export function setLiveCommandsSupported(v: boolean | null) { liveCommandsSupported = v }
+
 // TTS state
 export let ttsEnabled = false
 export let ttsVoice: SpeechSynthesisVoice | null = null
