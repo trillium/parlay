@@ -98,6 +98,13 @@ parlay() {
 
 # ── 3. Start the server ──────────────────────────────────────────────────────
 say "starting packages/server on port $PORT"
+# Refuse a port somebody else already holds. Everything below both reads and
+# WRITES over $BASE, so adopting a foreign server would mutate its data — the
+# one thing this script promises not to do.
+if bun -e "try{Bun.listen({hostname:'127.0.0.1',port:$PORT,socket:{data(){}}}).stop(true);process.exit(1)}catch{process.exit(0)}"; then
+  echo "port $PORT is already in use; refusing to run against a server this script did not start" >&2
+  exit 1
+fi
 # `exec` is load-bearing: without it the subshell is a real intermediate process
 # on stock macOS bash 3.2, $! records IT rather than bun, and the kill in
 # cleanup() leaves an orphaned server holding this port while $SANDBOX is
@@ -112,13 +119,28 @@ say "starting packages/server on port $PORT"
 ) > "$SANDBOX/server.log" 2>&1 &
 SERVER_PID=$!
 
+# A reachable port is not evidence that OUR server is the one answering: if the
+# process we started died (EADDRINUSE, a crash on boot), curl would happily
+# succeed against whatever else holds the port and every command below would
+# read and write that server's data. So the liveness of $SERVER_PID is checked
+# alongside reachability, and a dead one is fatal rather than silently adopted.
+server_gone() {
+  echo "$1" >&2
+  echo "server log follows:" >&2
+  cat "$SANDBOX/server.log" >&2
+  exit 1
+}
+
 for _ in $(seq 1 40); do
+  kill -0 "$SERVER_PID" 2>/dev/null ||
+    server_gone "the server this script started exited before becoming ready (port $PORT may have been taken)"
   curl -fsS -m 1 "$BASE/api/chat/agents" >/dev/null 2>&1 && break
   sleep 0.25
 done
-curl -fsS -m 2 "$BASE/api/chat/agents" >/dev/null || {
-  echo "server did not come up; log follows:" >&2; cat "$SANDBOX/server.log" >&2; exit 1
-}
+kill -0 "$SERVER_PID" 2>/dev/null ||
+  server_gone "the server this script started is no longer running; refusing to use port $PORT"
+curl -fsS -m 2 "$BASE/api/chat/agents" >/dev/null ||
+  server_gone "server did not come up"
 sed -n '1,2p' "$SANDBOX/server.log"
 
 # ── 4. Exercise it ───────────────────────────────────────────────────────────

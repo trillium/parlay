@@ -181,11 +181,13 @@ Then copy the pieces individually. Never recursively over the whole directory:
 
 ```sh
 mkdir -p ~/.parlay/agents ~/.parlay/data
-cp -R examples/parlay-state/agents/helm     ~/.parlay/agents/   # see below
-cp -R examples/parlay-state/agents/reviewer ~/.parlay/agents/   # see below
-cp examples/parlay-state/config.json        ~/.parlay/          # see below
-cp examples/parlay-state/sweep-keep         ~/.parlay/          # see below
-cp examples/data-dir/*.json examples/data-dir/*.jsonl ~/.parlay/data/  # see below
+cp -R examples/parlay-state/agents/helm     ~/.parlay/agents/   # OVERWRITES an existing agent store with the id "helm"
+cp -R examples/parlay-state/agents/reviewer ~/.parlay/agents/   # OVERWRITES an existing agent store with the id "reviewer"
+cp examples/parlay-state/config.json        ~/.parlay/          # REPLACES your persisted server URL
+cp examples/parlay-state/sweep-keep         ~/.parlay/          # REPLACES your sweep keep-list: agents you had protected become sweep-eligible
+# cp examples/data-dir/*.json examples/data-dir/*.jsonl ~/.parlay/data/
+# ^ ONLY on a fresh data dir. This REPLACES your whole agent registry and your
+#   whole message log. Uncomment it only after reading the notes below.
 ```
 
 Every line above is marked because it can overwrite something of yours:
