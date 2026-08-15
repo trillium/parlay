@@ -260,6 +260,17 @@ persisted_only_in_data_dir() {
 persisted_only_in_data_dir &&
   check "server persisted only into \$PARLAY_DATA_DIR" ok || check "server persisted only into \$PARLAY_DATA_DIR" no
 
+cat <<'EOF'
+
+  UNCOVERED  Every message above is sent with `parlay send` (POST /api/chat/send).
+             The --agent reply path (POST /api/chat/reply) is not exercised by
+             this script, and no check here says anything about it: that path
+             resolves ~/.parlay/agents/<id>/context.json from the SERVER
+             process's own $HOME, so `parlay say --agent <id>` can succeed while
+             the message is filed on the global thread instead of that agent's
+             tab. See "The layout" in examples/README.md.
+EOF
+
 if [ "$fail" = "0" ]; then
   printf '\n\033[32mall checks passed\033[0m — port %s, sandbox %s\n' "$PORT" "$SANDBOX"
 else

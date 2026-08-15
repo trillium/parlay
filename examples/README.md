@@ -46,8 +46,19 @@ examples/
 └── bootstrap-sandbox.sh
 ```
 
-The server never reads `~/.parlay`. The CLI never reads `$PARLAY_DATA_DIR`. They
-meet only over HTTP. Each directory has its own README with a per-file table:
+`~/.parlay` is the CLI's own state; the server keeps its data under
+`$PARLAY_DATA_DIR`, and the CLI never reads that. They meet over HTTP — with one
+exception worth knowing before you split the two apart. The reply path resolves
+agent context from the **server process's** own `$HOME`, at
+`~/.parlay/agents/<id>/context.json` (`loadAgentContext` in
+`packages/server/src/agent-context.ts`, called on every `POST /api/chat/reply`),
+so `--agent` routing needs the agent store visible to the server. Run the server
+under a different `$HOME` and `parlay say --agent helm` still succeeds and still
+prints `said as helm`, but the message is filed on the global thread instead of
+the helm tab: `loadAgentContext` returns null and the channel is dropped. Run the
+server under the same `$HOME` as the agent store and it routes.
+
+Each directory has its own README with a per-file table:
 [`parlay-state/README.md`](parlay-state/README.md),
 [`data-dir/README.md`](data-dir/README.md).
 
@@ -130,6 +141,18 @@ rather than inheriting it.
 `status`, and `doctor`. They do **not** cover `launch`, `teardown`, `variant`, or
 `guard`, which resolve `~/.parlay/agents` from `$HOME` directly and will read
 your real store even with both variables set.
+
+The server has a `$HOME` of its own here, and step 4 leaves it at your real one.
+That is the exception from [The layout](#the-layout) showing up in this recipe:
+`"$PARLAY_EXAMPLE/bin/parlay" say --agent helm "…"` posts to
+`/api/chat/reply`, the server looks for `~/.parlay/agents/helm/context.json`
+under *your* home rather than the scratch copy, does not find it, and files the
+message on the global thread — printing `said as helm` either way. To exercise
+`--agent` routing, give the server the same home as the agent store by adding
+`HOME="$PARLAY_EXAMPLE"` to step 4's command, which is the redirection
+`bootstrap-sandbox.sh` does. Copying the example into your real `~/.parlay` is
+not the remedy; that path overwrites live state and has its own section below.
+`send` is unaffected — `/api/chat/send` takes its channel from the flag.
 
 `parlay sweep` is the one to watch, because it is split down the middle and
 `sweep --apply` is what deletes agent stores and removes worktrees. Its

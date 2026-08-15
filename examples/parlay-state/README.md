@@ -1,6 +1,10 @@
 # `parlay-state/` — the CLI's and agents' state
 
-This is the client side of the split: the server never reads any of it. Point
+This is the CLI's and the agents' own state; the server keeps its data under
+`$PARLAY_DATA_DIR` rather than here. One exception matters in practice: the reply
+path resolves agent context from the **server process's** own `$HOME`, so
+`--agent` routing works only when the agent store is visible to the server — see
+the [`context.json`](#contextjson) section below. Point
 `PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` at a copy of this directory, or merge
 it into an existing `~/.parlay/`. If you already have a `~/.parlay`, follow
 [the merge instructions](../README.md#optional-merging-into-a-real-parlay) —
@@ -12,7 +16,7 @@ state you are using.
 | `config.json` | Persisted default server URL. | Yes — point it at your server. |
 | `sweep-keep` | Agents `parlay sweep` must never tear down. Commented inline. | Yes — list your long-lived agents. |
 | `agents/<id>/identity.md` | The agent's launch spec + durable self-knowledge. | Yes — see below. |
-| `agents/<id>/context.json` | `{id, name, color}` reply-attribution record. | Yes — must match `identity.md` and the registry. |
+| `agents/<id>/context.json` | `{id, name, color}` reply-attribution record — the server reads it from its own `$HOME`. | Yes — must match `identity.md` and the registry. |
 | `agents/<id>/scratchpad.md` | The agent's working notes. | No — the agent writes it. Created on first write. |
 | `agents/<id>/status` | Append-only agent→supervisor status lines. | No — `parlay status <verb> "<line>"` appends. |
 
@@ -81,6 +85,24 @@ with a worktree and no `worktree:` key is torn down without that check.
 
 Everything below the frontmatter is prose. `parlay identity '<fact>'` appends a
 line; a bare `parlay identity` prints this part with the frontmatter stripped.
+
+### `context.json`
+
+```json
+{ "id": "helm", "name": "Helm", "color": "#6366f1" }
+```
+
+The reply-attribution record, and the one place in this directory where whose
+`$HOME` is in play changes the outcome. `loadAgentContext`
+(`packages/server/src/agent-context.ts`, called on every `POST /api/chat/reply`)
+resolves `~/.parlay/agents/<id>/context.json` against the **server process's**
+own `$HOME` — not `PARLAY_AGENT_HOME`, and not the home of the CLI that sent the
+message. So `parlay say --agent helm` reaches the helm tab only when the server
+can see this file under the home *it* is running with. When it cannot, the reply
+still succeeds and the CLI still prints `said as helm`, but the server drops the
+channel and files the message on the global thread. The fix is to run the server
+under the same `$HOME` as the agent store — not to copy this directory into a
+live `~/.parlay`.
 
 ### `status`
 
