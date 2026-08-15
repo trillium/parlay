@@ -1,13 +1,14 @@
 // Fold §3.6 — the agent→supervisor keyed status verb.
 //
-// The fold (design doc §3.6, captain-private, not in this repo) ports firstmate's supervision
-// signal into a thin parlay verb — a sibling to reply/scratchpad/identity. It
-// COLLIDED with the historical `status` name, but that name was only a redundant
-// fall-through alias of bare `parlay` (`case undefined: case "status" →
-// cmdStatus`), carrying zero unique behavior. So the resolution (task-ve2v)
-// RETIRES the alias and binds `status` to this verb: the panel/fleet snapshot
-// stays on bare `parlay` (cmdStatus in ./commands); `parlay status` now
-// emits/reads the keyed stream.
+// The fold (design doc §3.6, captain-private, not in this repo) ports
+// firstmate's supervision signal into a thin parlay verb — a sibling to
+// reply/scratchpad/identity. It COLLIDED with the historical `status` name,
+// but that name was only a redundant fall-through alias of bare `parlay`
+// (`case undefined: case "status" → cmdStatus`), carrying zero unique
+// behavior. So the resolution (task-ve2v) RETIRES the alias and binds
+// `status` to this verb: the panel/fleet snapshot stays on bare `parlay`
+// (cmdStatus in ./commands); `parlay status` now emits/reads the keyed
+// stream.
 //   parlay status <verb> [--key <slug>] "<note>"   → APPEND a keyed status line
 //   parlay status                                  → READ this agent's status file
 
