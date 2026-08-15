@@ -14,18 +14,31 @@ export interface ScratchServer {
   /** http://127.0.0.1:<port> — what a request is sent to. */
   base: string
   /**
-   * http://127.0.0.1:<port> — host:port identical to `base`, so originAllowed
-   * accepts it on its SAME-HOST comparison against the request's Host header.
-   * This is the panel's real shape: served by the server it calls.
+   * http://127.0.0.1:<port> — the panel's real shape, served by the server it
+   * calls. It satisfies BOTH of originAllowed's accept branches at once (its
+   * host:port equals `base`'s, AND `127.` is a private-v4 literal), so it
+   * proves neither branch in isolation. Use `tunnelOrigin` for the same-host
+   * comparison and `loopbackOrigin` for the hostname branch.
    */
-  sameHostOrigin: string
+  panelOrigin: string
   /**
-   * http://localhost:<port> — a loopback HOSTNAME. It does NOT match `base`'s
-   * host, so originAllowed can only accept it on its isLocalHostname branch —
-   * a different branch from `sameHostOrigin`, and the one a browser sends when
-   * the panel is opened as localhost while requests resolve to 127.0.0.1.
+   * http://localhost:<port> — a loopback HOSTNAME that does NOT match `base`'s
+   * host, so only originAllowed's isLocalHostname branch can accept it.
    */
   loopbackOrigin: string
+  /**
+   * http://panel.tunnel.test:<port>, to be sent with `Host: tunnelHost`. Its
+   * hostname is not loopback, not private-LAN, not .local and not in
+   * PARLAY_ALLOWED_ORIGINS (which this instance sets empty), so the same-host
+   * comparison is the ONLY thing that can accept it — the deployment shape
+   * being a panel behind a Host-forwarding tunnel or reverse proxy. Send it
+   * with `tunnelForeignHost` instead and it must be refused. No DNS is
+   * involved: Host and Origin are just headers on a request still dialled at
+   * `base`.
+   */
+  tunnelOrigin: string
+  tunnelHost: string
+  tunnelForeignHost: string
   /** PARLAY_DATA_DIR — every file this instance persists lands here. */
   dataDir: string
   stop(): void
@@ -120,7 +133,16 @@ export async function startScratchServer(): Promise<ScratchServer> {
         stop()
         throw new Error(`${base} is answering, but it is not our server — no identity marker in /api/chat/history`)
       }
-      return { base, sameHostOrigin: base, loopbackOrigin: `http://localhost:${port}`, dataDir, stop }
+      return {
+        base,
+        panelOrigin: base,
+        loopbackOrigin: `http://localhost:${port}`,
+        tunnelOrigin: `http://panel.tunnel.test:${port}`,
+        tunnelHost: `panel.tunnel.test:${port}`,
+        tunnelForeignHost: `other.tunnel.test:${port}`,
+        dataDir,
+        stop,
+      }
     } catch (e) {
       if (e instanceof Error && e.message.includes("not our server")) throw e
       await Bun.sleep(100)

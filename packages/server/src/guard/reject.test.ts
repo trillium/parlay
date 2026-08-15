@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { CORS, guardChatRequest, guardedCorsHeaders, preflightResponse, withGuardedCors } from "./index"
-import { EVIL, SAME_ORIGIN, req } from "./test-helpers"
+import { EVIL, OTHER_HOST, SAME_ORIGIN, TUNNEL_ORIGIN, req } from "./test-helpers"
 
 // What the guard REFUSES. ./allow.test.ts is the other half — every refusal
 // below has a counterpart there proving the legitimate caller still works.
@@ -22,6 +22,15 @@ describe("cross-origin POST is rejected", () => {
   test("a cross-origin DELETE of an agent is rejected", () => {
     const p = "/api/chat/agents/parlay-cors-p1"
     expect(guardChatRequest(req("DELETE", p, { origin: EVIL, contentType: null }), p)?.status).toBe(403)
+  })
+
+  test("a non-local origin whose Host does NOT match is refused, with no ACAO", () => {
+    // The control for ./allow.test.ts's tunnel case: the same origin that the
+    // same-host comparison accepts on its own Host is refused on any other, so
+    // that comparison cannot be mistaken for a blanket allowance.
+    const r = req("PUT", "/api/chat/draft", { origin: TUNNEL_ORIGIN, host: OTHER_HOST })
+    expect(guardChatRequest(r, "/api/chat/draft")?.status).toBe(403)
+    expect(guardedCorsHeaders(r)["Access-Control-Allow-Origin"]).toBeUndefined()
   })
 })
 

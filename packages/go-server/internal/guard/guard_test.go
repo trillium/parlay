@@ -53,6 +53,32 @@ func TestOriginAllowed(t *testing.T) {
 	}
 }
 
+// TestSameHostIsTheOnlyThingAcceptingATunnelledPanel isolates the same-host
+// comparison in OriginAllowed. Every other origin in TestOriginAllowed is a
+// local hostname (localhost, 127.0.0.1, 192.168.x, .local, ::1), so deleting
+// that comparison leaves all of them green — these two cases are what pin it.
+// The shape it exists for is a panel reached through a Host-forwarding tunnel
+// or reverse proxy under a name that is none of those; if the branch silently
+// regresses, that panel gets 403 on every mutating route.
+func TestSameHostIsTheOnlyThingAcceptingATunnelledPanel(t *testing.T) {
+	const origin = "http://panel.tunnel.test:8443"
+
+	on := func(host string) *http.Request {
+		r := req(t, http.MethodPut, "/api/chat/draft", origin, "application/json")
+		r.Host = host
+		return r
+	}
+
+	if !OriginAllowed(on("panel.tunnel.test:8443")) {
+		t.Fatal("an origin equal to the Host it arrived on must be accepted")
+	}
+	// The control: without it the accept case above could be passing for some
+	// other reason.
+	if OriginAllowed(on("other.tunnel.test:8443")) {
+		t.Fatal("the same non-local origin arriving on a different Host must be refused")
+	}
+}
+
 func TestAllowedOriginsEnvOptsIn(t *testing.T) {
 	t.Setenv("PARLAY_ALLOWED_ORIGINS", "https://tunnel.example.com, https://other.example.com")
 	if !OriginAllowed(req(t, http.MethodPost, "/api/chat/send", "https://tunnel.example.com", "application/json")) {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { CORS, guardChatRequest, guardedCorsHeaders, preflightResponse, withGuardedCors } from "./index"
-import { EVIL, HOST, SAME_ORIGIN, noOrigin, req } from "./test-helpers"
+import { EVIL, HOST, SAME_ORIGIN, TUNNEL_HOST, TUNNEL_ORIGIN, noOrigin, req } from "./test-helpers"
 
 // What the guard must NOT break. A guard that refuses the CLI, curl or the
 // panel's own same-origin requests is a failed fix, not a strict one — so
@@ -39,6 +39,16 @@ describe("D9: the panel and the CLI still work on every newly guarded route", ()
     expect(guardChatRequest(req("POST", "/api/chat/upload", { origin: SAME_ORIGIN, contentType: ct }), "/api/chat/upload")).toBeNull()
     // …and the no-Origin (curl -F) caller too.
     expect(guardChatRequest(noOrigin("POST", "/api/chat/upload", ct), "/api/chat/upload")).toBeNull()
+  })
+
+  test("a panel behind a Host-forwarding tunnel can still write, on the same-host branch alone", () => {
+    // TUNNEL_ORIGIN's hostname is not loopback, private-LAN, .local or
+    // allow-listed, so ./origin.ts's same-host comparison is the only thing
+    // that accepts it — delete that comparison and this goes red while every
+    // local-hostname case above stays green.
+    const r = req("PUT", "/api/chat/draft", { origin: TUNNEL_ORIGIN, host: TUNNEL_HOST })
+    expect(guardChatRequest(r, "/api/chat/draft")).toBeNull()
+    expect(guardedCorsHeaders(r)["Access-Control-Allow-Origin"]).toBe(TUNNEL_ORIGIN)
   })
 
   test("the phone on the LAN can still upload and set a draft", () => {

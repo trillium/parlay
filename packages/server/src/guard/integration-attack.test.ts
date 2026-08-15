@@ -29,7 +29,7 @@ describe("live server: mutating routes", () => {
   })
 
   test("non-JSON Content-Type from an ALLOWED origin → 415", async () => {
-    const r = await send({ headers: { "Content-Type": "text/plain", Origin: srv.sameHostOrigin } })
+    const r = await send({ headers: { "Content-Type": "text/plain", Origin: srv.panelOrigin } })
     expect(r.status).toBe(415)
   })
 

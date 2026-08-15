@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach } from "bun:test"
 import { isJsonContentType, originAllowed } from "./origin"
-import { EVIL, HOST, SAME_ORIGIN, noOrigin, req } from "./test-helpers"
+import { EVIL, HOST, OTHER_HOST, SAME_ORIGIN, TUNNEL_HOST, TUNNEL_ORIGIN, noOrigin, req } from "./test-helpers"
 
 afterEach(() => { delete process.env.PARLAY_ALLOWED_ORIGINS })
 
@@ -20,6 +20,14 @@ describe("origin policy: who is refused", () => {
 
   test("a non-http scheme", () => {
     expect(originAllowed(req("POST", "/api/chat/send", { origin: "chrome-extension://abcdef" }))).toBe(false)
+  })
+
+  test("a non-local tunnel origin arriving on a DIFFERENT Host", () => {
+    // The control for the accept case below: same non-local origin, wrong
+    // Host, so the same-host comparison cannot save it and nothing else can
+    // either. Without this, that accept case could be passing for the wrong
+    // reason.
+    expect(originAllowed(req("POST", "/api/chat/send", { origin: TUNNEL_ORIGIN, host: OTHER_HOST }))).toBe(false)
   })
 })
 
@@ -50,6 +58,16 @@ describe("origin policy: who still gets through", () => {
   test("a bonjour .local name", () => {
     const r = req("POST", "/api/chat/send", { origin: "http://captain.local:31337", host: HOST })
     expect(originAllowed(r)).toBe(true)
+  })
+
+  test("the panel behind a Host-forwarding tunnel — ONLY the same-host comparison can accept it", () => {
+    // Isolates the branch at ./origin.ts's `u.host === host` comparison. Every
+    // other accepted fixture here is a local hostname, so deleting that
+    // comparison leaves them all green; this one goes red, which is the point.
+    // The shape it protects is real: a panel served through a reverse proxy or
+    // tunnel under a non-local name. If the branch silently regresses, that
+    // panel gets 403 on every mutating route while the suite stays green.
+    expect(originAllowed(req("POST", "/api/chat/send", { origin: TUNNEL_ORIGIN, host: TUNNEL_HOST }))).toBe(true)
   })
 
   test("PARLAY_ALLOWED_ORIGINS opts a specific public origin in", () => {

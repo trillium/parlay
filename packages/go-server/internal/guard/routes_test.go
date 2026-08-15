@@ -19,6 +19,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -62,6 +63,33 @@ func do(t *testing.T, method, url, origin, contentType, body string) *http.Respo
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// doHost is do with an explicit arrival Host — what a reverse proxy or tunnel
+// forwards. Only the header changes; the request is still dialled at url.
+func doHost(t *testing.T, method, url, origin, host, contentType, body string) *http.Response {
+	t.Helper()
+	var rdr io.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, rdr)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Host = host
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}
@@ -216,12 +244,60 @@ func TestD9SubscribersNoLongerLeaksIdentifiers(t *testing.T) {
 	}
 }
 
+// TestATunnelledPanelStillWorks isolates OriginAllowed's same-host comparison
+// end-to-end. `panel` in TestTheCLIAndThePanelStillWork is http://127.0.0.1:
+// <port>, which is also a private-v4 literal, so isLocalHostname accepts it
+// whether or not the comparison exists — no other case in this file proves the
+// branch. Here the origin's hostname is not loopback, not private-LAN, not
+// .local and not allow-listed, so the only thing that can accept it is its
+// equality with the Host the request arrived on. That is the deployment shape
+// the branch exists for (a panel behind a Host-forwarding tunnel or reverse
+// proxy); if it regresses, that panel gets 403 on every mutating route.
+func TestATunnelledPanelStillWorks(t *testing.T) {
+	base := newServer(t)
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("parse base: %v", err)
+	}
+	origin := "http://panel.tunnel.test:" + u.Port()
+	host := "panel.tunnel.test:" + u.Port()
+	foreign := "other.tunnel.test:" + u.Port()
+
+	t.Run("guarded PUT on its own forwarded Host reaches the handler", func(t *testing.T) {
+		resp := doHost(t, http.MethodPut, base+"/api/chat/draft", origin, host, "application/json", `{"text":"tunnelled draft"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != origin {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want %q (never '*')", got, origin)
+		}
+		got := decode(t, doHost(t, http.MethodGet, base+"/api/chat/draft", origin, host, "", ""))
+		if got["text"] != "tunnelled draft" {
+			t.Fatalf("draft = %v, want what the tunnelled panel just wrote", got["text"])
+		}
+	})
+
+	// The control: without it the accept case could be passing for some other
+	// reason than the same-host comparison.
+	t.Run("the same origin arriving on a different Host is refused", func(t *testing.T) {
+		resp := doHost(t, http.MethodPut, base+"/api/chat/draft", origin, foreign, "application/json", `{"text":"should never land"}`)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("Access-Control-Allow-Origin = %q, want none", got)
+		}
+	})
+}
+
 // TestTheCLIAndThePanelStillWork is the other half of the acceptance
 // criteria: a guard that refuses a legitimate caller is a failed fix, not a
 // strict one.
 func TestTheCLIAndThePanelStillWork(t *testing.T) {
 	base := newServer(t)
-	// The panel's own origin is whatever host the request arrived on.
+	// The panel's own origin is whatever host the request arrived on. Note it
+	// satisfies both accept branches at once — see TestATunnelledPanelStillWorks
+	// for the same-host comparison in isolation.
 	panel := base
 
 	t.Run("CLI/curl: no-Origin send is accepted", func(t *testing.T) {
