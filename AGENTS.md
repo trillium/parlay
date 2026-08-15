@@ -1292,7 +1292,10 @@ Four things worth knowing before editing it:
 - **Deliberately not in CI**, because they drive live or macOS-only state:
   `tools/monitor/parlay-monitor.test.sh` (enrols over a relay control socket),
   `tools/relay/deploy/{ensure-up,install}.test.sh` (launchctl/PlistBuddy),
-  `tools/cli/parity/run.sh` (stands up a real go-server fixture), and
+  `tools/cli/parity/run.sh` (stands up a real go-server fixture),
+  `examples/bootstrap-sandbox.sh` (same class as the previous entry — it stands
+  up a real `packages/server` fixture; it has also not been trial-run to the
+  bar stated at the end of this bullet), and
   `packages/client`'s `bun run build` (its `build.ts` POSTs to the captain's
   live `:31337` — see the packages/client note above). Also not enforced:
   `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a
@@ -1366,6 +1369,36 @@ no `check` case in `tools/cli/parity/run.sh`, but it is in that script's
 running, because an end event is how a record leaves the running set, and it
 gives up loudly (a stdout notice plus a non-zero exit) when the SSE stream
 closes rather than returning quietly — the robots-dcag shape.
+
+## Need a real parlay instance to test against? `examples/bootstrap-sandbox.sh`
+
+`examples/` is a public, sanitized two-agent configuration (`parlay-state/` →
+`~/.parlay`, `data-dir/` → `$PARLAY_DATA_DIR`), and
+`examples/bootstrap-sandbox.sh` instantiates it in a `mktemp` sandbox on a
+kernel-picked free port, builds `tools/cli`, starts `packages/server`, and
+asserts the round trip. Reach for it instead of hand-rolling another throwaway
+instance — and read it before writing one, because it encodes the isolation
+recipe: redirect **`$HOME`** as well as `PARLAY_DATA_DIR`/`PARLAY_STATE_HOME`/
+`PARLAY_AGENT_HOME`, since `launch`/`teardown`/`variant`/`guard` resolve
+`~/.parlay/agents` from `$HOME` and ignore `PARLAY_AGENT_HOME` (see the B4/B9
+notes above). `PAI_DIR` too — see the `PARLAY_DATA_DIR` section above for why it
+is not covered.
+
+`sweep` is the sharpest case, because it straddles that split: a half-redirected
+`sweep --apply` judges the REAL agent store against a redirected keep-list, and
+it is the verb that deletes stores and removes worktrees. It fails toward held,
+but redirect `$HOME` rather than relying on that. `examples/README.md` has the
+per-variable breakdown.
+
+Two traps it exists to keep you out of: `pkill -f 'bun src/index.ts'` matches
+**every** worktree's sandbox server on this box, not just yours (the script
+kills its own recorded pid instead); and `bin/parlay` exports
+`PARLAY_SERVER=http://localhost:31337`, which outranks `config.json`, so a
+sandbox must build and invoke the Go binary directly.
+
+Anything added to the example ships publicly — it is derived from the captain's
+live setup, so keep every value a stand-in and re-run the script before
+committing.
 
 ## Maintaining this file
 

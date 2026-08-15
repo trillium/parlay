@@ -1,0 +1,90 @@
+# `data-dir/` — the server's persisted state
+
+Copy this directory's contents to whatever you point **`PARLAY_DATA_DIR`** at, then
+start the server with that env var set. The files below all resolve through
+`packages/server/src/paths.ts`; setting `PARLAY_DATA_DIR` relocates every one of
+them, flat, into that one directory.
+
+With `PARLAY_DATA_DIR` **unset**, they scatter to their production locations
+instead — `~/exchange/` for most, `$PAI_DIR/MEMORY/STATE/` for the registry. That
+split is historical. Set `PARLAY_DATA_DIR`; it is one directory you can back up,
+inspect, and throw away.
+
+Set it *before* a server has state, though, or move that state in first. It
+relocates the read side as well: a server that has been running without it comes
+back with an empty panel, no tabs until every agent re-registers, and a second
+registry here diverging from the one still sitting in `~/exchange` and
+`$PAI_DIR/MEMORY/STATE`. Nothing is lost, but nothing is found either.
+
+`PARLAY_DATA_DIR` is not quite the server's whole write surface: `$PAI_DIR` is
+read unconditionally by the hook and tool tailers and the boot-time
+session-channel backfill, and `src/tts.ts` writes
+`$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl` and
+`$PAI_DIR/MEMORY/STATE/tts-cache/` no matter what `PARLAY_DATA_DIR` says. Set
+`PAI_DIR` as well for a genuinely self-contained instance — to a real path, or
+not at all. It is resolved with `??`, so an empty value is not "unset": those
+`$PAI_DIR/…` paths turn relative and the tree lands wherever the server was
+started from.
+
+| File | What it is | Change it? |
+|---|---|---|
+| `parlay-agents.json` | The **agent registry** — every agent that gets a tab in the panel. | Yes: one entry per agent you run. |
+| `parlay-settings.json` | Panel/voice preferences, served over `/api/chat/parlay/settings`. | Optional. Every key has a default. |
+| `chat-history.jsonl` | The message log, one JSON object per line. Rotates at 5 MB. | No — the server appends here. The four seeded lines just give a new panel something to render. |
+
+Files the server creates on demand, so they are not shipped here: `chat-draft.txt`
+(persisted composer draft), `parlay-agent-channels.json` and
+`parlay-session-channels.json` (session→channel maps), and `parlay-uploads/`
+(image attachments).
+
+## `parlay-agents.json`
+
+A JSON **array** of `AgentInfo` (`packages/server/src/types.ts`, mirrored by
+`packages/go-server/internal/store/registry.go`):
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | Channel id. Must match the agent's directory under `agents/` and its `context.json`. |
+| `name` | yes | Display name on the tab. |
+| `color` | yes | Tab colour, CSS hex. |
+| `nicknames` | no | Voice/picker aliases. |
+| `urls` | no | Pages this agent owns. |
+| `path` | no | Filesystem paths this agent is responsible for. |
+
+`packages/go-server` additionally persists a `caps` field (arbitrary JSON
+forwarded from `parlay listen --caps`, see `internal/store/registry.go`).
+`packages/server` does not: `AgentInfo` has no such field, its registry loader
+copies only the six keys above, and a hand-seeded `caps` is dropped the next time
+the file is written back. Do not rely on it against the TypeScript server.
+
+You do not have to seed this file at all — `parlay listen` / `parlay monitor`
+register an agent on first contact and the server writes it here. Seeding it means
+the tabs exist before any agent starts.
+
+**Some agent names are deleted on sight.** The server's autonomous cleanup sweep
+removes any channel whose id matches `TEST_NAME_PATTERNS` in
+`packages/server/src/prune/policy.ts`, at every sweep including startup, regardless
+of how active it is — those are the fingerprints of leaked test fixtures. The
+patterns, all case-insensitive:
+
+| Shape | Matches |
+|---|---|
+| starts with `test-`, `bench-`, `forge-`, `meas-`, `profile-`, `busy-`, `nonexistent-`, `spawn-beads-` | `test-agent`, `forge-deploy-1` |
+| ends with `-test` | `api-test`, `parser-test` |
+| contains `-probe` | `db-probe`, `bench-probe-9` |
+| ends with `z<digits>`, optionally plus one letter | `reviewer-z1`, `worker-z12b`, `nobackendz3` |
+
+`-test` and `-probe` catch names nobody thinks of as fixtures — `api-test` and
+`db-probe` are both deleted. `helm` and `reviewer` are safe; `reviewer-z1` would
+be deleted out from under you.
+
+## `chat-history.jsonl`
+
+One `ChatMessage` per line. Required keys are `id`, `role` (`"user"` | `"agent"`),
+`ts` (ISO 8601), `text`; `channel` is the agent id and is what routes a message to a
+tab. `role: "user"` with no `from` means the human sent it. Optional keys —
+`type`, `action`, `source`, `meta`, `images`, `from` — are documented in
+`packages/server/src/types.ts`.
+
+The seeded ids here are obviously fake (`00000000-…-0001`). Real ones are UUIDs the
+server mints.
