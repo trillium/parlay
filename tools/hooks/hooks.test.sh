@@ -19,6 +19,9 @@
 #      also how "did the hook reach delivery?" is asserted positively.
 #   3. The scratch repo has packages/client/src/ but no build.ts at all, so even
 #      an escaped real bun would have nothing to execute.
+# PARLAY_HOOK_LOG points the hooks' log at the scratch dir for every case but the
+# last, so the log assertions do not depend on the macOS-shaped default path (this
+# harness also runs on Linux in CI); case 7 unsets it to cover that default.
 # No assertion greps hook source: each one reads an exit code, stdout/stderr, or
 # what the hook actually wrote to (or refused to create on) disk.
 #
@@ -45,6 +48,7 @@ bad() { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 eq() { if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 — want [$3], got [$2]"; fi; }
 has_line() { if grep -q "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1 — no /$2/ in $3"; fi; }
 no_line() { if grep -q "$2" "$3" 2>/dev/null; then bad "$1 — /$2/ found in $3"; else ok "$1"; fi; }
+absent() { if [[ -e "$2" ]]; then bad "$1 — $2 exists"; else ok "$1"; fi; }
 
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/parlay-hooks-test.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$SCRATCH"' EXIT
@@ -52,7 +56,7 @@ trap 'rm -rf "$SCRATCH"' EXIT
 export HOME="$SCRATCH/home"
 export GIT_AUTHOR_NAME=hooks-test GIT_AUTHOR_EMAIL=hooks@test
 export GIT_COMMITTER_NAME=hooks-test GIT_COMMITTER_EMAIL=hooks@test
-unset PARLAY_MAIN_CHECKOUT PARLAY_HOOK_LOG
+unset PARLAY_MAIN_CHECKOUT
 mkdir -p "$HOME/.bun/bin"
 
 BUN_CALLS="$HOME/bun-calls.log"
@@ -77,8 +81,10 @@ exec "$REAL_GIT" "\$@"
 STUB
 chmod +x "$SCRATCH/bin/git"
 
-LOG_DIR="$HOME/Library/Logs/parlay"
+LOG_DIR="$SCRATCH/logs"
 LOG="$LOG_DIR/bundle-rebuild.out.log"
+export PARLAY_HOOK_LOG="$LOG"
+DEFAULT_LOG="$HOME/Library/Logs/parlay/bundle-rebuild.out.log"
 bun_calls() { [[ -f "$BUN_CALLS" ]] && wc -l < "$BUN_CALLS" | tr -d ' ' || echo 0; }
 log_lines() { [[ -f "$LOG" ]] && wc -l < "$LOG" | tr -d ' ' || echo 0; }
 
@@ -121,6 +127,7 @@ for hook in "$POST_COMMIT" "$POST_MERGE"; do
 done
 eq "opted out never invokes the build" "$(bun_calls)" "0"
 no_line "opted out logs no delivery" "deliver" "$LOG"
+absent "opted out creates no log directory" "$LOG_DIR"
 
 # ---- 1b. opted out, an irrelevant commit: completely silent -----------------
 # The announcement must not become noise on every commit in the repo, so a change
@@ -158,6 +165,28 @@ for hook in "$POST_COMMIT" "$POST_MERGE"; do
 done
 eq "opted out + unresolvable never delivers" "$(bun_calls)" "$before"
 eq "opted out + unresolvable logs nothing" "$(log_lines)" "$before_log"
+
+# ---- 1d. opted out, commit in a linked worktree: writes nothing at all ------
+# The worktree guard has its own diagnostic (case 3 asserts it), but that is a
+# delivery-path diagnostic: a clone that never enabled delivery must not have a
+# log directory conjured under it, nor a line appended, by a feature it declined.
+echo "1d. opted out, commit in a linked worktree"
+WT_OUT="$SCRATCH/wt-optout"
+git -C "$MAIN" worktree add -q -b optout-wt "$WT_OUT" > /dev/null 2>&1
+echo 'export const y = 25' > "$WT_OUT/packages/client/src/y.ts"
+git -C "$WT_OUT" add -A --force
+git -C "$WT_OUT" commit -qm "client change in an opted-out worktree"
+before="$(bun_calls)"
+for hook in "$POST_COMMIT" "$POST_MERGE"; do
+  name="$(basename "$hook")"
+  run_hook "$hook" "$WT_OUT"
+  eq "$name exits 0 in an opted-out linked worktree" "$RC" "0"
+  eq "$name writes no stdout in an opted-out linked worktree" "$(cat "$SCRATCH/out")" ""
+  eq "$name writes no stderr in an opted-out linked worktree" "$(cat "$SCRATCH/err")" ""
+done
+eq "an opted-out linked worktree never delivers" "$(bun_calls)" "$before"
+absent "an opted-out linked worktree creates no log directory" "$LOG_DIR"
+absent "an opted-out linked worktree writes no log file" "$LOG"
 
 # ---- 2. opted in, primary checkout: proceeds past the guard ---------------
 echo "2. opted in, primary checkout"
@@ -257,6 +286,20 @@ for hook in "$POST_COMMIT" "$POST_MERGE"; do
 done
 eq "an unreadable override never delivers" "$(bun_calls)" "$before"
 eq "an unreadable override logs nothing" "$(log_lines)" "$before_log"
+
+# ---- 7. PARLAY_HOOK_LOG unset: the default log path still resolves ----------
+# Every case above points the log at the scratch dir through the override, so
+# this is the one that exercises the coded default under the redirected $HOME.
+echo "7. PARLAY_HOOK_LOG unset"
+before="$(bun_calls)"
+echo 'export const e = 5' > "$MAIN/packages/client/src/e.ts"
+git -C "$MAIN" add -A --force
+git -C "$MAIN" commit -qm "client change logged to the default path"
+( cd "$MAIN" && unset PARLAY_HOOK_LOG && /bin/bash "$POST_COMMIT" ) > "$SCRATCH/out" 2> "$SCRATCH/err"
+RC=$?
+eq "post-commit exits 0 with no log override" "$RC" "0"
+eq "the default log path still delivers" "$(bun_calls)" "$((before + 1))"
+has_line "post-commit logs the delivery to the default path" "delivering" "$DEFAULT_LOG"
 
 echo
 echo "$PASS passed, $FAIL failed"

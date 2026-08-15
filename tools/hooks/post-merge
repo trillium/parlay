@@ -33,12 +33,17 @@ if [[ -z "$MAIN_CHECKOUT" ]]; then
   exit 1
 fi
 
+# Same as post-commit: naming the log file is not writing to it, and the
+# directory is created only on a path that is about to write, so an opted-out
+# clone leaves nothing on disk.
 LOG="${PARLAY_HOOK_LOG:-$HOME/Library/Logs/parlay/bundle-rebuild.out.log}"
-mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 TOP="$(resolve_dir "$(git rev-parse --show-toplevel)")" || TOP=""
 
 if [[ "$TOP" != "$MAIN_CHECKOUT" ]]; then
-  echo "[post-merge] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  if [[ "$AUTOBUILD" == "true" ]]; then
+    mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+    echo "[post-merge] $(date +%FT%T) skip: $TOP is not the main checkout" >> "$LOG"
+  fi
   exit 0
 fi
 
@@ -55,6 +60,7 @@ fi
 
 # Absolute fallback kept for hooks fired with a minimal PATH; see post-commit.
 BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 echo "[post-merge] $(date +%FT%T) delivering $(git log -1 --format='%h %s' | head -c 80)" >> "$LOG"
 if ( cd "$MAIN_CHECKOUT/packages/client" && "$BUN" build.ts ) >> "$LOG" 2>&1; then
   echo "[post-merge] delivered" >> "$LOG"
