@@ -78,20 +78,26 @@ channel. On those routes:
 - Allowed responses carry the **exact** origin in
   `Access-Control-Allow-Origin` plus `Vary: Origin` — never `*`.
 
-The read/SSE routes (`history`, `agents`, `events`, `version`,
+The read routes (`history`, `agents`, `version`,
 `GET /api/chat/uploads/<name>`) are outside the guard and behave as documented
-below.
+below. `/api/chat/events` is **guarded on the Go server and not on the TS
+one** — the two servers deliberately differ here. `packages/go-server` serves
+an external-producer ingress on `POST /api/chat/events` (see [SSE
+Events](#sse-events) below), so the path is in `internal/guard.GuardedPaths`,
+and because that classifier is method-independent the `GET` SSE stream is
+guarded with it. No caller loses anything: the panel is same-origin, and the
+tailers, the CLI and curl send no `Origin`.
 
 That surface is not purely read-only, and the boundary above is narrower than
 "everything that writes or discloses". Two TS routes are **known, accepted,
 deliberately unguarded residue** — accepted meaning somebody looked and
 decided, not that nothing is exposed:
 
-- `GET /api/chat/events` writes `sseClients` from an attacker-supplied
-  `?device=` (`router-events.ts`), and the `tts_event` frames it streams carry
-  that device uuid to every connected client (`router-tts-events.ts`
-  broadcasts `{ …, device, ...body }` with no filtering), so a cross-origin
-  `EventSource` can read it.
+- `GET /api/chat/events` **on the TS server only** writes `sseClients` from an
+  attacker-supplied `?device=` (`router-events.ts`), and the `tts_event` frames
+  it streams carry that device uuid to every connected client
+  (`router-tts-events.ts` broadcasts `{ …, device, ...body }` with no
+  filtering), so a cross-origin `EventSource` can read it.
 - `GET /api/chat/agents` (`router-messages.ts`) returns every registered agent
   id under `Access-Control-Allow-Origin: *` — the same class of disclosure
   `GET /api/chat/subscribers` was guarded for.
@@ -102,8 +108,8 @@ from chaining is that every route that *aims* anything (`eval`, `draft`,
 `device-cmd`, `navigate`, `reload`, `poll`, `upload`, `subscribers`) is
 guarded. The Go server does not expose it the same way: its unguarded routes
 send no `Access-Control-Allow-Origin` at all, so a foreign page's read still
-executes but its body stays unreadable, and its `/api/chat/events` accepts
-`?device=` without storing it.
+executes but its body stays unreadable, and its `/api/chat/events` is guarded
+outright and accepts `?device=` without storing it.
 
 ---
 
@@ -580,6 +586,41 @@ The live-command registry adds two further first-party event names
 `/api/chat/commands` read route and three report routes. Both are additive —
 an older client ignores unknown frames — and are documented in
 [`docs/live-commands.md`](./live-commands.md), which owns that contract.
+
+### `POST /api/chat/events` (Go server only)
+The external-producer ingress into the Go SSE hub, for a producer that cannot
+live inside that server. `Hub.broadcast` is in-process-only, so this is the one
+seam by which an outside process puts a frame on the panel.
+
+Callers: `packages/server/src/tool-tailer.ts`, via
+`packages/server/src/hub-ingress.ts` (`pushHubEvent`). The TS server has no such
+route — its `/api/chat/events` is `GET`-only.
+
+Request body:
+```jsonc
+{
+  "event": "tool_event",   // required; must be in the ingress allowlist
+  "data":  { }             // optional; forwarded to the wire byte-identical
+}
+```
+Response: `{"ok": true, "event": "<echoed name>"}`. An absent `data` broadcasts
+`{}`.
+
+**The allowlist is one name per real producer** — `tool_event` alone today.
+Anything else is **400**, including every name the server produces from its own
+persisted state (`message`, `history`, `agents`, `agent_register`,
+`message_received`, `presence_map`, `commands`, `command_update`), every
+panel-aiming name with no producer in the repo (`navigate`, `reload`,
+`device_cmd`, `input_action`, `draft`), and any unknown name. `system_update` is
+refused too: it is a `ChatMessage.type` carried on `message`, not an event name
+— a producer wanting one posts to
+[`POST /api/chat/message`](#post-apichatmessage) with `type: "system_update"`,
+which persists first and broadcasts as a consequence. Rationale for each
+refusal is in `packages/go-server/internal/handlers/events_ingress.go`'s doc
+comment, which owns this contract.
+
+This route is in the Go guard's `GuardedPaths`; see § Origin guard above for
+what that means for the `GET` stream on the same path.
 
 #### `input_action` envelope shape
 ```ts
