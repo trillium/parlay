@@ -171,13 +171,16 @@ from both `/api/chat/tts-report` and the substitution handler), **creates**
 cache every time it passes `DISK_CACHE_MAX` (100). `PARLAY_DATA_DIR` redirects
 none of it. On the read side, `startHookFiringTailer()` and
 `startToolEventTailer()` still watch `$PAI_DIR` (default `~/.claude/PAI`), which
-`PARLAY_DATA_DIR` does not cover, and every event they see is injected into the
-instance's chat history as a `channel:"system"`, `source:"turn"` message. A
-scratch instance booted on a host that has a populated `$PAI_DIR` will therefore
-fill with real, live agent turns from the agents running on that host — read-only,
-but confusing (and a quiet information leak) for whoever is reading the sandbox.
-Set `PAI_DIR` to an empty scratch dir alongside `PARLAY_DATA_DIR` whenever you
-boot a test instance, or the run writes into and deletes out of the real one;
+`PARLAY_DATA_DIR` does not cover, and every event they see is now pushed **out
+of this process over HTTP** to `PARLAY_HUB_URL` (default the Go server on
+`http://127.0.0.1:4242` — see the hub-ingress section below), as a
+`system_update` chat message or a `tool_event` frame. A scratch
+instance booted on a host that has a populated `$PAI_DIR` therefore replays real,
+live agent turns from the agents running on that host into whatever hub answers
+that address — on a development box, the captain's live one, whose history keeps
+them. Set `PAI_DIR` to an empty scratch dir alongside `PARLAY_DATA_DIR` whenever
+you boot a test instance (or point `PARLAY_HUB_URL` at a dead port), or the run
+writes into and deletes out of the real one;
 `guard.integration.test.ts` already redirects both, and the
 public Quickstart in `README.md` says the same for anyone who happens to have a
 `~/.claude/PAI`.
