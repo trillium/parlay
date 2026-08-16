@@ -69,6 +69,14 @@ func TestEventsIngressRejectsUnknownAndServerOwnedEvents(t *testing.T) {
 		// Not an event name at all — it is a ChatMessage.type carried on
 		// `message`; the hook tailer posts it to /api/chat/message instead.
 		"system_update",
+		// Documented SSE names with a first-party client subscriber and no
+		// producer in this server — but also no producer ANYWHERE in this
+		// repo, and the first five aim the panel. The ingress is guarded but
+		// deliberately allows a missing Origin, so admitting these would hand
+		// any local or LAN process a way to reload or navigate every connected
+		// panel, overwrite the captain's draft, or replay an input_action.
+		"navigate", "reload", "device_cmd", "input_action", "draft",
+		"presence", "agent_presence", "lavish_session", "pages_patch",
 	} {
 		rec := postIngress(t, hub, `{"event":"`+name+`","data":{}}`)
 		if rec.Code != http.StatusBadRequest {
@@ -100,10 +108,10 @@ func TestEventsIngressBroadcastsAnEmptyPayloadForADataLessEvent(t *testing.T) {
 	sub, cancel := hub.subscribe()
 	defer cancel()
 
-	if rec := postIngress(t, hub, `{"event":"reload"}`); rec.Code != http.StatusOK {
+	if rec := postIngress(t, hub, `{"event":"tool_event"}`); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
-	ev := awaitEvent(t, sub, "reload", time.Second)
+	ev := awaitEvent(t, sub, "tool_event", time.Second)
 	got, err := json.Marshal(ev.data)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)

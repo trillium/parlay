@@ -4,6 +4,10 @@ import { describe, test, expect, afterAll } from "bun:test"
 // to exist before the dynamic import below.
 const received: { path: string; contentType: string | null; body: any }[] = []
 let resolveNext: (() => void) | null = null
+// When set, the fixture records the arrival and then holds the response open —
+// which is how the ordering test observes that a second post is not even sent
+// until the first one has completed.
+let gate: Promise<void> | null = null
 
 const hub = Bun.serve({
   port: 0,
@@ -15,6 +19,7 @@ const hub = Bun.serve({
       body:        await req.json(),
     })
     resolveNext?.()
+    if (gate) await gate
     return Response.json({ ok: true })
   },
 })
@@ -68,6 +73,30 @@ describe("hub-ingress", () => {
       source:  "SessionStart",
       meta:    { session_id: "s-1" },
     })
+  })
+
+  test("posts on one route are serialized, so a burst arrives in call order", async () => {
+    // The burst this reproduces: hook-firings.jsonl rotates, hook-tailer resets
+    // byteOffset to 0 and re-reads every line in one synchronous pass. The
+    // in-process addMessage these calls replace persisted them strictly in file
+    // order; unawaited concurrent fetches let the server assign id/ts in
+    // arrival order instead.
+    const before = received.length
+    let release!: () => void
+    gate = new Promise<void>(resolve => { release = resolve })
+
+    for (const n of [1, 2, 3]) postHubMessage("agent", `line ${n}`, "system", { type: "system_update" })
+
+    // While the first response is held open, no later post may have been sent.
+    await Bun.sleep(150)
+    expect(received.length - before).toBe(1)
+
+    release()
+    gate = null
+    const deadline = Date.now() + 1000
+    while (received.length - before < 3 && Date.now() < deadline) await Bun.sleep(10)
+
+    expect(received.slice(before).map(r => r.body.text)).toEqual(["line 1", "line 2", "line 3"])
   })
 
   test("an unreachable hub neither throws nor rejects — a tailer must keep tailing", async () => {

@@ -21,21 +21,34 @@ import (
 // as the TS server's /api/chat/eval-push, which solved the same problem for
 // the Go eval engine.
 //
-// # The allowlist, and why it is not "every documented event"
+// # The allowlist: one name per real producer, and nothing else
 //
-// ingressEvents is exactly the set of docs/api-contract.md "SSE Events" names
-// that have a first-party client subscriber and NO producer inside this
-// server — the "not live" column of events.go's table. Every name this server
-// does produce (connected, history, agents, agent_register, presence_map,
-// message, message_received, commands, command_update) is deliberately
-// REFUSED here, because each of those frames is this server reporting its own
-// persisted state. Accepting them from outside would let a caller put a
-// message on the panel that is in no history file, or an agent in the panel's
-// registry that GET /agents does not know about — a frame the panel cannot
-// tell from the real thing and no reconnect would reproduce. An external
-// producer that wants a message broadcast has POST /api/chat/message, which
-// persists first and broadcasts as a consequence; that is the route the hook
-// tailer uses.
+// ingressEvents is the set of event names an out-of-process producer that
+// exists TODAY needs. That is tool_event alone — the TS tool tailer. The hook
+// tailer, the only other caller this seam was built for, does not come through
+// here at all: it posts to /api/chat/message, which persists first and
+// broadcasts as a consequence.
+//
+// The rule for widening it is per real producer, not per documented name. The
+// tempting larger set — every docs/api-contract.md SSE name with a first-party
+// client subscriber and no producer inside this server (the "not live" column
+// of events.go's table) — is deliberately NOT what this is, because it sweeps
+// in the panel-aiming events: navigate, reload, device_cmd, input_action and
+// draft. This server has no route that emits any of them, and this route's
+// guard allows a missing Origin by design (that is what lets the tailers and
+// the CLI through), so admitting them would let any local or LAN process
+// reload or navigate every connected panel, overwrite the captain's draft, or
+// replay an input_action envelope. Add a name here when something in this repo
+// actually produces it, and name the producer next to it.
+//
+// Every name this server does produce (connected, history, agents,
+// agent_register, presence_map, message, message_received, commands,
+// command_update) is refused for a second, independent reason: each of those
+// frames is this server reporting its own persisted state. Accepting one from
+// outside would let a caller put a message on the panel that is in no history
+// file, or an agent in the panel's registry that GET /agents does not know
+// about — a frame the panel cannot tell from the real thing and no reconnect
+// would reproduce.
 //
 // An unknown name is a 400 rather than a pass-through broadcast: the client's
 // onSse shim lets plugins subscribe to arbitrary names, so an unguarded
@@ -55,16 +68,9 @@ import (
 // Every legitimate caller is unaffected: the tailers and the CLI send no
 // Origin, and the panel is same-origin.
 var ingressEvents = map[string]bool{
-	"tool_event":     true,
-	"presence":       true,
-	"agent_presence": true,
-	"draft":          true,
-	"lavish_session": true,
-	"reload":         true,
-	"navigate":       true,
-	"input_action":   true,
-	"device_cmd":     true,
-	"pages_patch":    true,
+	// Producer: packages/server/src/tool-tailer.ts, via hub-ingress.ts's
+	// pushHubEvent.
+	"tool_event": true,
 }
 
 // eventIngressRequest is the POST body: the event name plus its payload,
@@ -106,8 +112,9 @@ func handleEventsIngress(hub *Hub) http.HandlerFunc {
 		}
 
 		// An absent payload broadcasts `{}`, matching how this package already
-		// writes a payload-less frame (writeSSE(w, eventConnected, struct{}{})).
-		// `reload` is the documented no-payload event.
+		// writes a payload-less frame (writeSSE(w, eventConnected, struct{}{})),
+		// so an allowed name whose producer has nothing to say still reaches
+		// the wire as valid JSON rather than as a bare `data:` line.
 		var data any = struct{}{}
 		if len(req.Data) > 0 {
 			data = req.Data
