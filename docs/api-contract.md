@@ -204,16 +204,20 @@ optional and all stored on the resulting `ChatMessage` as-is:
   "channel": "agent-id",
   "role":    "agent",
   "text":    "string",
-  "type":    "system_update",   // ChatMessage.type — NOT an SSE event name
-  "source":  "SessionStart",    // dropping this renders the line as an ordinary
-                                // agent bubble, and the panel speaks it aloud
+  "type":    "system_update",   // ChatMessage.type — NOT an SSE event name.
+                                // This is the field that makes the panel render
+                                // a muted system line and skip TTS; drop it and
+                                // the hook firing becomes an ordinary agent
+                                // bubble that is spoken aloud
+  "source":  "SessionStart",    // label printed on that muted line; drop it and
+                                // the line reads "system" and is otherwise
+                                // unchanged
   "meta":    { "session_id": "s-1" }
 }
 ```
-Response: the stored `ChatMessage` (same shape as
-[`GET /api/chat/history`](#get-apichathistorylimitn)), echoing whichever of
-`type`/`source`/`meta` were sent. `supervise` does not parse it — only `res.ok`
-is checked.
+Response: `{"ok": true, "id": "..."}` — the id the server assigned to the stored
+message, and nothing else; the stored message is not echoed back. `supervise`
+does not parse it — only `res.ok` is checked.
 
 ### `GET /api/chat/history?limit=N`
 Recent chat history, newest presumably last (consumers iterate in order and
@@ -231,8 +235,10 @@ interface ChatMessage {
   channel?: string
   type?: "alert"       // cli/types.ts only lists "alert"; the client (thread.ts)
                         // also handles "system_update" and "action_request" — see Open Gaps
-  source?: string      // set by POST /api/chat/message; the client renders a
-                        // sourced message as a muted system line and suppresses TTS
+  source?: string      // set by POST /api/chat/message; the label the client
+                        // prints on a system_update line (thread.ts falls back
+                        // to "system"). It drives neither the muted rendering
+                        // nor the TTS suppression — `type` does
   meta?: Record<string, unknown>  // opaque producer metadata, stored verbatim
 }
 ```

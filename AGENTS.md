@@ -413,8 +413,9 @@ unauthenticated server.
 muted system line and to suppress TTS). It travels through
 `/api/chat/message`, which now accepts `type`/`source`/`meta` and stores them
 on `store.ChatMessage` (all `omitempty`, so an existing producer's frame is
-byte-identical); dropping `source` would render every hook firing as an
-ordinary agent bubble and speak it aloud.
+byte-identical). `type` is the load-bearing one: drop it and every hook firing
+renders as an ordinary agent bubble and is spoken aloud. `source` is only the
+label on that muted line — drop it and `thread.ts` prints `system` instead.
 
 `/api/chat/events` is consequently in `internal/guard.GuardedPaths`, and since
 that classifier is method-independent the **GET stream is now guarded too**.
@@ -446,6 +447,20 @@ a rotated `hook-firings.jsonl` re-reads every line in one synchronous pass, so
 unawaited fetches would let the Go server assign `id`/`ts` in arrival order and
 land the burst out of order in history and in the thread. `post()` still returns
 void immediately and the chain can never reject.
+
+A chain that cannot drain is bounded at `HUB_QUEUE_MAX` (256) posts per route,
+past which the newest is shed — but **depth alone never sheds**. A rotated
+`hook-firings.jsonl` is re-read in one synchronous pass, and no `.then` can run
+until that pass yields, so a perfectly healthy hub legitimately shows a
+several-hundred-deep queue for one tick; and `POST /api/chat/message` persists,
+so a shed there is a history entry no reconnect brings back, not a stale panel
+frame. Shedding therefore also requires the chain to be genuinely stalled — the
+head link unanswered for longer than the 5s abort deadline (`stalled()`, off
+`unansweredSince`, which any response clears and an idle route resets). A hub
+that refuses or errors fast keeps the chain moving and never sheds. Each shed
+post goes through the same rate-limited failure path, and a success is not
+allowed to clear that limiter while a backlog remains, so sustained shedding
+stays one line per 30s per route rather than one per shed post.
 
 The hub URL is `PARLAY_HUB_URL`, falling back to a **fixed**
 `http://127.0.0.1:4242` (the Go server's own coded default addr).

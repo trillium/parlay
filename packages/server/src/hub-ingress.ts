@@ -43,14 +43,16 @@ const HUB_LOG_INTERVAL_MS = 30_000
 // tick, forever. The AbortError lands in the same rate-limited catch below.
 const HUB_TIMEOUT_MS = 5_000
 
-// Serialization means an unreachable hub converts every tailer tick into a
+// Serialization means an unresponsive hub converts every tailer tick into a
 // queued link that cannot start until the one ahead of it times out, so the
-// chain grows at the tailer's rate and each link holds its payload string. This
-// caps the backlog: past it, the newest post is dropped rather than queued. A
-// drop is the right loss — these are broadcast frames, the panel has no replay
-// for them, and by the time a few hundred deep ones drain they describe events
-// minutes old. The cap is per route, and generous enough that an ordinary
-// hook-firings.jsonl rotation (the burst chaining exists for) never reaches it.
+// chain grows at the tailer's rate and each link holds its payload string.
+// HUB_QUEUE_MAX bounds that per route — but depth alone does not mean the hub
+// is in trouble: a rotated hook-firings.jsonl re-read is one synchronous pass
+// that enqueues every line before a single response can be observed, so a
+// healthy hub legitimately shows a deep queue for one tick. POST
+// /api/chat/message PERSISTS, so shedding one there is a history entry that no
+// reconnect brings back, not a stale panel frame. Shedding is therefore gated
+// on the chain being genuinely stalled as well — see stalled() below.
 const HUB_QUEUE_MAX = 256
 
 const failures = new Map<string, { since: number; count: number }>()
@@ -65,9 +67,20 @@ const failures = new Map<string, { since: number; count: number }>()
 // changing the fire-and-forget contract: post() still returns void immediately,
 // and the chain can never reject because every link ends in a catch.
 //
-// depth is what is enqueued-but-not-settled on that route, which is what
-// HUB_QUEUE_MAX bounds.
-const queues = new Map<string, { tail: Promise<void>; depth: number }>()
+// depth is what is enqueued-but-not-settled on that route. unansweredSince is
+// when the current unbroken run of links that never reached a response began —
+// null whenever the hub last answered, or whenever the route is idle — so it
+// measures how long the head has been waiting on a hub that is not talking,
+// which is what separates a wedged hub from a deep-but-draining one.
+type RouteQueue = { tail: Promise<void>; depth: number; unansweredSince: number | null }
+const queues = new Map<string, RouteQueue>()
+
+// A hub that refuses or errors fast keeps the chain moving and never trips
+// this; one that accepts the connection and then says nothing does, once the
+// head has been in flight past the abort deadline it will be killed at.
+function stalled(queue: RouteQueue): boolean {
+  return queue.unansweredSince !== null && Date.now() - queue.unansweredSince >= HUB_TIMEOUT_MS
+}
 
 function noteFailure(route: string, err: unknown) {
   const now = Date.now()
@@ -85,33 +98,40 @@ function post(route: string, body: unknown): void {
   // Serialized in the enqueue order, but never awaited by the caller: the
   // caller is a synchronous tail loop, and the in-process broadcast this
   // replaces returned immediately.
-  const queue = queues.get(route) ?? { tail: Promise.resolve(), depth: 0 }
+  const queue = queues.get(route) ?? { tail: Promise.resolve(), depth: 0, unansweredSince: null }
   queues.set(route, queue)
 
-  if (queue.depth >= HUB_QUEUE_MAX) {
+  if (queue.depth >= HUB_QUEUE_MAX && stalled(queue)) {
     // Reported through the same rate limiter, so a hub that is down for an hour
-    // still costs one line per 30s rather than one per dropped frame.
-    noteFailure(route, `backlog of ${HUB_QUEUE_MAX} unsent posts; dropped this one`)
+    // still costs one line per 30s rather than one per shed post.
+    noteFailure(route, `backlog of ${queue.depth} unsent posts against a hub that has not answered in ${HUB_TIMEOUT_MS}ms; shed this one`)
     return
   }
 
   const payload = JSON.stringify(body)
   queue.depth++
   queue.tail = queue.tail
-    .then(() =>
-      fetch(`${HUB_URL}${route}`, {
+    .then(() => {
+      queue.unansweredSince ??= Date.now()
+      return fetch(`${HUB_URL}${route}`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    payload,
         signal:  AbortSignal.timeout(HUB_TIMEOUT_MS),
-      }),
-    )
+      })
+    })
     .then(res => {
+      // Any response at all — including a 4xx — is the hub talking, so the
+      // chain is moving and nothing may be shed off the back of it.
+      queue.unansweredSince = null
       // A 4xx here means the payload or the event name is wrong — a bug in the
       // caller, not a transient outage — so it is worth a line, under the same
       // rate limit.
       if (!res.ok) noteFailure(route, `HTTP ${res.status}`)
-      else failures.delete(route)
+      // Clearing the limiter mid-backlog would re-arm the very first line for
+      // every post behind it, so sustained shedding would print one warn per
+      // shed post. Only a route that has fully drained is quiet again.
+      else if (queue.depth <= 1) failures.delete(route)
       // Nothing reads these bodies, and an unread one holds its connection out
       // of the keep-alive pool until GC gets to it. Cancel rather than await:
       // the next queued post must not wait on a body no one wants, and a
@@ -126,6 +146,10 @@ function post(route: string, body: unknown): void {
     .catch(err => noteFailure(route, err))
     .finally(() => {
       queue.depth--
+      // Nothing is in flight, so there is no stall to carry forward: a later
+      // burst must get its own chance at the hub rather than inherit a verdict
+      // from whenever it was last seen.
+      if (queue.depth === 0) queue.unansweredSince = null
     })
 }
 
