@@ -174,14 +174,24 @@ Response:
 ### `POST /api/chat/message`
 Lower-level message post used by `parlay supervise` to relay a daemon-authored
 digest onto an agent's channel on the agent's behalf (not a captain/user
-message).
+message). Also the cross-process path the Go server's hook tailer uses to
+persist + broadcast a `system_update` firing (see below).
 
-Caller: `packages/cli/src/commands-supervise.ts` (`postToRelay`).
+Caller: `packages/cli/src/commands-supervise.ts` (`postToRelay`); the hook
+tailer (`packages/server/src/hook-tailer.ts`) posts here instead of the
+in-process `addMessage`.
 
 Request body:
 ```jsonc
-{ "channel": "agent-id", "role": "agent", "text": "string" }
+{ "channel": "agent-id", "role": "agent", "text": "string",
+  "type": "system_update", "source": "hook-name", "meta": {"session_id": "…"} }
 ```
+`type`, `source`, and `meta` are optional and ride through to the stored
+message unchanged: `type` is a free-form string (the panel's `thread.ts`
+branches on `"system_update"` and `"action_request"`), `source` is the
+system/hook that emitted the line (rendered as the line's prefix), and `meta`
+carries attribution the panel does not read yet. A caller that omits them
+stores and broadcasts exactly what it did before they were accepted.
 Response: not parsed by the caller — only `res.ok` is checked. Shape unknown.
 
 ### `GET /api/chat/history?limit=N`

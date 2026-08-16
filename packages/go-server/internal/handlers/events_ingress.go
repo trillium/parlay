@@ -54,17 +54,16 @@ import (
 // method, that also closes GET /api/chat/events to cross-origin EventSource.
 // Every legitimate caller is unaffected: the tailers and the CLI send no
 // Origin, and the panel is same-origin.
+//
+// The allowlist is deliberately NARROW — tool_event is the only name the two
+// producers this change adds actually push (the hook tailer goes through POST
+// /api/chat/message, not here). The device-driving names that a hostile
+// local/LAN caller could use to reload or navigate every panel, or overwrite
+// the draft, are NOT admitted: the guard permits missing-Origin by design, so
+// anything this list admits is reachable by any process on the host or LAN.
+// Widen per real producer as each one gains an out-of-process caller.
 var ingressEvents = map[string]bool{
-	"tool_event":     true,
-	"presence":       true,
-	"agent_presence": true,
-	"draft":          true,
-	"lavish_session": true,
-	"reload":         true,
-	"navigate":       true,
-	"input_action":   true,
-	"device_cmd":     true,
-	"pages_patch":    true,
+	"tool_event": true,
 }
 
 // eventIngressRequest is the POST body: the event name plus its payload,

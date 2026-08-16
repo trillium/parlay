@@ -21,9 +21,9 @@ func postIngress(t *testing.T, hub *Hub, body string) *httptest.ResponseRecorder
 
 func TestEventsIngressBroadcastsAnAllowedEventToEveryClient(t *testing.T) {
 	hub := newHub(newBroker())
-	a, cancelA := hub.subscribe()
+	a, cancelA := hub.subscribe("")
 	defer cancelA()
-	b, cancelB := hub.subscribe()
+	b, cancelB := hub.subscribe("")
 	defer cancelB()
 
 	rec := postIngress(t, hub, `{"event":"tool_event","data":{"tool":"Bash","channel":"c1"}}`)
@@ -56,7 +56,7 @@ func TestEventsIngressBroadcastsAnAllowedEventToEveryClient(t *testing.T) {
 
 func TestEventsIngressRejectsUnknownAndServerOwnedEvents(t *testing.T) {
 	hub := newHub(newBroker())
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
 	for _, name := range []string{
@@ -97,13 +97,13 @@ func TestEventsIngressRejectsAMissingEventNameAndABadBody(t *testing.T) {
 
 func TestEventsIngressBroadcastsAnEmptyPayloadForADataLessEvent(t *testing.T) {
 	hub := newHub(newBroker())
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
-	if rec := postIngress(t, hub, `{"event":"reload"}`); rec.Code != http.StatusOK {
+	if rec := postIngress(t, hub, `{"event":"tool_event"}`); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
-	ev := awaitEvent(t, sub, "reload", time.Second)
+	ev := awaitEvent(t, sub, "tool_event", time.Second)
 	got, err := json.Marshal(ev.data)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)

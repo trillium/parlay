@@ -73,6 +73,8 @@ import (
 func Register(mux *http.ServeMux, st *store.Store) {
 	b := newBroker()
 	hub := newHub(b)
+	relay := newEvalRelay()
+	sc := newSessionChannels()
 
 	mux.HandleFunc("/api/chat/send", handleSend(st, b))
 	mux.HandleFunc("/api/chat/reply", handleReply(st, b))
@@ -92,6 +94,40 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub))
 
 	registerCommands(mux, st, hub)
+
+	// Device-driving, eval relay, and read routes (device.go / eval_relay.go).
+	mux.HandleFunc("/api/chat/eval", handleEval(relay, hub))
+	mux.HandleFunc("/api/chat/eval-push", handleEvalPush(relay, hub))
+	mux.HandleFunc("/api/chat/device-cmd", handleDeviceCmd(hub))
+	mux.HandleFunc("/api/chat/navigate", handleNavigate(hub))
+	mux.HandleFunc("/api/chat/reload", handleReload(hub))
+	mux.HandleFunc("/api/chat/clear", handleClear(st, hub))
+	mux.HandleFunc("/api/chat/pages", handlePages())
+	mux.HandleFunc("/api/chat/version", handleVersion())
+
+	// Plugins, system, declare-channel, DELETE agents/:id (plugins.go).
+	mux.HandleFunc("/api/chat/plugins", handlePlugins())
+	mux.HandleFunc("/api/chat/plugin/cursorless/rpc", handleCursorlessRPC(hub))
+	mux.HandleFunc("/api/chat/plugin/cursorless/response", handleCursorlessResponse())
+	mux.HandleFunc("/api/chat/system", handleSystem(st, b))
+	mux.HandleFunc("/api/chat/declare-channel", handleDeclareChannel(sc))
+	mux.HandleFunc("/api/chat/agents/", handleDeleteAgent(st))
+
+	// TTS family (tts.go) and parlay-ui.js (parlay_ui.go).
+	mux.HandleFunc("/api/chat/tts", handleTTS())
+	mux.HandleFunc("/api/chat/tts-report", handleTTSReport())
+	mux.HandleFunc("/api/chat/tts-correction", handleTTSCorrection())
+	mux.HandleFunc("/api/chat/tts-event", handleTTSEvent(hub))
+	mux.HandleFunc("/api/chat/parlay-ui.js", handleParlayUi())
+
+	// Debug telemetry (debug.go).
+	mux.HandleFunc("/api/debug/input-timing", handleDebugInputTiming())
+
+	// Observability tailers: tail $PAI_DIR JSONL in-process and broadcast
+	// tool_event / system_update directly into this server's hub.
+	backfillFromToolActivity(sc)
+	startToolEventTailer(sc, hub)
+	startHookFiringTailer(sc, st, b)
 }
 
 // writeJSON encodes v as a 200 JSON response — the shared success path for

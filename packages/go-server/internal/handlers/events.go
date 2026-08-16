@@ -79,6 +79,23 @@ const (
 	eventMessageReceived = "message_received"
 	eventCommands        = "commands"
 	eventCommandUpdate   = "command_update"
+
+	// Event names this server emits via device-scoped or broadcast paths on
+	// top of the connect-burst above. Each matches a first-party client
+	// subscriber in packages/client/src/sse.ts (see docs/api-contract.md
+	// "SSE Events"): device_cmd/navigate/reload/input_action are the
+	// device-driving actions, draft echoes cross-device draft sync, presence
+	// drives the thinking-dots indicator, pages_patch updates the page-nav
+	// picker, and tool_event carries the observability tailer's log lines.
+	eventDeviceCmd   = "device_cmd"
+	eventNavigate    = "navigate"
+	eventReload      = "reload"
+	eventInputAction = "input_action"
+	eventDraft       = "draft"
+	eventPresence    = "presence"
+	eventPagesPatch  = "pages_patch"
+	eventToolEvent   = "tool_event"
+	eventCursorless  = "cursorless_rpc"
 )
 
 // sseClientBuffer sizes each connected client's outgoing event channel. A
@@ -105,10 +122,12 @@ type sseEvent struct {
 // a single bridge subscription onto broker's wildcard feed (see newHub).
 // Unlike broker (keyed by channel, one waiter wakes at most once per poll),
 // Hub has no channel scoping — every connected client gets every broadcast,
-// matching /events having no channel query parameter.
+// matching /events having no channel query parameter. Each client DOES carry
+// its optional device id (from ?device=) so the device-driving routes
+// (device-cmd, navigate, reload, input_action) can target exactly one panel.
 type Hub struct {
 	mu      sync.Mutex
-	clients map[chan sseEvent]struct{}
+	clients map[chan sseEvent]string // event channel -> device id ("" = none)
 }
 
 // newHub creates a Hub and starts its one background bridge goroutine,
@@ -119,7 +138,7 @@ type Hub struct {
 // a ChatMessage fans out, whether to a blocked /poll or to every /events
 // client.
 func newHub(b *broker) *Hub {
-	h := &Hub{clients: make(map[chan sseEvent]struct{})}
+	h := &Hub{clients: make(map[chan sseEvent]string)}
 	msgs, _ := b.subscribeAll() // never cancelled: lives exactly as long as the process, like b itself
 	go func() {
 		for m := range msgs {
@@ -129,13 +148,13 @@ func newHub(b *broker) *Hub {
 	return h
 }
 
-// subscribe registers a new /events client and returns its event channel
-// plus a cancel func the caller must defer immediately, mirroring
-// broker.subscribe's contract.
-func (h *Hub) subscribe() (<-chan sseEvent, func()) {
+// subscribe registers a new /events client (with its optional device id) and
+// returns its event channel plus a cancel func the caller must defer
+// immediately, mirroring broker.subscribe's contract.
+func (h *Hub) subscribe(device string) (<-chan sseEvent, func()) {
 	ch := make(chan sseEvent, sseClientBuffer)
 	h.mu.Lock()
-	h.clients[ch] = struct{}{}
+	h.clients[ch] = device
 	h.mu.Unlock()
 
 	cancel := func() {
@@ -166,6 +185,33 @@ func (h *Hub) broadcast(name string, data any) {
 		default:
 		}
 	}
+}
+
+// broadcastToDevice delivers (name, data) to every client whose recorded
+// device id equals deviceId, returning how many clients matched. This is the
+// scoped counterpart of broadcast for the device-driving surface: eval's
+// input_action, device-cmd, navigate, and reload all target one panel rather
+// than every tab. A deviceId of "" matches no client (broadcast is the
+// all-tabs path); passing a device the panel never registered simply fans
+// out to zero, which callers report as a zero matched count.
+func (h *Hub) broadcastToDevice(deviceId, name string, data any) int {
+	if h == nil || deviceId == "" {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	matched := 0
+	for ch, dev := range h.clients {
+		if dev != deviceId {
+			continue
+		}
+		matched++
+		select {
+		case ch <- sseEvent{name: name, data: data}:
+		default:
+		}
+	}
+	return matched
 }
 
 // messageReceivedPayload is the `message_received` event's documented
@@ -201,12 +247,12 @@ func writeSSE(w http.ResponseWriter, name string, data any) {
 }
 
 // handleEvents implements GET /api/chat/events?device=<uuid>&after=<lastMsgId>&url=<currentPageUrl>.
-// `device` and `url` are accepted (so a malformed/absent value never breaks
-// the connection) but unused: nothing in this server yet needs per-device
-// identity or per-URL history scoping (docs/api-contract.md's own wording,
-// "lets the server scope `history` more deeply", is speculative about a
-// capability, not a documented required behavior) — a clean-slate choice
-// to not invent scoping logic nothing currently consumes.
+// `device` is now stored per client so the device-driving routes
+// (device-cmd, navigate, reload, input_action) can target exactly one panel;
+// a missing device simply means that client never receives scoped events.
+// `url` is accepted but unused: nothing needs per-URL history scoping
+// (docs/api-contract.md's own wording is speculative, not a documented
+// required behavior), so no scoping logic is invented for it.
 func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -219,7 +265,8 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 			return
 		}
 
-		ch, cancel := hub.subscribe()
+		device := r.URL.Query().Get("device")
+		ch, cancel := hub.subscribe(device)
 		defer cancel()
 
 		st.Presence.AddPanelClient()

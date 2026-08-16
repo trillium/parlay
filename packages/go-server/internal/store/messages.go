@@ -197,6 +197,39 @@ func (ms *MessageStore) compactLocked() error {
 	return nil
 }
 
+// Clear removes messages from the retained ring buffer and rewrites the
+// durable log to match. An empty channel clears everything; a non-empty
+// channel removes only messages whose Channel equals it. It returns how many
+// messages were removed and how many remain. This is the backing operation
+// for POST /api/chat/clear — history is append-only elsewhere, so the reset
+// lives here rather than being assembled from Append calls.
+func (ms *MessageStore) Clear(channel string) (removed, remaining int) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	before := len(ms.ring)
+	if channel == "" {
+		ms.ring = nil
+	} else {
+		kept := ms.ring[:0]
+		for _, m := range ms.ring {
+			if m.Channel != channel {
+				kept = append(kept, m)
+			}
+		}
+		ms.ring = kept
+	}
+	removed = before - len(ms.ring)
+	remaining = len(ms.ring)
+	if err := ms.compactLocked(); err != nil {
+		// The in-memory ring already reflects the clear; a compaction failure
+		// only means the file keeps stale lines until the next successful
+		// rewrite. The caller still sees an accurate removed/remaining count.
+		_ = err
+	}
+	return removed, remaining
+}
+
 // History returns up to limit of the most recent messages, oldest first
 // (matching GET /history's documented "newest presumably last" order).
 // limit<=0 returns the full retained ring buffer.

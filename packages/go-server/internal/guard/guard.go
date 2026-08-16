@@ -151,6 +151,43 @@ var GuardedPaths = map[string]bool{
 	// caller is affected: every poller in this repo is a no-Origin HTTP
 	// client, and nothing in packages/client polls.
 	"/api/chat/poll": true,
+
+	// Device-driving and eval-relay surface (device.go / eval_relay.go).
+	// /eval and /eval-push relay into the compiled engine and broadcast the
+	// returned actions to a device as input_action; device-cmd, navigate and
+	// reload drive one or all panels; clear wipes history. Each writes state or
+	// aims an action at a device, so each is guarded by what it DOES regardless
+	// of method — the same classification the TS side already applies to these
+	// exact routes (packages/server/src/guard/paths.ts).
+	"/api/chat/eval":       true,
+	"/api/chat/eval-push":  true,
+	"/api/chat/device-cmd": true,
+	"/api/chat/navigate":   true,
+	"/api/chat/reload":     true,
+	"/api/chat/clear":      true,
+
+	// The rest of the newly-ported mutating/announce surface (plugins.go,
+	// tts.go, parlay_ui.go's cursorless RPC). Each writes state or drives a
+	// device, so each is guarded by what it does, matching TS's
+	// GUARDED_CHAT_PATHS for the same routes.
+	"/api/chat/system":                     true,
+	"/api/chat/declare-channel":            true,
+	"/api/chat/tts":                        true,
+	"/api/chat/tts-report":                 true,
+	"/api/chat/tts-correction":             true,
+	"/api/chat/tts-event":                  true,
+	"/api/chat/plugin/cursorless/rpc":      true,
+	"/api/chat/plugin/cursorless/response": true,
+}
+
+// cursorlessRPCPaths are the guarded plugin RPC routes whose out-of-repo
+// Talon caller POSTs a JSON body under whatever content type Python gave it,
+// so they are exempt from the Content-Type: application/json gate the way the
+// TS side's JSON_EXEMPT_PATHS exempts the same routes (see that server's
+// guard/paths.ts). The origin check still applies.
+var cursorlessRPCPaths = map[string]bool{
+	"/api/chat/plugin/cursorless/rpc":      true,
+	"/api/chat/plugin/cursorless/response": true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
@@ -343,8 +380,22 @@ func Wrap(next http.Handler) http.Handler {
 		// content-type gate; GET carries no body and DELETE is never a CORS
 		// simple request.
 		if (r.Method == http.MethodPost || r.Method == http.MethodPut) &&
-			!jsonExemptPaths[path] && !IsJSONContentType(r.Header.Get("Content-Type")) {
+			!jsonExemptPaths[path] && !cursorlessRPCPaths[path] &&
+			!IsJSONContentType(r.Header.Get("Content-Type")) {
 			deny(w, http.StatusUnsupportedMediaType, "Content-Type: application/json required")
+			return
+		}
+
+		// GET /api/chat/events is guarded (the POST on the same path is the
+		// external-producer ingress), but the SSE stream itself must NOT gain a
+		// reflected Access-Control-Allow-Origin. The origin check above still
+		// 403s a disallowed origin; this only withholds the CORS grant from an
+		// ALLOWED one, so a page served from another loopback/.local/LAN host
+		// still cannot EventSource-read the connect burst. This restores the
+		// no-ACAO read posture the guard's own divergence-1 comment documents,
+		// which guarding the path for POST would otherwise have loosened.
+		if path == "/api/chat/events" && r.Method == http.MethodGet {
+			next.ServeHTTP(w, r)
 			return
 		}
 

@@ -22,12 +22,12 @@
 // line per HUB_LOG_INTERVAL_MS per route with a count of what it stood for.
 
 // Where the Go hub listens. PARLAY_HUB_URL is the explicit override and the one
-// to set whenever both servers run side by side — this process reads
-// PARLAY_PORT as ITS OWN listen port (index.ts), so the fallback below only
-// resolves to the right place when the Go server is the thing bound to it,
-// which is the post-flip arrangement.
-const HUB_URL =
-  process.env.PARLAY_HUB_URL ?? `http://127.0.0.1:${process.env.PARLAY_PORT ?? 4242}`
+// to set whenever both servers run side by side. The default is the Go server's
+// own coded address (cmd/parlay-server/main.go's defaultAddr) — deliberately NOT
+// PARLAY_PORT, which this process reads as ITS OWN listen port (index.ts), so
+// coupling the tailer default to it would POST to ourselves whenever a caller
+// sets PARLAY_PORT to a non-default value.
+const HUB_URL = process.env.PARLAY_HUB_URL ?? "http://127.0.0.1:4242"
 
 // A tailer can emit many events per second, so an unreachable hub must not turn
 // into an unreachable-hub log firehose. One line per route per interval,
@@ -57,9 +57,12 @@ function post(route: string, body: unknown): void {
     body:    JSON.stringify(body),
   })
     .then(res => {
-      // A 4xx here means the payload or the event name is wrong — a bug in the
-      // caller, not a transient outage — so it is worth a line, under the same
-      // rate limit.
+      // Drain the body so the response socket is released for reuse — Bun
+      // otherwise keeps the connection open until GC, churning sockets under a
+      // busy tailer. A 4xx here means the payload or the event name is wrong —
+      // a bug in the caller, not a transient outage — so it is worth a line,
+      // under the same rate limit.
+      void res.arrayBuffer().catch(() => {})
       if (!res.ok) noteFailure(route, `HTTP ${res.status}`)
       else failures.delete(route)
     })
