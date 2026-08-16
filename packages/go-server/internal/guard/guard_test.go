@@ -305,3 +305,67 @@ func TestEventsIngressAndStreamAreBothGuarded(t *testing.T) {
 		})
 	}
 }
+
+// TestGuardingTheEventsPathGrantsNoCORSOnItsStream pins the other half of that
+// classification. Guarding a path also turns the reflected ACAO on for every
+// origin OriginAllowed accepts, which includes any page on the captain's LAN —
+// so putting /api/chat/events in GuardedPaths for the sake of its POST ingress
+// would otherwise hand a LAN page a readable SSE stream it could not read
+// before. The refusal is the part that is stricter than the TS side; the grant
+// must not come with it.
+func TestGuardingTheEventsPathGrantsNoCORSOnItsStream(t *testing.T) {
+	// The regression: an origin the guard ALLOWS still gets no CORS headers on
+	// the stream, so a foreign page's EventSource runs but reads nothing.
+	rec := httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", "http://192.168.1.42:4242", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("allowed LAN origin: status = %d, want 200", rec.Code)
+	}
+	for _, h := range []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+	} {
+		if got := rec.Header().Get(h); got != "" {
+			t.Errorf("GET /api/chat/events carries %s: %q, want it absent", h, got)
+		}
+	}
+	// Vary is a cache directive, not a grant, and the response really does
+	// differ by Origin (403 vs. the stream).
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Errorf("Vary = %q, want %q", got, "Origin")
+	}
+
+	// The 403 the path is guarded for is untouched.
+	rec = httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", "https://evil.example.com", ""))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("hostile origin: status = %d, want 403", rec.Code)
+	}
+
+	// And every caller that actually streams today still gets its stream.
+	for _, c := range []struct{ name, origin string }{
+		{"a no-Origin client (curl, the CLI)", ""},
+		{"the panel itself", "http://localhost:4242"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", c.origin, ""))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+		})
+	}
+
+	// Method-scoped: the POST ingress is an ordinary guarded route and keeps
+	// the reflected ACAO, so the carve-out cannot be read as "this path is
+	// half-guarded".
+	rec = httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/events", "http://192.168.1.42:4242", "application/json"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST from an allowed LAN origin: status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://192.168.1.42:4242" {
+		t.Errorf("POST ingress ACAO = %q, want the reflected origin", got)
+	}
+}

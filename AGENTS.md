@@ -417,10 +417,19 @@ byte-identical); dropping `source` would render every hook firing as an
 ordinary agent bubble and speak it aloud.
 
 `/api/chat/events` is consequently in `internal/guard.GuardedPaths`, and since
-that classifier is method-independent the **GET stream is now guarded too** —
-stricter than the TS side, where the same GET is accepted residue. It costs
-no caller anything: the panel is same-origin and every other caller sends no
-Origin.
+that classifier is method-independent the **GET stream is now guarded too**.
+No real caller notices the refusal — the panel is same-origin and every other
+caller sends no Origin — but **guarding a path is not a one-way tightening**:
+it also makes the guard reflect an `Access-Control-Allow-Origin` back to every
+origin `OriginAllowed` accepts, which is any loopback, `.local` or private-LAN
+page. On the SSE stream that would be brand-new read access, since this server
+has never sent CORS headers on a read route (divergence 1). `noGuardedCORSReads`
+in `guard.go` is the carve-out: for `GET /api/chat/events` the guard sets only
+`Vary: Origin` and no CORS headers at all, so the cross-origin refusal is
+stricter than the TS side while the grant to allowed origins stays exactly
+where it was. The path stays guarded — un-guarding it to drop the ACAO would
+drop the 403 too. Anything else here that acquires a mutating method on a
+read path needs the same entry.
 
 The two PAI observability tailers are the first callers and stay TS-side (they
 read JSONL under `$PAI_DIR` in the Pulse home): `tool-tailer.ts` →

@@ -85,8 +85,15 @@ one** — the two servers deliberately differ here. `packages/go-server` serves
 an external-producer ingress on `POST /api/chat/events` (see [SSE
 Events](#sse-events) below), so the path is in `internal/guard.GuardedPaths`,
 and because that classifier is method-independent the `GET` SSE stream is
-guarded with it. No caller loses anything: the panel is same-origin, and the
-tailers, the CLI and curl send no `Origin`.
+guarded with it. No caller loses the stream: the panel is same-origin, and the
+tailers, the CLI and curl send no `Origin`. Guarding a read path is **not** a
+one-way tightening, though — it also reflects an `Access-Control-Allow-Origin`
+back to every origin the guard *allows* (any loopback, `.local` or private-LAN
+page), which on a stream that has never sent CORS headers would be new read
+access. `noGuardedCORSReads` in `internal/guard/guard.go` suppresses it: `GET
+/api/chat/events` answers with `Vary: Origin` and **no** CORS headers, so a
+disallowed origin gets 403 and an allowed one gets a stream it still cannot
+read cross-origin.
 
 That surface is not purely read-only, and the boundary above is narrower than
 "everything that writes or discloses". Two TS routes are **known, accepted,
@@ -109,7 +116,8 @@ from chaining is that every route that *aims* anything (`eval`, `draft`,
 guarded. The Go server does not expose it the same way: its unguarded routes
 send no `Access-Control-Allow-Origin` at all, so a foreign page's read still
 executes but its body stays unreadable, and its `/api/chat/events` is guarded
-outright and accepts `?device=` without storing it.
+outright (with the same no-ACAO posture preserved on the stream) and accepts
+`?device=` without storing it.
 
 ---
 
@@ -178,17 +186,34 @@ Response:
 `channels` = channels the alert was recorded against; `delivered` = live pollers that received it immediately (see Open Gaps — exact semantics unverified).
 
 ### `POST /api/chat/message`
-Lower-level message post used by `parlay supervise` to relay a daemon-authored
-digest onto an agent's channel on the agent's behalf (not a captain/user
-message).
+Lower-level message post: it persists the message and broadcasts the resulting
+`message` event. Used by `parlay supervise` to relay a daemon-authored digest
+onto an agent's channel on the agent's behalf (not a captain/user message), and
+by the PAI hook tailer to put a hook firing on the panel from outside the
+server process.
 
-Caller: `packages/cli/src/commands-supervise.ts` (`postToRelay`).
+Callers: `packages/cli/src/commands-supervise.ts` (`postToRelay`),
+`packages/server/src/hook-tailer.ts` (via `hub-ingress.ts`'s `postHubMessage`,
+which targets the Go server).
 
-Request body:
+Request body — `channel`, `role` and `text` are what `supervise` sends;
+`type`, `source` and `meta` are the passthrough fields the hook tailer adds, all
+optional and all stored on the resulting `ChatMessage` as-is:
 ```jsonc
-{ "channel": "agent-id", "role": "agent", "text": "string" }
+{
+  "channel": "agent-id",
+  "role":    "agent",
+  "text":    "string",
+  "type":    "system_update",   // ChatMessage.type — NOT an SSE event name
+  "source":  "SessionStart",    // dropping this renders the line as an ordinary
+                                // agent bubble, and the panel speaks it aloud
+  "meta":    { "session_id": "s-1" }
+}
 ```
-Response: not parsed by the caller — only `res.ok` is checked. Shape unknown.
+Response: the stored `ChatMessage` (same shape as
+[`GET /api/chat/history`](#get-apichathistorylimitn)), echoing whichever of
+`type`/`source`/`meta` were sent. `supervise` does not parse it — only `res.ok`
+is checked.
 
 ### `GET /api/chat/history?limit=N`
 Recent chat history, newest presumably last (consumers iterate in order and
@@ -206,6 +231,9 @@ interface ChatMessage {
   channel?: string
   type?: "alert"       // cli/types.ts only lists "alert"; the client (thread.ts)
                         // also handles "system_update" and "action_request" — see Open Gaps
+  source?: string      // set by POST /api/chat/message; the client renders a
+                        // sourced message as a muted system line and suppresses TTS
+  meta?: Record<string, unknown>  // opaque producer metadata, stored verbatim
 }
 ```
 `cmdStats` also reads `images?: unknown[]` and `type === "action_request"` off
