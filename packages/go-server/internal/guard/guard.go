@@ -45,10 +45,14 @@
 //     where the TS guard still spreads a wildcard `CORS` on its read/SSE
 //     routes. This server has never sent CORS headers on any route, so adding
 //     a wildcard to match the TS side would newly OPEN read access that is
-//     currently closed. Cross-origin reads of /history, /agents and /events
-//     therefore still execute (as they do on the TS side) but their bodies
-//     remain unreadable to a foreign page. If the panel is ever served from a
-//     different origin than this server, that is the knob to revisit.
+//     currently closed. Cross-origin reads of /history and /agents therefore
+//     still execute (as they do on the TS side) but their bodies remain
+//     unreadable to a foreign page. If the panel is ever served from a
+//     different origin than this server, that is the knob to revisit. The same
+//     reasoning is why noGuardedCORSReads exists: guarding a path also turns
+//     ACAO ON for the origins the guard allows, and a read stream that has
+//     never sent one must not gain it as a side effect of its own path
+//     acquiring a mutating method.
 //  2. OPTIONS on an unguarded route is left to the route's own handler
 //     (today: 405), where the TS guard answers a blanket 204 + wildcard. Same
 //     reasoning — no preflight permission this server does not already grant.
@@ -78,7 +82,9 @@
 // as identifier-disclosure-remains-on-sse. /api/chat/events is not part of
 // this server's residue: it is guarded here, because POST on that path is the
 // external-producer ingress into the SSE hub and the classification rule is
-// method-independent. This server's residue is smaller
+// method-independent — with the ACAO on its GET stream suppressed by
+// noGuardedCORSReads, so guarding it refuses more and grants nothing.
+// This server's residue is smaller
 // for two reasons, neither of them a route-set decision: divergence 1 above
 // means its unguarded routes send no ACAO at all, so a foreign page's read
 // still executes but its body stays unreadable, and handleEvents accepts
@@ -139,10 +145,14 @@ var GuardedPaths = map[string]bool{
 	// POST pushes an event to every connected SSE client (the external-producer
 	// ingress in internal/handlers/events_ingress.go); guarded on that, and the
 	// method-independent rule then covers the GET stream on the same path too.
-	// That is stricter than the TS side, where GET /api/chat/events is accepted
-	// residue (identifier-disclosure-remains-on-sse) — and costs nothing here:
-	// the panel is same-origin, and every other caller (the TS tailers, the
-	// CLI, curl) sends no Origin.
+	// On the refusal side that is stricter than the TS server, where GET
+	// /api/chat/events is accepted residue (identifier-disclosure-remains-on-sse),
+	// and no caller notices: the panel is same-origin, and every other caller
+	// (the TS tailers, the CLI, curl) sends no Origin. It is not stricter in
+	// every direction, though — guarding a path is also what makes this server
+	// reflect an ACAO to the origins it DOES allow, which on a stream it has
+	// never sent CORS headers for would be new read access. See
+	// noGuardedCORSReads for the carve-out that keeps that from happening.
 	"/api/chat/events": true,
 
 	// A GET that takes a Presence poller slot for the life of the request,
@@ -308,6 +318,35 @@ func setGuardedCORS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
 
+// noGuardedCORSReads maps a guarded path to the one read method whose
+// responses must NOT carry the reflected-origin CORS headers.
+//
+// Guarding a path does two things, not one: it refuses a disallowed origin,
+// and it hands an ALLOWED one a reflected ACAO it did not have before —
+// "allowed" here including every loopback, .local and private-v4 origin
+// OriginAllowed accepts, i.e. any page on the captain's LAN. For a mutating
+// route that trade is the point. For a READ route that only became guarded
+// because a mutating method landed on its path, it is a regression: the stream
+// answered the same bytes before and a foreign page simply could not read
+// them, and now a LAN page can. /api/chat/events is exactly that shape — the
+// POST ingress is what put it in GuardedPaths; the GET stream's exposure is
+// unchanged, so its CORS grant must be too.
+//
+// The path stays in GuardedPaths: the 403 for a disallowed origin is the whole
+// reason it is there, and un-guarding it to drop the ACAO would drop that too.
+// Only the header-setting step is skipped, so a cross-origin EventSource still
+// executes but its frames stay unreadable — divergence 1's posture, preserved.
+var noGuardedCORSReads = map[string]string{
+	"/api/chat/events": http.MethodGet,
+}
+
+// suppressesGuardedCORS reports whether this guarded request is one of the
+// read methods in noGuardedCORSReads.
+func suppressesGuardedCORS(path, method string) bool {
+	m, ok := noGuardedCORSReads[path]
+	return ok && m == method
+}
+
 // Wrap returns next with the origin/content-type guard in front of it. Apply
 // it once, to the whole mux, so no route can be added outside the boundary —
 // which route is guarded is then decided by GuardedPaths alone.
@@ -348,7 +387,14 @@ func Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		setGuardedCORS(w, r)
+		if suppressesGuardedCORS(path, r.Method) {
+			// Vary still belongs here — this response genuinely does differ by
+			// Origin (403 vs. the stream), and Vary is a cache directive, not a
+			// grant.
+			w.Header().Set("Vary", "Origin")
+		} else {
+			setGuardedCORS(w, r)
+		}
 		next.ServeHTTP(w, r)
 	})
 }

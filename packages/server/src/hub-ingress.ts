@@ -43,6 +43,16 @@ const HUB_LOG_INTERVAL_MS = 30_000
 // tick, forever. The AbortError lands in the same rate-limited catch below.
 const HUB_TIMEOUT_MS = 5_000
 
+// Serialization means an unreachable hub converts every tailer tick into a
+// queued link that cannot start until the one ahead of it times out, so the
+// chain grows at the tailer's rate and each link holds its payload string. This
+// caps the backlog: past it, the newest post is dropped rather than queued. A
+// drop is the right loss — these are broadcast frames, the panel has no replay
+// for them, and by the time a few hundred deep ones drain they describe events
+// minutes old. The cap is per route, and generous enough that an ordinary
+// hook-firings.jsonl rotation (the burst chaining exists for) never reaches it.
+const HUB_QUEUE_MAX = 256
+
 const failures = new Map<string, { since: number; count: number }>()
 
 // One in-flight request per route, chained. The in-process calls these replace
@@ -54,7 +64,10 @@ const failures = new Map<string, { since: number; count: number }>()
 // in history and in the panel thread. Chaining restores the ordering without
 // changing the fire-and-forget contract: post() still returns void immediately,
 // and the chain can never reject because every link ends in a catch.
-const queues = new Map<string, Promise<void>>()
+//
+// depth is what is enqueued-but-not-settled on that route, which is what
+// HUB_QUEUE_MAX bounds.
+const queues = new Map<string, { tail: Promise<void>; depth: number }>()
 
 function noteFailure(route: string, err: unknown) {
   const now = Date.now()
@@ -72,8 +85,19 @@ function post(route: string, body: unknown): void {
   // Serialized in the enqueue order, but never awaited by the caller: the
   // caller is a synchronous tail loop, and the in-process broadcast this
   // replaces returned immediately.
+  const queue = queues.get(route) ?? { tail: Promise.resolve(), depth: 0 }
+  queues.set(route, queue)
+
+  if (queue.depth >= HUB_QUEUE_MAX) {
+    // Reported through the same rate limiter, so a hub that is down for an hour
+    // still costs one line per 30s rather than one per dropped frame.
+    noteFailure(route, `backlog of ${HUB_QUEUE_MAX} unsent posts; dropped this one`)
+    return
+  }
+
   const payload = JSON.stringify(body)
-  const next = (queues.get(route) ?? Promise.resolve())
+  queue.depth++
+  queue.tail = queue.tail
     .then(() =>
       fetch(`${HUB_URL}${route}`, {
         method:  "POST",
@@ -88,13 +112,21 @@ function post(route: string, body: unknown): void {
       // rate limit.
       if (!res.ok) noteFailure(route, `HTTP ${res.status}`)
       else failures.delete(route)
+      // Nothing reads these bodies, and an unread one holds its connection out
+      // of the keep-alive pool until GC gets to it. Cancel rather than await:
+      // the next queued post must not wait on a body no one wants, and a
+      // cancel rejection is not a delivery failure, so it never reaches
+      // noteFailure.
+      res.body?.cancel().catch(() => {})
     })
     // The one catch the whole link needs: it absorbs a synchronous throw from
     // the fetch call, the transport rejection, and anything the response
     // handler throws, so the chained promise always settles fulfilled and the
     // next post() on this route can never inherit a rejection.
     .catch(err => noteFailure(route, err))
-  queues.set(route, next)
+    .finally(() => {
+      queue.depth--
+    })
 }
 
 // Push one SSE event to every client connected to the Go hub. `event` must be
