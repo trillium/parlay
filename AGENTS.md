@@ -379,6 +379,54 @@ SSE hub. Two things `docs/api-contract.md` doesn't pin down, decided here:
   declared type is always derived from its real bytes, never from a
   client-supplied filename or extension.
 
+## Out-of-process producers reach the Go SSE hub via `POST /api/chat/events`
+
+`Hub.broadcast` is in-process-only, so a producer that cannot live in the Go
+server had no way to put a frame on the panel. `POST /api/chat/events`
+(`packages/go-server/internal/handlers/events_ingress.go`) is that seam: a
+`{event, data}` body, an **allowlist** check, then `hub.broadcast`. `data` is
+`json.RawMessage` and reaches the wire untouched — the panel must not be able
+to tell an ingress frame from an internal one.
+
+The allowlist rule, and the reason it is not "every documented event": it is
+exactly the `docs/api-contract.md` SSE names with a first-party client
+subscriber and **no producer inside this server** (events.go's "not live"
+column). Every name the server does produce — `message`, `history`, `agents`,
+`agent_register`, `message_received`, `presence_map`, `commands`,
+`command_update` — is refused, because each of those frames is the server
+reporting its own persisted state; accepting one from outside puts a message
+on the panel that is in no history file and that no reconnect reproduces. A
+producer that wants a message broadcast uses `POST /api/chat/message`, which
+persists first. Unknown names 400 rather than passing through: the client's
+`onSse` shim subscribes to arbitrary names, so a pass-through would make this
+a "push any frame to every panel" primitive on an unauthenticated server.
+
+`system_update` is **not** an event name — it is `ChatMessage.type` carried on
+`message` (`packages/client/src/{sse,thread}.ts` branch on it to render a
+muted system line and to suppress TTS). It travels through
+`/api/chat/message`, which now accepts `type`/`source`/`meta` and stores them
+on `store.ChatMessage` (all `omitempty`, so an existing producer's frame is
+byte-identical); dropping `source` would render every hook firing as an
+ordinary agent bubble and speak it aloud.
+
+`/api/chat/events` is consequently in `internal/guard.GuardedPaths`, and since
+that classifier is method-independent the **GET stream is now guarded too** —
+stricter than the TS side, where the same GET is accepted residue. It costs
+no caller anything: the panel is same-origin and every other caller sends no
+Origin.
+
+The two PAI observability tailers are the first callers and stay TS-side (they
+read JSONL under `$PAI_DIR` in the Pulse home): `tool-tailer.ts` →
+`pushHubEvent("tool_event", …)`, `hook-tailer.ts` → `postHubMessage(…)`, both
+via `packages/server/src/hub-ingress.ts`. **Every call there is
+fire-and-forget and must never throw into a tailer** — the in-process
+broadcast it replaces could not fail, and a tailer that dies on a connection
+refused stops tailing for the life of the process. Failures are swallowed and
+logged at most once per 30s per route with a suppressed count. The hub URL is
+`PARLAY_HUB_URL`, falling back to `127.0.0.1:$PARLAY_PORT` — note that this
+process reads `PARLAY_PORT` as its OWN listen port, so set `PARLAY_HUB_URL`
+explicitly whenever both servers run side by side.
+
 ## Go CLI ticket B7: `doctor`/`health`
 
 `tools/cli/internal/commands/doctor.go` ports both `cmdDoctor` and `cmdHealth`

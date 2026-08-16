@@ -33,6 +33,20 @@ type ChatMessage struct {
 	Type    string `json:"type,omitempty"`
 	From    string `json:"from,omitempty"`
 	Images  []any  `json:"images,omitempty"`
+
+	// Source and Meta are the two fields a `system_update` message carries
+	// alongside Type (packages/server/src/types.ts's ChatMessage): Source is
+	// the hook/system that emitted the line — the panel renders it as the
+	// line's prefix (packages/client/src/thread.ts) and falls back to
+	// "system" without it — and Meta is attribution the panel does not read
+	// yet (session_id today). Both are omitempty, so every message that does
+	// not set them serializes exactly as before this field pair existed;
+	// they are here because the TS hook tailer now posts its firings to this
+	// server's POST /api/chat/message instead of broadcasting in-process, and
+	// a field this struct does not know about is dropped on the way to both
+	// the history file and the wire.
+	Source string         `json:"source,omitempty"`
+	Meta   map[string]any `json:"meta,omitempty"`
 }
 
 // MessageStore is an append-only chat history: a bounded in-memory ring

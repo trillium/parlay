@@ -1,6 +1,6 @@
 import { existsSync, statSync, openSync, readSync, closeSync } from "fs"
 import { join } from "path"
-import { broadcastToClients } from "./sse"
+import { pushHubEvent } from "./hub-ingress"
 import { recordSessionChannel, channelForSession, parseEnrollmentChannel } from "./session-channel"
 
 // ── Tool event tailer ───────────────────────────────────────────────────────
@@ -10,6 +10,12 @@ import { recordSessionChannel, channelForSession, parseEnrollmentChannel } from 
 // a session_id; the enrollment command (`parlay monitor --agent <ch>`) that
 // every agent runs is itself captured here, which is how session → channel is
 // learned (see session-channel.ts).
+//
+// The broadcast goes out over HTTP (POST /api/chat/events on the Go server)
+// rather than this process's own SSE client map: the file being tailed lives in
+// the TS/Pulse home so the tailer stays here, but the panel's SSE connection is
+// served by the Go hub. See hub-ingress.ts — the push is fire-and-forget and an
+// unreachable hub must never stop the tail loop.
 
 export function startToolEventTailer() {
   const HOME           = process.env.HOME ?? ""
@@ -49,7 +55,7 @@ export function startToolEventTailer() {
           // Owning tab: the enrolling agent's channel, else the shared System
           // pseudo-tab for sessions that never enrolled (non-agent Claude runs).
           const channel = channelForSession(ev.session_id) ?? "system"
-          broadcastToClients("tool_event", {
+          pushHubEvent("tool_event", {
             ts:   ev.timestamp,
             tool: ev.tool_name ?? "?",
             desc: desc.slice(0, 100),

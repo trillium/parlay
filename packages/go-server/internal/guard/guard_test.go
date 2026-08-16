@@ -129,6 +129,10 @@ func TestGuardedPathsCoverEveryMutatingRoute(t *testing.T) {
 		// A GET, and still guarded: the verb is not the classifier. handlePoll
 		// takes a Presence poller slot that /subscribers then reports.
 		"/api/chat/poll",
+		// Also not classified by its verb: POST on this path pushes an event to
+		// every connected SSE client (handlers.handleEventsIngress), so the
+		// path is guarded and the GET stream on it comes along.
+		"/api/chat/events",
 	}
 	for _, p := range mustGuard {
 		if !IsGuarded(p) {
@@ -138,7 +142,7 @@ func TestGuardedPathsCoverEveryMutatingRoute(t *testing.T) {
 	// Read/SSE routes stay open — a guard that refuses these breaks the panel.
 	for _, p := range []string{
 		"/health", "/api/chat/history", "/api/chat/agents",
-		"/api/chat/events", "/api/chat/uploads/abc123.png",
+		"/api/chat/uploads/abc123.png",
 	} {
 		if IsGuarded(p) {
 			t.Errorf("%s is a read route and must stay unguarded", p)
@@ -260,11 +264,44 @@ func TestUploadIsExemptFromTheJSONGateButNotTheOriginCheck(t *testing.T) {
 // surface, including for a foreign origin (those routes were world-readable
 // before and this ticket does not change that; see the package comment).
 func TestUnguardedRoutesAreUntouched(t *testing.T) {
-	for _, p := range []string{"/health", "/api/chat/history", "/api/chat/events", "/api/chat/uploads/x.png"} {
+	for _, p := range []string{"/health", "/api/chat/history", "/api/chat/uploads/x.png"} {
 		rec := httptest.NewRecorder()
 		Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, p, "https://evil.example.com", ""))
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s: status = %d, want 200 — read routes must keep working", p, rec.Code)
 		}
+	}
+}
+
+// TestEventsIngressAndStreamAreBothGuarded pins the consequence of
+// /api/chat/events becoming a POST ingress into the SSE hub: the path is
+// guarded, and because the classifier is method-independent the GET stream on
+// it is refused cross-origin too. That is a deliberate tightening relative to
+// the TS server, where the same GET is accepted residue.
+func TestEventsIngressAndStreamAreBothGuarded(t *testing.T) {
+	for _, c := range []struct{ method, contentType string }{
+		{http.MethodPost, "application/json"},
+		{http.MethodGet, ""},
+	} {
+		rec := httptest.NewRecorder()
+		Wrap(pass()).ServeHTTP(rec, req(t, c.method, "/api/chat/events", "https://evil.example.com", c.contentType))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("cross-origin %s /api/chat/events: status = %d, want 403", c.method, rec.Code)
+		}
+	}
+
+	// Every real caller keeps working: the TS tailers and the CLI send no
+	// Origin, the panel is same-origin.
+	for _, c := range []struct{ name, origin string }{
+		{"the TS tailers / CLI (no Origin)", ""},
+		{"the panel itself", "http://localhost:4242"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/events", c.origin, "application/json"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 — the guard must not break this producer", rec.Code)
+			}
+		})
 	}
 }
