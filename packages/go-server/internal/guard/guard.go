@@ -75,7 +75,10 @@
 // which stores an attacker-supplied ?device= in its SSE client record and
 // streams tts_event frames carrying that uuid to every client, and GET
 // /api/chat/agents, which returns every registered agent id) — tracked there
-// as identifier-disclosure-remains-on-sse. This server's residue is smaller
+// as identifier-disclosure-remains-on-sse. /api/chat/events is not part of
+// this server's residue: it is guarded here, because POST on that path is the
+// external-producer ingress into the SSE hub and the classification rule is
+// method-independent. This server's residue is smaller
 // for two reasons, neither of them a route-set decision: divergence 1 above
 // means its unguarded routes send no ACAO at all, so a foreign page's read
 // still executes but its body stays unreadable, and handleEvents accepts
@@ -132,6 +135,15 @@ var GuardedPaths = map[string]bool{
 	// Read-only, but it is the route that handed the TS-side attack chain its
 	// connected device uuid and the ids of every registered agent (D9).
 	"/api/chat/subscribers": true,
+
+	// POST pushes an event to every connected SSE client (the external-producer
+	// ingress in internal/handlers/events_ingress.go); guarded on that, and the
+	// method-independent rule then covers the GET stream on the same path too.
+	// That is stricter than the TS side, where GET /api/chat/events is accepted
+	// residue (identifier-disclosure-remains-on-sse) — and costs nothing here:
+	// the panel is same-origin, and every other caller (the TS tailers, the
+	// CLI, curl) sends no Origin.
+	"/api/chat/events": true,
 
 	// A GET that takes a Presence poller slot for the life of the request,
 	// which /subscribers then reports. Guarded on this server's own behavior,
