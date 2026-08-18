@@ -36,10 +36,28 @@
 #      then bump the pin. This file and parlay-spawn move together, on purpose.
 #
 # ENV OVERRIDES:
-#   PARLAY_HERDR_MIN / PARLAY_HERDR_MAX   override the pinned range (see below)
-#   PARLAY_SPAWN_SKIP_CONTRACT=1          escape hatch: skip the gate entirely
-#                                         (parlay-spawn honors this; use only to
-#                                          unblock in an emergency, then fix)
+#   PARLAY_HERDR_MIN / PARLAY_HERDR_MAX      override the pinned range (see below)
+#   PARLAY_HERDR_CONTRACT_TIMEOUT            seconds for each herdr --help probe (default 5)
+#   PARLAY_SPAWN_SKIP_CONTRACT=1             escape hatch: skip the gate entirely
+#                                            (parlay-spawn honors this; use only to
+#                                             unblock in an emergency, then fix)
+#
+# HOW THE GATE HANDLES A NON-RESPONSIVE HERDR (robots-co45):
+#   herdr 0.8.x CLI requires an active server connection to answer --help. In
+#   environments where the server is unreachable the command exits non-zero
+#   immediately ("no herdr server is running at …"); from sandboxed subprocesses
+#   (e.g. CI, Claude Code's bash tool) it may be killed (SIGKILL/SIGTERM) with
+#   no output. Both used to be indistinguishable from a genuine API removal and
+#   triggered DRIFT on every contract point.
+#
+#   The gate now triages each probe exit:
+#     • exit 0                         → help text received; verify flags normally
+#     • exit 124 / 137 / 143 (timeout  → SKIP — herdr unresponsive, cannot verify
+#       or OS kill)
+#     • non-zero + server-error text   → SKIP — server unreachable, not API drift
+#     • non-zero + no server-error     → DRIFT — command genuinely gone
+#   A run with only SKIPs warns and returns 2 (distinct from 0=ok and 1=drift) so
+#   parlay-spawn can emit a "dispatch unverified" notice without blocking.
 
 # --- The pin -----------------------------------------------------------------
 # Tested-good range: parlay-spawn is written against herdr's 0.7.5 agent-start
@@ -72,9 +90,10 @@ _HERDR_CONTRACT=(
 
 # --- Version helpers ---------------------------------------------------------
 # Parse "herdr 0.8.0" (or "herdr 0.8.0-preview.3") -> "0.8.0".
+# Uses a timeout so a hung/killed herdr binary does not block the caller.
 herdr_version() {
   local raw
-  raw=$(herdr --version 2>/dev/null) || return 1
+  raw=$(timeout "${PARLAY_HERDR_CONTRACT_TIMEOUT:-5}" herdr --version 2>/dev/null) || return 1
   # first dotted numeric token
   printf '%s\n' "$raw" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
 }
@@ -106,7 +125,7 @@ herdr_contract_check() {
   fi
 
   local ver
-  ver=$(herdr_version)
+  ver=$(herdr_version) || ver=""
   if [ -z "$ver" ]; then
     echo "herdr-contract: WARN — could not parse 'herdr --version'; skipping version-range check." >&2
   else
@@ -118,17 +137,46 @@ herdr_contract_check() {
   fi
 
   # Flag/subcommand assertions — the part that actually gates dispatch.
-  local entry sub flag help missing=0
+  # Three outcomes per probe:
+  #   DRIFT  — command/flag genuinely gone (non-zero, no server-error text)
+  #   SKIP   — herdr unreachable/unresponsive (timeout, OS kill, or server-down msg)
+  #   OK     — help text received, flag verified
+  local _herdr_timeout="${PARLAY_HERDR_CONTRACT_TIMEOUT:-5}"
+  local entry sub flag help hc missing=0 skipped=0
   for entry in "${_HERDR_CONTRACT[@]}"; do
     sub="${entry%%|*}"
     flag="${entry#*|}"
-    # `herdr <sub> --help` prints the subcommand help; a missing subcommand
-    # errors non-zero.
-    if ! help=$(herdr $sub --help 2>&1); then
+
+    # set -e safe: capture exit code via if/else so set -e doesn't fire on
+    # timeout/SIGKILL exits when this function is sourced into a set -e script.
+    if help=$(timeout "$_herdr_timeout" herdr $sub --help 2>&1); then
+      hc=0
+    else
+      hc=$?
+    fi
+
+    if [ "$hc" -eq 124 ] || [ "$hc" -eq 137 ] || [ "$hc" -eq 143 ]; then
+      # Timeout (124) or OS kill (137=SIGKILL, 143=SIGTERM) — herdr unresponsive.
+      echo "herdr-contract: SKIP — 'herdr $sub --help' did not respond (exit $hc); cannot verify." >&2
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    if [ "$hc" -ne 0 ]; then
+      # Quick non-zero exit — distinguish "server not running" from "command gone".
+      # herdr 0.8.x prints "no herdr server is running at …" when the daemon is
+      # absent; earlier versions may say similar things about socket/connect.
+      if printf '%s' "$help" | grep -qiE '(server|socket).*(not.running|unavailable|not.found)|no.*server.*running|connect.*fail|failed.*connect|server.*down'; then
+        echo "herdr-contract: SKIP — 'herdr $sub': herdr server unreachable; cannot verify flag." >&2
+        skipped=$((skipped + 1))
+        continue
+      fi
+      # No server-error text → command probably gone (genuine API drift).
       echo "herdr-contract: DRIFT — 'herdr $sub' no longer exists (parlay-spawn depends on it)." >&2
       missing=$((missing + 1))
       continue
     fi
+
     if [ -n "$flag" ] && ! printf '%s' "$help" | grep -qE -- "(^|[^a-z-])$flag([^a-z-]|$)"; then
       echo "herdr-contract: DRIFT — 'herdr $sub' no longer accepts '$flag' (parlay-spawn passes it)." >&2
       missing=$((missing + 1))
@@ -139,6 +187,16 @@ herdr_contract_check() {
     echo "herdr-contract: FAIL — $missing herdr contract point(s) drifted. Dispatch WILL break." >&2
     echo "  Fix bin/parlay-spawn's herdr call sites + the assertions in bin/herdr-contract, then re-run pipeline-selftest." >&2
     return 1
+  fi
+
+  if [ "$skipped" -gt 0 ]; then
+    echo "herdr-contract: UNVERIFIED — $skipped contract point(s) could not be checked (herdr server unreachable or binary unresponsive)." >&2
+    echo "  Dispatch may still work from within a live herdr terminal; run 'pipeline-selftest' there to confirm." >&2
+    echo "  To skip this gate entirely: PARLAY_SPAWN_SKIP_CONTRACT=1 (emergency only)." >&2
+    if [ "$strict_report" = "report" ]; then
+      echo "herdr-contract: ${missing} DRIFT, ${skipped} SKIP of ${#_HERDR_CONTRACT[@]} (herdr server was not reachable for full verification)."
+    fi
+    return 2
   fi
 
   if [ "$strict_report" = "report" ]; then
