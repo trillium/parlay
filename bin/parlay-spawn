@@ -65,6 +65,109 @@ if [ -f "$BIN_DIR/herdr-contract" ]; then
   source "$BIN_DIR/herdr-contract"
 fi
 
+# herdr-rpc: socket-based herdr access — bypasses the binary in contexts where
+# it cannot run (SIGKILL'd by macOS when there is no WindowServer session, e.g.
+# subprocesses spawned by Claude Code or CI). Sourced unconditionally; the
+# helpers below prefer the RPC socket when the daemon is reachable and silently
+# fall back to the binary in normal terminal sessions where it runs fine.
+if [ -f "$BIN_DIR/herdr-rpc" ]; then
+  # shellcheck source=/dev/null
+  source "$BIN_DIR/herdr-rpc"
+fi
+
+# True when herdr_rpc is loaded AND the daemon socket exists.
+_herdr_use_rpc() {
+  type herdr_rpc >/dev/null 2>&1 && [ -S "${HERDR_SOCK:-$HOME/.config/herdr/herdr.sock}" ]
+}
+
+# Per-operation wrappers: try RPC socket first, fall back to binary.
+
+_herdr_agent_get() {  # <name> → JSON
+  if _herdr_use_rpc; then
+    herdr_rpc "agent.get" "$(jq -nc --arg n "$1" '{"name":$n}')"
+  else
+    herdr agent get "$1" 2>/dev/null
+  fi
+}
+
+_herdr_tab_close() {  # <tab_id>
+  if _herdr_use_rpc; then
+    herdr_rpc "tab.close" "$(jq -nc --arg t "$1" '{"tab_id":$t}')" >/dev/null 2>&1 || true
+  else
+    herdr tab close "$1" >/dev/null 2>&1 || true
+  fi
+}
+
+_herdr_pane_send_text() {  # <pane_id> <text>
+  if _herdr_use_rpc; then
+    herdr_rpc "pane.send_text" \
+      "$(jq -nc --arg p "$1" --arg t "$2" '{"pane_id":$p,"text":$t}')" >/dev/null 2>&1 || true
+  else
+    herdr pane send-text "$1" "$2" >/dev/null 2>&1 || true
+  fi
+}
+
+_herdr_pane_send_keys() {  # <pane_id> <keys>
+  if _herdr_use_rpc; then
+    herdr_rpc "pane.send_keys" \
+      "$(jq -nc --arg p "$1" --arg k "$2" '{"pane_id":$p,"keys":$k}')" >/dev/null 2>&1 || true
+  else
+    herdr pane send-keys "$1" "$2" >/dev/null 2>&1 || true
+  fi
+}
+
+_herdr_pane_wait_output() {  # <pane_id> <regex> <timeout_ms>
+  if _herdr_use_rpc; then
+    herdr_rpc "pane.wait_for_output" \
+      "$(jq -nc --arg p "$1" --arg r "$2" --argjson t "$3" \
+        '{"pane_id":$p,"regex":$r,"timeout":$t}')" >/dev/null 2>&1 || true
+  else
+    herdr pane wait-output "$1" --regex "$2" --timeout "$3" >/dev/null 2>&1 || true
+  fi
+}
+
+_herdr_agent_start() {  # <name> <kind> <pane_id> [extra_args...]
+  local _as_name="$1" _as_kind="$2" _as_pane="$3"; shift 3
+  if _herdr_use_rpc; then
+    local _as_args='[]'
+    [ $# -gt 0 ] && _as_args=$(printf '%s\n' "$@" | jq -Rsc 'split("\n")[:-1]')
+    herdr_rpc "agent.start" \
+      "$(jq -nc --arg n "$_as_name" --arg k "$_as_kind" --arg p "$_as_pane" \
+        --argjson a "$_as_args" '{"name":$n,"kind":$k,"pane_id":$p,"args":$a}')"
+  else
+    herdr agent start "$_as_name" --kind "$_as_kind" --pane "$_as_pane" -- "$@" 2>&1
+  fi
+}
+
+_herdr_agent_prompt() {  # <target> <text>
+  if _herdr_use_rpc; then
+    herdr_rpc "agent.prompt" \
+      "$(jq -nc --arg t "$1" --arg x "$2" '{"target":$t,"text":$x}')" >/dev/null 2>&1
+  else
+    herdr agent prompt "$1" "$2" >/dev/null 2>&1
+  fi
+}
+
+_herdr_agent_wait() {  # <name> <until_state> <timeout_ms>
+  if _herdr_use_rpc; then
+    herdr_rpc "agent.wait" \
+      "$(jq -nc --arg n "$1" --arg u "$2" --argjson t "$3" \
+        '{"name":$n,"until":[$u],"timeout":$t}')" >/dev/null 2>&1
+  else
+    herdr agent wait "$1" --until "$2" --timeout "$3" >/dev/null 2>&1
+  fi
+}
+
+_herdr_agent_prompt_wait() {  # <target> <text> <until_state> <timeout_ms>
+  if _herdr_use_rpc; then
+    herdr_rpc "agent.prompt" \
+      "$(jq -nc --arg t "$1" --arg x "$2" --arg u "$3" --argjson to "$4" \
+        '{"target":$t,"text":$x,"wait":true,"until":[$u],"timeout":$to}')" >/dev/null 2>&1
+  else
+    herdr agent prompt "$1" "$2" --wait --until "$3" --timeout "$4" >/dev/null 2>&1
+  fi
+}
+
 # Deterministic, readable hex color from an id — a bash port of colorFromId()
 # in packages/cli/src/identity-ephemeral.ts (FNV-1a 32-bit, each channel squeezed
 # into 40–220 so no tab accent is too dark or too washed out). Same id ⇒ same
@@ -437,8 +540,8 @@ shell_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 # second one leaves two identically-labeled "edgar" tabs (one a ghost) and is
 # confusing. Reclaim the name first (kill the old session + close its tab) or use
 # a different id. This is the up-front guard against same-name panes.
-if command -v herdr >/dev/null 2>&1; then
-  EXISTING_AGENT=$(herdr agent get "$AGENT_ID" 2>/dev/null | jq -r '.result.agent.name // empty' 2>/dev/null || true)
+if _herdr_use_rpc || command -v herdr >/dev/null 2>&1; then
+  EXISTING_AGENT=$(_herdr_agent_get "$AGENT_ID" | jq -r '.result.agent.name // empty' 2>/dev/null || true)
   if [ -n "$EXISTING_AGENT" ]; then
     echo "parlay-spawn: a herdr agent named '$AGENT_ID' already exists — refusing to create a duplicate." >&2
     echo "  Reclaim the name first: 'herdr agent list' to find it, kill its process, then 'herdr tab close <its tab>'." >&2
@@ -712,22 +815,49 @@ fi
 # captain's current tab, and they launch unfocused/background). The tab's root
 # pane becomes the agent's pane directly — `agent start` targets it below via
 # --pane, so there is no redundant pane to close afterward.
-TAB_JSON=$(herdr tab create --cwd "$CWD" $FOCUS_FLAG --label "$AGENT_ID" \
-  ${WORKSPACE:+--workspace "$WORKSPACE"} \
-  --env "PARLAY_SERVER=$PARLAY" \
-  --env "PARLAY_AGENT_ID=$AGENT_ID" \
-  --env "PARLAY_AGENT_NAME=$NAME" \
-  --env "PARLAY_AGENT_COLOR=$COLOR" \
-  ${MODEL:+--env "PARLAY_AGENT_MODEL=$MODEL"} \
-  ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
-  ${PROJECT_ENV_FLAGS[@]+"${PROJECT_ENV_FLAGS[@]}"} \
-  2>/dev/null) || true
+if _herdr_use_rpc; then
+  # Build the env object from fixed vars + optionals + PROJECT_ENV_FLAGS pairs.
+  _tab_env=$(jq -nc \
+    --arg ps "$PARLAY" \
+    --arg ai "$AGENT_ID" \
+    --arg an "$NAME" \
+    --arg ac "$COLOR" \
+    '{"PARLAY_SERVER":$ps,"PARLAY_AGENT_ID":$ai,"PARLAY_AGENT_NAME":$an,"PARLAY_AGENT_COLOR":$ac}')
+  [ -n "$MODEL" ] && _tab_env=$(printf '%s' "$_tab_env" | jq --arg m "$MODEL" '.PARLAY_AGENT_MODEL=$m')
+  [ -n "${_token:-}" ] && _tab_env=$(printf '%s' "$_tab_env" | jq --arg t "$_token" '.CLAUDE_CODE_OAUTH_TOKEN=$t')
+  _tab_env_i=1
+  while [ "$_tab_env_i" -lt "${#PROJECT_ENV_FLAGS[@]}" ]; do
+    _tab_kv="${PROJECT_ENV_FLAGS[$_tab_env_i]}"
+    _tab_env=$(printf '%s' "$_tab_env" | jq --arg k "${_tab_kv%%=*}" --arg v "${_tab_kv#*=}" '.[$k]=$v')
+    _tab_env_i=$((_tab_env_i + 2))
+  done
+  _tab_nofocus=true; [ "${FOCUS_FLAG:-}" != "--no-focus" ] && _tab_nofocus=false
+  _tab_params=$(jq -nc \
+    --arg c "$CWD" \
+    --arg l "$AGENT_ID" \
+    --argjson f "$_tab_nofocus" \
+    --argjson e "$_tab_env" \
+    '{"cwd":$c,"label":$l,"no_focus":$f,"env":$e}')
+  [ -n "${WORKSPACE:-}" ] && _tab_params=$(printf '%s' "$_tab_params" | jq --arg w "$WORKSPACE" '.workspace_id=$w')
+  TAB_JSON=$(herdr_rpc "tab.create" "$_tab_params" 2>/dev/null) || true
+else
+  TAB_JSON=$(herdr tab create --cwd "$CWD" $FOCUS_FLAG --label "$AGENT_ID" \
+    ${WORKSPACE:+--workspace "$WORKSPACE"} \
+    --env "PARLAY_SERVER=$PARLAY" \
+    --env "PARLAY_AGENT_ID=$AGENT_ID" \
+    --env "PARLAY_AGENT_NAME=$NAME" \
+    --env "PARLAY_AGENT_COLOR=$COLOR" \
+    ${MODEL:+--env "PARLAY_AGENT_MODEL=$MODEL"} \
+    ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
+    ${PROJECT_ENV_FLAGS[@]+"${PROJECT_ENV_FLAGS[@]}"} \
+    2>/dev/null) || true
+fi
 TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
 ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
 
 if [ -z "$ROOT_PANE" ]; then
   echo "parlay-spawn: herdr tab create failed — no root pane returned." >&2
-  [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
+  [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
 
@@ -740,11 +870,10 @@ fi
 # while merely typed-but-unsubmitted in the pane, and only expands to an
 # actual PID once the shell truly executes it — wait-output matches the
 # expanded (digits) form so it can't fire on the echoed keystrokes alone.
-herdr pane send-text "$ROOT_PANE" \
-  "unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; echo READY_\$\$" \
-  >/dev/null 2>&1 || true
-herdr pane send-keys "$ROOT_PANE" enter >/dev/null 2>&1 || true
-herdr pane wait-output "$ROOT_PANE" --regex 'READY_[0-9]+' --timeout 5000 >/dev/null 2>&1 || true
+_herdr_pane_send_text "$ROOT_PANE" \
+  "unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; echo READY_\$\$"
+_herdr_pane_send_keys "$ROOT_PANE" enter
+_herdr_pane_wait_output "$ROOT_PANE" 'READY_[0-9]+' 5000
 
 # Runs in YOLO mode (skip-permissions + sonnet fallback) — same as the `yolo`
 # command — so a remotely-driven agent never stalls on a permission prompt the
@@ -780,8 +909,8 @@ _start_ok=0
 _start_out=""
 _try=1
 while [ "$_try" -le "$_start_attempts" ]; do
-  if _start_out=$(herdr agent start "$AGENT_ID" --kind "$KIND" --pane "$ROOT_PANE" \
-      -- ${AGENT_START_ARGS[@]+"${AGENT_START_ARGS[@]}"} 2>&1); then
+  if _start_out=$(_herdr_agent_start "$AGENT_ID" "$KIND" "$ROOT_PANE" \
+      ${AGENT_START_ARGS[@]+"${AGENT_START_ARGS[@]}"}); then
     # Guard against a hypothetical exit-0-with-error-object; treat a busy marker
     # in the output as failure regardless of exit code.
     case "$_start_out" in
@@ -799,13 +928,13 @@ while [ "$_try" -le "$_start_attempts" ]; do
 done
 if [ "$_start_ok" -ne 1 ]; then
   echo "parlay-spawn: herdr agent start failed after $_try attempt(s) — rolling back the tab to avoid a ghost '$AGENT_ID' tab. (last: $_start_out)" >&2
-  [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
+  [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
 
-if ! herdr agent prompt "$AGENT_ID" "$STARTUP_PROMPT" >/dev/null 2>&1; then
+if ! _herdr_agent_prompt "$AGENT_ID" "$STARTUP_PROMPT"; then
   echo "parlay-spawn: herdr agent prompt failed to deliver the charter — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
-  [ -n "$TAB_ID" ] && herdr tab close "$TAB_ID" >/dev/null 2>&1 || true
+  [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
 
@@ -857,18 +986,18 @@ fi
 #    long before the timeout and this never nudges it. Disable with
 #    PARLAY_SPAWN_NO_WATCHDOG=1; tune with PARLAY_SPAWN_LIVENESS_TIMEOUT_MS.
 LIVENESS_TIMEOUT_MS="${PARLAY_SPAWN_LIVENESS_TIMEOUT_MS:-60000}"
-if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && command -v herdr >/dev/null 2>&1; then
+if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && (_herdr_use_rpc || command -v herdr >/dev/null 2>&1); then
   WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-watchdog.log"
   (
     # `agent wait` returns 0 as soon as the agent is observed 'working' — the
     # normal auto-start path exits here having done nothing.
-    if herdr agent wait "$AGENT_ID" --until working --timeout "$LIVENESS_TIMEOUT_MS" >/dev/null 2>&1; then
+    if _herdr_agent_wait "$AGENT_ID" working "$LIVENESS_TIMEOUT_MS"; then
       exit 0
     fi
     echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: initial turn never fired within ${LIVENESS_TIMEOUT_MS}ms — resubmitting charter." >&2
     # A never-started agent has done no work, so resubmitting the charter kicks
     # it off without duplicating anything.
-    if herdr agent prompt "$AGENT_ID" "$STARTUP_PROMPT" --wait --until working --timeout 30000 >/dev/null 2>&1; then
+    if _herdr_agent_prompt_wait "$AGENT_ID" "$STARTUP_PROMPT" working 30000; then
       echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: nudge confirmed — agent working." >&2
     else
       echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: nudge did not confirm landing — inspect the tab." >&2
