@@ -127,6 +127,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Teardown(args)
 	case "sweep":
 		commands.Sweep(args)
+	case "spawn":
+		commands.Spawn(args)
 	case "variant":
 		commands.Variant(args)
 	case "doctor":
