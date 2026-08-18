@@ -450,10 +450,19 @@ fi
 # instead of a cryptic mid-dispatch rollback. Escape hatch:
 # PARLAY_SPAWN_SKIP_CONTRACT=1 (emergency-only; fix the drift and remove it).
 if [ "${PARLAY_SPAWN_SKIP_CONTRACT:-0}" != "1" ] && command -v herdr_contract_check >/dev/null 2>&1; then
-  if ! herdr_contract_check; then
+  # set -e safe: capture exit code via if/else so set -e doesn't fire when the
+  # contract check returns 2 (UNVERIFIED — herdr server unreachable but no drift).
+  if herdr_contract_check; then
+    _contract_rc=0
+  else
+    _contract_rc=$?
+  fi
+  if [ "$_contract_rc" -eq 1 ]; then
     echo "parlay-spawn: herdr contract check failed — refusing to dispatch into a drifted herdr." >&2
     echo "  Re-run 'pipeline-selftest' after fixing, or set PARLAY_SPAWN_SKIP_CONTRACT=1 to bypass (emergency only)." >&2
     exit 1
+  elif [ "$_contract_rc" -eq 2 ]; then
+    echo "parlay-spawn: herdr contract unverified (server unreachable during preflight) — proceeding; dispatch may fail if herdr API has drifted." >&2
   fi
 fi
 
