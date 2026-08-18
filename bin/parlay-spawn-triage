@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# parlay-spawn-triage — launch three robots-triage pi agents, one per mini
+#
+# Plain herdr tabs — no parlay enrollment. Each agent uses qwen3:8b via that
+# mini's Ollama. The robots-triage-shepherd extension drives the state machine.
+# Agents stagger by 8s so they don't race to claim the same bead.
+#
+# Usage: parlay-spawn-triage [--model MODEL]
+#   --model MODEL   override the model on all three minis (default: qwen3:8b)
+
+set -euo pipefail
+
+MODEL="qwen3:8b"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) MODEL="$2"; shift 2 ;;
+    *) echo "Usage: parlay-spawn-triage [--model MODEL]" >&2; exit 1 ;;
+  esac
+done
+
+PROMPT="run \`robots-triage next\` and complete the task"
+CWD="${HOME}/code/localmodels"
+
+_spawn_one() {
+  local name="$1" label="$2" mini="$3"
+  local pane out
+  pane=$(herdr tab create --cwd "$CWD" --label "$label" --no-focus \
+    | jq -r '.result.root_pane.pane_id')
+  # Retry until the pane shell is ready
+  local try=1
+  while [[ $try -le 12 ]]; do
+    out=$(herdr agent start "$name" --kind pi --pane "$pane" \
+      -- --model "${mini}/${MODEL}" --no-skills --no-prompt-templates --no-context-files 2>&1) && break
+    [[ "$out" == *agent_pane_busy* ]] || { echo "herdr agent start failed: $out" >&2; exit 1; }
+    sleep 0.5
+    (( try++ ))
+  done
+  herdr agent prompt "$name" "$PROMPT"
+  echo "  ✓ ${name} (${mini}/${MODEL})"
+}
+
+echo "Launching robots-triage fleet (model: ${MODEL})…"
+echo ""
+
+_spawn_one triage-mini1 "Triage · mini1" mini1
+sleep 8
+_spawn_one triage-mini2 "Triage · mini2" mini2
+sleep 8
+_spawn_one triage-mini3 "Triage · mini3" mini3
+
+echo ""
+echo "Fleet up. herdr agent list to check status."
