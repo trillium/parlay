@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-08-17 — session d06df28f
+
+Files: bin/parlay-spawn-triage
 ## 2026-08-10 — Externalize parlay launch/shutdown text to template files
 
 **Refactor:** Launch and shutdown text moved from embedded strings in `bin/parlay-spawn` to external template files.
