@@ -159,8 +159,14 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   Must be the FIRST arg — cannot combine with an explicit agent-id.
   --cwd PATH      working directory for the spawned claude (default: \$HOME)
   --focus         focus the new terminal (default: launched --no-focus)
-  --model MODEL   pin the claude model (e.g. sonnet, opus, haiku, or a full
-                  model id); default: session default with sonnet fallback
+  --model MODEL   pin the agent model (claude: sonnet, opus, haiku, or a full
+                  model id; opencode: opencode-go/<model>, e.g.
+                  opencode-go/deepseek-v4-pro); default: claude session default
+                  with sonnet fallback
+  --kind KIND     agent harness to launch via herdr (default: claude). e.g.
+                  --kind opencode spawns the opencode TUI and forwards --model
+                  verbatim (opencode-go deepseek models: opencode-go/deepseek-v4-pro,
+                  opencode-go/deepseek-v4-flash)
   --mode MODE     delivery mode: report|branch|pr (default: report). Shapes the
                   Definition of Done in the brief and is recorded in meta.
                     report  — do the task, reply when done (default)
@@ -215,6 +221,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
   MODEL=""
   MODE="report"
   EFFORT=""
+  KIND="claude"
   WANT_WORKTREE=0
   ACCOUNT=""
   while [ $# -gt 0 ]; do
@@ -224,6 +231,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --model)     MODEL="$2"; shift 2 ;;
       --mode)      MODE="$2"; shift 2 ;;
       --effort)    EFFORT="$2"; shift 2 ;;
+      --kind)      KIND="$2"; shift 2 ;;
       --worktree)  WANT_WORKTREE=1; shift ;;
       --account)   ACCOUNT="$2"; shift 2 ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
@@ -277,6 +285,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_FOCUS="--no-focus"
           BATCH_MODE="report"
           BATCH_EFFORT=""
+          BATCH_KIND=""
           BATCH_WORKTREE=0
           BATCH_ACCOUNT=""
           while [ $# -gt 0 ]; do
@@ -287,6 +296,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
               --focus)     BATCH_FOCUS="--focus"; shift ;;
               --mode)      BATCH_MODE="$2"; shift 2 ;;
               --effort)    BATCH_EFFORT="$2"; shift 2 ;;
+              --kind)      BATCH_KIND="$2"; shift 2 ;;
               --worktree)  BATCH_WORKTREE=1; shift ;;
               --account)   BATCH_ACCOUNT="$2"; shift 2 ;;
               --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
@@ -322,6 +332,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             [ "$BATCH_FOCUS" = "--focus" ] && _shared+=(--focus)
             _shared+=(--mode "$BATCH_MODE")
             [ -n "$BATCH_EFFORT" ] && _shared+=(--effort "$BATCH_EFFORT")
+            [ -n "$BATCH_KIND" ] && _shared+=(--kind "$BATCH_KIND")
             [ "$BATCH_WORKTREE" -eq 1 ] && _shared+=(--worktree)
             [ -n "$BATCH_ACCOUNT" ] && _shared+=(--account "$BATCH_ACCOUNT")
             if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
@@ -357,6 +368,7 @@ FOCUS_FLAG="--no-focus"
 MODEL=""
 MODE="report"
 EFFORT=""
+KIND="claude"
 WANT_WORKTREE=0
 ACCOUNT=""
 CLAIM=""
@@ -368,6 +380,7 @@ while [ $# -gt 0 ]; do
     --model)     MODEL="$2"; shift 2 ;;
     --mode)      MODE="$2"; shift 2 ;;
     --effort)    EFFORT="$2"; shift 2 ;;
+    --kind)      KIND="$2"; shift 2 ;;
     --worktree)  WANT_WORKTREE=1; shift ;;
     --account)   ACCOUNT="$2"; shift 2 ;;
     --claim)     CLAIM="$2"; shift 2 ;;
@@ -672,7 +685,7 @@ fi
 #    (empty-string via --env is NOT enough — the guard checks presence, so
 #    we must `unset` — and new panes inherit the herdr server's own
 #    CLAUDECODE/CLAUDE_CODE_* env, confirmed empirically).
-echo "parlay-spawn: launching detached claude via herdr (cwd=$CWD, $FOCUS_FLAG) ..." >&2
+echo "parlay-spawn: launching detached $KIND agent via herdr (cwd=$CWD, $FOCUS_FLAG) ..." >&2
 
 # Resolve account token if --account was given, before tab creation so there
 # is no ghost tab to clean up on a bad keychain lookup.
@@ -739,13 +752,24 @@ herdr pane wait-output "$ROOT_PANE" --regex 'READY_[0-9]+' --timeout 5000 >/dev/
 # tunable via PARLAY_SPAWN_START_RETRIES); it is only spent while the pane is
 # genuinely busy. Only agent_pane_busy is retried — any other failure is
 # non-transient and rolls back immediately.
+# Agent-start args by harness kind. claude launches in YOLO mode
+# (--dangerously-skip-permissions + sonnet fallback) so a remotely-driven agent
+# never stalls on a permission prompt the absent user can't answer; other kinds
+# (e.g. opencode) take only an explicit --model and rely on their own config for
+# permissions/fallback (opencode's permission surface is its opencode.json).
+case "$KIND" in
+  claude) AGENT_START_ARGS=(--dangerously-skip-permissions --fallback-model sonnet) ;;
+  *)      AGENT_START_ARGS=() ;;
+esac
+[ -n "$MODEL" ] && AGENT_START_ARGS+=(--model "$MODEL")
+
 _start_attempts="${PARLAY_SPAWN_START_RETRIES:-12}"
 _start_ok=0
 _start_out=""
 _try=1
 while [ "$_try" -le "$_start_attempts" ]; do
-  if _start_out=$(herdr agent start "$AGENT_ID" --kind claude --pane "$ROOT_PANE" \
-      -- --dangerously-skip-permissions --fallback-model sonnet ${MODEL:+--model "$MODEL"} 2>&1); then
+  if _start_out=$(herdr agent start "$AGENT_ID" --kind "$KIND" --pane "$ROOT_PANE" \
+      -- ${AGENT_START_ARGS[@]+"${AGENT_START_ARGS[@]}"} 2>&1); then
     # Guard against a hypothetical exit-0-with-error-object; treat a busy marker
     # in the output as failure regardless of exit code.
     case "$_start_out" in
@@ -778,8 +802,9 @@ fi
 # Ephemeral agents were already seeded by the mint step (with `ephemeral: true`);
 # re-registering here without --ephemeral would strip that marker, so skip it.
 # Fold §3.2: also record mode/effort/yolo/kind so a relaunch restores full lifecycle
-# context, not just id/name/color. yolo=on because parlay-spawn always launches
-# with --dangerously-skip-permissions.
+# context, not just id/name/color. yolo/effort are claude-only: yolo=on because
+# parlay-spawn launches claude with --dangerously-skip-permissions; other kinds
+# (opencode) don't map them, so they are omitted.
 #
 # robots-jusi: this call used to be `>/dev/null 2>&1 || true`, which swallowed a
 # fatal unknown-flag exit when the Go port dropped --worktree/--project. The spec
@@ -788,11 +813,14 @@ fi
 # non-fatal (a launch spec is not worth aborting a live spawn over), but a failure
 # is now LOUD: the CLI's own error reaches stderr and we name it explicitly.
 if [ "$EPHEMERAL" -eq 0 ]; then
+  REGISTER_META=(--mode "$MODE" --kind "$KIND")
+  if [ "$KIND" = "claude" ]; then
+    REGISTER_META+=(--yolo on)
+    [ -n "$EFFORT" ] && REGISTER_META+=(--effort "$EFFORT")
+  fi
   if ! identity --register --agent "$AGENT_ID" --name "$NAME" --color "$COLOR" --cwd "$CWD" \
     ${MODEL:+--model "$MODEL"} \
-    --mode "$MODE" \
-    --yolo on \
-    ${EFFORT:+--effort "$EFFORT"} \
+    ${REGISTER_META[@]+"${REGISTER_META[@]}"} \
     ${WORKTREE_PATH:+--worktree "$WORKTREE_PATH"} \
     ${PROJECT_PATH:+--project "$PROJECT_PATH"} \
     >/dev/null; then
