@@ -25,12 +25,17 @@
 #
 # Env:
 #   PARLAY_SERVER                     Parlay/Pulse base URL (default http://localhost:31337)
+#   PARLAY_SPAWN_DEFAULT_ACCOUNT      ccjuggler account name to use when --account is not given
+#                                     (e.g. acc2). Resolved via the same keychain/file lookup as
+#                                     --account. Set to "" to disable (use the ambient session token).
 #   PARLAY_SPAWN_NO_WATCHDOG          1 disables the post-launch liveness watchdog (see step 6 below)
 #   PARLAY_SPAWN_LIVENESS_TIMEOUT_MS  watchdog's "did the first turn fire" window (default 60000)
 
 set -euo pipefail
 
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
+# Default account — resolved once here; any --account flag in any path overrides it.
+ACCOUNT="${PARLAY_SPAWN_DEFAULT_ACCOUNT:-}"
 
 # Absolute path to THIS script, so the batch loop can re-exec us in single mode
 # regardless of the cwd or relative path used to invoke us (mirror fm-spawn.sh's
@@ -223,7 +228,6 @@ if [ "${1:-}" = "--ephemeral" ]; then
   EFFORT=""
   KIND="claude"
   WANT_WORKTREE=0
-  ACCOUNT=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --cwd)       CWD="$2"; shift 2 ;;
@@ -287,7 +291,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_EFFORT=""
           BATCH_KIND=""
           BATCH_WORKTREE=0
-          BATCH_ACCOUNT=""
+          BATCH_ACCOUNT="$ACCOUNT"
           while [ $# -gt 0 ]; do
             case "$1" in
               --prompt)    BATCH_PROMPT="$2"; shift 2 ;;
@@ -370,7 +374,6 @@ MODE="report"
 EFFORT=""
 KIND="claude"
 WANT_WORKTREE=0
-ACCOUNT=""
 CLAIM=""
 WORKSPACE="${HERDR_WORKSPACE_ID:-}"
 while [ $# -gt 0 ]; do

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# herdr-rpc — send a JSON-RPC command to the herdr daemon via its Unix socket.
+#
+# WHY THIS EXISTS:
+#   The herdr binary (herdr CLI) links against Carbon.framework and attempts
+#   WindowServer initialization on startup. In execution contexts without a
+#   WindowServer session (subprocesses spawned by Claude Code, CI, launchd
+#   agents), the OS kills it with SIGKILL before it processes any arguments.
+#   The herdr daemon socket (~/.config/herdr/herdr.sock) is a plain Unix
+#   socket accepting newline-delimited JSON-RPC — accessible from any context.
+#   This script wraps that socket so parlay-spawn can call herdr operations
+#   without needing the herdr binary to be alive.
+#
+# USAGE (direct):
+#   herdr-rpc tab.list '{}'
+#   herdr-rpc tab.create '{"label":"foo","cwd":"/tmp","no_focus":true}'
+#   herdr-rpc agent.start '{"name":"my-agent","kind":"claude","pane_id":"w1:p2"}'
+#   herdr-rpc agent.prompt '{"target":"my-agent","text":"do the thing"}'
+#   herdr-rpc tab.close '{"tab_id":"w1:t3"}'
+#
+# USAGE (sourced — herdr_rpc function):
+#   source bin/herdr-rpc
+#   result=$(herdr_rpc tab.list '{}')   # returns JSON
+#
+# EXIT CODES:
+#   0  — result received (check .error in JSON for logical errors)
+#   1  — socket not found / nc failed / timeout
+#   2  — daemon returned a top-level error (when run directly)
+#
+# ENV:
+#   HERDR_SOCK                unix socket path (default ~/.config/herdr/herdr.sock)
+#   PARLAY_HERDR_RPC_TIMEOUT  seconds to wait for response (default 5)
+
+_herdr_sock="${HERDR_SOCK:-$HOME/.config/herdr/herdr.sock}"
+_herdr_rpc_timeout="${PARLAY_HERDR_RPC_TIMEOUT:-5}"
+_herdr_rpc_seq=0
+
+# herdr_rpc <method> <params-json> [id]
+# Sends one JSON-RPC request and prints the response JSON.
+# Returns 0 on any response received, 1 on I/O failure.
+herdr_rpc() {
+  local method="$1"
+  local params="${2:-{}}"
+  _herdr_rpc_seq=$(( _herdr_rpc_seq + 1 ))
+  local id="${3:-rpc${_herdr_rpc_seq}}"
+
+  if [ ! -S "$_herdr_sock" ]; then
+    echo "herdr-rpc: socket not found: $_herdr_sock" >&2
+    return 1
+  fi
+
+  local req
+  req=$(jq -nc --arg id "$id" --arg m "$method" --argjson p "$params" \
+    '{"id":$id,"method":$m,"params":$p}') || return 1
+
+  { printf '%s\n' "$req"; sleep "$_herdr_rpc_timeout"; } | nc -U "$_herdr_sock" 2>/dev/null
+}
+
+# herdr_rpc_check <method> <params-json> — like herdr_rpc but returns 1 on
+# daemon-level error and prints the error message to stderr.
+herdr_rpc_check() {
+  local method="$1" params="${2:-{}}"
+  local resp
+  resp=$(herdr_rpc "$method" "$params") || return 1
+  local err
+  err=$(printf '%s' "$resp" | jq -r '.error.message // empty' 2>/dev/null)
+  if [ -n "$err" ]; then
+    local code
+    code=$(printf '%s' "$resp" | jq -r '.error.code // "error"' 2>/dev/null)
+    echo "herdr-rpc: $method failed ($code): $err" >&2
+    return 1
+  fi
+  printf '%s\n' "$resp"
+}
+
+# Direct-invocation entrypoint — only runs when executed, not when sourced.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  if [ $# -lt 1 ]; then
+    echo "Usage: herdr-rpc <method> [params-json]" >&2
+    exit 1
+  fi
+  resp=$(herdr_rpc "$1" "${2:-{}}")
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    exit 1
+  fi
+  printf '%s\n' "$resp"
+  err=$(printf '%s' "$resp" | jq -r '.error.code // empty' 2>/dev/null)
+  [ -n "$err" ] && exit 2
+  exit 0
+fi
