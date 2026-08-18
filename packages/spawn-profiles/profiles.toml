@@ -1,0 +1,72 @@
+# Spawn profiles — the catalog parlay-spawn resolves --profile from.
+#
+# One [[profile]] block per named profile. Add a profile by appending a block;
+# then run `make validate` (or `go run ./cmd/validate`) and fix any errors it
+# reports. The full field reference + contribution rules live in README.md.
+#
+# Profiles here are deliberately parlay-shaped and diverge from gascity's
+# builtin catalog (see scripts/import-gascity-profiles.sh for the one-way
+# import). opencode-go deepseek models are the parlay defaults; gascity still
+# lists only the Zen free models.
+
+[[profile]]
+name = "claude"
+display_name = "Claude Code"
+kind = "claude"
+command = "claude"
+model = "sonnet"
+args = ["--dangerously-skip-permissions", "--fallback-model", "sonnet"]
+prompt_mode = "arg"
+resume_flag = "--resume"
+session_id_flag = "--session-id"
+ready_delay_ms = 10000
+ready_prompt_prefix = "❯ "
+
+[[profile]]
+name = "claude-plan"
+display_name = "Claude Code (plan mode)"
+kind = "claude"
+command = "claude"
+model = "sonnet"
+args = ["--permission-mode", "plan", "--fallback-model", "sonnet"]
+prompt_mode = "arg"
+resume_flag = "--resume"
+session_id_flag = "--session-id"
+ready_delay_ms = 10000
+ready_prompt_prefix = "❯ "
+
+[[profile]]
+name = "opencode-deepseek-pro"
+display_name = "OpenCode (DeepSeek V4 Pro)"
+kind = "opencode"
+command = "opencode"
+model = "opencode-go/deepseek-v4-pro"
+prompt_mode = "flag"
+prompt_flag = "--prompt"
+resume_flag = "--session"
+ready_delay_ms = 8000
+env = { OPENCODE_PERMISSION = '{"*":"allow"}' }
+
+[[profile]]
+name = "opencode-deepseek-flash"
+display_name = "OpenCode (DeepSeek V4 Flash)"
+kind = "opencode"
+command = "opencode"
+model = "opencode-go/deepseek-v4-flash"
+prompt_mode = "flag"
+prompt_flag = "--prompt"
+resume_flag = "--session"
+ready_delay_ms = 8000
+env = { OPENCODE_PERMISSION = '{"*":"allow"}' }
+
+[[profile]]
+name = "codex"
+display_name = "Codex CLI"
+kind = "codex"
+command = "codex"
+model = "gpt-5.5"
+prompt_mode = "arg"
+resume_flag = "resume"
+resume_style = "subcommand"
+ready_delay_ms = 3000
+ready_prompt_prefix = "› "
