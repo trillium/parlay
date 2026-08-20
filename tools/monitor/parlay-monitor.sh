@@ -3,18 +3,18 @@
 #
 # One-call enroll + stream: registers this agent with the central relay (adds
 # itself to the registry, which starts the relay's upstream poll loop for this
-# channel), then follows the agent's spool file with `tail -F` so its process
-# footprint is a bash supervisor plus `tail` (~2MB) — not a ~40MB bun poller.
+# channel), then execs `tail -F` on the agent's spool file so its final process
+# footprint is `tail` alone (~1.2MB) — not a ~40MB bun poller.
 #
 # A harness Monitor tool runs this and wakes the agent on every CHAT_MSG line.
 #
-# Stdout carries two kinds of line:
-#   CHAT_MSG|…   a spooled message, byte-for-byte from the relay
-#   MONITOR|…    this script reporting on the stream itself (`restarted`,
-#                `down`) — see the supervision section below (robots-gv6t)
-#
 # Usage:
 #   parlay-monitor.sh --agent <id> [--notify-safe]
+#   parlay-monitor.sh --reap [--apply]
+#
+# --reap: report every `tail -F` reader on this host whose launcher chain is
+#   gone, and with --apply kill them. See the "one reader per channel" section
+#   below for why they accumulate and why an orphan is identifiable.
 #
 # --notify-safe: cap each emitted CHAT_MSG line to a notification-safe budget
 #   (PARLAY_NOTIFY_BUDGET chars, default 400). WHY: when this stream runs under a
@@ -38,18 +38,17 @@
 #                          server, $TMPDIR/parlay/by-server/<slug> otherwise)
 #   PARLAY_RELAY_SOCK      explicit control-socket path (default: <runtime>/relay.sock)
 #   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
-#   PARLAY_RELAY_PROBE_TIMEOUT  seconds to allow the relay's /agents probe (default 15)
-#   PARLAY_MONITOR_MIN_UPTIME   seconds a tail must survive to count as healthy (default 2)
-#   PARLAY_MONITOR_MAX_RESTARTS consecutive fast respawns tolerated before giving up (default 5)
+#   PARLAY_MONITOR_WATCH_INTERVAL  seconds between orphan checks (default 15)
+#   PARLAY_MONITOR_NO_ORPHAN_EXIT  set to 1 to keep streaming after the launcher
+#                          dies (deliberate daemonization; off by default)
 #
-# Exit codes: 0 (never — the stream is supervised and only ends when this
-# process is killed), 2 usage error, 1 relay/enroll error OR a stream that
-# could not be kept alive (announced as MONITOR|down on stdout first).
+# Exit codes: 0 (never, tail runs until killed), 2 usage error, 1 relay/enroll error.
 set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
 Usage: parlay-monitor.sh --agent <id> [--notify-safe]
+       parlay-monitor.sh --reap [--apply]
 
 Registers <id> with the parlay relay, then streams its channel's CHAT_MSG lines
 to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
@@ -57,6 +56,11 @@ to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
   --notify-safe   cap each emitted line to a notification-safe budget and append
                   a "fetch full text" pointer (harness Monitor tools truncate long
                   lines mid-word; this makes that recoverable). Default off.
+  --reap          list every channel reader under the relay runtime dir whose
+                  launcher chain is gone (dry run). Add --apply to kill them.
+                  Scoped to \$PARLAY_RELAY_RUNTIME (default \$TMPDIR/parlay) and
+                  everything nested under it, so it can never reach another
+                  runtime dir's readers.
 
 Env:
   PARLAY_SERVER          upstream server; a non-default value gets its own
@@ -64,20 +68,185 @@ Env:
   PARLAY_RELAY_RUNTIME   runtime dir (default: server-scoped under \$TMPDIR/parlay)
   PARLAY_RELAY_SOCK      control socket path (default <runtime>/relay.sock)
   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
+  PARLAY_MONITOR_WATCH_INTERVAL  seconds between orphan checks (default 15)
+  PARLAY_MONITOR_NO_ORPHAN_EXIT  1 = keep streaming after the launcher dies
 EOF
   exit 2
 }
 
 AGENT=""
 NOTIFY_SAFE=0
+REAP=0
+APPLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent) AGENT="${2:-}"; shift 2 ;;
     --notify-safe) NOTIFY_SAFE=1; shift ;;
+    --reap) REAP=1; shift ;;
+    --apply) APPLY=1; shift ;;
     -h|--help) usage ;;
     *) echo "parlay-monitor: unknown arg: $1" >&2; usage ;;
   esac
 done
+
+WATCH_INTERVAL="${PARLAY_MONITOR_WATCH_INTERVAL:-15}"
+
+# ── One reader per channel, and no reader outliving its launcher (robots-3pvi) ─
+# The spool is append-only and every `tail -F` on it gets its own copy of every
+# line, so a channel with N readers wakes N sessions with the same directive —
+# and readers used to accumulate because NOTHING ever ended one. A harness kills
+# only the shell it spawned; `tail` sits two or three levels below that, is
+# reparented to init, and on a quiet channel never writes again so it never even
+# earns a SIGPIPE. 168 readers were live on the captain's box when this was
+# found — 139 with no launcher left anywhere in their ancestry, oldest 3 days,
+# one channel with 20 of them.
+#
+# The two helpers below are the whole basis of the fix. A reader is matched as a
+# WHOLE command line (`tail -n0 -F <spool>`), never as a `pgrep -f` regex — a
+# metacharacter in a spool path must never be able to widen a kill.
+#
+# A reader is an ORPHAN when climbing its ancestry reaches init without passing
+# through any process that isn't part of a monitor chain. A working monitor
+# always has a foreign root (the tmux/harness shell, herdr, bun), so this can
+# never mistake a live reader for garbage.
+
+# readers_of <spool> [ppid] → one pid per line, exact command-line match,
+# optionally only children of <ppid> (how this shell picks out its OWN reader
+# without guessing). Returns 0 on every path, including a failed `ps`: under this
+# script's `set -euo pipefail` a caller writing `VAR=$(readers_of …)` would
+# otherwise die on the probe itself (robots-dcag), and "could not enumerate" must
+# never be fatal here.
+readers_of() {
+  ps -axo pid=,ppid=,command= 2>/dev/null | awk -v want="tail -n0 -F $1" -v wantppid="${2:-}" '
+    {
+      pid = $1
+      ppid = $2
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+/, "")
+      if ($0 != want) next
+      if (wantppid != "" && ppid + 0 != wantppid + 0) next
+      print pid
+    }' || true
+}
+
+# is_monitor_chain_cmd <command line> → 0 when that process is part of a monitor
+# chain (the reader, its wrapper script, or the CLI that spawned either).
+is_monitor_chain_cmd() {
+  case "$1" in
+    "tail -n0 -F "*.chan) return 0 ;;
+    *parlay-monitor.sh*) return 0 ;;
+    *"parlay-cli listen"*|*"parlay-cli monitor"*) return 0 ;;
+    *"parlay listen"*|*"parlay monitor"*) return 0 ;;
+  esac
+  return 1
+}
+
+# ps_row <snapshot> <pid> → "<ppid> <command>", empty when the pid is gone.
+# `awk … exit` closes the pipe early, so printf takes a SIGPIPE and pipefail
+# would hand the caller a 141 — swallowed here for the same reason as above.
+ps_row() {
+  printf '%s\n' "$1" | awk -v p="$2" '
+    $1 + 0 == p {
+      ppid = $2
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+/, "")
+      print ppid " " $0
+      exit
+    }' || true
+}
+
+# reap_readers <apply 0|1> <runtime-dir> — report, and with apply=1 kill, every
+# orphaned reader whose spool lives under <runtime-dir>. Killing the reader
+# unwinds the whole chain above it: in --notify-safe mode the awk ends when the
+# pipe closes, the wrapper script then exits, and the CLI exits with its code.
+#
+# SCOPED BY RUNTIME DIR ON PURPOSE. An unscoped host-wide kill is not something
+# a test (or a sandbox, or a second server's relay) can be allowed to run — it
+# would reach the captain's live readers. The scope is the CANONICAL runtime dir
+# and the match is a prefix, so server-scoped relays nested under it
+# (<canonical>/srv-<hash>/) are still covered.
+reap_readers() {
+  local apply="$1" runtime="$2"
+  local snapshot readers total orphans pid spool row parent pcmd cur orphan killed left
+  snapshot="$(ps -axo pid=,ppid=,command= 2>/dev/null || true)"
+  readers="$(printf '%s\n' "$snapshot" | awk -v dir="$runtime/" '
+    {
+      pid = $1
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+/, "")
+      if ($0 !~ /^tail -n0 -F .*\.chan$/) next
+      spool = substr($0, 13)
+      if (index(spool, dir) != 1) next
+      print pid "\t" spool
+    }' || true)"
+
+  total=0; orphans=0; killed=""
+  while IFS="$(printf '\t')" read -r pid spool; do
+    if [ -z "${pid:-}" ]; then continue; fi
+    total=$((total + 1))
+    cur="$pid"
+    orphan=1
+    while :; do
+      row="$(ps_row "$snapshot" "$cur")"
+      if [ -z "$row" ]; then break; fi                # gone: nothing holds it
+      parent="${row%% *}"
+      if [ "$parent" -le 1 ]; then break; fi          # reached init: no launcher
+      pcmd="$(ps_row "$snapshot" "$parent")"
+      if [ -z "$pcmd" ]; then break; fi               # parent already reaped
+      pcmd="${pcmd#* }"
+      if ! is_monitor_chain_cmd "$pcmd"; then
+        orphan=0                                      # a live, foreign launcher
+        break
+      fi
+      cur="$parent"
+    done
+    if [ "$orphan" = 1 ]; then
+      orphans=$((orphans + 1))
+      echo "  orphan  pid $pid  ${spool##*/}"
+      killed="$killed $pid"
+    fi
+  done <<EOF
+$readers
+EOF
+
+  echo "parlay-monitor --reap: $total reader(s), $orphans orphaned, $((total - orphans)) with a live launcher"
+  if [ "$orphans" = 0 ]; then return 0; fi
+  if [ "$apply" != 1 ]; then
+    echo "parlay-monitor --reap: dry run — nothing killed. Re-run with --apply."
+    return 0
+  fi
+  for pid in $killed; do kill "$pid" 2>/dev/null || true; done
+  sleep 1
+  left=0
+  for pid in $killed; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+      left=$((left + 1))
+    fi
+  done
+  echo "parlay-monitor --reap: killed $orphans orphaned reader(s) ($left needed SIGKILL)"
+}
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ENSURE_UP="$HERE/../relay/deploy/ensure-up.sh"
+RELAY_LIB="$HERE/../relay/deploy/lib.sh"
+
+# --reap is a maintenance pass, not a stream: no agent, no relay, no enrollment.
+# It runs before any of the setup below so a host with no relay at all can still
+# be swept. Scope is the CANONICAL runtime dir (not the server-scoped one) so a
+# sweep covers every relay nested under it in one pass.
+if [ "$REAP" = 1 ]; then
+  if [ -r "$RELAY_LIB" ]; then
+    # shellcheck source=../relay/deploy/lib.sh
+    . "$RELAY_LIB"
+  fi
+  REAP_RUNTIME="${PARLAY_RELAY_RUNTIME:-}"
+  if [ -z "$REAP_RUNTIME" ] && command -v parlay_relay_runtime_dir >/dev/null 2>&1; then
+    REAP_RUNTIME="$(parlay_relay_runtime_dir)"
+  fi
+  if [ -z "$REAP_RUNTIME" ]; then
+    REAP_RUNTIME="${TMPDIR:-/tmp}/parlay"
+  fi
+  reap_readers "$APPLY" "${REAP_RUNTIME%/}"
+  exit 0
+fi
 
 [ -n "$AGENT" ] || { echo "parlay-monitor: --agent <id> is required" >&2; usage; }
 
@@ -93,10 +262,6 @@ done
 STREAMING=0
 on_setup_exit() {
   local code=$?
-  # A bare `[ … ] && rm` would make this whole statement the function's status
-  # under `set -e` and skip the warning below — the exact silence robots-dcag
-  # is about.
-  if [ -n "${CONSUMED:-}" ]; then rm -f "$CONSUMED"; fi
   [ "$code" = 0 ] && return 0
   [ "$STREAMING" = 1 ] && return 0
   echo "parlay-monitor: FAILED during setup (exit $code) — '$AGENT' is NOT streaming." >&2
@@ -111,10 +276,6 @@ if ! printf '%s' "$AGENT" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
   echo "parlay-monitor: --agent must be a kebab-slug (got: '$AGENT')" >&2
   exit 2
 fi
-
-HERE="$(cd "$(dirname "$0")" && pwd)"
-ENSURE_UP="$HERE/../relay/deploy/ensure-up.sh"
-RELAY_LIB="$HERE/../relay/deploy/lib.sh"
 
 # ── Resolve the runtime dir, SCOPED BY UPSTREAM SERVER (robots-buu8) ───────────
 # A relay is a per-runtime-dir singleton bound to ONE upstream server, so which
@@ -181,14 +342,7 @@ fi
 # respects PARLAY_RELAY_RUNTIME/SOCK via the same lib resolution, and honors
 # PARLAY_SERVER for the started relay.
 if [ -x "$ENSURE_UP" ]; then
-  ENSURE_RC=0
-  "$ENSURE_UP" || ENSURE_RC=$?
-  if [ "$ENSURE_RC" = 3 ]; then
-    # A relay IS up, bound to the wrong upstream server (robots-93xu). ensure-up
-    # already printed the mismatch and the repair; adding "install the relay"
-    # below would contradict it — a relay is precisely what is already running.
-    exit 1
-  elif [ "$ENSURE_RC" != 0 ]; then
+  if ! "$ENSURE_UP"; then
     echo "parlay-monitor: relay is not up and could not be started" >&2
     echo "parlay-monitor: install the relay (tools/relay/deploy/install.sh) or start it manually" >&2
     exit 1
@@ -263,26 +417,9 @@ if [ -n "${PARLAY_SERVER:-}" ]; then
     echo "parlay-monitor:   $RELAY_SERVER but PARLAY_SERVER is $WANT_SERVER." >&2
     echo "parlay-monitor: enrolling anyway would register this agent in the WRONG" >&2
     echo "parlay-monitor:   server's registry (robots-buu8)." >&2
-    # The advice has to fit the case, or it is a dead end exactly when it matters
-    # most (robots-93xu): the fleet-wide outage was a wrong-server relay squatting
-    # the CANONICAL dir, where neither override is set — so "unset them" named
-    # nothing to unset and pointed at no repair, on every agent on the box.
-    if [ -n "${PARLAY_RELAY_RUNTIME:-}" ] || [ -n "${PARLAY_RELAY_SOCK:-}" ]; then
-      echo "parlay-monitor: unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK to get an" >&2
-      echo "parlay-monitor:   automatically server-scoped relay, or point them at a" >&2
-      echo "parlay-monitor:   runtime dir whose relay serves $WANT_SERVER." >&2
-    else
-      # No overrides set, so this dir was chosen by the scoping rule itself: the
-      # canonical dir for the default server, or srv-<hash> otherwise. Either way
-      # the relay sitting in it is bound to the wrong server and only repointing
-      # (or removing) that relay fixes it — there is nothing to unset.
-      echo "parlay-monitor: PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK are not set, so this" >&2
-      echo "parlay-monitor:   runtime dir is the scoping rule's own choice for" >&2
-      echo "parlay-monitor:   $WANT_SERVER — the relay squatting it is what is wrong," >&2
-      echo "parlay-monitor:   and every agent on $WANT_SERVER is refused until it is" >&2
-      echo "parlay-monitor:   repointed. Repair the supervised relay with:" >&2
-      echo "parlay-monitor:   tools/relay/deploy/install.sh --server $WANT_SERVER" >&2
-    fi
+    echo "parlay-monitor: unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK to get an" >&2
+    echo "parlay-monitor:   automatically server-scoped relay, or point them at a" >&2
+    echo "parlay-monitor:   runtime dir whose relay serves $WANT_SERVER." >&2
     exit 1
   fi
 fi
@@ -319,162 +456,130 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 echo "parlay-monitor: streaming '$AGENT' from $SPOOL" >&2
-# Setup is over: past here, the stream is live and its death is a different,
-# separately-reported event (see stream_down below), not the silent
-# registered-but-deaf setup failure the trap warns about.
+# Setup is over: past here, an exit is the stream ending (usually the harness
+# killing us), not the silent registered-but-deaf failure the trap warns about.
 STREAMING=1
 
-# ── 2. Stream, SUPERVISED (robots-gv6t) ───────────────────────────────────────
-# The stream used to be terminal: `exec tail` (or tail|awk) ran until something
-# killed it, and whatever that something was took the agent's ONLY reply channel
-# with it. The death was silent in the worst possible direction — registration
-# and the "listening" announce had already succeeded, so the panel kept showing a
-# ready agent while nothing reached it. An agent that did not happen to read its
-# harness task-failure notification was unreachable for the rest of its session,
-# and the captain had no signal that a message went nowhere.
+# ── Evict any reader this channel already has (robots-3pvi) ──────────────────
+# Enrollment is the one moment we know authoritatively who the channel's reader
+# should be: us. Anything already tailing this spool is a previous session's
+# leftover, and leaving it alive means every directive sent here is ALSO
+# delivered to that dead session — the "multiple readers race the same channel"
+# half of the defect (shape.chan had 20).
+STALE_READERS="$(readers_of "$SPOOL" | tr '\n' ' ' || true)"
+if [ -n "$(printf '%s' "$STALE_READERS" | tr -d '[:space:]')" ]; then
+  echo "parlay-monitor: '$AGENT' already has reader(s) on $SPOOL:${STALE_READERS% }" >&2
+  echo "parlay-monitor:   evicting them — a channel gets exactly one reader, or a" >&2
+  echo "parlay-monitor:   stale session is woken by messages meant for this one." >&2
+  for _p in $STALE_READERS; do kill "$_p" 2>/dev/null || true; done
+  sleep 0.3
+  for _p in $(readers_of "$SPOOL"); do kill -9 "$_p" 2>/dev/null || true; done
+fi
+
+# 2. Stream. Flags:
+#      -n0  start at end-of-file — no replay of already-consumed spool lines
+#      -F   follow by name; re-open on truncate/rotate/recreate. This is the
+#           "channel re-open after relay restart" correctness requirement: if the
+#           relay is restarted and the spool is recreated, tail -F reattaches
+#           without the monitor needing to restart.
 #
-# Two things follow from that, and both are implemented here:
+# --notify-safe pipes tail through awk that caps each over-budget line and appends
+# a self-describing pointer (id survives — it sits in the first ~55 chars). fflush
+# after every line keeps the Monitor tool's per-line event contract intact. This
+# costs one extra awk process; only harness agents that opt in pay it.
 #
-#   1. A dead tail is RECOVERED, not fatal. tail is respawned in a loop instead
-#      of being the last thing this script ever does. Whatever killed it (a
-#      stray signal, an OOM reap, a bad fd) has to keep winning to keep the
-#      channel down, and the common case — one transient kill — self-heals.
-#
-#   2. Every stream event is announced ON STDOUT. A harness Monitor tool raises
-#      a notification per *stdout* line and never reads stderr, so a stderr-only
-#      notice is invisible to the very agent whose channel just dropped. Notices
-#      use a `MONITOR|<kind>|<text>` prefix, deliberately distinct from the
-#      `CHAT_MSG|` lines the relay spools, so a programmatic consumer of this
-#      stream can filter them out by prefix and a human/agent reading it can't
-#      miss them. They are also mirrored to stderr for the process log.
-#
-# Restarting from end-of-file would re-open the channel but silently swallow
-# everything the relay spooled during the gap, so each respawn resumes at the
-# byte offset the previous tail stopped at (`tail -c +N`) rather than `-n0`.
-# The first arm still starts at end-of-file — offset := current spool size —
-# which is exactly what `-n0` meant.
-#
-# --notify-safe pipes tail through awk that caps each over-budget line and
-# appends a self-describing pointer (the message id survives — it sits in the
-# first ~55 chars). fflush after every line keeps the Monitor tool's per-line
-# event contract intact. Only harness agents that opt in pay for the extra awk.
-#
-# Tunables (tests pin them; defaults are what production runs):
-#   PARLAY_MONITOR_MIN_UPTIME    seconds a tail must survive to count as healthy
-#                                and reset the thrash counter (default 2)
-#   PARLAY_MONITOR_MAX_RESTARTS  consecutive sub-MIN_UPTIME respawns tolerated
-#                                before giving up loudly (default 5)
-MIN_UPTIME="${PARLAY_MONITOR_MIN_UPTIME:-2}"
-MAX_RESTARTS="${PARLAY_MONITOR_MAX_RESTARTS:-5}"
-BUDGET="${PARLAY_NOTIFY_BUDGET:-400}"
+# WHY tail is no longer `exec`d (robots-3pvi): `exec` bought a ~1.2MB footprint by
+# deleting the only process that could ever clean tail up. This shell now stays as
+# a supervisor (~2MB more per agent, paid once) and does two things `exec` made
+# impossible: it `wait`s on the stream so a trapped signal is acted on immediately
+# (a signal arriving during a FOREGROUND command is deferred by bash until that
+# command finishes — which for `tail -F` is never), and it kills the reader on the
+# way out. Raw stdout completeness is unchanged: tail still writes straight to
+# this process's stdout.
+if [ "$NOTIFY_SAFE" = 1 ]; then
+  BUDGET="${PARLAY_NOTIFY_BUDGET:-400}"
+  tail -n0 -F "$SPOOL" | awk -v BUD="$BUDGET" '
+    {
+      if (length($0) > BUD) {
+        printf "%s ⟪+%d chars truncated for notification — run: parlay history 30 --full⟫\n", substr($0, 1, BUD), length($0) - BUD
+      } else {
+        print $0
+      }
+      fflush()
+    }' &
+else
+  tail -n0 -F "$SPOOL" &
+fi
+STREAM_PID=$!
 
-# notice <kind> <text> — the loud channel. stdout so the harness raises an event
-# for the agent; stderr so it also lands in the process log.
-notice() {
-  printf 'MONITOR|%s|%s\n' "$1" "$2"
-  echo "parlay-monitor: $1 — $2" >&2
-}
-
-# spool_bytes — current spool size, or 0 while the relay has yet to (re)create
-# it. `wc -c <file` rather than `stat`, whose flags differ between BSD and GNU.
-spool_bytes() {
-  local n=0
-  if [ -f "$SPOOL" ]; then
-    # Consume the status explicitly: under `set -e` a bare `n=$(…)` assignment
-    # would take the pipeline's status and abort the supervisor over a probe
-    # that is allowed to fail (robots-dcag).
-    n="$(wc -c <"$SPOOL" 2>/dev/null | tr -d '[:space:]')" || n=0
-  fi
-  case "$n" in
-    ''|*[!0-9]*) n=0 ;;
-  esac
-  printf '%s' "$n"
-}
-
-# CONSUMED holds the byte count the counting stage below reports for one tail
-# run. It has to be a file, not a variable: the counter is a pipeline stage, so
-# it runs in a subshell and cannot assign back into this one.
-# on_setup_exit removes it on the way out (the EXIT trap is already spoken for
-# by robots-dcag's setup guard); the signal traps cover a kill that skips EXIT.
-CONSUMED="$(mktemp "${TMPDIR:-/tmp}/parlay-monitor-consumed.XXXXXX")"
-trap 'rm -f "$CONSUMED"; exit 143' HUP INT TERM
-
-# run_tail <offset> — stream from byte <offset>+1 to end, following the file by
-# name so a relay restart that recreates the spool reattaches on its own.
-# Returns tail's (or the pipeline's) status; never aborts the script, so the
-# supervisor below decides what a non-zero status means.
-#
-# The first stage after tail counts the bytes it forwarded and writes the total
-# to $CONSUMED at EOF. That is the resume point — NOT the spool's size when the
-# supervisor gets around to looking, which would swallow anything the relay
-# appended between tail's death and that read. Counting runs under LC_ALL=C so
-# `length()` is bytes, matching `tail -c`; the truncation stage deliberately
-# does not, since its budget is about how much text a notification can carry.
-# (Byte arithmetic assumes the spool only ever grows. `tail -F` would reattach
-# to a truncated/rotated spool from its start, and the offset would then be
-# wrong — the relay never rotates spools, and a wrong offset here degrades to
-# replayed or skipped lines, not a dead channel.)
-run_tail() {
-  local from="$1" rc=0
-  : >"$CONSUMED"
-  if [ "$NOTIFY_SAFE" = 1 ]; then
-    # No `exec` even in the single-tail case now: this shell has to outlive the
-    # stream to restart it.
-    tail -c "+$((from + 1))" -F "$SPOOL" \
-      | LC_ALL=C awk -v CF="$CONSUMED" '{ n += length($0) + 1; print; fflush() } END { printf "%d", n > CF }' \
-      | awk -v BUD="$BUDGET" '
-      {
-        if (length($0) > BUD) {
-          printf "%s ⟪+%d chars truncated for notification — run: parlay history 30 --full⟫\n", substr($0, 1, BUD), length($0) - BUD
-        } else {
-          print $0
-        }
-        fflush()
-      }' || rc=$?
-  else
-    tail -c "+$((from + 1))" -F "$SPOOL" \
-      | LC_ALL=C awk -v CF="$CONSUMED" '{ n += length($0) + 1; print; fflush() } END { printf "%d", n > CF }' || rc=$?
-  fi
-  return "$rc"
-}
-
-# consumed_bytes — what the last run_tail forwarded, or 0 if the counter never
-# got to write (killed outright rather than seeing EOF). Same explicit-status
-# discipline as spool_bytes.
-consumed_bytes() {
-  local n=0
-  n="$(tr -d '[:space:]' <"$CONSUMED" 2>/dev/null)" || n=0
-  case "$n" in
-    ''|*[!0-9]*) n=0 ;;
-  esac
-  printf '%s' "$n"
-}
-
-OFFSET="$(spool_bytes)"
-THRASH=0
-while :; do
-  STARTED_AT=$SECONDS
-  RC=0
-  run_tail "$OFFSET" || RC=$?
-  UPTIME=$((SECONDS - STARTED_AT))
-
-  # Resume exactly where delivery stopped. Everything before this point reached
-  # stdout, so re-reading it would duplicate messages the agent already acted
-  # on; everything after it is the gap, and skipping it is the silent loss this
-  # whole loop exists to prevent.
-  OFFSET=$((OFFSET + $(consumed_bytes)))
-
-  if [ "$UPTIME" -lt "$MIN_UPTIME" ]; then
-    THRASH=$((THRASH + 1))
-  else
-    THRASH=1
-  fi
-
-  if [ "$THRASH" -gt "$MAX_RESTARTS" ]; then
-    notice "down" "stream for '$AGENT' died ${THRASH}x in a row (last exit $RC) — GIVING UP. This agent is registered but DEAF: nothing sent to it will arrive. Re-arm with: parlay listen --agent $AGENT"
-    exit 1
-  fi
-
-  notice "restarted" "stream for '$AGENT' ended after ${UPTIME}s (exit $RC) — resuming from byte $OFFSET (attempt $THRASH/$MAX_RESTARTS)"
-  sleep 1
+# The reader's own pid. For a backgrounded pipeline `$!` is the LAST process
+# (awk), and killing awk only leaves tail writing into a closed pipe — it dies at
+# its next write, which on a quiet channel is never. So address tail directly.
+# Scoped to this shell's own children so a reader that survived eviction can
+# never be mistaken for ours — the watchdog and the teardown both act on this
+# pid alone.
+READER_PID=""
+for _ in 1 2 3 4 5; do
+  READER_PID="$(readers_of "$SPOOL" "$$" | head -1 || true)"
+  if [ -n "$READER_PID" ]; then break; fi
+  sleep 0.2
 done
+if [ -z "$READER_PID" ]; then
+  echo "parlay-monitor: could not identify the reader process for '$AGENT' — it will" >&2
+  echo "parlay-monitor:   still stream, but cannot be reaped if this session dies." >&2
+fi
+
+stream_teardown() {
+  if [ -n "${WATCHDOG_PID:-}" ]; then kill "$WATCHDOG_PID" 2>/dev/null || true; fi
+  if [ -n "${READER_PID:-}" ]; then kill "$READER_PID" 2>/dev/null || true; fi
+  if [ -n "${STREAM_PID:-}" ]; then kill "$STREAM_PID" 2>/dev/null || true; fi
+  return 0
+}
+trap 'stream_teardown' EXIT
+trap 'stream_teardown; exit 143' TERM INT HUP
+
+# ── Watchdog: the reader dies with its launcher ──────────────────────────────
+# Two failure modes, one loop, and it must survive both of the processes above
+# it because either can be killed without the other:
+#   * this supervisor is gone  → nothing is left to reap the reader at all
+#   * our launcher is gone     → we were reparented; the session that wanted
+#                                this stream no longer exists
+# It only ever kills the ONE pid it was told about, so it can never touch a
+# newer reader that enrolled on this channel after us. Opt out with
+# PARLAY_MONITOR_NO_ORPHAN_EXIT=1 (deliberate daemonization).
+if [ -n "$READER_PID" ] && [ "${PARLAY_MONITOR_NO_ORPHAN_EXIT:-0}" != 1 ]; then
+  (
+    # Own traps only: an inherited EXIT trap here would have this subshell run
+    # the supervisor's teardown on its own way out.
+    trap - EXIT TERM INT HUP
+    sup=$$ ; reader="$READER_PID" ; launcher="$PPID"
+    while :; do
+      sleep "$WATCH_INTERVAL"
+      kill -0 "$reader" 2>/dev/null || exit 0
+      why=""
+      if ! kill -0 "$sup" 2>/dev/null; then
+        why="supervisor (pid $sup) exited"
+      else
+        now="$(ps -o ppid= -p "$sup" 2>/dev/null | tr -d '[:space:]' || true)"
+        if [ -n "$now" ] && [ "$now" != "$launcher" ]; then
+          why="launcher (pid $launcher) is gone — reparented to $now"
+        fi
+      fi
+      if [ -n "$why" ]; then
+        echo "parlay-monitor: $why; stopping the reader for '$AGENT' (robots-3pvi)" >&2
+        kill "$reader" 2>/dev/null || true
+        sleep 1
+        kill -9 "$reader" 2>/dev/null || true
+        exit 0
+      fi
+    done
+  ) &
+  WATCHDOG_PID=$!
+fi
+
+# `wait`, not a foreground pipeline: this is the one construct bash interrupts to
+# run a trap, so TERM/INT/HUP tear the reader down instead of queueing behind a
+# `tail -F` that never returns.
+STREAM_CODE=0
+wait "$STREAM_PID" || STREAM_CODE=$?
+exit "$STREAM_CODE"

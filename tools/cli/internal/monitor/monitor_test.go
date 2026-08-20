@@ -278,3 +278,101 @@ func TestPollOnceNotifySafeLeavesShortLinesAlone(t *testing.T) {
 		t.Errorf("output = %q, want %q", out.String(), want)
 	}
 }
+
+// ── orphan supervision (robots-3pvi) ─────────────────────────────────────────
+// The monitor chain used to outlive whatever launched it: a harness kills only
+// the shell it spawned, and `parlay-cli` plus the `tail -F` under it were
+// reparented to init and ran on — 168 readers were live on the captain's box,
+// 139 with no launcher left anywhere in their ancestry.
+
+func TestOrphanedDetectsReparenting(t *testing.T) {
+	if !orphaned(4242, 1) {
+		t.Error("reparenting to init must read as orphaned")
+	}
+	if !orphaned(4242, 501) {
+		t.Error("any changed parent means the launcher exited")
+	}
+	if orphaned(4242, 4242) {
+		t.Error("an unchanged parent must never look orphaned")
+	}
+}
+
+func TestOrphanedTreatsUnknownParentAsAlive(t *testing.T) {
+	// A failed read must never be able to kill a healthy monitor: unknown is
+	// "could not tell", not "the launcher is gone".
+	if orphaned(4242, 0) {
+		t.Error("a 0 ppid is unknown, not orphaned")
+	}
+}
+
+func TestWatchIntervalDefaultsAndHonorsEnv(t *testing.T) {
+	t.Setenv("PARLAY_MONITOR_WATCH_INTERVAL", "")
+	if got := watchInterval(); got != 15*time.Second {
+		t.Errorf("watchInterval() = %v, want 15s", got)
+	}
+	t.Setenv("PARLAY_MONITOR_WATCH_INTERVAL", "3")
+	if got := watchInterval(); got != 3*time.Second {
+		t.Errorf("watchInterval() = %v, want 3s", got)
+	}
+	// Junk and non-positive values fall back rather than busy-looping or
+	// disabling the watchdog outright.
+	for _, bad := range []string{"nonsense", "0", "-5"} {
+		t.Setenv("PARLAY_MONITOR_WATCH_INTERVAL", bad)
+		if got := watchInterval(); got != 15*time.Second {
+			t.Errorf("watchInterval() with %q = %v, want the 15s default", bad, got)
+		}
+	}
+}
+
+// stubScript puts a recording parlay-monitor.sh on PATH and returns the path of
+// the file it writes its args to.
+func stubScript(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	argLog := filepath.Join(dir, "args.txt")
+	stub := filepath.Join(dir, "parlay-monitor.sh")
+	body := "#!/bin/sh\necho \"$@\" > " + argLog + "\nexit 0\n"
+	if err := os.WriteFile(stub, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argLog
+}
+
+func TestCmdMonitorReapForwardsToScriptWithoutAnAgent(t *testing.T) {
+	argLog := stubScript(t)
+	trapExit(t)
+
+	code, ok := testsupport.Capture(func() {
+		CmdMonitor([]string{"--reap"})
+	})
+	if !ok {
+		t.Fatal("--reap should run the script and exit, not return")
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	got, err := os.ReadFile(argLog)
+	if err != nil {
+		t.Fatalf("script was never run: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "--reap" {
+		t.Errorf("script args = %q, want %q", strings.TrimSpace(string(got)), "--reap")
+	}
+}
+
+func TestCmdMonitorReapApplyIsForwarded(t *testing.T) {
+	argLog := stubScript(t)
+	trapExit(t)
+
+	testsupport.Capture(func() {
+		CmdMonitor([]string{"--reap", "--apply"})
+	})
+	got, err := os.ReadFile(argLog)
+	if err != nil {
+		t.Fatalf("script was never run: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "--reap --apply" {
+		t.Errorf("script args = %q, want %q", strings.TrimSpace(string(got)), "--reap --apply")
+	}
+}

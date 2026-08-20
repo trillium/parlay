@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -43,9 +44,20 @@ func CmdMonitor(argv []string) {
 	if help.Wanted("monitor", argv) {
 		return
 	}
-	res := args.Parse("monitor", argv, []string{"--legacy-poll", "--notify-safe"}, []string{"--agent"})
+	res := args.Parse("monitor", argv, []string{"--legacy-poll", "--notify-safe", "--reap", "--apply"}, []string{"--agent"})
 	agent, _ := res.String("--agent")
 	notifySafe := res.Bool("--notify-safe")
+
+	// --reap is a maintenance pass over the whole host, not a stream: it needs
+	// no agent, no relay, and no enrollment. Hand it straight to the script.
+	if res.Bool("--reap") {
+		reapArgs := []string{"--reap"}
+		if res.Bool("--apply") {
+			reapArgs = append(reapArgs, "--apply")
+		}
+		runScript(reapArgs, false)
+		return
+	}
 
 	if !res.Bool("--legacy-poll") {
 		if agent == "" {
@@ -59,177 +71,129 @@ func CmdMonitor(argv []string) {
 	runLegacyPoll(config.ServerURL(), agent, notifySafe)
 }
 
-// Supervision policy for the monitor script (robots-gv6t). A script run that
-// survives monitorMinUptime is a healthy stream that later died; anything
-// shorter is thrash, and monitorMaxRestarts consecutive thrashes end the
-// supervision rather than spinning forever.
-const (
-	monitorMinUptime     = 2 * time.Second
-	monitorMaxRestarts   = 5
-	monitorRestartDelay  = time.Second
-	monitorRelayReplyURL = "/api/chat/reply"
-)
-
 // runRelayMonitor runs tools/monitor/parlay-monitor.sh under bash with stdio
 // inherited from this process — a harness Monitor tool sees CHAT_MSG lines on
-// stdout exactly as before — and SUPERVISES it.
-//
-// It used to be a single `cmd.Run()` followed by `os.Exit(child's code)`, a
-// faithful port of monitor.ts's `Bun.spawn` + `process.exit(code)`. That made
-// the agent's only reply channel exactly as durable as one bash process:
-// whatever killed it — a stray signal, a reaped child — ended the channel, and
-// because `parlay listen` registers and announces BEFORE getting here, the
-// panel went on showing a ready agent that could no longer be reached
-// (robots-gv6t). The exit code was swallowed into a harness task-failure
-// notification an agent may never read, and `exec.ExitError.ExitCode()`
-// reports -1 for a signalled child, so even that notification could not name
-// what happened.
-//
-// Now: an unexplained death is respawned, every transition is reported on
-// stdout (the only stream the harness turns into an agent-visible event) as
-// well as stderr, a signalled death is named, and a give-up posts the outage
-// to the agent's own channel so the announce that said "listening" is
-// retracted where the captain can see it.
-//
-// Every terminal path here leaves through httpc.Exit rather than os.Exit: it
-// is the CLI's one exit hook, so it is where commandreport's
-// end-of-invocation report is wired (and where testsupport.RecordingExit
-// substitutes in tests). A bare os.Exit would leave `parlay monitor` — one of
-// the longest-lived verbs there is — permanently "running" in the
-// live-command registry until the server's reaper noticed, instead of ending
-// cleanly the moment the relay script exits.
+// stdout exactly as before — then exits this process with the child's exit
+// code, mirroring monitor.ts's `Bun.spawn` + `process.exit(code)`.
 func runRelayMonitor(agent string, notifySafe bool) {
+	scriptArgs := []string{"--agent", agent}
+	if notifySafe {
+		scriptArgs = append(scriptArgs, "--notify-safe")
+	}
+	runScript(scriptArgs, true)
+}
+
+// runScript runs parlay-monitor.sh with the given args and exits with its code.
+//
+// supervise ties the child's lifetime to this process's own: the script and its
+// `tail` land in their own process group, a signal to this process is forwarded
+// to that whole group, and if THIS process is orphaned the group is torn down
+// (robots-3pvi). Without it, a harness that kills only the shell it spawned
+// leaves `parlay-cli` running as an init child with a live `tail` under it —
+// 73 of the 168 stranded readers found on the captain's box were rooted at an
+// orphaned parlay-cli exactly like that, and the script's own watchdog cannot
+// see it because from down there its launcher is still alive.
+func runScript(scriptArgs []string, supervise bool) {
 	script, err := scriptPath()
 	if err != nil {
 		httpc.Die(fmt.Sprintf("parlay monitor: %v", err), config.ExitRuntime)
 		return
 	}
 
-	scriptArgs := []string{script, "--agent", agent}
-	if notifySafe {
-		scriptArgs = append(scriptArgs, "--notify-safe")
+	cmd := exec.Command("bash", append([]string{script}, scriptArgs...)...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = append(os.Environ(), "PARLAY_SERVER="+config.ServerURL())
+	if supervise {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 
-	consecutiveFast := 0
-	for {
-		cmd := exec.Command("bash", scriptArgs...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		cmd.Env = append(os.Environ(), "PARLAY_SERVER="+config.ServerURL())
+	if startErr := cmd.Start(); startErr != nil {
+		httpc.Die(fmt.Sprintf("parlay monitor: failed to run %s — %v", script, startErr), config.ExitRuntime)
+		return
+	}
+	if supervise {
+		defer superviseChild(cmd.Process.Pid)()
+	}
 
-		start := now()
-		runErr := cmd.Run()
-		uptime := now().Sub(start)
-
-		if runErr != nil && !errors.As(runErr, new(*exec.ExitError)) {
-			// Could not spawn bash at all — nothing to supervise, and
-			// retrying would just re-fail. Die loud, as before.
-			httpc.Die(fmt.Sprintf("parlay monitor: failed to run %s — %v", script, runErr), config.ExitRuntime)
+	// httpc.Exit, not os.Exit: same process-ending behavior in production, but
+	// injectable, so a test can assert this path without tearing down `go test`.
+	if runErr := cmd.Wait(); runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			httpc.Exit(exitErr.ExitCode())
 			return
 		}
+		httpc.Die(fmt.Sprintf("parlay monitor: failed to run %s — %v", script, runErr), config.ExitRuntime)
+		return
+	}
+	httpc.Exit(0)
+}
 
-		code, signal := classifyRun(runErr)
-		if !shouldRestartMonitor(code) {
-			// The script refused on purpose and already said why (bad
-			// usage, unreachable relay, or its own supervised give-up).
-			// It will refuse identically next time, so this is terminal.
-			announceStreamDown(agent, describeRun(code, signal))
-			httpc.Exit(code)
-			return
+// superviseChild watches this process's parent and forwards signals to the
+// child's process group. It returns a stop func for the caller to defer.
+//
+// Setpgid put the child in its own group, so a Ctrl-C that used to reach the
+// whole foreground group now reaches only this process — forwarding is what
+// keeps that behavior, and it is also what makes ONE kill tear down bash, tail,
+// and awk together.
+func superviseChild(pgid int) (stop func()) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	done := make(chan struct{})
+
+	go func() {
+		origPPID := os.Getppid()
+		ticker := time.NewTicker(watchInterval())
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-sigs:
+				killGroup(pgid, syscall.SIGTERM)
+				return
+			case <-ticker.C:
+				if os.Getenv("PARLAY_MONITOR_NO_ORPHAN_EXIT") == "1" {
+					continue
+				}
+				if nowPPID := os.Getppid(); orphaned(origPPID, nowPPID) {
+					fmt.Fprintf(os.Stderr,
+						"parlay monitor: launcher (pid %d) is gone — reparented to %d; stopping the monitor (robots-3pvi)\n",
+						origPPID, nowPPID)
+					killGroup(pgid, syscall.SIGTERM)
+					return
+				}
+			}
 		}
+	}()
 
-		if uptime < monitorMinUptime {
-			consecutiveFast++
-		} else {
-			consecutiveFast = 1
+	return func() { close(done); signal.Stop(sigs) }
+}
+
+// orphaned reports whether this process was reparented — i.e. the process that
+// launched it has exited. A pid of 0 from Getppid is treated as "unknown", not
+// as orphaning, so a bad read can never kill a healthy monitor.
+func orphaned(origPPID, nowPPID int) bool {
+	if nowPPID == 0 {
+		return false
+	}
+	return nowPPID != origPPID
+}
+
+// killGroup signals the child's whole process group (bash + tail + awk).
+func killGroup(pgid int, sig syscall.Signal) {
+	_ = syscall.Kill(-pgid, sig)
+}
+
+// watchInterval is the orphan-check period, shared with parlay-monitor.sh's own
+// watchdog via PARLAY_MONITOR_WATCH_INTERVAL (seconds, default 15).
+func watchInterval() time.Duration {
+	if v := os.Getenv("PARLAY_MONITOR_WATCH_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
 		}
-		if consecutiveFast > monitorMaxRestarts {
-			emitMonitorNotice("down", fmt.Sprintf(
-				"monitor for '%s' died %d times in a row (%s) — GIVING UP. This agent is registered but DEAF: nothing sent to it will arrive. Re-arm with: parlay listen --agent %s",
-				agent, consecutiveFast, describeRun(code, signal), agent))
-			announceStreamDown(agent, describeRun(code, signal))
-			httpc.Exit(config.ExitRuntime)
-			return
-		}
-
-		emitMonitorNotice("respawned", fmt.Sprintf(
-			"monitor for '%s' ended after %s (%s) — restarting (attempt %d/%d)",
-			agent, uptime.Round(time.Second), describeRun(code, signal), consecutiveFast, monitorMaxRestarts))
-		sleep(monitorRestartDelay)
 	}
-}
-
-// now and sleep are indirections so the supervision loop is testable without
-// real elapsed time.
-var (
-	now   = time.Now
-	sleep = time.Sleep
-)
-
-// classifyRun turns cmd.Run()'s result into an exit status plus, when the
-// child was killed rather than returning, the signal that killed it.
-// exec.ExitError.ExitCode() answers -1 for a signalled child and drops the
-// signal on the floor, which is precisely the information the silent-death
-// report was missing.
-func classifyRun(runErr error) (code int, signal syscall.Signal) {
-	if runErr == nil {
-		return 0, 0
-	}
-	var exitErr *exec.ExitError
-	if !errors.As(runErr, &exitErr) {
-		return config.ExitRuntime, 0
-	}
-	if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-		return exitErr.ExitCode(), ws.Signal()
-	}
-	return exitErr.ExitCode(), 0
-}
-
-// describeRun renders classifyRun's answer for a human.
-func describeRun(code int, signal syscall.Signal) string {
-	if signal != 0 {
-		// Name the signal AND the shell-convention status it surfaces as, so
-		// a bare "exit 144" in a harness notification is greppable back to
-		// this line.
-		return fmt.Sprintf("killed by %s, reported as exit %d", signal, 128+int(signal))
-	}
-	return fmt.Sprintf("exit %d", code)
-}
-
-// shouldRestartMonitor decides whether a finished script run is worth
-// respawning. The script's two deliberate refusals — EXIT_USAGE for a bad
-// invocation, EXIT_RUNTIME for an unreachable relay or its own give-up — are
-// self-explained and reproducible, so retrying only spams. Everything else
-// (a signal, a status nothing in the script produces) is the unexplained
-// death this supervision exists for.
-func shouldRestartMonitor(code int) bool {
-	return code != config.ExitUsage && code != config.ExitRuntime
-}
-
-// emitMonitorNotice writes a stream-lifecycle line to BOTH stdout and stderr.
-// stdout matters: a harness Monitor tool raises a notification per stdout line
-// and never reads stderr, so a stderr-only warning is invisible to the very
-// agent whose channel just dropped. The MONITOR| prefix is deliberately
-// distinct from the relay's CHAT_MSG| lines so programmatic consumers can
-// filter it — see parlay-monitor.sh's own notice().
-func emitMonitorNotice(kind, text string) {
-	_, _ = fmt.Fprintf(os.Stdout, "MONITOR|%s|%s\n", kind, text)
-	_, _ = fmt.Fprintf(os.Stderr, "parlay monitor: %s — %s\n", kind, text)
-}
-
-// announceStreamDown retracts `parlay listen`'s "listening — monitor armed"
-// announcement on the agent's own channel. Best-effort by construction: the
-// stream is already dead and a server that cannot be reached must not turn
-// that into a second failure.
-func announceStreamDown(agent, cause string) {
-	ok, reason := httpc.TryPostJSON(monitorRelayReplyURL, map[string]string{
-		"agent": agent,
-		"text": fmt.Sprintf(
-			"monitor DOWN (%s) — this channel is no longer being read. Messages sent now will not be delivered. Re-arm with: parlay listen --agent %s",
-			cause, agent),
-	}, httpc.DefaultTimeout)
-	if !ok {
-		_, _ = fmt.Fprintf(os.Stderr, "parlay monitor: could not post the stream-down notice for '%s' — %s\n", agent, reason)
-	}
+	return 15 * time.Second
 }
 
 // scriptPath resolves tools/monitor/parlay-monitor.sh. It prefers the name
@@ -296,15 +260,11 @@ type pollMessage struct {
 // !res.ok (non-2xx -> sleep 2s) branches exactly, plus the
 // `msg.id && msg.role && msg.text != null` guard before emitting a line.
 func pollOnce(server, channelParam string, lastID *string, notifySafe bool, notifyBudget int, out io.Writer) time.Duration {
-	// UnboundedClient, not Client: the server holds a poll open for 25s
-	// before answering with its {"timeout":true} marker, so the shared
-	// client's DefaultTimeout would sever every poll in flight. This loop is
-	// the one place a total-timeout-free client is correct (robots-gxlb).
-	resp, err := httpc.UnboundedClient.Get(fmt.Sprintf("%s/api/chat/poll?after=%s%s", server, *lastID, channelParam))
+	resp, err := httpc.Client.Get(fmt.Sprintf("%s/api/chat/poll?after=%s%s", server, *lastID, channelParam))
 	if err != nil {
 		return 3 * time.Second
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return 2 * time.Second
@@ -331,7 +291,7 @@ func pollOnce(server, channelParam string, lastID *string, notifySafe bool, noti
 		line = fmt.Sprintf("%s ⟪+%d chars truncated for notification — run: parlay history 30 --full⟫",
 			line[:notifyBudget], len(line)-notifyBudget)
 	}
-	_, _ = fmt.Fprintln(out, line)
+	fmt.Fprintln(out, line)
 	return 0
 }
 

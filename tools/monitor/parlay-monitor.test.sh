@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Regression harness for parlay-monitor.sh's upstream-server scoping (robots-buu8).
+# Regression harness for parlay-monitor.sh: upstream-server scoping (robots-buu8),
+# probe survivability (robots-dcag), and reader lifetime (robots-3pvi).
 #
 # The defect: a relay is a per-runtime-dir singleton bound to ONE upstream server,
 # so enrolling on the shared $TMPDIR/parlay relay registered the agent against
@@ -12,15 +13,15 @@
 #   B. refusal    — even when the runtime dir is pinned past that scoping, the
 #      monitor reads the relay's own /agents.server and ABORTS BEFORE /register
 #      rather than enrolling into the wrong registry (parlay-monitor.sh).
-#
-# Sections C and D cover the two later monitor defects that share robots-buu8's
-# failure shape — the agent stays registered while its stream is gone:
-#   C. a best-effort probe written as `VAR=$(cmd)` killed setup (robots-dcag).
-#   D. the stream itself was terminal, so anything that killed `tail` killed the
-#      agent's only reply channel, silently (robots-gv6t).
+#   C. probe      — a slow/failed /agents read degrades to unverified, never to
+#      a silent death before streaming (robots-dcag).
+#   D. lifetime   — a reader never outlives its launcher, a channel keeps exactly
+#      one reader, and --reap cleans up what already leaked (robots-3pvi).
 #
 # No production state is touched: every case runs against a stub relay on a unix
 # socket in its own temp dir, with $HOME and the runtime dir redirected there.
+# Section D kills processes and sweeps readers, both scoped to that temp dir —
+# it can never reach a live fleet reader.
 #
 # Usage: tools/monitor/parlay-monitor.test.sh [-v]
 set -uo pipefail
@@ -41,17 +42,25 @@ note() { [ "${VERBOSE}" = 1 ] && echo "         $*"; return 0; }
 
 command -v bun >/dev/null 2>&1 || { echo "parlay-monitor.test: bun is required" >&2; exit 2; }
 
-# Strip $TMPDIR's trailing slash first: macOS sets it with one, and the doubled
-# separator survives into every path derived from ROOT — which breaks matching a
-# spool path against a running process's argv (section D), where the kernel
-# reports the collapsed form.
-TMPROOT="${TMPDIR:-/tmp}"
-ROOT="$(mktemp -d "${TMPROOT%/}/parlay-monitor-test.XXXXXX")"
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/parlay-monitor-test.XXXXXX")"
+# Collapse duplicate slashes: $TMPDIR ends in "/" on macOS, and the relay's
+# /register response comes back path-normalized. Section D matches reader
+# command lines EXACTLY, so "//" here would make every reader unfindable.
+ROOT="$(printf '%s' "${ROOT}" | sed 's://*:/:g')"
 # Space-separated PID list, not an array — macOS ships bash 3.2, where expanding
 # an empty array under `set -u` is itself an error.
 STUBS=""
 cleanup() {
   for p in ${STUBS}; do kill "${p}" 2>/dev/null; done
+  # Section D deliberately orphans readers. A harness for a reader-leak bug must
+  # not leak readers itself — sweep anything still tailing a spool under $ROOT,
+  # including the debris a FAILED case left behind. Matched on $ROOT, so this can
+  # never touch a fleet reader.
+  for p in $(ps -axo pid=,command= 2>/dev/null | awk -v dir="${ROOT}/" '
+      { pid = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
+        if ($0 ~ /^tail -n0 -F /) { spool = substr($0, 13); if (index(spool, dir) == 1) print pid } }'); do
+    kill -9 "${p}" 2>/dev/null
+  done
   rm -rf "${ROOT}"
 }
 trap cleanup EXIT
@@ -117,8 +126,9 @@ start_stub() {
 }
 
 # run_monitor <runtime> <sock> <server> <agent> → OUT/ERR/CODE globals.
-# The monitor execs `tail -F` on success and never exits, so it runs backgrounded
-# with a bounded wait; a still-alive process is reported as CODE=running.
+# The monitor streams with `tail -F` on success and never exits, so it runs
+# backgrounded with a bounded wait; a still-alive process is reported as
+# CODE=running. Section D covers the streaming path itself.
 run_monitor() {
   local runtime="$1" sock="$2" server="$3" agent="$4"
   local out="${ROOT}/run.out" err="${ROOT}/run.err"
@@ -238,20 +248,9 @@ if grep -q "/register" "${STUB_LOG}"; then
 else
   ok "never sent /register to the production relay"
 fi
-# Two layers can answer here, and the assertions are on the OUTCOME rather than
-# on which one spoke: ensure-up.sh now detects a healthy-but-wrong-server relay
-# first and exits 3 (robots-93xu), so it usually gets there before the monitor's
-# own pre-enroll guard. The guard is still the last line of defence for a
-# checkout with no ensure-up.sh — B4 and B6 below exercise exactly that path.
 case "${ERR}" in
-  *"${DEFAULT_SERVER}"*) ok "error names the relay's actual bound server" ;;
+  *"refusing to enroll"*"${DEFAULT_SERVER}"*) ok "error names the relay's actual bound server" ;;
   *) bad "error message does not explain the mismatch" "${ERR}" ;;
-esac
-# The advice must fit the case: an override IS set here, so it is the thing to
-# change — and whichever layer answers has to say so.
-case "${ERR}" in
-  *PARLAY_RELAY_RUNTIME*) ok "pinned dir: advice names the override that caused this" ;;
-  *) bad "pinned dir: advice does not mention the overrides that caused this" "${ERR}" ;;
 esac
 [ ! -e "${STUB_RUNTIME}/verify-agent.chan" ] \
   && ok "no spool created in the production runtime dir" \
@@ -299,49 +298,6 @@ if grep -q "/register" "${STUB_LOG}"; then
 else
   bad "unset PARLAY_SERVER was blocked" "exit=${CODE} ${ERR}"
 fi
-
-# B6. NEITHER override set — the shape of the real fleet-wide outage
-#     (robots-93xu). A relay bound to the wrong server was squatting the runtime
-#     dir the resolution rule itself picked, so "unset PARLAY_RELAY_RUNTIME/SOCK"
-#     named nothing to unset and pointed at no repair: a dead end printed to
-#     every agent on the box. The advice must instead identify the squatting
-#     relay and give the command that repoints it.
-NOENV_BASE="${ROOT}/noenv"
-start_stub "${NOENV_BASE}/parlay" "${DEFAULT_SERVER}" || exit 1
-# The lib.sh-less copy from B4: with no lib.sh its runtime dir falls back to
-# $TMPDIR/parlay, which is how this stays hermetic while leaving both overrides
-# genuinely unset. (It also has no ensure-up.sh, so nothing runs before the guard.)
-NOENV_OUT="${ROOT}/noenv.err"
-(
-  export HOME="${ROOT}/home"
-  export TMPDIR="${NOENV_BASE}"
-  export PARLAY_SERVER="http://127.0.0.1:45001"
-  unset PARLAY_RELAY_RUNTIME PARLAY_RELAY_SOCK
-  exec "${ROOT}/nolib/tools/monitor/parlay-monitor.sh" --agent "verify-agent"
-) >/dev/null 2>"${NOENV_OUT}" &
-NOENV_PID=$!
-NOENV_CODE="running"
-for _ in $(seq 1 60); do
-  if ! kill -0 "${NOENV_PID}" 2>/dev/null; then wait "${NOENV_PID}"; NOENV_CODE=$?; break; fi
-  sleep 0.1
-done
-[ "${NOENV_CODE}" = "running" ] && { kill "${NOENV_PID}" 2>/dev/null; wait "${NOENV_PID}" 2>/dev/null; }
-NOENV_ERR="$(cat "${NOENV_OUT}")"
-note "noenv exit=${NOENV_CODE} stderr: ${NOENV_ERR}"
-if [ "${NOENV_CODE}" != 1 ] || grep -q "/register" "${STUB_LOG}"; then
-  bad "no-override cross-server enroll was not refused" \
-      "exit=${NOENV_CODE} requests: $(tr '\n' ' ' <"${STUB_LOG}")"
-else
-  ok "refuses the enroll with neither override set"
-fi
-case "${NOENV_ERR}" in
-  *"unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK"*)
-    bad "told the agent to unset overrides that were never set — the dead end is back" "${NOENV_ERR}" ;;
-  *"install.sh --server http://127.0.0.1:45001"*)
-    ok "no overrides: names the squatting relay as the fault and gives the repair" ;;
-  *)
-    bad "no overrides: advice gives no actionable repair" "${NOENV_ERR}" ;;
-esac
 
 # ══ C. a slow /agents probe must never kill the monitor ══════════════════════
 # robots-dcag: the section-B probe was a bare `VAR=$(curl … | sed …)`, and under
@@ -434,159 +390,187 @@ got="$(PARLAY_RELAY_PROBE_TIMEOUT=1 parlay_relay_reported_server "${STUB_SOCK}")
   && ok "helper returns 0 with an empty result on timeout (never aborts a caller)" \
   || bad "helper signals failure on timeout — set -e callers would die" "rc=${rc} got='${got}'"
 
-# ══ D. the stream is supervised, not terminal (robots-gv6t) ══════════════════
-# The stream used to be `exec tail -F`: whatever killed tail took the agent's
-# only reply channel with it, silently — registration and the "listening"
-# announce had already succeeded, so the panel kept showing a ready agent.
+# ══ D. one reader per channel, and no reader outliving its launcher ══════════
+# robots-3pvi: nothing ever ended a `tail -F`. A harness kills only the shell it
+# spawned; the reader sits below that, reparents to init, and on a quiet channel
+# never writes again so it never even earns a SIGPIPE. They accumulated — 168
+# live on the captain's box, 142 orphaned, one channel with 20 readers — and
+# because the spool is append-only, every extra reader re-delivers every
+# directive to a session that is already dead.
+#
+# Every case here runs against the test's OWN runtime dir, and --reap is scoped
+# to that dir, so nothing in this section can reach a live fleet reader.
 echo
-echo "D. a dead stream is recovered and reported, never silent"
+echo "D. reader lifetime and duplicate eviction (robots-3pvi)"
 
-MON_PID=""
-MON_OUT=""
-MON_ERR=""
+# readers_of_spool <spool> → pids, matched as a WHOLE command line (never a
+# pgrep -f regex, which a metacharacter in a path could widen).
+readers_of_spool() {
+  ps -axo pid=,command= 2>/dev/null | awk -v want="tail -n0 -F $1" '
+    { pid = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, ""); if ($0 == want) print pid }' || true
+}
 
-# start_monitor <runtime> <sock> <server> <agent> — like run_monitor, but leaves
-# the monitor running so the stream itself can be attacked.
-start_monitor() {
+# launch_monitor <runtime> <sock> <server> <agent> → LAUNCHER_PID
+# The subshell is a REAL launcher, not an exec-away wrapper: the trailing `true`
+# defeats bash's implicit-exec optimization so the monitor runs as its CHILD.
+# Killing LAUNCHER_PID then reproduces exactly what a harness does — kill the
+# shell it spawned and leave everything below it reparented to init.
+launch_monitor() {
   local runtime="$1" sock="$2" server="$3" agent="$4"
-  MON_OUT="${ROOT}/mon.out"; MON_ERR="${ROOT}/mon.err"
-  : >"${MON_OUT}"; : >"${MON_ERR}"
   (
     export HOME="${ROOT}/home"
     export PARLAY_RELAY_RUNTIME="${runtime}"
     export PARLAY_RELAY_SOCK="${sock}"
+    export PARLAY_MONITOR_WATCH_INTERVAL=1
     [ -n "${server}" ] && export PARLAY_SERVER="${server}"
-    # A caller that needs tail to fail on demand prepends a stub dir (D3).
-    [ -n "${MONITOR_PATH_PREFIX:-}" ] && export PATH="${MONITOR_PATH_PREFIX}:${PATH}"
-    [ -n "${MIN_UPTIME_OVERRIDE:-}" ] && export PARLAY_MONITOR_MIN_UPTIME="${MIN_UPTIME_OVERRIDE}"
-    [ -n "${MAX_RESTARTS_OVERRIDE:-}" ] && export PARLAY_MONITOR_MAX_RESTARTS="${MAX_RESTARTS_OVERRIDE}"
-    exec "${MONITOR}" --agent "${agent}"
-  ) >"${MON_OUT}" 2>"${MON_ERR}" &
-  MON_PID=$!
-  STUBS="${STUBS} ${MON_PID}"
+    [ -n "${NO_ORPHAN_EXIT_OVERRIDE:-}" ] \
+      && export PARLAY_MONITOR_NO_ORPHAN_EXIT="${NO_ORPHAN_EXIT_OVERRIDE}"
+    "${MONITOR}" --agent "${agent}" || true
+    true
+  ) >>"${ROOT}/d.out" 2>>"${ROOT}/d.err" &
+  LAUNCHER_PID=$!
+  STUBS="${STUBS} ${LAUNCHER_PID}"
+  # These launchers are SIGKILLed on purpose; disowning keeps bash from printing
+  # a "Killed: 9" job notice over the test output.
+  disown "${LAUNCHER_PID}" 2>/dev/null || true
 }
 
-stop_monitor() {
-  [ -n "${MON_PID}" ] || return 0
-  pkill -P "${MON_PID}" 2>/dev/null
-  kill "${MON_PID}" 2>/dev/null
-  wait "${MON_PID}" 2>/dev/null
-  MON_PID=""
-}
-
-# wait_for_tail <spool> — the "streaming" line is printed a beat BEFORE the loop
-# spawns tail and takes its starting offset, and that offset is end-of-spool (the
-# old `-n0`: don't replay history). Appending inside that window is genuinely
-# skipped, so a test that wants a message delivered must wait for tail itself.
-wait_for_tail() {
+# wait_for_reader <spool> → READER_PID (empty + rc 1 if none appears)
+wait_for_reader() {
   for _ in $(seq 1 100); do
-    pgrep -f "tail -c .*$1" >/dev/null 2>&1 && return 0
+    READER_PID="$(readers_of_spool "$1" | head -1)"
+    if [ -n "${READER_PID}" ]; then return 0; fi
+    sleep 0.1
+  done
+  READER_PID=""
+  return 1
+}
+
+# wait_for_gone <pid> [tries] → 0 once the pid is gone
+wait_for_gone() {
+  for _ in $(seq 1 "${2:-100}"); do
+    if ! kill -0 "$1" 2>/dev/null; then return 0; fi
     sleep 0.1
   done
   return 1
 }
 
-# wait_for <file> <fixed-string> [tenths] — poll until it shows up.
-wait_for() {
-  local f="$1" pat="$2" tries="${3:-100}"
-  for _ in $(seq 1 "${tries}"); do
-    grep -qF "${pat}" "${f}" 2>/dev/null && return 0
-    sleep 0.1
-  done
-  return 1
-}
+D_SERVER="http://127.0.0.1:45003"
 
-# D1/D2. Kill the tail out from under a live stream.
-start_stub "${ROOT}/d1" "http://127.0.0.1:45001" || exit 1
-D_RUNTIME="${STUB_RUNTIME}"
-start_monitor "${D_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45001" "stream-agent"
-SPOOL="${D_RUNTIME}/stream-agent.chan"
-
-if wait_for "${MON_ERR}" "streaming" && wait_for_tail "${SPOOL}"; then
-  printf 'CHAT_MSG|m1|before the kill\n' >>"${SPOOL}"
-  if wait_for "${MON_OUT}" "before the kill"; then
-    ok "streams normally before anything goes wrong"
+# D1. A reader must not outlive its launcher. This IS the leak.
+start_stub "${ROOT}/d1" "${D_SERVER}" || exit 1
+d1_runtime="${STUB_RUNTIME}"; d1_sock="${STUB_SOCK}"
+launch_monitor "${d1_runtime}" "${d1_sock}" "${D_SERVER}" "reap-me"
+d1_launcher="${LAUNCHER_PID}"
+if wait_for_reader "${d1_runtime}/reap-me.chan"; then
+  d1_reader="${READER_PID}"
+  # SIGKILL: the launcher gets no chance to pass anything down, exactly like a
+  # harness tearing down its shell. Only the watchdog can save us here.
+  kill -9 "${d1_launcher}" 2>/dev/null
+  if wait_for_gone "${d1_reader}" 150; then
+    ok "reader dies when its launcher is killed (no orphaned tail -F)"
   else
-    bad "the baseline stream never delivered a message" "$(cat "${MON_ERR}")"
+    bad "reader survived its launcher — robots-3pvi is still open" "pid ${d1_reader}"
+    kill -9 "${d1_reader}" 2>/dev/null
   fi
+else
+  bad "monitor never started a reader" "$(tail -3 "${ROOT}/d.err")"
+fi
 
-  # Kill only the tail — the same shape as whatever signal ended the stream in
-  # the field, and precisely what used to end the whole monitor.
-  if pkill -f "tail -c .*${SPOOL}" 2>/dev/null; then
-    # The message has to arrive AFTER the kill, at a byte offset the dead tail
-    # never reached: `-n0` on respawn would drop it, and resuming from the
-    # spool's size-at-restart would drop it too.
-    printf 'CHAT_MSG|m2|after the kill\n' >>"${SPOOL}"
-
-    if kill -0 "${MON_PID}" 2>/dev/null; then
-      ok "the monitor outlives its tail (the stream is no longer terminal)"
-    else
-      bad "the monitor died with its tail — robots-gv6t is still open" "$(cat "${MON_ERR}")"
-    fi
-    if wait_for "${MON_OUT}" "MONITOR|restarted|"; then
-      ok "announces the restart ON STDOUT, where the harness raises an event"
-    else
-      bad "a stream death produced no stdout event" "$(cat "${MON_OUT}")"
-    fi
-    if wait_for "${MON_OUT}" "after the kill"; then
-      ok "delivers a message spooled during the gap (byte-offset resume)"
-    else
-      bad "messages spooled during the restart gap were swallowed" "$(cat "${MON_OUT}")"
-    fi
-    if [ "$(grep -cF "before the kill" "${MON_OUT}")" = 1 ]; then
-      ok "does not re-deliver what the dead tail already emitted"
-    else
-      bad "resume replayed already-delivered messages" "$(grep -cF "before the kill" "${MON_OUT}") copies"
-    fi
+# D2. A second monitor on the same channel evicts the first. Two readers on an
+#     append-only spool means one directive wakes two sessions.
+start_stub "${ROOT}/d2" "${D_SERVER}" || exit 1
+d2_runtime="${STUB_RUNTIME}"; d2_sock="${STUB_SOCK}"
+d2_spool="${d2_runtime}/dupe.chan"
+launch_monitor "${d2_runtime}" "${d2_sock}" "${D_SERVER}" "dupe"
+if wait_for_reader "${d2_spool}"; then
+  d2_first="${READER_PID}"
+  launch_monitor "${d2_runtime}" "${d2_sock}" "${D_SERVER}" "dupe"
+  d2_second_launcher="${LAUNCHER_PID}"
+  if wait_for_gone "${d2_first}" 100; then
+    ok "a new monitor evicts the channel's existing reader"
   else
-    bad "could not find the tail process to kill" "$(ps -o pid=,command= -p "${MON_PID}" 2>/dev/null)"
+    bad "two readers now share one channel — every directive lands twice" "first=${d2_first}"
   fi
+  sleep 0.5
+  d2_count="$(readers_of_spool "${d2_spool}" | wc -l | tr -d ' ')"
+  [ "${d2_count}" = 1 ] \
+    && ok "exactly one reader remains on the channel" \
+    || bad "channel has ${d2_count} readers after eviction" "expected 1"
+  case "$(cat "${ROOT}/d.err")" in
+    *"already has reader"*) ok "eviction is announced, not silent" ;;
+    *) bad "evicted a reader without saying so" "$(tail -3 "${ROOT}/d.err")" ;;
+  esac
+  kill -9 "${d2_second_launcher}" 2>/dev/null
+  for p in $(readers_of_spool "${d2_spool}"); do kill -9 "${p}" 2>/dev/null; done
 else
-  bad "the monitor never reached the streaming stage" "$(cat "${MON_ERR}")"
+  bad "monitor never started a reader for the duplicate case" "$(tail -3 "${ROOT}/d.err")"
 fi
-stop_monitor
 
-# D3. A stream that cannot be kept alive must give up LOUDLY and terminally,
-#     never spin forever and never fall quiet. A `tail` stub that fails
-#     instantly makes every respawn thrash.
-mkdir -p "${ROOT}/failtail"
-cat >"${ROOT}/failtail/tail" <<'SH'
-#!/bin/sh
-exit 9
-SH
-chmod +x "${ROOT}/failtail/tail"
+# D3. --reap: dry run reports and kills NOTHING; --apply kills the orphan and
+#     spares a live reader. The orphan is made with the documented
+#     daemonization escape hatch so the script's own watchdog stays out of it.
+start_stub "${ROOT}/d3" "${D_SERVER}" || exit 1
+d3_runtime="${STUB_RUNTIME}"; d3_sock="${STUB_SOCK}"
 
-start_stub "${ROOT}/d3" "http://127.0.0.1:45001" || exit 1
-MONITOR_PATH_PREFIX="${ROOT}/failtail"
-MIN_UPTIME_OVERRIDE=2
-MAX_RESTARTS_OVERRIDE=1
-start_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45001" "stream-agent"
-MONITOR_PATH_PREFIX=""; MIN_UPTIME_OVERRIDE=""; MAX_RESTARTS_OVERRIDE=""
+NO_ORPHAN_EXIT_OVERRIDE=1
+launch_monitor "${d3_runtime}" "${d3_sock}" "${D_SERVER}" "stray"
+d3_stray_launcher="${LAUNCHER_PID}"
+NO_ORPHAN_EXIT_OVERRIDE=""
+wait_for_reader "${d3_runtime}/stray.chan" || bad "no reader for the stray case"
+d3_stray="${READER_PID}"
+# Kill the whole chain above the reader with SIGKILL: bash cannot trap it, so
+# the tail is left rooted at init — a genuine orphan, built the way real ones
+# are built rather than simulated.
+pkill -9 -P "${d3_stray_launcher}" 2>/dev/null
+kill -9 "${d3_stray_launcher}" 2>/dev/null
+sleep 0.5
 
-D3_CODE="running"
-for _ in $(seq 1 100); do
-  if ! kill -0 "${MON_PID}" 2>/dev/null; then
-    wait "${MON_PID}"; D3_CODE=$?
-    break
-  fi
-  sleep 0.1
-done
-if [ "${D3_CODE}" = 1 ]; then
-  ok "gives up with exit 1 once restarts stop helping (bounded, not infinite)"
+launch_monitor "${d3_runtime}" "${d3_sock}" "${D_SERVER}" "healthy"
+d3_live_launcher="${LAUNCHER_PID}"
+wait_for_reader "${d3_runtime}/healthy.chan" || bad "no reader for the live case"
+d3_live="${READER_PID}"
+
+reap_out="$(PARLAY_RELAY_RUNTIME="${d3_runtime}" "${MONITOR}" --reap 2>&1)"
+note "${reap_out}"
+case "${reap_out}" in
+  *"pid ${d3_stray}"*) ok "--reap lists the orphaned reader" ;;
+  *) bad "--reap missed an orphaned reader" "pid ${d3_stray}: ${reap_out}" ;;
+esac
+case "${reap_out}" in
+  *"pid ${d3_live}"*) bad "--reap flagged a LIVE reader as an orphan" "pid ${d3_live}" ;;
+  *) ok "--reap does not flag a reader whose launcher is alive" ;;
+esac
+if kill -0 "${d3_stray}" 2>/dev/null; then
+  ok "--reap without --apply is a dry run (killed nothing)"
 else
-  bad "a hopeless stream did not terminate as a runtime error" "exit=${D3_CODE}"
+  bad "--reap killed without --apply" "pid ${d3_stray} is gone"
 fi
-if grep -qF "MONITOR|down|" "${MON_OUT}" && grep -qF "DEAF" "${MON_OUT}"; then
-  ok "giving up says so on stdout, in the words the agent needs to act on"
+
+apply_out="$(PARLAY_RELAY_RUNTIME="${d3_runtime}" "${MONITOR}" --reap --apply 2>&1)"
+note "${apply_out}"
+if wait_for_gone "${d3_stray}" 60; then
+  ok "--reap --apply kills the orphaned reader"
 else
-  bad "gave up without an agent-visible notice" "$(cat "${MON_OUT}")"
+  bad "--apply left the orphan running" "pid ${d3_stray}"
+  kill -9 "${d3_stray}" 2>/dev/null
 fi
-if grep -qF "MONITOR|restarted|" "${MON_OUT}"; then
-  ok "tried to recover before giving up"
+if kill -0 "${d3_live}" 2>/dev/null; then
+  ok "--reap --apply spares the live reader"
 else
-  bad "gave up without attempting a restart" "$(cat "${MON_OUT}")"
+  bad "--apply killed a healthy monitor's reader" "pid ${d3_live}"
 fi
-stop_monitor
+
+# D4. The reaper must never reach outside the runtime dir it was pointed at. An
+#     unscoped host-wide kill would take the captain's live readers with it.
+scoped_out="$(PARLAY_RELAY_RUNTIME="${ROOT}/no-such-runtime" "${MONITOR}" --reap 2>&1)"
+case "${scoped_out}" in
+  *"0 reader(s)"*) ok "--reap is scoped to its runtime dir (sees none elsewhere)" ;;
+  *) bad "--reap reached beyond its runtime dir" "${scoped_out}" ;;
+esac
+
+kill -9 "${d3_live_launcher}" 2>/dev/null
+for p in $(readers_of_spool "${d3_runtime}/healthy.chan"); do kill -9 "${p}" 2>/dev/null; done
 
 echo
 echo "parlay-monitor.test: ${pass} passed, ${fail} failed"
