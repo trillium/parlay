@@ -40,12 +40,30 @@ _herdr_rpc_seq=0
 # Returns 0 on any response received, 1 on I/O failure.
 herdr_rpc() {
   local method="$1"
-  local params="${2:-{}}"
+  # NOTE: do NOT write this as "${2:-{}}". Bash ends the parameter expansion at
+  # the FIRST unescaped '}', so that form means «default '{'» followed by a
+  # literal '}' — which is invisible when $2 is unset (you get '{}' by
+  # accident) but appends a stray '}' to EVERY caller-supplied value, e.g.
+  # '{"name":"x"}' -> '{"name":"x"}}'. jq then rejects it with
+  # "invalid JSON text passed to --argjson", every RPC call fails, and
+  # parlay-spawn's socket path silently falls apart (tab.create returns
+  # nothing -> "herdr tab create failed — no root pane returned").
+  # Two steps, no brace default. Same reason at the other two sites below.
+  local params="${2:-}"
+  [ -n "$params" ] || params='{}'
   _herdr_rpc_seq=$(( _herdr_rpc_seq + 1 ))
   local id="${3:-rpc${_herdr_rpc_seq}}"
 
   if [ ! -S "$_herdr_sock" ]; then
     echo "herdr-rpc: socket not found: $_herdr_sock" >&2
+    return 1
+  fi
+
+  # Validate params BEFORE jq -n consumes it, so a malformed value names itself
+  # and the method it was aimed at instead of surfacing as a bare jq complaint
+  # with no context (that bare message is exactly what the bug above produced).
+  if ! printf '%s' "$params" | jq -e . >/dev/null 2>&1; then
+    echo "herdr-rpc: $method: params is not valid JSON: $params" >&2
     return 1
   fi
 
@@ -59,7 +77,8 @@ herdr_rpc() {
 # herdr_rpc_check <method> <params-json> — like herdr_rpc but returns 1 on
 # daemon-level error and prints the error message to stderr.
 herdr_rpc_check() {
-  local method="$1" params="${2:-{}}"
+  local method="$1" params="${2:-}"
+  [ -n "$params" ] || params='{}'
   local resp
   resp=$(herdr_rpc "$method" "$params") || return 1
   local err
@@ -79,7 +98,9 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     echo "Usage: herdr-rpc <method> [params-json]" >&2
     exit 1
   fi
-  resp=$(herdr_rpc "$1" "${2:-{}}")
+  _cli_params="${2:-}"
+  [ -n "$_cli_params" ] || _cli_params='{}'
+  resp=$(herdr_rpc "$1" "$_cli_params")
   rc=$?
   if [ "$rc" -ne 0 ]; then
     exit 1
