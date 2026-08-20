@@ -34,6 +34,7 @@ import { cmdIdentity, cmdSay, cmdScratchpad } from "./commands-identity"
 import { cmdVariant } from "./commands-variant"
 import { cmdAgentDown } from "./commands-agent-down"
 import { cmdRemote } from "./commands-remote"
+import { cmdSpawnAccount } from "./commands-spawn-account"
 import { cmdGuard } from "./commands-guard"
 import { cmdDoctor, cmdHealth } from "./commands-doctor"
 import { cmdContextCheck } from "./commands-context-check"
@@ -52,6 +53,7 @@ async function main() {
     case "agents":        return cmdAgents(args)
     case "agent-down":    return cmdAgentDown(args)
     case "remote":        return cmdRemote(args)
+    case "spawn-account": return cmdSpawnAccount(args)
     case "nickname":      return cmdNickname(args)
     case "send":          return cmdSend(args)
     case "say":

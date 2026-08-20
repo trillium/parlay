@@ -1,46 +1,54 @@
-// parlay CLI shared config: server URL and process exit codes.
+// parlay CLI shared config: server URL, spawn account, and process exit codes.
+//
+// Config file: ~/.parlay/config.toml (PARLAY_STATE_HOME overrides ~/.parlay).
+// Set values with the dedicated verbs: `parlay remote set/clear`,
+// `parlay spawn-account set/clear`.
 //
 // Exit codes: 0 = ok, 1 = runtime/server error, 2 = usage error (bad flag/command/args).
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
+const parseToml = Bun.TOML.parse
 
 const DEFAULT_SERVER = "http://localhost:4242"
 
-// Same override convention as commands-guard.ts / robots-watch's cursor.ts:
-// $PARLAY_STATE_HOME (default ~/.parlay). Tests inject a tmp dir here so a
-// persisted config on the machine running them is never read.
 function stateHome(): string {
   return process.env.PARLAY_STATE_HOME || join(homedir(), ".parlay")
 }
+
 function configPath(): string {
-  return join(stateHome(), "config.json")
+  return join(stateHome(), "config.toml")
 }
 
-type PersistedConfig = { server?: string }
+type PersistedConfig = { server?: string; spawnAccount?: string }
 
 function readPersistedConfig(): PersistedConfig {
   const p = configPath()
   if (!existsSync(p)) return {}
   try {
-    const parsed = JSON.parse(readFileSync(p, "utf8"))
-    return parsed && typeof parsed === "object" ? parsed : {}
+    const parsed = parseToml(readFileSync(p, "utf8"))
+    return parsed && typeof parsed === "object" ? (parsed as PersistedConfig) : {}
   } catch {
-    // A corrupt config is treated as empty — resolution falls through to default.
     return {}
   }
+}
+
+function serializeToml(config: PersistedConfig): string {
+  const lines: string[] = []
+  if (config.server !== undefined) lines.push(`server = ${JSON.stringify(config.server)}`)
+  if (config.spawnAccount !== undefined) lines.push(`spawnAccount = ${JSON.stringify(config.spawnAccount)}`)
+  return lines.length ? lines.join("\n") + "\n" : ""
 }
 
 function writePersistedConfig(config: PersistedConfig): void {
   const dir = stateHome()
   mkdirSync(dir, { recursive: true })
   const tmp = join(dir, `.config.${process.pid}.tmp`)
-  writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n")
-  renameSync(tmp, configPath()) // atomic swap
+  writeFileSync(tmp, serializeToml(config))
+  renameSync(tmp, configPath())
 }
 
-// Persist (or clear, with url === undefined) the default server URL.
 export function setPersistedServer(url: string | undefined): void {
   const config = readPersistedConfig()
   if (url) config.server = url.replace(/\/+$/, "")
@@ -52,23 +60,28 @@ export function persistedServerUrl(): string | undefined {
   return readPersistedConfig().server?.trim() || undefined
 }
 
+export function setPersistedSpawnAccount(account: string | undefined): void {
+  const config = readPersistedConfig()
+  if (account) config.spawnAccount = account
+  else delete config.spawnAccount
+  writePersistedConfig(config)
+}
+
+export function persistedSpawnAccount(): string | undefined {
+  return readPersistedConfig().spawnAccount?.trim() || undefined
+}
+
 export function configFilePath(): string {
   return configPath()
 }
 
-// Resolve the server base URL, trimming trailing slashes. Precedence: env var
-// (explicit, per-shell override) > persisted config (~/.parlay/config.json,
-// set via `parlay remote set <url>`) > coded default. Read lazily (via
-// serverUrl()) so a PARLAY_SERVER set after module load — e.g. in a test's
-// beforeAll — is honored. SERVER is the import-time snapshot kept for
-// display strings (USAGE, `parlay @ <server>`); network calls use serverUrl().
+// Resolve the server base URL. Precedence: env var > config.toml > coded default.
 export function serverUrl(): string {
   const env = process.env.PARLAY_SERVER?.trim()
   const resolved = env || persistedServerUrl() || DEFAULT_SERVER
   return resolved.replace(/\/+$/, "")
 }
 
-// Which source is currently in effect — for `parlay doctor` / `parlay remote`.
 export function serverSource(): { source: "env" | "config" | "default"; url: string } {
   const env = process.env.PARLAY_SERVER?.trim()
   if (env) return { source: "env", url: env.replace(/\/+$/, "") }
