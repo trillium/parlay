@@ -361,9 +361,10 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   Claude usage across accounts. Resolves CLAUDE_CODE_OAUTH_TOKEN from
                   keychain (security find-generic-password -a ccjuggler -s ccjuggler-NAME)
                   or ~/.ccjuggler/NAME/.oauth-token. Injected via herdr --env.
-  --workspace ID  land the new tab in an existing herdr workspace instead of
-                  wherever the caller's shell currently is. Falls back to
-                  \$HERDR_WORKSPACE_ID when not given.
+  --workspace ID|LABEL  land the new tab in a herdr workspace. Pass the raw
+                  workspace ID (e.g. w6T) or a label (e.g. "firstmate").
+                  Label lookup: uses an existing workspace with that name, or
+                  creates one. Falls back to \$HERDR_WORKSPACE_ID when not given.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -609,6 +610,39 @@ json_escape() { printf '%s' "$1" | jq -Rs .; }
 # command-substituted on paste (robots-2h4n). An embedded quote is closed,
 # escaped, and reopened ('\'') — the one form single-quoting cannot express.
 shell_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+# Resolve a herdr workspace ID from either an ID or a label.
+# If the value looks like a workspace ID (starts with 'w' followed by
+# alphanumerics) it is used as-is. Otherwise it is treated as a label:
+# the existing workspace with that label is returned, or a new one is
+# created. Prints the resolved ID; exits non-zero on RPC failure.
+resolve_workspace() {
+  local want="$1"
+  # Looks like a raw ID — pass through unchanged.
+  if printf '%s' "$want" | grep -qE '^w[A-Za-z0-9]+$'; then
+    printf '%s' "$want"
+    return 0
+  fi
+  # Label lookup: find a workspace whose label matches exactly.
+  local list id
+  list=$(herdr workspace list 2>/dev/null) || { echo "parlay-spawn: herdr workspace list failed" >&2; return 1; }
+  id=$(printf '%s' "$list" | jq -r --arg l "$want" \
+    '.result.workspaces[] | select(.label == $l) | .workspace_id' 2>/dev/null | head -1)
+  if [ -n "$id" ]; then
+    echo "parlay-spawn: workspace '$want' resolved to $id" >&2
+    printf '%s' "$id"
+    return 0
+  fi
+  # Not found — create it.
+  echo "parlay-spawn: workspace '$want' not found, creating..." >&2
+  local created
+  created=$(herdr workspace create --label "$want" --no-focus 2>/dev/null) || \
+    { echo "parlay-spawn: herdr workspace create '$want' failed" >&2; return 1; }
+  id=$(printf '%s' "$created" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
+  [ -n "$id" ] || { echo "parlay-spawn: could not parse workspace_id from create response" >&2; return 1; }
+  echo "parlay-spawn: created workspace '$want' → $id" >&2
+  printf '%s' "$id"
+}
 
 # Refuse a duplicate: if a herdr agent with this id is already live, creating a
 # second one leaves two identically-labeled "edgar" tabs (one a ghost) and is
@@ -880,6 +914,11 @@ fi
 #    (empty-string via --env is NOT enough — the guard checks presence, so
 #    we must `unset` — and new panes inherit the herdr server's own
 #    CLAUDECODE/CLAUDE_CODE_* env, confirmed empirically).
+# Resolve workspace label → ID before tab creation (no ghost tab on failure).
+if [ -n "$WORKSPACE" ]; then
+  WORKSPACE=$(resolve_workspace "$WORKSPACE") || exit 1
+fi
+
 echo "parlay-spawn: launching detached $KIND agent via $LAUNCHER (cwd=$CWD, $FOCUS_FLAG) ..." >&2
 
 # Resolve account token if --account was given, before tab creation so there
