@@ -83,10 +83,16 @@ Both variables in that command matter, and here is why.
 
 `PAI_DIR` is pointed at an empty scratch directory for a second reason: it is both a
 write target and a read target. Besides the registry above, the server tails that tree
-for agent-activity events and folds every one of them into your chat history — so on a
-machine that has a real `~/.claude/PAI`, leaving `PAI_DIR` unset fills a brand-new
-instance with unrelated live agent turns. Setting both variables, as the command
-does, is what fully protects the real directory. See
+for agent-activity events and re-posts every one of them over HTTP to `PARLAY_HUB_URL`
+(default `http://127.0.0.1:4242`) — so on a machine that has a real `~/.claude/PAI`,
+leaving `PAI_DIR` unset ships unrelated live agent turns to whatever is listening
+there. Setting both variables, as the command does, is what fully protects the real
+directory.
+
+That hub is the Go server (`packages/go-server`), not this one: with only the Bun
+server running, those posts hit routes it does not serve, so they are dropped with a
+rate-limited warning and hook/tool activity does not appear in the panel. Tailing
+itself never stops. See
 [`packages/server/README.md`](packages/server/README.md) for the full config surface.
 
 **2. Point the CLI at it**, in another shell. Every command from here on is written

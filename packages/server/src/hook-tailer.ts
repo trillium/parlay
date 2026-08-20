@@ -1,6 +1,6 @@
 import { existsSync, statSync, openSync, readSync, closeSync } from "fs"
 import { join } from "path"
-import { addMessage } from "./router-messages"
+import { postHubMessage } from "./hub-ingress"
 import { channelForSession } from "./session-channel"
 
 // ── Hook firing tailer ──────────────────────────────────────────────────────
@@ -9,6 +9,14 @@ import { channelForSession } from "./session-channel"
 // into a system_update chat message — persisted to history and broadcast over
 // SSE. This is how hook activity becomes visible in the Parlay panel without
 // hooks ever paying network latency.
+//
+// Persist-and-broadcast now happens on the Go server (POST /api/chat/message,
+// which does both) instead of this process's in-process addMessage: the file
+// being tailed lives in the TS/Pulse home so the tailer stays here, while both
+// the history file and the panel's SSE connection move to Go. The message shape
+// is unchanged — type/source/meta ride along in the POST body. See
+// hub-ingress.ts; the post is fire-and-forget and an unreachable hub must never
+// stop the tail loop.
 
 export function startHookFiringTailer() {
   const HOME         = process.env.HOME ?? ""
@@ -43,7 +51,7 @@ export function startHookFiringTailer() {
           // session (most hooks don't stamp session_id yet) fall back to the
           // shared 'system' pseudo-tab. session_id still rides in meta.
           const channel = channelForSession(ev.session_id ? String(ev.session_id) : undefined) ?? "system"
-          addMessage("agent", text, channel, {
+          postHubMessage("agent", text, channel, {
             type: "system_update",
             source,
             ...(ev.session_id ? { meta: { session_id: String(ev.session_id) } } : {}),

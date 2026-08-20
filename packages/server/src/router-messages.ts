@@ -30,7 +30,7 @@ function parseNicknames(body: Record<string, unknown>, fallback?: string[]): str
 }
 
 // Message creation lives in messages.ts; re-exported so existing importers
-// (lavish.ts, hook-tailer.ts) keep their "./router-messages" path.
+// (lavish.ts) keep their "./router-messages" path.
 export { addMessage, broadcastAlert }
 
 // ── Message routes ────────────────────────────────────────────────────────────

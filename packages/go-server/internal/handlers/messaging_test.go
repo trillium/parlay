@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"parlay/go-server/internal/store"
@@ -170,6 +171,54 @@ func TestHandleMessageStoresRelayedMessage(t *testing.T) {
 	history := st.Messages.History(0)
 	if len(history) != 1 || history[0].Channel != "c0" || history[0].Text != "digest" {
 		t.Errorf("stored message = %+v, want channel=c0 text=digest", history)
+	}
+}
+
+// The TS hook tailer posts its firings here instead of broadcasting them
+// in-process, and the panel renders a system_update line from type + source
+// (packages/client/src/thread.ts). A message whose type or source were dropped
+// on the way in would render as an ordinary agent bubble — and get spoken.
+func TestHandleMessageCarriesTheSystemUpdateFields(t *testing.T) {
+	st := newTestStore(t)
+	rec := postJSON(t, handleMessage(st, newBroker()), map[string]any{
+		"channel": "c0",
+		"role":    "agent",
+		"text":    "SessionStart fired",
+		"type":    "system_update",
+		"source":  "SessionStart",
+		"meta":    map[string]any{"session_id": "s-1"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	history := st.Messages.History(0)
+	if len(history) != 1 {
+		t.Fatalf("history = %+v, want exactly one message", history)
+	}
+	got := history[0]
+	if got.Type != "system_update" || got.Source != "SessionStart" {
+		t.Errorf("stored type/source = %q/%q, want system_update/SessionStart", got.Type, got.Source)
+	}
+	if got.Meta["session_id"] != "s-1" {
+		t.Errorf("stored meta = %+v, want session_id=s-1", got.Meta)
+	}
+}
+
+// The same fields must be absent — not empty strings — for every caller that
+// does not send them, so an existing producer's frame is byte-identical to
+// what it was before those fields were accepted.
+func TestHandleMessageOmitsTheSystemUpdateFieldsWhenUnset(t *testing.T) {
+	st := newTestStore(t)
+	postJSON(t, handleMessage(st, newBroker()), map[string]any{"channel": "c0", "role": "agent", "text": "digest"})
+
+	encoded, err := json.Marshal(st.Messages.History(0)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"type"`, `"source"`, `"meta"`} {
+		if strings.Contains(string(encoded), key) {
+			t.Errorf("encoded message contains %s; got %s", key, encoded)
+		}
 	}
 }
 

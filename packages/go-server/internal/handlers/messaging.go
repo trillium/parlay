@@ -141,6 +141,17 @@ type messageRequest struct {
 	Channel string `json:"channel"`
 	Role    string `json:"role"`
 	Text    string `json:"text"`
+
+	// The system_update trio, forwarded to the stored message unchanged. A
+	// caller that omits them (the original `parlay supervise` shape) stores
+	// and broadcasts exactly what it did before they were accepted; they exist
+	// so an out-of-process producer — the TS hook tailer, which used to call
+	// addMessage in-process — can post a message whose rendered form is
+	// identical to the one it used to build itself. Type is deliberately not
+	// validated against an enum, matching store.ChatMessage.Type's own doc.
+	Type   string         `json:"type"`
+	Source string         `json:"source"`
+	Meta   map[string]any `json:"meta"`
 }
 
 // handleMessage implements POST /api/chat/message, the lower-level relay
@@ -166,7 +177,14 @@ func handleMessage(st *store.Store, b *broker) http.HandlerFunc {
 		if role == "" {
 			role = "agent"
 		}
-		msg := store.ChatMessage{Role: role, Text: req.Text, Channel: req.Channel}
+		msg := store.ChatMessage{
+			Role:    role,
+			Text:    req.Text,
+			Channel: req.Channel,
+			Type:    req.Type,
+			Source:  req.Source,
+			Meta:    req.Meta,
+		}
 		stored, _, err := appendAndPublish(st, b, msg)
 		if err != nil {
 			writeStatusError(w, http.StatusInternalServerError, err.Error())

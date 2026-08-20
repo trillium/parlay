@@ -38,15 +38,20 @@ import (
 //	                  newHub.
 //	message_received  live — broadcast from handlePoll (poll.go) at both
 //	                  points a queued message is handed to a waiting agent.
-//	agent_presence, presence, draft, tool_event, lavish_session, reload,
-//	navigate, input_action, device_cmd, pages_patch
+//	tool_event        live, but produced OUTSIDE this process: the TS tool
+//	                  tailer POSTs it to the external-producer ingress on
+//	                  POST /api/chat/events, the only name that ingress
+//	                  accepts today. See events_ingress.go, which owns the
+//	                  allowlist and the rule for widening it.
+//	agent_presence, presence, draft, lavish_session, reload, navigate,
+//	input_action, device_cmd, pages_patch
 //	                  not live — each names a real client-side handler (see
 //	                  sse.ts) but no C0/C1/C2 code path in this server
 //	                  produces the underlying state change yet (no draft-set
-//	                  endpoint, no device-cmd endpoint, no tool/session
-//	                  relay, no thinking-status signal). broadcast can carry
-//	                  any of these the moment a future ticket wires a
-//	                  producer; encoding/transport is not what's missing.
+//	                  endpoint, no device-cmd endpoint, no session relay, no
+//	                  thinking-status signal). broadcast can carry any of
+//	                  these the moment a future ticket wires a producer;
+//	                  encoding/transport is not what's missing.
 //
 // That is 17 documented names, 8 of them live from this ticket alone (9
 // counting `message`, whose live is via the pre-existing C1 endpoints that

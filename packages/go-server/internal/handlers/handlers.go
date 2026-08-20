@@ -87,7 +87,9 @@ func Register(mux *http.ServeMux, st *store.Store) {
 
 	mux.HandleFunc("/api/chat/poll", handlePoll(st, b, hub, defaultPollTimeout))
 
-	mux.HandleFunc("/api/chat/events", handleEvents(st, hub))
+	// One registration, two methods: GET is the SSE stream, POST the
+	// external-producer ingress. See events_ingress.go.
+	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub))
 
 	registerCommands(mux, st, hub)
 }
