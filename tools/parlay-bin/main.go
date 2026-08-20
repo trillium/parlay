@@ -14,6 +14,9 @@ Usage:
   parlay-bin spawn ...        launch a new background claude agent (bin/parlay-spawn)
   parlay-bin reset ...        clean self-restart for a persistent agent (bin/context-reset)
   parlay-bin reincarnate ...  alias for 'reset' (legacy invocation name)
+  parlay-bin gascity-spawn ...  start a detached headless session (herdr-free launcher path)
+  parlay-bin gascity-stop ...   stop a gascity-spawn session
+  parlay-bin gascity-ping ...   exit 0 if a gascity-spawn session is alive, 1 if not
 `
 
 func main() {
@@ -26,6 +29,12 @@ func main() {
 		os.Exit(runSpawnCommand(os.Args[2:]))
 	case "reset", "reincarnate":
 		os.Exit(runResetCommand(os.Args[2:]))
+	case "gascity-spawn":
+		os.Exit(runGascitySpawnCommand(os.Args[2:]))
+	case "gascity-stop":
+		os.Exit(runGascityStopCommand(os.Args[2:]))
+	case "gascity-ping":
+		os.Exit(runGascityPingCommand(os.Args[2:]))
 	case "-h", "--help":
 		fmt.Fprint(os.Stderr, topUsage)
 		os.Exit(0)
