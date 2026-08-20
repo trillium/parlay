@@ -131,9 +131,60 @@ function ToolLog({ events, filterChannel }: { events: ToolEvent[]; filterChannel
   )
 }
 
+// ── CommandTable ──────────────────────────────────────────────────────────────
+
+const STATE_COLOR: Record<string, string> = {
+  running: 'var(--green)',
+  done: 'var(--text2)',
+  failed: 'var(--red)',
+}
+
+function CommandTable({ commands, filterAgent }: { commands: Command[]; filterAgent: string | null }) {
+  const visible = filterAgent ? commands.filter(c => !c.agent || c.agent === filterAgent) : commands
+  const sorted = [...visible].sort((a, b) => {
+    const order = { running: 0, failed: 1, done: 2 }
+    return (order[a.state as keyof typeof order] ?? 3) - (order[b.state as keyof typeof order] ?? 3)
+  })
+
+  if (!sorted.length) return <div style={{ padding: '24px 16px', color: 'var(--text2)' }}>No commands recorded.</div>
+
+  return (
+    <div className="cmd-table-wrap">
+      <table className="cmd-table">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>Verb</th>
+            <th>Agent</th>
+            <th>Flags</th>
+            <th>PID</th>
+            <th>Duration</th>
+            <th>Started</th>
+            <th>Outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(c => (
+            <tr key={c.id}>
+              <td><span className="state-dot" style={{ background: STATE_COLOR[c.state] ?? 'var(--text2)' }} />{c.state}</td>
+              <td className="td-verb">{c.verb}</td>
+              <td className="td-agent">{c.agent ?? '—'}</td>
+              <td className="td-flags">{(c.flags ?? []).join(' ')}</td>
+              <td className="td-pid">{c.pid ?? '—'}</td>
+              <td>{fmtDuration(c.durationMs)}</td>
+              <td>{relTime(c.startedAt)}</td>
+              <td>{c.outcome ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
-type Tab = 'thread' | 'events'
+type Tab = 'thread' | 'events' | 'commands'
 
 export default function App() {
   const { agents, liveChannels, commands, messages, toolEvents, selectedChannel, selectChannel, connectedClients } = useFleetStore()
@@ -166,14 +217,16 @@ export default function App() {
             <button className={tab === 'thread' ? 'tab active' : 'tab'} onClick={() => setTab('thread')}>
               Thread
             </button>
+            <button className={tab === 'commands' ? 'tab active' : 'tab'} onClick={() => setTab('commands')}>
+              Commands <span className="badge">{runningCount}</span>
+            </button>
             <button className={tab === 'events' ? 'tab active' : 'tab'} onClick={() => setTab('events')}>
               Tool Events {toolEvents.length > 0 && <span className="badge">{toolEvents.length}</span>}
             </button>
           </div>
-          {tab === 'thread'
-            ? <MessageThread messages={messages} />
-            : <ToolLog events={toolEvents} filterChannel={selectedChannel} />
-          }
+          {tab === 'thread' && <MessageThread messages={messages} />}
+          {tab === 'commands' && <CommandTable commands={commands} filterAgent={selectedChannel} />}
+          {tab === 'events' && <ToolLog events={toolEvents} filterChannel={selectedChannel} />}
         </main>
       </div>
     </div>

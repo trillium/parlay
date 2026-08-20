@@ -123,6 +123,29 @@ html, body, #root { height: 100%; background: var(--bg); color: var(--text); fon
 .tl-out { color: var(--text); opacity: .8; white-space: pre-wrap; }
 .tl-err { color: var(--red); opacity: .8; white-space: pre-wrap; }
 
+/* ── command table ── */
+.cmd-table-wrap { flex: 1; overflow: auto; }
+.cmd-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.cmd-table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 7px 12px; text-align: left; font-weight: 600; font-size: 11px;
+  color: var(--text2); text-transform: uppercase; letter-spacing: .04em;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.cmd-table td {
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; vertical-align: middle;
+}
+.cmd-table tr:hover td { background: var(--bg2); }
+.state-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.td-verb { color: var(--accent); font-weight: 600; }
+.td-agent { color: var(--text2); }
+.td-flags { color: var(--text2); font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 10px; }
+.td-pid { color: var(--text2); font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 10px; }
+
 /* ── badge ── */
 .badge {
   display: inline-block; padding: 0 5px; border-radius: 8px;
