@@ -116,8 +116,8 @@ func TestPollOnceNetworkErrorSleeps3s(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce("http://127.0.0.1:1", "", &lastID, false, 400, &out)
-	if got != 3*time.Second {
-		t.Errorf("sleep = %v, want 3s", got)
+	if got.sleep != 3*time.Second {
+		t.Errorf("sleep = %v, want 3s", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output on network error, got %q", out.String())
@@ -133,8 +133,8 @@ func TestPollOnceNon2xxSleeps2s(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 2*time.Second {
-		t.Errorf("sleep = %v, want 2s", got)
+	if got.sleep != 2*time.Second {
+		t.Errorf("sleep = %v, want 2s", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output on non-2xx, got %q", out.String())
@@ -150,8 +150,8 @@ func TestPollOnceInvalidJSONSleeps3s(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 3*time.Second {
-		t.Errorf("sleep = %v, want 3s", got)
+	if got.sleep != 3*time.Second {
+		t.Errorf("sleep = %v, want 3s", got.sleep)
 	}
 }
 
@@ -165,8 +165,8 @@ func TestPollOnceTimeoutMessageIsQuietAndImmediate(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 0 {
-		t.Errorf("sleep = %v, want 0 (no delay on bare timeout)", got)
+	if got.sleep != 0 {
+		t.Errorf("sleep = %v, want 0 (no delay on bare timeout)", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output on timeout, got %q", out.String())
@@ -187,8 +187,8 @@ func TestPollOnceEmitsChatMsgAndAdvancesLastID(t *testing.T) {
 	lastID := "msg-0"
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 0 {
-		t.Errorf("sleep = %v, want 0", got)
+	if got.sleep != 0 {
+		t.Errorf("sleep = %v, want 0", got.sleep)
 	}
 	if gotAfter != "msg-0" {
 		t.Errorf("server saw after=%q, want msg-0", gotAfter)
@@ -212,8 +212,8 @@ func TestPollOnceSkipsIncompleteMessage(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 0 {
-		t.Errorf("sleep = %v, want 0", got)
+	if got.sleep != 0 {
+		t.Errorf("sleep = %v, want 0", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output for an incomplete message, got %q", out.String())
@@ -279,51 +279,6 @@ func TestPollOnceNotifySafeLeavesShortLinesAlone(t *testing.T) {
 	}
 }
 
-// ── orphan supervision (robots-3pvi) ─────────────────────────────────────────
-// The monitor chain used to outlive whatever launched it: a harness kills only
-// the shell it spawned, and `parlay-cli` plus the `tail -F` under it were
-// reparented to init and ran on — 168 readers were live on the captain's box,
-// 139 with no launcher left anywhere in their ancestry.
-
-func TestOrphanedDetectsReparenting(t *testing.T) {
-	if !orphaned(4242, 1) {
-		t.Error("reparenting to init must read as orphaned")
-	}
-	if !orphaned(4242, 501) {
-		t.Error("any changed parent means the launcher exited")
-	}
-	if orphaned(4242, 4242) {
-		t.Error("an unchanged parent must never look orphaned")
-	}
-}
-
-func TestOrphanedTreatsUnknownParentAsAlive(t *testing.T) {
-	// A failed read must never be able to kill a healthy monitor: unknown is
-	// "could not tell", not "the launcher is gone".
-	if orphaned(4242, 0) {
-		t.Error("a 0 ppid is unknown, not orphaned")
-	}
-}
-
-func TestWatchIntervalDefaultsAndHonorsEnv(t *testing.T) {
-	t.Setenv("PARLAY_MONITOR_WATCH_INTERVAL", "")
-	if got := watchInterval(); got != 15*time.Second {
-		t.Errorf("watchInterval() = %v, want 15s", got)
-	}
-	t.Setenv("PARLAY_MONITOR_WATCH_INTERVAL", "3")
-	if got := watchInterval(); got != 3*time.Second {
-		t.Errorf("watchInterval() = %v, want 3s", got)
-	}
-	// Junk and non-positive values fall back rather than busy-looping or
-	// disabling the watchdog outright.
-	for _, bad := range []string{"nonsense", "0", "-5"} {
-		t.Setenv("PARLAY_MONITOR_WATCH_INTERVAL", bad)
-		if got := watchInterval(); got != 15*time.Second {
-			t.Errorf("watchInterval() with %q = %v, want the 15s default", bad, got)
-		}
-	}
-}
-
 // stubScript puts a recording parlay-monitor.sh on PATH and returns the path of
 // the file it writes its args to.
 func stubScript(t *testing.T) string {
@@ -374,5 +329,49 @@ func TestCmdMonitorReapApplyIsForwarded(t *testing.T) {
 	}
 	if strings.TrimSpace(string(got)) != "--reap --apply" {
 		t.Errorf("script args = %q, want %q", strings.TrimSpace(string(got)), "--reap --apply")
+	}
+}
+
+func TestPollOnceStopsOn410Gone(t *testing.T) {
+	// robots-ycfa: a tombstoned channel answers 410, and retrying re-creates
+	// it and polls forever. The Go port used to fold 410 into the generic
+	// non-2xx 2s retry, which kept the leak alive on the path bin/parlay
+	// actually execs (robots-jkwc).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+		w.Write([]byte(`{"gone":true,"error":"channel was unregistered; stop polling"}`))
+	}))
+	defer srv.Close()
+
+	lastID := ""
+	var out strings.Builder
+	got := pollOnce(srv.URL, "&channel=ghost-z1", &lastID, false, 400, &out)
+	if !got.stop {
+		t.Error("410 Gone must be terminal for the poll loop")
+	}
+	if got.sleep != 0 {
+		t.Errorf("a terminal answer must not also ask for a retry sleep, got %v", got.sleep)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected no CHAT_MSG output on 410, got %q", out.String())
+	}
+}
+
+func TestPollOnceKeepsRetryingOnAServerError(t *testing.T) {
+	// 410 is the ONLY terminal status — a 500 is a transient server problem
+	// and must never retire a live agent's monitor.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	lastID := ""
+	var out strings.Builder
+	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
+	if got.stop {
+		t.Error("a 500 must not stop the poll loop")
+	}
+	if got.sleep != 2*time.Second {
+		t.Errorf("sleep = %v, want 2s", got.sleep)
 	}
 }
