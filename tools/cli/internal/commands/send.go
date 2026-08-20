@@ -54,6 +54,15 @@ const registryLookupTimeout = 5 * time.Second
 //     anyway, since a transport problem must not become a new way to lose a
 //     message. `--force` skips it outright, for deliberately seeding a channel
 //     before its agent has registered.
+//
+// A second pre-flight follows it: refuseStaleWindow (robots-9d2w). Registered
+// and live is not the same as WORTH sending to — a pane that finished its task
+// and is sitting at its prompt still accepts messages, and continuing it makes
+// the new work re-pay for the whole finished session's transcript on every
+// turn. See stale.go for the policy; `--force` waives this one too, which is
+// the escape hatch for the legitimate case (asking a done agent a follow-up
+// question ABOUT the work it just finished — there, the old context is the
+// point).
 func Send(argv []string) {
 	if helpWanted("send", argv) {
 		return
@@ -118,6 +127,7 @@ func Send(argv []string) {
 
 	if !force {
 		requireRegisteredTarget(target)
+		refuseStaleWindow(target)
 	}
 
 	from := strings.TrimSpace(fromOverride)
@@ -177,6 +187,36 @@ func requireRegisteredTarget(target string) {
 	msg += "  Run 'parlay send' with no arguments to list every targetable agent.\n" +
 		"  Use --force to send anyway (e.g. seeding a channel before its agent registers)."
 	httpc.Die(msg, config.ExitUsage)
+}
+
+// refuseStaleWindow aborts the send when target is a spent pane — one that
+// posted a terminal status and is sitting at its prompt (robots-9d2w).
+//
+// requireRegisteredTarget above answers "will this message be delivered?".
+// This answers the question after it: "should it be?". A finished agent is
+// still registered, still enrolled, and still accepts messages, so a re-task
+// lands in a session whose transcript is entirely the job it already closed —
+// and every turn of the new work re-pays for it. The remedy is to relaunch,
+// not to continue, so the refusal prints the relaunch commands rather than
+// just saying no.
+//
+// Fails OPEN in exactly the same way and for the same reason: unknown state
+// (relay down, nothing recorded) is not stale, so a transport problem can
+// never become a refused send. Policy lives in ClassifyStaleWindow — this is
+// only the send-side reaction to it.
+func refuseStaleWindow(target string) {
+	v := ClassifyStaleWindow(resolveStaleWindow(target))
+	if !v.Stale {
+		return
+	}
+	httpc.Die(
+		fmt.Sprintf("parlay send: %q is a STALE WINDOW (%s) — refusing to send.\n", target, v.Reason)+
+			"  That pane already finished its work; continuing it makes the new task re-pay for the\n"+
+			"  whole finished session on every turn (this is what the harness means by \"/clear to save …\").\n"+
+			relaunchAdvice(target)+"\n"+
+			"  Use --force to send anyway (e.g. a follow-up question ABOUT the work it just finished).",
+		config.ExitUsage,
+	)
 }
 
 // nearestAgentIDs returns up to 5 registered ids sharing a substring with
