@@ -442,10 +442,8 @@ bead_gate() {
 
   if [ -z "$BEAD_ID" ]; then
     if [ "$BEADS_REQUIRED" -eq 1 ]; then
-      echo "parlay-spawn: beads-required mode is ON and no --bead <id> was given." >&2
-      echo "  Every spawn must name an OPEN beads work item; that bead's lifecycle then governs the agent." >&2
-      echo "  Pass --bead <id>, or turn the mode off: [spawn] beads_required = false in" >&2
-      echo "  ${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml, or PARLAY_SPAWN_BEADS_REQUIRED=0 for one run." >&2
+      echo "parlay-spawn: beads-required mode is ON — every spawn must name an OPEN beads work item." >&2
+      echo "  Pass --bead <id>. The bead's lifecycle governs the agent." >&2
       exit 2
     fi
     return 0
