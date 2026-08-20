@@ -991,7 +991,7 @@ if [ -z "$ROOT_PANE" ]; then
   [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
-_spawn_snapshot "pane-launched" "$ROOT_PANE"
+( _spawn_snapshot "pane-launched" "$ROOT_PANE" ) &
 
 # Pre-clear the nesting-marker vars in the pane's login shell before handing
 # it to `agent start` — this is the `unset` half of the old bash wrapper.
@@ -1023,7 +1023,7 @@ _pane_prep="$_pane_prep; echo READY_\$\$"
 _herdr_pane_send_text "$ROOT_PANE" "$_pane_prep"
 _herdr_pane_send_keys "$ROOT_PANE" enter
 _herdr_pane_wait_output "$ROOT_PANE" 'READY_[0-9]+' 5000
-_spawn_snapshot "pane-prep-done" "$ROOT_PANE"
+( _spawn_snapshot "pane-prep-done" "$ROOT_PANE" ) &
 
 # Runs in YOLO mode (skip-permissions + sonnet fallback) — same as the `yolo`
 # command — so a remotely-driven agent never stalls on a permission prompt the
@@ -1081,16 +1081,15 @@ if [ "$_start_ok" -ne 1 ]; then
   [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
-_spawn_snapshot "agent-started" "$ROOT_PANE"
+( _spawn_snapshot "agent-started" "$ROOT_PANE" ) &
 
 if ! _herdr_agent_prompt "$AGENT_ID" "$STARTUP_PROMPT"; then
   echo "parlay-spawn: herdr agent prompt failed to deliver the charter — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
   [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
-_spawn_snapshot "prompt-injected" "$ROOT_PANE"
-sleep 3
-_spawn_snapshot "post-prompt" "$ROOT_PANE"
+( _spawn_snapshot "prompt-injected" "$ROOT_PANE" ) &
+( _spawn_snapshot "post-prompt" "$ROOT_PANE" ) &
 
 else
 # gascity launcher: a detached subprocess instead of a herdr terminal tab —
