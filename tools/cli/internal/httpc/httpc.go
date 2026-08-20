@@ -24,9 +24,29 @@ import (
 // calling the real os.Exit and killing the test binary.
 var Exit = os.Exit
 
-// Client is the shared HTTP client. No total timeout: callers that need one
-// (e.g. long-poll) set it per-request via context.
-var Client = &http.Client{}
+// DefaultTimeout bounds every one-shot request this package makes. Every
+// command in this CLI is a short-lived process talking to a local relay, so
+// any request still outstanding after this long is a wedged peer, not slow
+// work — and an unbounded wait is worse than a loud failure, especially on
+// the supervision path (`parlay supervise` wakes a supervisor with a relay
+// POST; firstmate's bin/fm-watch.sh mirrors status wakes through it, so a
+// relay that accepts the connection and never answers would freeze the whole
+// supervision loop). See robots-gxlb.
+const DefaultTimeout = 10 * time.Second
+
+// Client is the shared HTTP client for one-shot requests, bounded by
+// DefaultTimeout. Callers needing a different bound pass one explicitly
+// (TryGetJSON, TryPostJSON); the one caller that must NOT be bounded uses
+// UnboundedClient.
+var Client = &http.Client{Timeout: DefaultTimeout}
+
+// UnboundedClient has no total timeout, for the single long-poll caller
+// (internal/monitor's poll loop) that legitimately blocks until the server
+// answers. packages/go-server holds a poll open for 25s before returning its
+// {"timeout":true} marker, so DefaultTimeout would sever every poll in
+// flight. Do not reach for this for anything else: "no timeout" is a
+// deliberate exception, not the default.
+var UnboundedClient = &http.Client{}
 
 // Die prints msg to stderr and exits with code. It never returns under the
 // default Exit (os.Exit terminates immediately); the trailing panic only
@@ -118,11 +138,17 @@ func TryGetJSON[T any](path string, timeout time.Duration) (out T, ok bool) {
 }
 
 // TryPostJSON issues a POST like PostJSON but never dies: it returns
-// ok=false plus a short reason on network error or non-2xx status instead of
-// exiting. Same graceful-degradation exception as TryGetJSON — used by
-// supervise's postToRelay to post relay messages without killing the
+// ok=false plus a short reason on network error, timeout, or non-2xx status
+// instead of exiting. Same graceful-degradation exception as TryGetJSON —
+// used by supervise's postToRelay to post relay messages without killing the
 // process when the relay is down.
-func TryPostJSON(path string, body any) (ok bool, reason string) {
+//
+// Takes an explicit timeout for the same reason TryGetJSON does: a relay that
+// accepts the connection and then never answers is exactly the failure this
+// helper's callers must survive, and "never dies" is a hollow promise if the
+// call can block forever (robots-gxlb). Pass DefaultTimeout when there is no
+// reason to pick something else.
+func TryPostJSON(path string, body any, timeout time.Duration) (ok bool, reason string) {
 	base := config.ServerURL()
 
 	payload, err := json.Marshal(body)
@@ -130,7 +156,8 @@ func TryPostJSON(path string, body any) (ok bool, reason string) {
 		return false, err.Error()
 	}
 
-	resp, err := Client.Post(base+path, "application/json", bytes.NewReader(payload))
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Post(base+path, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return false, err.Error()
 	}
