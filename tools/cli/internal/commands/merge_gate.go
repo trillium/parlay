@@ -20,7 +20,8 @@
 // review posted. So this verb deliberately does NOT trust the check
 // conclusion as the merge signal at all. It asserts, in order:
 //
-//  1. the PR is open and not conflicting,
+//  1. the PR is open, not conflicting, and not behind its base — a check that
+//     ran against an older base has not evaluated the merge that would happen,
 //  2. there is at least one check, and no check is failing or still pending,
 //  3. no check is a VACUOUS pass — conclusion green but description
 //     admitting it did not run (the rate-limit case above),
@@ -73,6 +74,34 @@
 // reviewer will never come" (4); it is its own answer, and the only one of
 // the three that is genuinely transient. Re-run the gate; do not edit, do not
 // escalate, do not merge.
+//
+// A green check is also only evidence about the base it ran against
+// (robots-1hs5). GitHub runs `pull_request` workflows on refs/pull/N/merge —
+// the merge RESULT, not the branch head — and it recomputes that ref when the
+// base branch moves, but it does NOT re-trigger the check run. So a PR whose
+// CI went green hours ago keeps that green forever, describing a merge with a
+// main that no longer exists. Merging it lands a combination no CI ever
+// evaluated. trillium/firstmate #76/#77/#79 each stayed green that way and
+// collectively broke main with duplicate entries in a shared JSON file
+// (robots-ot20) — three PRs that were individually correct and jointly wrong.
+//
+// The obvious signal does not work: `mergeStateStatus=BEHIND` is only ever
+// reported when the base branch has protection with "require branches to be up
+// to date before merging" enabled, and the repos this gate runs against have no
+// protection at all — every behind PR there reports CLEAN or UNSTABLE. Reading
+// that field alone would be a blocker that never fires in exactly the case it
+// was written for. So the gate asks the compare API instead
+// (`repos/O/R/compare/base...head` -> `behind_by`), which is true regardless of
+// repo settings, and treats BEHIND as corroboration when it is present.
+//
+// Being behind is code-class (3): it is fixable on the branch by merging the
+// base in or rebasing, which re-triggers CI against the current base. The gate
+// deliberately does NOT try to time-correlate check completion against the base
+// tip's commit date to exempt "behind but CI ran after the base moved" — commit
+// dates are not push times and can predate the push arbitrarily, so that
+// refinement fails OPEN on exactly the force-pushed and rebased branches it
+// would matter for. Blocking every behind PR is the same rule GitHub's own
+// "require branches to be up to date" enforces, and it costs one rebase.
 
 package commands
 
@@ -186,6 +215,7 @@ type ghPRView struct {
 	State            string      `json:"state"`
 	Mergeable        string      `json:"mergeable"`
 	MergeStateStatus string      `json:"mergeStateStatus"`
+	BaseRefName      string      `json:"baseRefName"`
 	HeadRefOid       string      `json:"headRefOid"`
 	Author           ghAuthor    `json:"author"`
 	Reviews          []ghReview  `json:"reviews"`
@@ -210,6 +240,14 @@ type MergeGateSnapshot struct {
 	// ThreadsKnown is false when the review-thread query could not be run;
 	// the gate then reports the gap instead of silently claiming zero.
 	ThreadsKnown bool
+	// BehindBy is how many commits the base branch has that the head does not
+	// — i.e. how stale the base this PR's checks ran against now is
+	// (robots-1hs5). Read from the compare API, NOT from mergeStateStatus,
+	// which only says BEHIND on a protected branch that requires up-to-date
+	// branches. BehindKnown is false when that call could not be made; the
+	// gate then reports the gap rather than claiming zero.
+	BehindBy    int
+	BehindKnown bool
 }
 
 // MergeBlocker is one reason the PR must not be merged. Code is a stable
@@ -233,10 +271,14 @@ type MergeGateVerdict struct {
 	// Pending is true when there ARE blockers but every one of them is the
 	// review still running. Nothing is known to be wrong with the code and
 	// nothing needs deciding — the caller re-runs the gate later.
-	Pending  bool           `json:"pending"`
-	Blockers []MergeBlocker `json:"blockers"`
-	Notes    []string       `json:"notes"`
-	ExitCode int            `json:"exitCode"`
+	Pending bool `json:"pending"`
+	// BehindKnown mirrors MergeGateSnapshot.BehindKnown: false when the
+	// base-comparison call failed, so FormatMergeGate can qualify the
+	// ready summary rather than asserting "green against the current base".
+	BehindKnown bool           `json:"behindKnown"`
+	Blockers    []MergeBlocker `json:"blockers"`
+	Notes       []string       `json:"notes"`
+	ExitCode    int            `json:"exitCode"`
 }
 
 func block(v *MergeGateVerdict, code, format string, a ...any) {
@@ -253,7 +295,7 @@ func blockAs(v *MergeGateVerdict, code, class, format string, a ...any) {
 
 // ComputeMergeGate is the whole decision, as a pure function of a snapshot.
 func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
-	v := MergeGateVerdict{Blockers: []MergeBlocker{}, Notes: []string{}}
+	v := MergeGateVerdict{Blockers: []MergeBlocker{}, Notes: []string{}, BehindKnown: s.BehindKnown}
 
 	// Which repository this answer is about comes FIRST, above even the
 	// merged short-circuit — the whole robots-g4qz defect was a verdict that
@@ -286,6 +328,34 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 
 	if strings.EqualFold(s.PR.Mergeable, "CONFLICTING") {
 		block(&v, "conflicting", "PR conflicts with the base branch (mergeable=CONFLICTING).")
+	}
+
+	// --- base freshness -----------------------------------------------
+	//
+	// Everything below this point reasons about checks and reviews, and both
+	// of them are statements about a merge with SOME base. If that base has
+	// moved, every one of those statements is about a merge that will not
+	// happen (robots-1hs5). Nothing re-runs on a base move, so the gate is
+	// the only thing that can notice.
+	baseLabel := s.PR.BaseRefName
+	if baseLabel == "" {
+		baseLabel = "the base branch"
+	}
+	switch {
+	case s.BehindKnown && s.BehindBy > 0:
+		block(&v, "behind-base",
+			"%s has %d commit(s) this branch does not — every check here ran against a merge with an older %s, and GitHub does not re-run them when the base moves. Merge %s in (or rebase) so CI evaluates the code that would actually land.",
+			baseLabel, s.BehindBy, baseLabel, baseLabel)
+	case strings.EqualFold(s.PR.MergeStateStatus, "BEHIND"):
+		// Only reachable on a protected base that requires up-to-date
+		// branches; kept because when it IS present it is authoritative, and
+		// it is the one path that still works if the compare call failed.
+		block(&v, "behind-base",
+			"GitHub reports mergeStateStatus=BEHIND: this branch is out of date with %s, so its green checks describe a merge with an older base. Merge %s in (or rebase).",
+			baseLabel, baseLabel)
+	case !s.BehindKnown:
+		v.Notes = append(v.Notes,
+			"Could not compare this branch against its base — whether the checks ran against the CURRENT base is UNKNOWN, not confirmed.")
 	}
 
 	// --- checks -------------------------------------------------------
@@ -591,7 +661,11 @@ func FormatMergeGate(pr ghPRView, v MergeGateVerdict) string {
 		fmt.Fprintf(&b, "  · %s\n", n)
 	}
 	if v.Ready && !v.Merged {
-		b.WriteString("  · Checks green, a real review covered the current head, no unresolved threads.\n")
+		if v.BehindKnown {
+			b.WriteString("  · Checks green against the current base, a real review covered the current head, no unresolved threads.\n")
+		} else {
+			b.WriteString("  · Checks green (base freshness unknown — could not compare branch against base), a real review covered the current head, no unresolved threads.\n")
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -638,7 +712,12 @@ func MergeGate(argv []string) {
 			Verdict    MergeGateVerdict `json:"verdict"`
 			Checks     []ghCheck        `json:"checks"`
 			Unresolv   int              `json:"unresolvedThreads"`
-		}{snap.PR.Number, snap.PR.URL, snap.Repo, snap.RepoSource, v, snap.Checks, snap.UnresolvedThreads}, "", "  ")
+			// behindBy is null, not 0, when the compare call could not be
+			// made — "unknown" and "up to date" must not look identical to a
+			// scripted caller.
+			BehindBy *int `json:"behindBy"`
+		}{snap.PR.Number, snap.PR.URL, snap.Repo, snap.RepoSource, v, snap.Checks, snap.UnresolvedThreads,
+			behindByJSON(snap)}, "", "  ")
 		fmt.Println(string(out))
 	} else {
 		fmt.Println(FormatMergeGate(snap.PR, v))
@@ -649,8 +728,19 @@ func MergeGate(argv []string) {
 	}
 }
 
+// behindByJSON reports how far behind the base the branch is, or nil when the
+// gate could not find out. A scripted caller must be able to tell "0 commits
+// behind" from "never asked".
+func behindByJSON(s MergeGateSnapshot) *int {
+	if !s.BehindKnown {
+		return nil
+	}
+	n := s.BehindBy
+	return &n
+}
+
 // prViewFields is the exact --json field set fetchMergeGateSnapshot requests.
-const prViewFields = "number,url,state,mergeable,mergeStateStatus,headRefOid,author,reviews,comments"
+const prViewFields = "number,url,state,mergeable,mergeStateStatus,baseRefName,headRefOid,author,reviews,comments"
 
 // reviewThreadsQuery counts unresolved review threads. `gh pr view` has no
 // field for thread resolution, so this is the one place GraphQL is needed.
@@ -691,6 +781,23 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 	}
 	// No stdout means gh reported "no checks reported" — leave Checks empty
 	// so the no-checks blocker fires, rather than erroring out.
+
+	// How far the base has moved since this PR's checks ran (robots-1hs5).
+	// `gh pr view` cannot answer this — mergeStateStatus only reports BEHIND
+	// on a protected branch that requires up-to-date branches — so ask the
+	// compare API, which is true on any repo. Best-effort: a failure leaves
+	// BehindKnown false and the gate discloses the gap instead of assuming
+	// the branch is current. Pinned to the resolved repo like every other gh
+	// call here (robots-g4qz).
+	if s.PR.BaseRefName != "" && s.PR.HeadRefOid != "" && repo != "" {
+		c := sh("gh", "api", fmt.Sprintf("repos/%s/compare/%s...%s", repo, s.PR.BaseRefName, s.PR.HeadRefOid),
+			"--jq", ".behind_by")
+		if c.ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(c.out)); err == nil {
+				s.BehindBy, s.BehindKnown = n, true
+			}
+		}
+	}
 
 	if owner, name, ok := splitRepo(repo); ok {
 		q := sh("gh", "api", "graphql", "-f", "query="+reviewThreadsQuery,
