@@ -31,7 +31,7 @@ parlay-spawn <id> <name> <color> <task> [options]
 | `--pane <id>` | In-place mode: reuse caller's existing herdr pane instead of creating a new tab |
 | `--worktree` | Spawn in an isolated git worktree (created under `<repo>/.worktrees/parlay-<id>`) |
 | `--claim <bead-id>` | Associate with an existing task bead |
-| `--workspace <id>` | Place tab in a specific herdr workspace |
+| `--workspace <id\|label>` | Place tab in a herdr workspace by ID (`w6T`) or label (`"firstmate"`). Creates the workspace if the label doesn't exist. |
 
 ## Default account
 
