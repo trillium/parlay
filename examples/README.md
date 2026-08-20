@@ -136,7 +136,10 @@ it: the hook tailer, the tool tailer, and the boot-time session-channel backfill
 all read `$PAI_DIR/MEMORY/OBSERVABILITY` unconditionally, and `src/tts.ts` writes
 `$PAI_DIR/MEMORY/{OBSERVABILITY/tts-pronunciation-reports.jsonl,STATE/tts-cache/}`
 regardless. Leave it unset and the scratch server tails your real
-`~/.claude/PAI` activity and broadcasts it onto the example's channels.
+`~/.claude/PAI` activity and pushes it *out* of the sandbox — the tailers post
+to `PARLAY_HUB_URL` (default `http://127.0.0.1:4242`), so on a box already
+running a Go server there, your live agent turns land in *its* history, not the
+example's (see `packages/server/README.md`).
 
 Set it to a real path or leave it out entirely — never let it expand to empty.
 The server resolves it with `??`, not `||`, so `PAI_DIR=""` is a *value*, not
