@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useFleetStore } from './useFleetStore'
-import type { Agent, Command, Message, ToolEvent } from './types'
+import type { Agent, Command, EvalHit, Message, ToolEvent } from './types'
 import './App.css'
 
 // ── utils ────────────────────────────────────────────────────────────────────
@@ -131,6 +131,79 @@ function ToolLog({ events, filterChannel }: { events: ToolEvent[]; filterChannel
   )
 }
 
+// ── EvalLog ───────────────────────────────────────────────────────────────────
+
+const ACTION_COLOR: Record<string, string> = {
+  submitNow:          'var(--green)',
+  setText:            'var(--accent)',
+  replaceRange:       'var(--accent)',
+  clear:              'var(--yellow)',
+  stopSpeech:         'var(--yellow)',
+  flagSpeech:         'var(--red)',
+  switchTab:          'var(--text)',
+  openChannelPicker:  'var(--text)',
+  armTimer:           'var(--text2)',
+  cancelTimer:        'var(--text2)',
+  showHint:           'var(--text2)',
+  clearHint:          'var(--text2)',
+  noop:               'var(--border)',
+}
+
+function EvalLog({ hits, filter }: { hits: EvalHit[]; filter: string }) {
+  const [selected, setSelected] = useState<EvalHit | null>(null)
+  const q = filter.toLowerCase()
+  const visible = q
+    ? hits.filter(h =>
+        h.actions.some(a => a.verb.toLowerCase().includes(q)) ||
+        h.streamId.toLowerCase().includes(q)
+      )
+    : hits
+
+  return (
+    <div className="eval-wrap">
+      <div className="eval-list">
+        {visible.length === 0 && (
+          <div style={{ padding: '24px 16px', color: 'var(--text2)' }}>
+            {filter ? 'No matches for filter.' : 'Waiting for eval hits… speak a command.'}
+          </div>
+        )}
+        {visible.map((h, i) => (
+          <div
+            key={i}
+            className={`eval-row ${selected === h ? 'eval-row-selected' : ''}`}
+            onClick={() => setSelected(selected === h ? null : h)}
+          >
+            <span className="eval-ts">{relTime(h.ts)}</span>
+            <span className="eval-stream">{h.streamId.replace(/^eval-/, '').replace(/-main$/, '')}</span>
+            <span className="eval-actions">
+              {h.actions.map((a, j) => (
+                <span key={j} className="eval-verb" style={{ color: ACTION_COLOR[a.verb] ?? 'var(--text)' }}>
+                  {a.verb}
+                  {a.args?.channel ? ` → ${a.args.channel}` : ''}
+                  {a.args?.reason ? ` (${a.args.reason})` : ''}
+                </span>
+              ))}
+            </span>
+            {h.timing?.engineEvalNs != null && (
+              <span className="eval-timing">{(h.timing.engineEvalNs / 1e6).toFixed(2)}ms</span>
+            )}
+            {h.serverOwned && <span className="eval-server-tag">server</span>}
+          </div>
+        ))}
+      </div>
+      {selected && (
+        <div className="eval-drawer">
+          <div className="eval-drawer-header">
+            <span>Event detail</span>
+            <button className="eval-drawer-close" onClick={() => setSelected(null)}>×</button>
+          </div>
+          <pre className="eval-drawer-body">{JSON.stringify(selected, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── CommandTable ──────────────────────────────────────────────────────────────
 
 const STATE_COLOR: Record<string, string> = {
@@ -184,11 +257,12 @@ function CommandTable({ commands, filterAgent }: { commands: Command[]; filterAg
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
-type Tab = 'thread' | 'events' | 'commands'
+type Tab = 'thread' | 'eval' | 'commands' | 'events'
 
 export default function App() {
-  const { agents, liveChannels, commands, messages, toolEvents, selectedChannel, selectChannel, connectedClients } = useFleetStore()
-  const [tab, setTab] = useState<Tab>('thread')
+  const { agents, liveChannels, commands, messages, toolEvents, evalHits, selectedChannel, selectChannel, connectedClients } = useFleetStore()
+  const [tab, setTab] = useState<Tab>('eval')
+  const [evalFilter, setEvalFilter] = useState('')
   const liveCount = [...liveChannels].filter(ch => agents.some(a => a.id === ch)).length
   const runningCount = commands.filter(c => c.state === 'running').length
 
@@ -217,6 +291,9 @@ export default function App() {
             <button className={tab === 'thread' ? 'tab active' : 'tab'} onClick={() => setTab('thread')}>
               Thread
             </button>
+            <button className={tab === 'eval' ? 'tab active' : 'tab'} onClick={() => setTab('eval')}>
+              Eval {evalHits.length > 0 && <span className="badge">{evalHits.length}</span>}
+            </button>
             <button className={tab === 'commands' ? 'tab active' : 'tab'} onClick={() => setTab('commands')}>
               Commands <span className="badge">{runningCount}</span>
             </button>
@@ -224,6 +301,19 @@ export default function App() {
               Tool Events {toolEvents.length > 0 && <span className="badge">{toolEvents.length}</span>}
             </button>
           </div>
+          {tab === 'eval' && (
+            <>
+              <div className="eval-filter-bar">
+                <input
+                  className="eval-filter"
+                  placeholder="filter by verb or stream…"
+                  value={evalFilter}
+                  onChange={e => setEvalFilter(e.target.value)}
+                />
+              </div>
+              <EvalLog hits={evalHits} filter={evalFilter} />
+            </>
+          )}
           {tab === 'thread' && <MessageThread messages={messages} />}
           {tab === 'commands' && <CommandTable commands={commands} filterAgent={selectedChannel} />}
           {tab === 'events' && <ToolLog events={toolEvents} filterChannel={selectedChannel} />}

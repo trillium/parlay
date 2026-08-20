@@ -51,3 +51,28 @@ export interface PresenceEntry {
   lastSeen?: string
   status?: string
 }
+
+export interface EvalAction {
+  verb: string
+  args?: {
+    text?: string
+    channel?: string
+    url?: string
+    reason?: string
+    timerId?: string
+    fireInMs?: number
+    hintId?: string
+    hintKind?: string
+    [key: string]: unknown
+  }
+}
+
+export interface EvalHit {
+  ts: string
+  streamId: string
+  seq: number
+  device?: string
+  actions: EvalAction[]
+  timing?: { engineEvalNs?: number; relayMs?: number; serverOwnedFire?: boolean }
+  serverOwned?: boolean
+}

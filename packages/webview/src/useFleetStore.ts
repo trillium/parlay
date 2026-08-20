@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchAgents, fetchCommands, fetchHistory, fetchSubscribers, openEventStream } from './api'
-import type { Agent, Command, Message, ToolEvent } from './types'
+import type { Agent, Command, EvalHit, Message, ToolEvent } from './types'
 
 const MAX_EVENTS = 500
 const MAX_MESSAGES = 200
+const MAX_EVAL_HITS = 500
 
 export interface FleetStore {
   agents: Agent[]
   liveChannels: Set<string>
   commands: Command[]
-  messages: Message[]           // thread for selected channel (or recent fleet msgs)
+  messages: Message[]
   toolEvents: ToolEvent[]
+  evalHits: EvalHit[]
   selectedChannel: string | null
   selectChannel: (id: string | null) => void
   connectedClients: number
@@ -22,6 +24,7 @@ export function useFleetStore(): FleetStore {
   const [commands, setCommands] = useState<Command[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([])
+  const [evalHits, setEvalHits] = useState<EvalHit[]>([])
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null)
   const [connectedClients, setConnectedClients] = useState(0)
   const selectedRef = useRef<string | null>(null)
@@ -85,9 +88,26 @@ export function useFleetStore(): FleetStore {
       if (type === 'agents') {
         if (Array.isArray(data)) setAgents(data)
       }
+      if (type === 'input_action') {
+        const hit: EvalHit = {
+          ts: new Date().toISOString(),
+          streamId: data.streamId ?? '',
+          seq: data.seq ?? 0,
+          actions: data.actions ?? [],
+          timing: data.timing,
+          serverOwned: data.timing?.serverOwnedFire === true,
+        }
+        // only record hits that actually fired actions (skip empty/noop-only evals)
+        if (hit.actions.length > 0 && !hit.actions.every((a: any) => a.verb === 'noop')) {
+          setEvalHits(prev => {
+            const next = [hit, ...prev]
+            return next.length > MAX_EVAL_HITS ? next.slice(0, MAX_EVAL_HITS) : next
+          })
+        }
+      }
     })
     return stop
   }, [])
 
-  return { agents, liveChannels, commands, messages, toolEvents, selectedChannel, selectChannel, connectedClients }
+  return { agents, liveChannels, commands, messages, toolEvents, evalHits, selectedChannel, selectChannel, connectedClients }
 }

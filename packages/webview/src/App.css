@@ -123,6 +123,50 @@ html, body, #root { height: 100%; background: var(--bg); color: var(--text); fon
 .tl-out { color: var(--text); opacity: .8; white-space: pre-wrap; }
 .tl-err { color: var(--red); opacity: .8; white-space: pre-wrap; }
 
+/* ── eval log ── */
+.eval-wrap { flex: 1; display: flex; overflow: hidden; }
+.eval-list { flex: 1; overflow-y: auto; font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 11px; }
+.eval-filter-bar { padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; }
+.eval-filter {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+  padding: 4px 8px; color: var(--text); font-size: 12px; outline: none;
+}
+.eval-filter:focus { border-color: var(--accent); }
+
+.eval-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 12px; border-bottom: 1px solid var(--border);
+  cursor: pointer; user-select: none;
+}
+.eval-row:hover { background: var(--bg2); }
+.eval-row-selected { background: var(--bg3); border-left: 2px solid var(--accent); }
+.eval-ts { color: var(--text2); white-space: nowrap; min-width: 60px; }
+.eval-stream { color: var(--text2); min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eval-actions { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
+.eval-verb { font-weight: 600; white-space: nowrap; }
+.eval-timing { color: var(--text2); white-space: nowrap; }
+.eval-server-tag { font-size: 10px; padding: 1px 5px; border-radius: 8px; background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+
+.eval-drawer {
+  width: 320px; flex-shrink: 0; border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; background: var(--bg2);
+}
+.eval-drawer-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 12px; border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 600; color: var(--text2);
+}
+.eval-drawer-close {
+  background: none; border: none; color: var(--text2); cursor: pointer;
+  font-size: 16px; line-height: 1; padding: 0 4px;
+}
+.eval-drawer-close:hover { color: var(--text); }
+.eval-drawer-body {
+  flex: 1; overflow: auto; padding: 10px 12px;
+  font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 10px;
+  color: var(--text); white-space: pre; line-height: 1.5;
+}
+
 /* ── command table ── */
 .cmd-table-wrap { flex: 1; overflow: auto; }
 .cmd-table {
