@@ -1,0 +1,22 @@
+## NO TASK — DO NOT START WORK
+
+parlay claim {{.TaskID}}: {{.Reason}}.
+{{.TitleBlock}}{{.DetailBlock}}
+There is no work behind this pane and nothing you do here can create any.
+Do NOT go looking for the ticket, do NOT pick a different one, do NOT sit
+waiting for a message, and do NOT arm a monitor. Close yourself out now.
+
+{{.StatusBlock}}
+Your remaining steps — run them now, nothing in between:
+
+{{.HandoffLine}}
+   Put the reason in the body. This is the record of why the pane ended.
+2. identity --park <the-handoff-id-from-step-1>
+
+Step 2 IS the exit: --park pins the handoff and shuts you down WITHOUT a
+restart. Do not reach for the other two exits — 'identity --submit' reboots
+you straight back into this same dead claim (the respawn loop this brief
+exists to prevent), and 'identity --complete' wants an open work item to
+close, which is exactly what is missing here.
+
+After step 2 you are done. Report nothing further.

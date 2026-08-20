@@ -42,7 +42,7 @@ Never commit, branch, or push from the primary checkout.
 // composeStartupPrompt builds the full first-turn brief handed to the
 // spawned claude: the enrollment contract (unchanged across every spawn)
 // plus the task-specific setup/task/DoD/status-protocol sections. Mirrors
-// bin/parlay-spawn's STARTUP_PROMPT heredoc verbatim (lines 575–621).
+// bin/parlay-spawn's STARTUP_PROMPT heredoc verbatim (lines 572–618).
 func composeStartupPrompt(server, agentID, name, color, setupBlock, prompt, dod string) string {
 	// Single-quote each value for the shell, then render the whole thing as a
 	// quoted literal for the Monitor({}) call. A display name is arbitrary
