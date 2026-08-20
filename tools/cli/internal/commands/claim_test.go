@@ -476,6 +476,15 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if !strings.Contains(out, "re-run the gate") {
 		t.Errorf("robots DoD should tell the mechanic to re-run rather than edit on exit 5; got:\n%s", out)
 	}
+	// robots-1186: "use an isolated worktree" is a silent no-op over a symlinked
+	// subtree — git copies the symlink, so writes land in the shared checkout it
+	// points at. The contract must name that case and the concrete instance.
+	if !strings.Contains(out, "does NOT isolate a symlinked subtree") {
+		t.Errorf("robots DoD should warn that a worktree does not isolate a symlinked subtree; got:\n%s", out)
+	}
+	if !strings.Contains(out, "~/code/pai-hooks") || !strings.Contains(out, "~/.claude/hooks") {
+		t.Errorf("robots DoD should point hooks work at ~/code/pai-hooks rather than ~/.claude; got:\n%s", out)
+	}
 }
 
 // --- no-work claims (robots-4ek1) -------------------------------------------
