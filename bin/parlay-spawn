@@ -49,6 +49,22 @@ fi
 ACCOUNT="${PARLAY_SPAWN_DEFAULT_ACCOUNT:-$_config_account}"
 unset _config_toml _config_account
 
+# Launcher — herdr (default) or gascity (detached-subprocess escape hatch for
+# herdr's SIGKILL failure mode in headless/no-WindowServer environments).
+# Precedence: PARLAY_SPAWN_LAUNCHER env var > ~/.parlay/config.toml [spawn] launcher > herdr.
+_config_toml="${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml"
+_config_launcher=""
+if [ -z "${PARLAY_SPAWN_LAUNCHER:-}" ] && [ -f "$_config_toml" ] && command -v python3 >/dev/null 2>&1; then
+  _config_launcher=$(python3 - "$_config_toml" <<'PYEOF' 2>/dev/null || true
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    print(tomllib.load(f).get("spawn", {}).get("launcher", ""), end="")
+PYEOF
+)
+fi
+LAUNCHER="${PARLAY_SPAWN_LAUNCHER:-${_config_launcher:-herdr}}"
+unset _config_toml _config_launcher
+
 # Absolute path to THIS script, so the batch loop can re-exec us in single mode
 # regardless of the cwd or relative path used to invoke us (mirror fm-spawn.sh's
 # $FM_ROOT/bin/fm-spawn.sh self-reference).
@@ -575,6 +591,7 @@ fi
 # registering the agent (avoids an orphaned tab on failure).
 WORKTREE_PATH=""
 PROJECT_PATH=""
+TREEHOUSE_LEASED_PATH=""
 if [ "$WANT_WORKTREE" -eq 1 ]; then
   PROJECT_PATH=$(cd "$CWD" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || {
     echo "parlay-spawn: --worktree requires --cwd to be inside a git repo (got: '$CWD')" >&2
@@ -688,6 +705,12 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
         if [ "$(repo_identity "$_th_path")" = "$(repo_identity "$PROJECT_PATH")" ]; then
           WORKTREE_PATH="$_th_path"
           _wt_created=1
+          # Recorded ONLY on a verified treehouse lease (never the plain git
+          # worktree fallback below) — this is what the gascity launch branch
+          # passes to `parlay-bin gascity-spawn --worktree-path`, so
+          # gascity-stop knows to `treehouse return` it and a plain
+          # git-worktree agent is never mistaken for a leased one.
+          TREEHOUSE_LEASED_PATH="$WORKTREE_PATH"
           echo "parlay-spawn: worktree via treehouse at $WORKTREE_PATH" >&2
         else
           echo "parlay-spawn: WRONG-REPO WORKTREE — treehouse handed back $_th_path," >&2
@@ -857,7 +880,7 @@ fi
 #    (empty-string via --env is NOT enough — the guard checks presence, so
 #    we must `unset` — and new panes inherit the herdr server's own
 #    CLAUDECODE/CLAUDE_CODE_* env, confirmed empirically).
-echo "parlay-spawn: launching detached $KIND agent via herdr (cwd=$CWD, $FOCUS_FLAG) ..." >&2
+echo "parlay-spawn: launching detached $KIND agent via $LAUNCHER (cwd=$CWD, $FOCUS_FLAG) ..." >&2
 
 # Resolve account token if --account was given, before tab creation so there
 # is no ghost tab to clean up on a bad keychain lookup.
@@ -868,6 +891,7 @@ if [ -n "$ACCOUNT" ]; then
   echo "parlay-spawn: using account '$ACCOUNT' (token resolved)" >&2
 fi
 
+if [ "$LAUNCHER" != "gascity" ]; then
 # Give the agent its OWN tab (captain's rule 2026-07-13: agents never split the
 # captain's current tab, and they launch unfocused/background). The tab's root
 # pane becomes the agent's pane directly — `agent start` targets it below via
@@ -1029,6 +1053,69 @@ _spawn_snapshot "prompt-injected" "$ROOT_PANE"
 sleep 3
 _spawn_snapshot "post-prompt" "$ROOT_PANE"
 
+else
+# gascity launcher: a detached subprocess instead of a herdr terminal tab —
+# the escape hatch for herdr's SIGKILL failure mode in headless/no-WindowServer
+# environments. No tab/pane exists, so the charter can't be delivered via
+# herdr's paste-safe `agent prompt` channel; instead it is written to disk and
+# piped into the agent process's stdin as part of its one-shot launch command
+# (tools/parlay-bin's gascity-spawn runs `sh -c <command>` once, detached —
+# see tools/parlay-bin/gascity_spawn.go's header comment for the full design
+# rationale, including why this is a from-scratch port of gascity's lifecycle
+# semantics rather than an import or a `gc` CLI wrapper).
+GASCITY_PROMPT_FILE="$AGENT_DIR/startup-prompt.txt"
+printf '%s\n' "$STARTUP_PROMPT" > "$GASCITY_PROMPT_FILE"
+
+# Same YOLO-mode args as the herdr path's $AGENT_START_ARGS, expressed as a
+# claude CLI flag string instead of a herdr `agent start` argv.
+case "$KIND" in
+  claude) GASCITY_CMD_ARGS="--dangerously-skip-permissions --fallback-model sonnet" ;;
+  *)      GASCITY_CMD_ARGS="" ;;
+esac
+[ -n "$MODEL" ] && GASCITY_CMD_ARGS="$GASCITY_CMD_ARGS --model $(shell_quote "$MODEL")"
+
+# Mirrors the herdr path's in-place `_pane_prep` unset list (line ~968) — new
+# subprocess children inherit this CLI's own CLAUDECODE/CLAUDE_CODE_* env same
+# as a fresh herdr pane does, so the same nesting-marker unset applies here.
+GASCITY_ENV_UNSET="unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT"
+GASCITY_COMMAND="$GASCITY_ENV_UNSET; cd $(shell_quote "$CWD") && exec $(shell_quote "$KIND") $GASCITY_CMD_ARGS < $(shell_quote "$GASCITY_PROMPT_FILE")"
+
+# Env overrides for the child process — mirrors the herdr path's tab --env set
+# (PARLAY_* profile vars, optional OAuth token, PROJECT_ENV_FLAGS pairs).
+GASCITY_ENV_ARGS=(--env "PARLAY_SERVER=$PARLAY" --env "PARLAY_AGENT_ID=$AGENT_ID" --env "PARLAY_AGENT_NAME=$NAME" --env "PARLAY_AGENT_COLOR=$COLOR")
+[ -n "$MODEL" ] && GASCITY_ENV_ARGS+=(--env "PARLAY_AGENT_MODEL=$MODEL")
+[ -n "${_token:-}" ] && GASCITY_ENV_ARGS+=(--env "CLAUDE_CODE_OAUTH_TOKEN=$_token")
+_ge_i=1
+while [ "$_ge_i" -lt "${#PROJECT_ENV_FLAGS[@]}" ]; do
+  GASCITY_ENV_ARGS+=(--env "${PROJECT_ENV_FLAGS[$_ge_i]}")
+  _ge_i=$((_ge_i + 2))
+done
+
+# Only pass --worktree-path when WORKTREE_PATH came from a verified treehouse
+# lease (TREEHOUSE_LEASED_PATH), never a plain git-worktree fallback — see
+# this file's TREEHOUSE_LEASED_PATH assignment in the worktree-setup step.
+GASCITY_WORKTREE_FLAG=()
+[ -n "$TREEHOUSE_LEASED_PATH" ] && GASCITY_WORKTREE_FLAG=(--worktree-path "$TREEHOUSE_LEASED_PATH")
+
+# Build tools/parlay-bin if missing or stale, mirroring bin/parlay's own
+# build-if-stale pattern for tools/cli.
+GASCITY_BIN_DIR="$BIN_DIR/../tools/parlay-bin"
+GASCITY_GO_BIN="$GASCITY_BIN_DIR/bin/parlay-bin"
+if [ ! -x "$GASCITY_GO_BIN" ] || [ -n "$(find "$GASCITY_BIN_DIR" -name '*.go' -newer "$GASCITY_GO_BIN" -print -quit)" ]; then
+  mkdir -p "$(dirname "$GASCITY_GO_BIN")"
+  (cd "$GASCITY_BIN_DIR" && go build -o "$GASCITY_GO_BIN" .) || exit 1
+fi
+
+if ! "$GASCITY_GO_BIN" gascity-spawn "$AGENT_ID" "$GASCITY_COMMAND" "$CWD" \
+    --state-dir "$AGENT_DIR/gascity" \
+    "${GASCITY_ENV_ARGS[@]}" \
+    ${GASCITY_WORKTREE_FLAG[@]+"${GASCITY_WORKTREE_FLAG[@]}"}; then
+  echo "parlay-spawn: gascity-spawn failed to launch $AGENT_ID." >&2
+  exit 1
+fi
+echo "parlay-spawn: gascity session '$AGENT_ID' launched (state dir: $AGENT_DIR/gascity)." >&2
+fi
+
 # Seed the identity's LAUNCH SPEC (frontmatter) so the agent can reconstitute itself
 # on context reset — the identity fully describes how to relaunch it. Best-effort.
 # Ephemeral agents were already seeded by the mint step (with `ephemeral: true`);
@@ -1077,7 +1164,32 @@ fi
 #    long before the timeout and this never nudges it. Disable with
 #    PARLAY_SPAWN_NO_WATCHDOG=1; tune with PARLAY_SPAWN_LIVENESS_TIMEOUT_MS.
 LIVENESS_TIMEOUT_MS="${PARLAY_SPAWN_LIVENESS_TIMEOUT_MS:-60000}"
-if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && (_herdr_use_rpc || command -v herdr >/dev/null 2>&1); then
+if [ "$LAUNCHER" = "gascity" ]; then
+  # gascity path: there is no herdr agent to `agent wait` on, so liveness is
+  # observed the same way any client confirms an agent is connected — polling
+  # this server's own /api/chat/subscribers for the agent's channel. Same
+  # opt-out/tuning knobs as the herdr watchdog for operational parity.
+  if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ]; then
+    GASCITY_LIVENESS_TIMEOUT_S=$(( LIVENESS_TIMEOUT_MS / 1000 ))
+    [ "$GASCITY_LIVENESS_TIMEOUT_S" -lt 1 ] && GASCITY_LIVENESS_TIMEOUT_S=60
+    GASCITY_WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-gascity-watchdog.log"
+    (
+      _gascity_elapsed=0
+      while [ "$_gascity_elapsed" -lt "$GASCITY_LIVENESS_TIMEOUT_S" ]; do
+        if curl -fsS "$PARLAY/api/chat/subscribers" 2>/dev/null \
+            | jq -e --arg id "$AGENT_ID" '.[] | select(.channel == $id)' >/dev/null 2>&1; then
+          echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: observed in /api/chat/subscribers — session live." >&2
+          exit 0
+        fi
+        sleep 1
+        _gascity_elapsed=$((_gascity_elapsed + 1))
+      done
+      echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: did not appear in /api/chat/subscribers within ${GASCITY_LIVENESS_TIMEOUT_S}s — inspect $AGENT_DIR/gascity or run '$GASCITY_GO_BIN gascity-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'." >&2
+    ) </dev/null >>"$GASCITY_WATCHDOG_LOG" 2>&1 &
+    disown 2>/dev/null || true
+    echo "parlay-spawn: gascity liveness watchdog armed (${GASCITY_LIVENESS_TIMEOUT_S}s → poll /api/chat/subscribers); log: $GASCITY_WATCHDOG_LOG" >&2
+  fi
+elif [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && (_herdr_use_rpc || command -v herdr >/dev/null 2>&1); then
   WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-watchdog.log"
   (
     # `agent wait` returns 0 as soon as the agent is observed 'working' — the
