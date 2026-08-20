@@ -76,14 +76,22 @@ echo '{}'
 exit 0
 S
 
-# security: controlled by STUB_SECURITY_TOKEN (exported into every subshell).
-#   Set non-empty → keychain hit; empty/unset → keychain miss → exit 1.
-cat > "$STUB/security" <<'S'
+# ccjuggler-resolve: replaces packages/ccjuggler's bin entry.
+#   Controlled by STUB_SECURITY_TOKEN (simulates keychain) and the real
+#   ~/.ccjuggler/<account>/.oauth-token flat-file path under the test HOME.
+cat > "$STUB/ccjuggler-resolve" <<'S'
 #!/usr/bin/env bash
+account="${1:-}"
+if [ -z "$account" ]; then echo "Usage: ccjuggler-resolve <account>" >&2; exit 2; fi
+# Simulate keychain hit
 if [ -n "${STUB_SECURITY_TOKEN:-}" ]; then
   printf '%s' "$STUB_SECURITY_TOKEN"
   exit 0
 fi
+# Flat-file fallback
+f="$HOME/.ccjuggler/${account}/.oauth-token"
+if [ -f "$f" ]; then cat "$f"; exit 0; fi
+echo "ccjuggler: no token found for account '${account}' — tried keychain 'ccjuggler-${account}' and $f" >&2
 exit 1
 S
 
@@ -111,7 +119,7 @@ out=$(run_spawn "$HOME1" bad-acct "Bad Acct" "#aabbcc" "task" --account ghost-ac
 if grep -q "no token found" <<<"$out"; then
   pass "missing token: 'no token found' message printed"
 else
-  fail "missing token: expected 'no token found'; got:"$'\n'"$out"
+  fail "missing token: expected 'no token found' (from ccjuggler-resolve); got:"$'\n'"$out"
 fi
 # herdr tab create must NOT be called — env file stays empty.
 # ("launching detached" is logged before token resolution, so that line is

@@ -262,19 +262,16 @@ repo_identity() {
 }
 
 # Resolve a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler account name.
-# Tries: macOS keychain (ccjuggler-<name>) → ~/.ccjuggler/<name>/.oauth-token
+# Delegates to ccjuggler-resolve (packages/ccjuggler) which checks:
+#   macOS keychain (ccjuggler-<name>) → ~/.ccjuggler/<name>/.oauth-token
 # Prints the token or exits non-zero with an error message.
 resolve_account_token() {
   local account="$1"
-  local token
-  # macOS keychain — primary store on MacBook
-  token=$(security find-generic-password -a "ccjuggler" -s "ccjuggler-${account}" -w 2>/dev/null)
-  if [ -n "$token" ]; then printf '%s' "$token"; return 0; fi
-  # Flat-file fallback
-  local f="$HOME/.ccjuggler/${account}/.oauth-token"
-  if [ -f "$f" ]; then cat "$f"; return 0; fi
-  echo "parlay-spawn: --account '${account}': no token found — tried keychain 'ccjuggler-${account}' and $f" >&2
-  return 1
+  if ! command -v ccjuggler-resolve >/dev/null 2>&1; then
+    echo "parlay-spawn: ccjuggler-resolve not found on PATH — run 'bun install' in packages/ccjuggler or add it to PATH" >&2
+    return 1
+  fi
+  ccjuggler-resolve "$account"
 }
 
 # Load a launch template file and interpolate variables.
