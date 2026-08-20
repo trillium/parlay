@@ -1049,6 +1049,30 @@ merge-and-disclose / park) instead of two. The gate deliberately does not post
 that comment itself: it is a read-only verb, and a gate called in a poll loop
 would spam the reviewer and re-consume the very limit at issue.
 
+**Every verdict is about ORIGIN's head — say which commit that is (robots-bn5d).**
+That is the right commit to gate, since it is what a merge lands. But the caller
+is a mechanic who has just authored a fix and pushed it, and for whom READY
+reads as "my fix is cleared to merge". `git push no-mistakes` goes to the
+**mirror**, and the pipeline pushes on to origin asynchronously — so on
+trillium/firstmate#91 origin's head was still the pre-fix commit while the gate
+said READY, and merging there would have landed the old head and silently
+DROPPED the fix for the finding that had blocked the PR. Minutes later, once the
+pipeline pushed, the same PR went 0 → 4: the READY was not merely early, it was
+the opposite of the eventual truthful answer. The gate cannot see a mirror or a
+pipeline run, but from any checkout or linked worktree of the repo it can see
+that the local branch holds commits origin's PR head does not —
+`detectHeadFreshness` measures exactly that, pinned to the already-resolved repo
+so a same-named branch elsewhere can never invent a blocker. Ahead (or diverged)
+is `head-not-pushed`, **pending**-class, exit 5: nothing is wrong with the diff,
+the commits simply have not arrived, and the answer changes on its own. On a
+MERGED PR it is code-class instead — the stale merge already happened, waiting
+cannot undo it, and `git branch -r --contains <sha>` will pass for the wrong
+commit. Behind is only a note (a stale checkout risks nothing). Where no local
+branch is available, the gate says the freshness is **UNVERIFIED** rather than
+implying agreement, and hands over the one-line check it could not run. Exit 5
+now has two shapes with opposite instructions, so its notes name whichever is
+present instead of always printing the review-in-flight script.
+
 **Never let `gh` pick the repository implicitly (robots-g4qz).** gh's
 base-repo resolution prefers a remote named `upstream` over `origin`, so in a
 fork clone — origin=`trillium/<repo>` plus an `upstream` remote, which is every
