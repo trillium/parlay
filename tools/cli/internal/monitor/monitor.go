@@ -226,7 +226,7 @@ func announceStreamDown(agent, cause string) {
 		"text": fmt.Sprintf(
 			"monitor DOWN (%s) — this channel is no longer being read. Messages sent now will not be delivered. Re-arm with: parlay listen --agent %s",
 			cause, agent),
-	})
+	}, httpc.DefaultTimeout)
 	if !ok {
 		_, _ = fmt.Fprintf(os.Stderr, "parlay monitor: could not post the stream-down notice for '%s' — %s\n", agent, reason)
 	}

@@ -275,12 +275,12 @@ func claimRecordFailure(agent, taskID, reason string) bool {
 // ever printed — leaving exactly the instruction-less agent this path exists to
 // fix, only now with the server as the trigger.)
 func claimAnnounceNoWork(agent, name, color, taskID, reason string) bool {
-	if ok, why := httpc.TryPostJSON("/api/chat/register-agent", map[string]any{"id": agent, "name": name, "color": color}); !ok {
+	if ok, why := httpc.TryPostJSON("/api/chat/register-agent", map[string]any{"id": agent, "name": name, "color": color}, httpc.DefaultTimeout); !ok {
 		fmt.Fprintf(os.Stderr, "parlay claim: note — could not register '%s' to report the failed claim: %s\n", agent, why)
 		return false
 	}
 	announce := fmt.Sprintf("claim FAILED: %s — %s. No work to do; reporting and exiting WITHOUT restart.", taskID, reason)
-	ok, why := httpc.TryPostJSON("/api/chat/reply", map[string]string{"text": announce, "agent": agent})
+	ok, why := httpc.TryPostJSON("/api/chat/reply", map[string]string{"text": announce, "agent": agent}, httpc.DefaultTimeout)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "parlay claim: note — could not announce the failed claim: %s\n", why)
 	}
