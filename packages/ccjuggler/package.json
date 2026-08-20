@@ -1,0 +1,16 @@
+{
+  "name": "parlay-ccjuggler",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "ccjuggler OAuth token resolution for parlay agent spawning",
+  "module": "src/index.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "ccjuggler-resolve": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
