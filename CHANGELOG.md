@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-08-20 — session cf74f28d
+
+Files: bin/parlay-spawn
 ## 2026-08-19 — session 889aed33
 
 Files: bin/herdr-rpc, bin/parlay-spawn, bin/herdr-rpc.test.sh, VISION.md, VISION-answers.md
