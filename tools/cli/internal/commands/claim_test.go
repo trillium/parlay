@@ -496,6 +496,17 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if !strings.Contains(out, "~/code/pai-hooks") || !strings.Contains(out, "~/.claude/hooks") {
 		t.Errorf("robots DoD should point hooks work at ~/code/pai-hooks rather than ~/.claude; got:\n%s", out)
 	}
+	// robots-oex0: the LANDED proof above assumes origin/main is what runs.
+	// Where the working tree is the deployment target (pai-hooks symlinks
+	// ~/.claude/hooks into the checkout) origin can lag it by 20 commits, so
+	// "merged to origin/main" is satisfiable without the fix ever going live.
+	// The contract has to name that case and refuse the inference.
+	if !strings.Contains(out, "ORIGIN LAGS LIVE") {
+		t.Errorf("robots DoD should name the gate's origin-lags-live signal; got:\n%s", out)
+	}
+	if !strings.Contains(out, "merged but NOT live") {
+		t.Errorf("robots DoD should require saying so when a fix is merged but not deployed; got:\n%s", out)
+	}
 }
 
 // --- no-work claims (robots-4ek1) -------------------------------------------

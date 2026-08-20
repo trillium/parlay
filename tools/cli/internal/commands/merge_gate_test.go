@@ -1250,3 +1250,269 @@ func TestResolveMergeGateRepoPicksOriginOverUpstream(t *testing.T) {
 		t.Errorf("source = %q, want %q", src, "origin remote")
 	}
 }
+
+// --- merged is not live (robots-oex0) ---------------------------------
+//
+// The mechanic contract proves a fix landed by showing origin/main contains
+// the commit. That is only a proof of LIVENESS if origin/main is the artifact
+// that runs. In pai-hooks it is not — ~/.claude/hooks symlinks into the
+// checkout, so local main is live — and origin sat 20 commits behind it, so a
+// merged commit satisfied "FIXED" without ever going live.
+
+// laggingLive is the observed pai-hooks shape: origin/main 20 commits behind
+// the branch the checkout actually runs, and 1 commit ahead of it (the squash
+// of PR #5), i.e. genuinely diverged in both directions.
+func laggingLive() LiveBranchState {
+	return LiveBranchState{Known: true, Branch: "main", Ahead: 20, Behind: 1}
+}
+
+func notesJoined(v MergeGateVerdict) string { return strings.Join(v.Notes, "\n") }
+
+// The drift must never change the exit code. Nothing about it says the diff is
+// bad, and a gate that refuses every merge in a repo like pai-hooks gets
+// ignored on the run that matters.
+func TestOriginLaggingLiveIsNotedButNeverBlocks(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.Live = laggingLive()
+
+	v := ComputeMergeGate(s)
+	if !v.Ready || v.ExitCode != config.ExitOK {
+		t.Fatalf("drift must not block: ready=%v exit=%d blockers %v", v.Ready, v.ExitCode, blockerCodes(v))
+	}
+	if !v.OriginLagsLive {
+		t.Fatal("OriginLagsLive not set on a base branch 20 commits ahead of origin")
+	}
+	notes := notesJoined(v)
+	if !strings.Contains(notes, "ORIGIN LAGS LIVE") {
+		t.Errorf("notes never say the merge will not deploy:\n%s", notes)
+	}
+	if !strings.Contains(notes, "20 commit(s) ahead") {
+		t.Errorf("notes omit how far origin lags:\n%s", notes)
+	}
+}
+
+// The whole defect, at the surface a mechanic actually reads: "MERGED" is the
+// word it converts into "FIXED", so a merged PR in a lagging repo must not be
+// allowed to print that word unqualified.
+func TestMergedPRInALaggingRepoSaysNotLiveInTheHeader(t *testing.T) {
+	s := reviewedPR()
+	s.PR.State = "MERGED"
+	s.PR.BaseRefName = "main"
+	s.Live = laggingLive()
+
+	v := ComputeMergeGate(s)
+	if !v.Merged || v.ExitCode != config.ExitOK {
+		t.Fatalf("merged PR should still short-circuit to ready: %+v", v)
+	}
+	out := FormatMergeGate(s.PR, v)
+	head := strings.SplitN(out, "\n", 2)[0]
+	if !strings.Contains(head, "NOT LIVE") {
+		t.Errorf("header must qualify MERGED when origin lags live, got %q", head)
+	}
+	if !strings.Contains(notesJoined(v), "ORIGIN LAGS LIVE") {
+		t.Errorf("merged short-circuit dropped the liveness note:\n%s", out)
+	}
+}
+
+func TestReadyHeaderWarnsThatMergingWillNotDeploy(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.Live = laggingLive()
+
+	head := strings.SplitN(FormatMergeGate(s.PR, ComputeMergeGate(s)), "\n", 2)[0]
+	if !strings.Contains(head, "WILL NOT MAKE IT LIVE") {
+		t.Errorf("bare READY hides the drift, got %q", head)
+	}
+}
+
+// A repo in sync must stay silent — the note is only meaningful because it is
+// rare, and READY has to keep meaning READY everywhere else.
+func TestOriginInSyncSaysNothingAboutLiveness(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.Live = LiveBranchState{Known: true, Branch: "main"}
+
+	v := ComputeMergeGate(s)
+	if v.OriginLagsLive {
+		t.Error("OriginLagsLive set on a branch that matches origin")
+	}
+	if strings.Contains(notesJoined(v), "ORIGIN LAGS LIVE") {
+		t.Errorf("in-sync repo got a drift note:\n%s", notesJoined(v))
+	}
+	if head := strings.SplitN(FormatMergeGate(s.PR, v), "\n", 2)[0]; !strings.HasPrefix(head, "READY —") {
+		t.Errorf("header = %q, want plain READY", head)
+	}
+}
+
+// "Could not tell" is not "they agree". A checkout with no local base branch
+// (or no git at all) must not have its silence read as an all-clear — but it
+// also must not manufacture a warning it has no evidence for.
+func TestUnmeasuredLiveStateIsSilent(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.Live = LiveBranchState{Branch: "main", Ahead: 20} // Known stays false
+
+	v := ComputeMergeGate(s)
+	if v.OriginLagsLive {
+		t.Error("unmeasured drift reported as fact")
+	}
+	if strings.Contains(notesJoined(v), "ORIGIN LAGS LIVE") {
+		t.Errorf("unmeasured state produced a note:\n%s", notesJoined(v))
+	}
+}
+
+// Two-sided divergence cannot be fast-forwarded. Telling a mechanic to run
+// `pull --ff-only` there hands them a command that is guaranteed to fail.
+func TestDivergedBranchIsToldToMergeNotFastForward(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.Live = laggingLive() // Behind: 1
+
+	notes := notesJoined(ComputeMergeGate(s))
+	if !strings.Contains(notes, "git merge origin/main") {
+		t.Errorf("diverged branch not told to merge:\n%s", notes)
+	}
+	if strings.Contains(notes, "--ff-only") {
+		t.Errorf("suggested a fast-forward that cannot apply:\n%s", notes)
+	}
+}
+
+func TestOriginOnlyBehindIsToldToFastForward(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.Live = LiveBranchState{Known: true, Branch: "main", Ahead: 3}
+
+	notes := notesJoined(ComputeMergeGate(s))
+	if !strings.Contains(notes, "--ff-only") {
+		t.Errorf("a strictly-behind origin should fast-forward:\n%s", notes)
+	}
+}
+
+// Same root cause, the symptom a mechanic hits first: a branch cut from the
+// local base drags every unpushed commit into the PR, and GitHub calls the
+// result CONFLICTING. Observed on pai-hooks#7, fixed by rebasing --onto.
+func TestConflictingPRInALaggingRepoNamesTheRebase(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.PR.Mergeable = "CONFLICTING"
+	s.Live = laggingLive()
+
+	v := ComputeMergeGate(s)
+	if !hasBlocker(v, "conflicting") {
+		t.Fatalf("expected the conflicting blocker, got %v", blockerCodes(v))
+	}
+	if v.ExitCode != ExitMergeBlocked {
+		t.Errorf("ExitCode = %d, want %d — a real conflict still blocks", v.ExitCode, ExitMergeBlocked)
+	}
+	if !strings.Contains(notesJoined(v), "git rebase --onto origin/main main") {
+		t.Errorf("conflict left unexplained:\n%s", notesJoined(v))
+	}
+}
+
+// A clean PR must not get the rebase advice — that note is an explanation of
+// an observed CONFLICTING status, not a standing instruction.
+func TestCleanPRInALaggingRepoIsNotToldToRebase(t *testing.T) {
+	s := reviewedPR()
+	s.PR.BaseRefName = "main"
+	s.Live = laggingLive()
+
+	if notes := notesJoined(ComputeMergeGate(s)); strings.Contains(notes, "git rebase --onto") {
+		t.Errorf("clean PR told to rebase:\n%s", notes)
+	}
+}
+
+// --- detectLiveBranchDrift over a real repository ---------------------
+
+// gitFixture builds a throwaway repo and chdirs into it for the test.
+func gitFixture(t *testing.T) func(args ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "gate@example.com")
+	run("config", "user.name", "gate")
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	return run
+}
+
+// The measurement itself, against real refs: origin's copy and the local
+// branch each carrying commits the other does not.
+func TestDetectLiveBranchDriftCountsBothSides(t *testing.T) {
+	run := gitFixture(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	run("branch", "mirror")
+	run("commit", "-q", "--allow-empty", "-m", "local 1")
+	run("commit", "-q", "--allow-empty", "-m", "local 2")
+	run("checkout", "-q", "mirror")
+	run("commit", "-q", "--allow-empty", "-m", "squash on origin")
+	run("update-ref", "refs/remotes/origin/main", "mirror")
+	run("checkout", "-q", "main")
+
+	got := detectLiveBranchDrift("main")
+	if !got.Known {
+		t.Fatal("drift not measured in a repo where both refs exist")
+	}
+	if got.Ahead != 2 {
+		t.Errorf("Ahead = %d, want 2 (commits origin does not have)", got.Ahead)
+	}
+	if got.Behind != 1 {
+		t.Errorf("Behind = %d, want 1 (the squash only origin has)", got.Behind)
+	}
+}
+
+func TestDetectLiveBranchDriftIsZeroWhenInSync(t *testing.T) {
+	run := gitFixture(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	run("update-ref", "refs/remotes/origin/main", "main")
+
+	got := detectLiveBranchDrift("main")
+	if !got.Known || got.Ahead != 0 || got.Behind != 0 {
+		t.Errorf("detectLiveBranchDrift = %+v, want known and zero on both sides", got)
+	}
+}
+
+// No remote-tracking ref means nothing to compare against — unknowable, not
+// "in sync". Reporting Known here would license the merged-means-fixed
+// inference on exactly the checkouts that cannot support it.
+func TestDetectLiveBranchDriftIsUnknownWithoutAnOriginRef(t *testing.T) {
+	run := gitFixture(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+
+	if got := detectLiveBranchDrift("main"); got.Known {
+		t.Errorf("detectLiveBranchDrift = %+v, want Known=false with no origin/main", got)
+	}
+}
+
+func TestDetectLiveBranchDriftIsUnknownForAnAbsentLocalBranch(t *testing.T) {
+	run := gitFixture(t)
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	run("update-ref", "refs/remotes/origin/release", "main")
+
+	if got := detectLiveBranchDrift("release"); got.Known {
+		t.Errorf("detectLiveBranchDrift = %+v, want Known=false with no local release branch", got)
+	}
+}
+
+func TestDetectLiveBranchDriftIsUnknownWithoutABaseBranchName(t *testing.T) {
+	if got := detectLiveBranchDrift(""); got.Known {
+		t.Errorf("detectLiveBranchDrift(%q) = %+v, want Known=false", "", got)
+	}
+}
