@@ -43,7 +43,7 @@ import (
 	"time"
 )
 
-const gascitySpawnUsage = `Usage: parlay-bin gascity-spawn <agent-id> <command> <workdir> [--state-dir DIR] [--env KEY=VALUE ...] [--worktree-path PATH]
+const gascitySpawnUsage = `Usage: parlay-bin gascity-spawn <agent-id> <command> <workdir> [--state-dir DIR] [--env KEY=VALUE ...] [--worktree-path PATH] [--bead-id ID]
        parlay-bin gascity-stop <agent-id> [--state-dir DIR]
        parlay-bin gascity-ping <agent-id> [--state-dir DIR]
 
@@ -59,6 +59,9 @@ const gascitySpawnUsage = `Usage: parlay-bin gascity-spawn <agent-id> <command> 
   --env KEY=VALUE   one or more environment overrides for the child
   --worktree-path P a treehouse-leased worktree path; gascity-stop returns
                      it via 'treehouse return' before stopping the process
+  --bead-id ID      the beads work item bound to this session (beads-required
+                     mode); gascity-stop closes it via its store wrapper
+                     before stopping the process
 `
 
 // stopGrace is a var, not a const, so tests can shrink it to keep the
@@ -83,6 +86,7 @@ func runGascitySpawnCommand(args []string) int {
 	stateDir := defaultGascityStateDir(agentID)
 	var envOverrides []string
 	var worktreePath string
+	var beadID string
 
 	rest := args[3:]
 	for i := 0; i < len(rest); i++ {
@@ -108,13 +112,20 @@ func runGascitySpawnCommand(args []string) int {
 			}
 			worktreePath = rest[i+1]
 			i++
+		case "--bead-id":
+			if i+1 >= len(rest) {
+				fmt.Fprintln(os.Stderr, "gascity-spawn: --bead-id requires a value")
+				return 2
+			}
+			beadID = rest[i+1]
+			i++
 		default:
 			fmt.Fprintf(os.Stderr, "gascity-spawn: unknown arg: %s\n", rest[i])
 			return 2
 		}
 	}
 
-	if err := gascitySpawn(stateDir, agentID, command, workdir, envOverrides, worktreePath); err != nil {
+	if err := gascitySpawn(stateDir, agentID, command, workdir, envOverrides, worktreePath, beadID); err != nil {
 		fmt.Fprintf(os.Stderr, "gascity-spawn: %v\n", err)
 		return 1
 	}
@@ -183,6 +194,7 @@ func runGascityPingCommand(args []string) int {
 func pidFilePath(stateDir string) string       { return filepath.Join(stateDir, "pid") }
 func treehousePathFile(stateDir string) string { return filepath.Join(stateDir, "treehouse-path") }
 func startedAtFilePath(stateDir string) string { return filepath.Join(stateDir, "started-at") }
+func beadIDFilePath(stateDir string) string    { return filepath.Join(stateDir, "bead-id") }
 
 // readPID returns the recorded PID, or 0 if none is recorded.
 func readPID(stateDir string) int {
@@ -219,9 +231,9 @@ func gascityAlive(stateDir string) bool {
 }
 
 // gascitySpawn starts command as a detached sh -c child in workdir, records
-// its PID (and, when worktreePath is set, a treehouse sidecar) in stateDir,
-// and returns once the child is running — it never waits on it.
-func gascitySpawn(stateDir, agentID, command, workdir string, envOverrides []string, worktreePath string) error {
+// its PID (and, when set, treehouse/bead sidecars) in stateDir, and returns
+// once the child is running — it never waits on it.
+func gascitySpawn(stateDir, agentID, command, workdir string, envOverrides []string, worktreePath, beadID string) error {
 	if gascityAlive(stateDir) {
 		return fmt.Errorf("session %q already running", agentID)
 	}
@@ -268,6 +280,21 @@ func gascitySpawn(stateDir, agentID, command, workdir string, envOverrides []str
 		}
 	}
 
+	// Same sidecar shape, same accepted hazard: the file is written AFTER the
+	// child is running, so a spawn that dies between here and registration can
+	// leave a stale bead-id behind — a later gascity-stop would then close a
+	// bead this session never actually worked. That is the identical exposure
+	// the treehouse sidecar above already carries, and the alternative
+	// (writing it before Start) trades it for the worse one: a recorded bead
+	// for a session that never existed at all.
+	if beadID != "" {
+		if err := os.WriteFile(beadIDFilePath(stateDir), []byte(beadID+"\n"), 0o644); err != nil {
+			// Non-fatal for the same reason: the session is already running,
+			// and losing this only means gascity-stop cannot auto-close the bead.
+			fmt.Fprintf(os.Stderr, "gascity-spawn: warning: could not record bead id: %v\n", err)
+		}
+	}
+
 	// Release the child from our own process group tracking — it is now
 	// detached (own pgid) and fully independent of this CLI invocation.
 	go func() { _, _ = cmd.Process.Wait() }() //nolint:errcheck
@@ -275,11 +302,12 @@ func gascitySpawn(stateDir, agentID, command, workdir string, envOverrides []str
 	return nil
 }
 
-// gascityStop returns any leased treehouse worktree (best-effort, never
-// blocking), then sends SIGTERM to the session's process group, escalating
-// to SIGKILL after stopGrace if it hasn't exited. Idempotent: returns nil
-// if no session is recorded or it is already dead.
+// gascityStop closes any bound bead and returns any leased treehouse worktree
+// (both best-effort, never blocking), then sends SIGTERM to the session's
+// process group, escalating to SIGKILL after stopGrace if it hasn't exited.
+// Idempotent: returns nil if no session is recorded or it is already dead.
 func gascityStop(stateDir string) error {
+	closeBoundBead(stateDir)
 	returnTreehouseWorktree(stateDir)
 
 	pid := readPID(stateDir)
@@ -314,6 +342,52 @@ func cleanupGascityState(stateDir string) {
 	_ = os.Remove(pidFilePath(stateDir))
 	_ = os.Remove(treehousePathFile(stateDir))
 	_ = os.Remove(startedAtFilePath(stateDir))
+	_ = os.Remove(beadIDFilePath(stateDir))
+}
+
+// closeBoundBead reads the bead sidecar written by gascitySpawn and closes
+// that work item through its own federation store wrapper (the id's leading
+// token: task-oyaj → `task close task-oyaj`), falling back to a bare `bd`.
+// Stopping the session IS the end of the work in beads-required mode, and the
+// closed bead is what stops anything from relaunching the agent afterwards.
+//
+// Best-effort in every direction, exactly like returnTreehouseWorktree: a
+// missing sidecar, no store CLI on PATH, or a failing close must never block
+// the stop that follows it — a session left running is worse than a bead left
+// open, and the operator can always close the bead by hand.
+//
+// The sidecar is NOT removed here: cleanupGascityState clears it on every path
+// that actually ends the session, and removing it early would lose the record
+// if the stop itself fails partway.
+func closeBoundBead(stateDir string) {
+	data, err := os.ReadFile(beadIDFilePath(stateDir))
+	if err != nil {
+		return
+	}
+	id := strings.TrimSpace(string(data))
+	if id == "" {
+		return
+	}
+	store := ""
+	if i := strings.IndexByte(id, '-'); i > 0 {
+		store = id[:i]
+	}
+	bin := ""
+	if store != "" {
+		if abs, err := exec.LookPath(store); err == nil {
+			bin = abs
+		}
+	}
+	if bin == "" {
+		abs, err := exec.LookPath("bd")
+		if err != nil {
+			return
+		}
+		bin = abs
+	}
+	if err := exec.Command(bin, "close", id).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "gascity-stop: warning: could not close bead %s: %v\n", id, err)
+	}
 }
 
 // returnTreehouseWorktree reads the treehouse sidecar written by

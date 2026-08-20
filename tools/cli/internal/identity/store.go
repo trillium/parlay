@@ -47,6 +47,15 @@ var (
 		// worktree, delete the store, and orphan the worktree (and any
 		// unpushed commits in it) unchecked. Restored: robots-6xq7.
 		"--worktree", "--project",
+		// --bead binds a beads work item at SPAWN time (the beads-required
+		// mode: `bin/parlay-spawn --bead <id>` → `identity --register …
+		// --bead <id>`), and that bead's open/closed lifecycle then governs
+		// the agent's. It MUST be in this table, not MemBoolFlags: same
+		// robots-6xq7 trap as --worktree/--project above — a value flag
+		// missing from here makes args.Parse die EXIT_USAGE, and
+		// parlay-spawn's registration warns but does not abort, so the agent
+		// would launch with no bead recorded and no relaunch suppression.
+		"--bead",
 	}
 )
 

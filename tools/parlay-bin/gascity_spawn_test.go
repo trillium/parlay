@@ -24,7 +24,7 @@ func TestGascityStartStopPingLifecycle(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	workdir := t.TempDir()
 
-	if err := gascitySpawn(stateDir, "gascity-lifecycle-test", "sleep 30", workdir, nil, ""); err != nil {
+	if err := gascitySpawn(stateDir, "gascity-lifecycle-test", "sleep 30", workdir, nil, "", ""); err != nil {
 		t.Fatalf("gascitySpawn: %v", err)
 	}
 
@@ -56,14 +56,14 @@ func TestGascitySpawnRefusesDuplicateSession(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	workdir := t.TempDir()
 
-	if err := gascitySpawn(stateDir, "dup-test", "sleep 30", workdir, nil, ""); err != nil {
+	if err := gascitySpawn(stateDir, "dup-test", "sleep 30", workdir, nil, "", ""); err != nil {
 		t.Fatalf("first gascitySpawn: %v", err)
 	}
 	t.Cleanup(func() { _ = gascityStop(stateDir) })
 
 	waitFor(t, 2*time.Second, func() bool { return gascityAlive(stateDir) })
 
-	if err := gascitySpawn(stateDir, "dup-test", "sleep 30", workdir, nil, ""); err == nil {
+	if err := gascitySpawn(stateDir, "dup-test", "sleep 30", workdir, nil, "", ""); err == nil {
 		t.Fatal("expected second spawn against the same state dir to fail")
 	}
 }
@@ -96,7 +96,7 @@ func TestGascityStopEscalatesToSigkillWhenProcessIgnoresSigterm(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	workdir := t.TempDir()
 
-	if err := gascitySpawn(stateDir, "ignores-sigterm", "trap '' TERM; sleep 30", workdir, nil, ""); err != nil {
+	if err := gascitySpawn(stateDir, "ignores-sigterm", "trap '' TERM; sleep 30", workdir, nil, "", ""); err != nil {
 		t.Fatalf("gascitySpawn: %v", err)
 	}
 	waitFor(t, 2*time.Second, func() bool { return gascityAlive(stateDir) })
@@ -130,7 +130,7 @@ func TestGascityTreehouseSidecarWrittenAndReturnedOnStop(t *testing.T) {
 	}
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	if err := gascitySpawn(stateDir, "treehouse-sidecar-test", "sleep 30", workdir, nil, worktreePath); err != nil {
+	if err := gascitySpawn(stateDir, "treehouse-sidecar-test", "sleep 30", workdir, nil, worktreePath, ""); err != nil {
 		t.Fatalf("gascitySpawn: %v", err)
 	}
 	waitFor(t, 2*time.Second, func() bool { return gascityAlive(stateDir) })

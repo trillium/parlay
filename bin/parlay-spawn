@@ -66,6 +66,35 @@ LAUNCHER="${PARLAY_SPAWN_LAUNCHER:-${_config_launcher:-herdr}}"
 unset _config_toml _config_launcher
 # --gascity (parsed per-mode below) overrides all of the above — highest precedence.
 
+# beads-required mode — when on, every spawn MUST name an open beads work item
+# (--bead <id>), and that bead's lifecycle then governs the agent's: `parlay
+# identity --submit` closes it, and a closed bead stops `parlay launch` from
+# ever respawning the agent. Off by default.
+# Precedence: PARLAY_SPAWN_BEADS_REQUIRED env var > ~/.parlay/config.toml
+# [spawn] beads_required > off. Same tomllib heredoc as [spawn] launcher above
+# (a missing python3 silently falls through to off, as it does there).
+_config_toml="${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml"
+_config_beads=""
+if [ -z "${PARLAY_SPAWN_BEADS_REQUIRED:-}" ] && [ -f "$_config_toml" ] && command -v python3 >/dev/null 2>&1; then
+  _config_beads=$(python3 - "$_config_toml" <<'PYEOF' 2>/dev/null || true
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    v = tomllib.load(f).get("spawn", {}).get("beads_required", False)
+# Normalize both spellings the key can legitimately carry — a TOML boolean
+# (beads_required = true) and a quoted string ("true"/"1"/"yes"/"on") — to the
+# single token "1" the shell below tests, so no caller has to know which.
+print("1" if (v is True or str(v).strip().lower() in ("1", "true", "yes", "on")) else "", end="")
+PYEOF
+)
+fi
+_beads_required_raw="${PARLAY_SPAWN_BEADS_REQUIRED:-$_config_beads}"
+case "$(printf '%s' "$_beads_required_raw" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on) BEADS_REQUIRED=1 ;;
+  *)             BEADS_REQUIRED=0 ;;
+esac
+unset _config_toml _config_beads _beads_required_raw
+BEAD_ID=""
+
 # Absolute path to THIS script, so the batch loop can re-exec us in single mode
 # regardless of the cwd or relative path used to invoke us (mirror fm-spawn.sh's
 # $FM_ROOT/bin/fm-spawn.sh self-reference).
@@ -366,6 +395,13 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   workspace ID (e.g. w6T) or a label (e.g. "firstmate").
                   Label lookup: uses an existing workspace with that name, or
                   creates one. Falls back to \$HERDR_WORKSPACE_ID when not given.
+  --bead ID       bind a beads work item to this agent (e.g. task-oyaj). The bead
+                  must be OPEN at spawn time; from then on its lifecycle governs
+                  the agent's — 'parlay identity --submit' closes it, and once it
+                  is closed 'parlay launch <id>' refuses to respawn the agent.
+                  REQUIRED for every spawn when beads-required mode is on
+                  ([spawn] beads_required in ~/.parlay/config.toml, or
+                  PARLAY_SPAWN_BEADS_REQUIRED=1).
   --gascity       use the herdr-free detached-subprocess launcher for this spawn
                   instead of herdr, regardless of PARLAY_SPAWN_LAUNCHER or
                   ~/.parlay/config.toml [spawn] launcher. Escape hatch for
@@ -384,6 +420,91 @@ Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
 Env: PARLAY_SERVER (default http://localhost:31337)
 EOF
   exit 2
+}
+
+# ── beads-required gate ─────────────────────────────────────────────────────
+# Enforces the two halves of beads-required mode BEFORE anything is registered:
+#   1. mode on + no --bead   → refuse (exit 2)
+#   2. --bead names a bead that is already closed, or that no store can resolve
+#      → refuse (exit 1)
+#
+# CALL ORDER IS THE WHOLE POINT: this must run before the register-agent POST
+# and before any herdr tab / gascity child exists. A refusal afterwards would
+# leave an orphaned registration (and possibly a tab) for an agent that never
+# launched — the one failure this gate is shaped to avoid.
+#
+# Idempotent: the ephemeral path calls it before its mint (so a refusal leaves
+# no minted store behind) and the shared call site calls it again for the named
+# path; the second call is a no-op rather than a second store round-trip.
+bead_gate() {
+  [ -n "${_BEAD_GATE_DONE:-}" ] && return 0
+  _BEAD_GATE_DONE=1
+
+  if [ -z "$BEAD_ID" ]; then
+    if [ "$BEADS_REQUIRED" -eq 1 ]; then
+      echo "parlay-spawn: beads-required mode is ON and no --bead <id> was given." >&2
+      echo "  Every spawn must name an OPEN beads work item; that bead's lifecycle then governs the agent." >&2
+      echo "  Pass --bead <id>, or turn the mode off: [spawn] beads_required = false in" >&2
+      echo "  ${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml, or PARLAY_SPAWN_BEADS_REQUIRED=0 for one run." >&2
+      exit 2
+    fi
+    return 0
+  fi
+
+  if [ -n "${PARLAY_SPAWN_SKIP_BEAD_CHECK:-}" ]; then
+    echo "parlay-spawn: PARLAY_SPAWN_SKIP_BEAD_CHECK set — NOT verifying that $BEAD_ID is open." >&2
+    return 0
+  fi
+
+  # Resolve the bead through its own store wrapper (the id's leading token:
+  # task-oyaj → `task`, each wrapper pinning its own BEADS_DIR), falling back
+  # to a bare `bd`. Same resolution order as the Go side's workItemStatus —
+  # and the reason a bare `bd` is the FALLBACK, not the default: without store
+  # context `bd` prints a federation menu instead of answering.
+  local _store="${BEAD_ID%%-*}" _bin="" _json="" _status=""
+  if [ -n "$_store" ] && [ "$_store" != "$BEAD_ID" ] && command -v "$_store" >/dev/null 2>&1; then
+    _bin="$_store"
+  elif command -v bd >/dev/null 2>&1; then
+    _bin="bd"
+  fi
+  if [ -z "$_bin" ]; then
+    echo "parlay-spawn: WARNING — no store CLI on PATH for $BEAD_ID (tried '$_store', then 'bd');" >&2
+    echo "  cannot verify the bead is open. Proceeding with the binding recorded." >&2
+    return 0
+  fi
+
+  # Every capture below consumes its own exit status explicitly. A bare
+  # `_json=$(...)` under `set -euo pipefail` takes the command's status and
+  # would abort the whole spawn on a store hiccup (robots-dcag).
+  if ! _json="$("$_bin" show "$BEAD_ID" --json 2>/dev/null)"; then
+    _json=""
+  fi
+  if [ -n "$_json" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      # Match the bead by id anywhere in the document, so an array (what the
+      # store wrappers emit), a bare object, or a wrapped envelope all work.
+      _status="$(printf '%s' "$_json" | jq -r --arg id "$BEAD_ID" '[.. | objects | select(.id? == $id)] | .[0].status // empty' 2>/dev/null)" || _status=""
+    else
+      _status="$(printf '%s' "$_json" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)" || _status=""
+    fi
+  fi
+
+  case "$(printf '%s' "$_status" | tr '[:upper:]' '[:lower:]')" in
+    closed|done|completed|resolved)
+      echo "parlay-spawn: bead $BEAD_ID is $_status — refusing to spawn." >&2
+      echo "  A closed bead means the work is over: the agent would be registered, launch," >&2
+      echo "  and be refused its first relaunch. Re-open the bead, or spawn against an open one." >&2
+      exit 1
+      ;;
+    "")
+      echo "parlay-spawn: could not read a status for $BEAD_ID ('$_bin show $BEAD_ID --json')." >&2
+      echo "  Refusing to spawn: a bead this script cannot resolve cannot govern the agent's" >&2
+      echo "  lifecycle, and a typo'd id would bind the agent to nothing. Check the id, or set" >&2
+      echo "  PARLAY_SPAWN_SKIP_BEAD_CHECK=1 to spawn without verifying." >&2
+      exit 1
+      ;;
+  esac
+  echo "parlay-spawn: bead $BEAD_ID is $_status — binding it to this agent." >&2
 }
 
 # ── Ephemeral hash-identity path ────────────────────────────────────────────
@@ -420,10 +541,14 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --worktree)  WANT_WORKTREE=1; shift ;;
       --account)   ACCOUNT="$2"; shift 2 ;;
       --gascity)   LAUNCHER="gascity"; shift ;;
+      --bead)      BEAD_ID="$2"; shift 2 ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
     esac
   done
+
+  # Gate before the mint: a refusal here leaves no seeded store behind.
+  bead_gate
 
   # Mint id/name/color and seed the store. Prints a TAB-separated "<id>\t<name>\t<color>"
   # line (name contains a space, so tabs keep the three fields unambiguous).
@@ -437,6 +562,16 @@ if [ "${1:-}" = "--ephemeral" ]; then
     exit 1
   fi
   echo "parlay-spawn: minted ephemeral identity $AGENT_ID ($NAME, $COLOR)" >&2
+
+  # The ephemeral path skips the trailing named-agent --register (the mint
+  # already seeded the store), so a --bead binding has to be recorded here or
+  # it is lost. Re-registering with --ephemeral keeps the ephemeral marker;
+  # every other field is left untouched (--register only writes what it is
+  # given, over the frontmatter the mint just wrote).
+  if [ -n "$BEAD_ID" ]; then
+    PARLAY_SERVER="$PARLAY" parlay identity --register --agent "$AGENT_ID" --ephemeral --bead "$BEAD_ID" >/dev/null \
+      || echo "parlay-spawn: WARNING — could not record bead $BEAD_ID on $AGENT_ID; its lifecycle will NOT govern this agent." >&2
+  fi
 fi
 
 # ── Batch dispatch (thin loop) ──────────────────────────────────────────────
@@ -475,6 +610,12 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_WORKTREE=0
           BATCH_ACCOUNT="$ACCOUNT"
           BATCH_GASCITY=0
+          # A batch --bead is SHARED by every pair, exactly like --account and
+          # --model: all of them are working one bead. Whichever agent submits
+          # first closes it, and every sibling's relaunch is refused from then
+          # on — that is the mode's contract, not an accident of forwarding.
+          # Spawn one batch per bead if that is not what you want.
+          BATCH_BEAD=""
           while [ $# -gt 0 ]; do
             case "$1" in
               --prompt)    BATCH_PROMPT="$2"; shift 2 ;;
@@ -487,6 +628,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
               --worktree)  BATCH_WORKTREE=1; shift ;;
               --account)   BATCH_ACCOUNT="$2"; shift 2 ;;
               --gascity)   BATCH_GASCITY=1; shift ;;
+              --bead)      BATCH_BEAD="$2"; shift 2 ;;
               --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
               --ephemeral) echo "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs" >&2; exit 2 ;;
               -*)       echo "parlay-spawn: unknown batch flag: $1" >&2; exit 2 ;;
@@ -498,6 +640,14 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             echo "parlay-spawn: batch dispatch requires a shared --prompt (the brief handed to every spawned agent)" >&2
             exit 2
           fi
+
+          # Gate the shared bead once, here, rather than letting every child
+          # discover the same refusal separately: a missing or closed bead is a
+          # property of the batch, and N identical failures read as N problems.
+          # Each child still re-checks (it is a fresh process with its own
+          # --bead), so this is an early, clearer refusal, not the only one.
+          BEAD_ID="$BATCH_BEAD"
+          bead_gate
 
           rc=0
           for pair in ${PAIRS[@]+"${PAIRS[@]}"}; do
@@ -524,6 +674,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             [ "$BATCH_WORKTREE" -eq 1 ] && _shared+=(--worktree)
             [ -n "$BATCH_ACCOUNT" ] && _shared+=(--account "$BATCH_ACCOUNT")
             [ "$BATCH_GASCITY" -eq 1 ] && _shared+=(--gascity)
+            [ -n "$BATCH_BEAD" ] && _shared+=(--bead "$BATCH_BEAD")
             if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
               :
             else
@@ -576,6 +727,7 @@ while [ $# -gt 0 ]; do
     --pane)      IN_PLACE_PANE="$2"; shift 2 ;;
     --workspace) WORKSPACE="$2"; shift 2 ;;
     --gascity)   LAUNCHER="gascity"; shift ;;
+    --bead)      BEAD_ID="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac
@@ -593,6 +745,12 @@ if ! printf '%s' "$AGENT_ID" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
   echo "parlay-spawn: agent-id must be a kebab-slug (got: '$AGENT_ID')" >&2
   exit 2
 fi
+
+# beads-required gate for the named path (a no-op if the ephemeral path above
+# already ran it). Deliberately placed here: after the args are known, and
+# before the worktree lease, the register-agent POST, and any launcher — every
+# one of which leaves state behind that a later refusal would strand.
+bead_gate
 
 # branch/pr delivery modes require worktree isolation — auto-enable.
 if [ "$MODE" = "branch" ] || [ "$MODE" = "pr" ]; then
@@ -1158,7 +1316,8 @@ fi
 if ! "$GASCITY_GO_BIN" gascity-spawn "$AGENT_ID" "$GASCITY_COMMAND" "$CWD" \
     --state-dir "$AGENT_DIR/gascity" \
     "${GASCITY_ENV_ARGS[@]}" \
-    ${GASCITY_WORKTREE_FLAG[@]+"${GASCITY_WORKTREE_FLAG[@]}"}; then
+    ${GASCITY_WORKTREE_FLAG[@]+"${GASCITY_WORKTREE_FLAG[@]}"} \
+    ${BEAD_ID:+--bead-id "$BEAD_ID"}; then
   echo "parlay-spawn: gascity-spawn failed to launch $AGENT_ID." >&2
   exit 1
 fi
@@ -1191,6 +1350,7 @@ if [ "$EPHEMERAL" -eq 0 ]; then
     ${REGISTER_META[@]+"${REGISTER_META[@]}"} \
     ${WORKTREE_PATH:+--worktree "$WORKTREE_PATH"} \
     ${PROJECT_PATH:+--project "$PROJECT_PATH"} \
+    ${BEAD_ID:+--bead "$BEAD_ID"} \
     >/dev/null; then
     echo "parlay-spawn: WARNING — identity --register failed for $AGENT_ID; no launch spec written." >&2
     echo "  This agent cannot self-reconstitute after a context reset, and if it holds a worktree," >&2

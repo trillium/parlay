@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-20 — session 8ba730e4
+
+Files: tools/cli/internal/identity/store.go, tools/cli/internal/identity/worklink.go, tools/cli/internal/identity/mem.go, tools/cli/internal/commands/launch.go, tools/parlay-bin/gascity_spawn.go, bin/parlay-spawn, tools/cli/internal/identity/bead_test.go
+## 2026-08-20 — session 8ba730e4
+
+Files: tools/cli/internal/identity/store.go, tools/cli/internal/identity/worklink.go, tools/cli/internal/identity/mem.go, tools/cli/internal/commands/launch.go, tools/parlay-bin/gascity_spawn.go, bin/parlay-spawn, tools/cli/internal/identity/bead_test.go
+## 2026-08-20 — session 8ba730e4
+
+Files: tools/cli/internal/identity/store.go, tools/cli/internal/identity/worklink.go, tools/cli/internal/identity/mem.go, tools/cli/internal/commands/launch.go, tools/parlay-bin/gascity_spawn.go, bin/parlay-spawn, tools/cli/internal/identity/bead_test.go
+## 2026-08-20 — session 8ba730e4
+
+Files: tools/cli/internal/identity/store.go, tools/cli/internal/identity/worklink.go, tools/cli/internal/identity/mem.go, tools/cli/internal/commands/launch.go, tools/parlay-bin/gascity_spawn.go, bin/parlay-spawn, tools/cli/internal/identity/bead_test.go
+## 2026-08-20 — session 9d0a8427
+
+Files: AGENTS.md, tools/cli/internal/help/help.go, tools/cli/internal/commands/merge_gate.go, tools/cli/internal/commands/claim.go, tools/cli/internal/commands/claim_test.go, packages/client/src/shell.html, packages/client/build.ts, tools/cli/internal/commands/merge_gate_test.go, packages/go-server/internal/static/static.go, packages/go-server/cmd/parlay-server/main.go
+## 2026-08-20 — session f04e2b02
+
+Files: skills/voice-command-consulting/SKILL.md, skills/voice-command-consulting/consulting-agent.md
 ## 2026-08-20 — session cf74f28d
 
 Files: bin/parlay-spawn

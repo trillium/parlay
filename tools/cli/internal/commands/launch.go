@@ -16,12 +16,20 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/format"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/identity"
 	"github.com/trillium/parlay/tools/cli/internal/monitor"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
 type knownAgent struct {
 	id, name, color, cwd, model string
+	// identityFile is the path knownAgents() parsed this agent out of. The
+	// closed-bead respawn gate needs it: identity.BoundWorkItemClosed resolves
+	// the binding (spawn-time `bead:`, else claim-time `task:`) from the file
+	// itself, so carrying the path — rather than a second copy of the id
+	// parsed here — keeps ONE implementation of "which item governs this
+	// agent" across `identity --launch`, `identity --submit` and this verb.
+	identityFile string
 }
 
 // knownAgents discovers agents from ~/.parlay/agents/*/identity.md
@@ -42,7 +50,8 @@ func knownAgents() []knownAgent {
 		if !d.IsDir() {
 			continue
 		}
-		fm := readLocalFrontmatter(filepath.Join(parlayAgentsDir(), d.Name(), "identity.md"))
+		identityFile := filepath.Join(parlayAgentsDir(), d.Name(), "identity.md")
+		fm := readLocalFrontmatter(identityFile)
 		id, name, color := fm.Get("id"), fm.Get("name"), fm.Get("color")
 		if id == "" || name == "" || color == "" {
 			continue
@@ -51,7 +60,7 @@ func knownAgents() []knownAgent {
 		if cwd == "" {
 			cwd = parlayHomeDir()
 		}
-		known = append(known, knownAgent{id: id, name: name, color: color, cwd: cwd, model: fm.Get("model")})
+		known = append(known, knownAgent{id: id, name: name, color: color, cwd: cwd, model: fm.Get("model"), identityFile: identityFile})
 	}
 	return known
 }
@@ -112,7 +121,11 @@ func Launch(argv []string) {
 	if helpWanted("launch", argv) {
 		return
 	}
-	r := args.Parse("launch", argv, nil, nil)
+	// --force is deliberately absent from the usage text: `parlay launch` has a
+	// TS twin whose usage the parity harness diffs (robots-xaxt), and the only
+	// place this override is ever needed is the closed-bead refusal below,
+	// which names it in full.
+	r := args.Parse("launch", argv, []string{"--force"}, nil)
 	known := knownAgents()
 
 	if len(r.Positionals) > 0 {
@@ -127,6 +140,27 @@ func Launch(argv []string) {
 		if target == nil {
 			httpc.Die(fmt.Sprintf("parlay launch: no known agent '%s' — run 'parlay launch' to list available agents", targetID), config.ExitUsage)
 			return
+		}
+		// Closed-bead respawn gate (beads-required mode). The bead bound at
+		// spawn time governs the agent's lifecycle: once it is closed the work
+		// is over, and re-spawning burns a whole fresh context on an agent that
+		// can only rediscover there is nothing to do and shut down again —
+		// exactly the loop `identity --launch` already refuses (lifecycle.go's
+		// guard). This is the same oracle, so both entrances to a relaunch
+		// agree, and it inherits the same FAIL-OPEN contract: only an
+		// affirmative closed status refuses, so a missing binding or a store
+		// hiccup still launches.
+		//
+		// A refusal is a successful no-op, not an error (exit 0), matching
+		// HandleLaunch: "that work is finished" is the answer the caller asked
+		// for, and a non-zero exit would make every supervisor treat a clean
+		// end as a failed spawn.
+		if !r.Bool("--force") {
+			if item, closed := boundWorkItemClosed(target.identityFile); closed {
+				fmt.Printf("parlay launch %s: bound work item %s is CLOSED — NOT spawning (clean end).\n", target.id, item)
+				fmt.Fprintf(os.Stderr, "  the agent's work is done; re-open %s, or run 'parlay launch %s --force' to spawn anyway.\n", item, target.id)
+				return
+			}
 		}
 		revival := "Your context was reset. Follow the recovery chain above (identity → handoff → scratchpad) to restore your state, then await the captain."
 		spawnArgs := []string{target.id, target.name, target.color, revival, "--cwd", target.cwd}
@@ -211,6 +245,11 @@ func Launch(argv []string) {
 // liveListeners is the process-table probe, injectable so the tests can drive
 // the classification without a real `ps` (a unit test cannot arm a listener).
 var liveListeners = monitor.LiveListenerAgents
+
+// boundWorkItemClosed is the closed-bead oracle, injectable for the same reason
+// liveListeners is: the real one shells out to a federation store CLI, which a
+// unit test has no business requiring on the box.
+var boundWorkItemClosed = identity.BoundWorkItemClosed
 
 // The three states `parlay launch` can report, padded to one column width.
 const (

@@ -176,7 +176,11 @@ func cmdMem(kind MemKind, argv []string) {
 		// Only set when provided. worktree/project are what make teardown's
 		// git safety reachable at all; the port had dropped them (see
 		// store.go's MemValueFlags note, robots-6xq7).
-		for _, k := range []string{"mode", "effort", "kind", "yolo", "worktree", "project"} {
+		// `bead` is the spawn-time work-item binding (beads-required mode):
+		// bin/parlay-spawn forwards its --bead here, and from then on that
+		// bead's open/closed state governs this agent's lifecycle — see
+		// worklink.go's BeadKey, which every relaunch guard reads.
+		for _, k := range []string{"mode", "effort", "kind", "yolo", "worktree", "project", "bead"} {
 			if v := strings.TrimSpace(optString(res, "--"+k)); v != "" {
 				fm.Set(k, v)
 			}
@@ -206,7 +210,9 @@ func cmdMem(kind MemKind, argv []string) {
 	// --submit [<id>]: pin the pointer AND trigger a context reset WITH
 	//   --reboot — the handoff act itself restarts the agent (kills this
 	//   session, relaunches recovering via identity → handoff → scratchpad).
-	//   Add --dry to preview.
+	//   A SPAWN-bound bead (frontmatter `bead:`) is closed here first, which
+	//   turns the reset into a no-reboot clean end — submitting IS the finish
+	//   signal for a beads-required agent. Add --dry to preview.
 	// --park [<id>]: pin the pointer AND trigger a context reset WITHOUT
 	//   --reboot — the agent shuts down and does NOT relaunch. The bound
 	//   bead is left OPEN so the work resumes later (a future spawn —
@@ -285,7 +291,46 @@ func cmdMem(kind MemKind, argv []string) {
 			verb = "previewing"
 		}
 		submitArgs := []string{"--reboot"}
-		if item, closed := BoundWorkItemClosed(file); closed {
+		item, closed := BoundWorkItemClosed(file)
+		// beads-required mode: for a SPAWN-bound bead (`bead:`, written by
+		// parlay-spawn --bead), --submit is the "this work is finished" exit,
+		// so it closes that bead here — after the handoff pointer is pinned
+		// (the state stays recoverable even if this is the last thing that
+		// happens) and before the reset fires.
+		//
+		// Two deliberate scope limits:
+		//   * `--park` never reaches this code. Parking is "pause, resume
+		//     later", and it returns above with the bead left OPEN.
+		//   * Only `bead:` is closed, never a claim-time `task:`. A claimed
+		//     task's close is governed by the mechanic contract (land the fix,
+		//     then close), not by an agent rotating its context.
+		//
+		// Closing the bead ENDS the lifecycle, so the submit downgrades to the
+		// same no-relaunch shutdown an already-closed item produces — the
+		// relaunch guard would refuse the reboot a moment later anyway, and
+		// asking for one we know will be declined is a wasted cycle.
+		//
+		// Fail-open, matching --complete: a close that fails is a warning, and
+		// the reset still fires (with --reboot, since the bead is still open).
+		if bead := strings.TrimSpace(ReadFrontmatter(file).Get(BeadKey)); bead != "" && !closed {
+			closedNow := dry // --dry previews the close without performing it
+			if !dry {
+				if err := closeWorkItem(bead); err != nil {
+					fmt.Printf("  (warn: could not close bound bead %s — %s; submitting anyway)\n", bead, exitStatusMessage(err))
+				} else {
+					closedNow = true
+				}
+			}
+			if closedNow {
+				item, closed = bead, true
+				closedTag := "closed"
+				if dry {
+					closedTag = "would close"
+				}
+				fmt.Printf("identity --submit: %s bound bead %s — its lifecycle governs this agent's, so no relaunch follows.\n", closedTag, bead)
+			}
+		}
+		if closed {
 			submitArgs = []string{} // drop --reboot → clean end, no relaunch
 			fmt.Printf("identity submitted for %s — handoff %s pinned; bound work item %s is CLOSED, so %s shutdown WITHOUT relaunch (use --complete next time)…\n", agent, pinID, item, verb)
 		} else {

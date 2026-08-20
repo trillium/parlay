@@ -29,6 +29,28 @@ import (
 // the agent's bound federation work item (e.g. "robots-2x2n").
 const WorkItemKey = "task"
 
+// BeadKey is the identity-frontmatter key under which SPAWN-time binding records
+// the agent's work item (`parlay-spawn --bead <id>` → `identity --register …
+// --bead <id>`, the beads-required mode). It is deliberately a second key rather
+// than a rename of WorkItemKey: `parlay claim` writes `task:` at CLAIM time and
+// nothing about that path changes here, so an agent can carry a spawn-time bead,
+// a claim-time task, or both. When both are present the spawn-time bead wins —
+// it is the binding whose lifecycle the operator asked to govern this agent.
+const BeadKey = "bead"
+
+// BoundWorkItem returns the work item bound to the identity file at `file`:
+// the spawn-time `bead:` if present, else the claim-time `task:`. "" means no
+// binding. One resolution order, shared by every consumer of the closed-item
+// oracle (HandleLaunch, identity --submit, `parlay launch`'s respawn gate), so
+// the three can never disagree about which id governs an agent.
+func BoundWorkItem(file string) string {
+	fm := ReadFrontmatter(file)
+	if bead := strings.TrimSpace(fm.Get(BeadKey)); bead != "" {
+		return bead
+	}
+	return strings.TrimSpace(fm.Get(WorkItemKey))
+}
+
 // BindWorkItem records itemID as the agent's bound work item in its identity
 // frontmatter, so the relaunch guard can refuse to reboot an agent whose item
 // has since closed. Passing "" clears the binding. Preserves the identity body
@@ -51,7 +73,7 @@ func BindWorkItem(agent, itemID string) error {
 // an unresolvable item, or any store error yields closed=false (fail open). The
 // returned item id (possibly "") is for the caller's log message.
 func BoundWorkItemClosed(file string) (item string, closed bool) {
-	item = strings.TrimSpace(ReadFrontmatter(file).Get(WorkItemKey))
+	item = BoundWorkItem(file)
 	if item == "" {
 		return "", false
 	}
@@ -134,6 +156,47 @@ func workItemStatusViaStore(id string) (string, error) {
 		return arr[0].Status, nil
 	}
 	return "", errString("ticket " + id + " not found")
+}
+
+// closeWorkItem closes a federation bead through its own store wrapper (the
+// id's leading token: task-oyaj → `task close task-oyaj`), falling back to a
+// bare `bd`. Same resolution as workItemStatus above, and a package var for the
+// same reason — a unit test must be able to observe the close without a real
+// beads store on the box.
+//
+// stdio is deliberately NOT inherited: this runs on the --submit path, whose
+// own output is the agent's last word before the reset, and a store wrapper's
+// chatter interleaved into it reads as parlay output. The caller reports the
+// outcome itself.
+var closeWorkItem = closeWorkItemViaStore
+
+func closeWorkItemViaStore(id string) error {
+	store := ""
+	if i := strings.IndexByte(id, '-'); i > 0 {
+		store = id[:i]
+	}
+	run := func(bin string) error {
+		cmd := exec.Command(bin, "close", id)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				return errString(msg)
+			}
+			return err
+		}
+		return nil
+	}
+	if store != "" {
+		if bin, err := exec.LookPath(store); err == nil {
+			return run(bin)
+		}
+	}
+	bin, err := exec.LookPath("bd")
+	if err != nil {
+		return errString("no store CLI found to close " + id)
+	}
+	return run(bin)
 }
 
 // errString is a tiny errors.New without pulling in the errors import for a
