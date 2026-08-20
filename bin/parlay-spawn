@@ -112,7 +112,20 @@ while [ -h "$_pspawn_src" ]; do
   [ "${_pspawn_src#/}" = "$_pspawn_src" ] && _pspawn_src="$_pspawn_dir/$_pspawn_src"
 done
 BIN_DIR="$(cd -P "$(dirname "$_pspawn_src")" && pwd)"
+REPO_DIR="$(cd -P "$BIN_DIR/.." && pwd)"
 unset _pspawn_src _pspawn_dir
+
+# Resolve the beads-required error template: user override > repo copy.
+_beads_err_user="${PARLAY_STATE_HOME:-$HOME/.parlay}/templates/beads-required-error.txt"
+_beads_err_repo="$REPO_DIR/share/parlay/beads-required-error.txt"
+if [ -f "$_beads_err_user" ]; then
+  BEADS_REQUIRED_ERROR_TMPL="$_beads_err_user"
+elif [ -f "$_beads_err_repo" ]; then
+  BEADS_REQUIRED_ERROR_TMPL="$_beads_err_repo"
+else
+  BEADS_REQUIRED_ERROR_TMPL=""
+fi
+unset _beads_err_user _beads_err_repo
 
 # herdr contract gate (robots-4v2e): the single source of truth for the herdr
 # CLI shape parlay-spawn depends on. Sourced here; asserted at startup (below,
@@ -442,8 +455,12 @@ bead_gate() {
 
   if [ -z "$BEAD_ID" ]; then
     if [ "$BEADS_REQUIRED" -eq 1 ]; then
-      echo "parlay-spawn: beads-required mode is ON — every spawn must name an OPEN beads work item." >&2
-      echo "  Pass --bead <id>. The bead's lifecycle governs the agent." >&2
+      if [ -n "$BEADS_REQUIRED_ERROR_TMPL" ]; then
+        cat "$BEADS_REQUIRED_ERROR_TMPL" >&2
+      else
+        echo "parlay-spawn: beads-required mode is ON — every spawn must name an OPEN beads work item." >&2
+        echo "  Pass --bead <id>. The bead's lifecycle governs the agent." >&2
+      fi
       exit 2
     fi
     return 0

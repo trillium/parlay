@@ -1,0 +1,13 @@
+parlay-spawn: beads-required mode is ON — every spawn must name an OPEN beads work item.
+
+  Create a bead first, then pass its id to --bead:
+
+    task create "what this agent will do"     → task-xxxx
+    robots create "defect to fix"             → robots-xxxx
+    brain create "investigation to run"       → brain-xxxx
+
+  Then spawn:
+    parlay-spawn <id> <name> <color> <prompt> --bead <bead-id>
+
+  The bead stays open while the agent works. When the agent submits,
+  the bead closes — that is the signal that the work is done.
