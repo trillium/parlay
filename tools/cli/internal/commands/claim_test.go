@@ -449,6 +449,17 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if !strings.Contains(out, "isolated worktree") {
 		t.Errorf("robots DoD should forbid tangling a shared checkout and require an isolated worktree; got:\n%s", out)
 	}
+	// robots-0a77: the landing proof must go through `parlay landed`, which
+	// pins the repository to this checkout's origin. The old wording told the
+	// mechanic to hand-run a BARE `gh pr view <n> --json state,mergedAt` — and
+	// gh resolves a bare PR number against `upstream`, so in a fork checkout
+	// that command reports a stranger's PR as MERGED.
+	if !strings.Contains(out, "parlay landed") {
+		t.Errorf("robots DoD should route the landing proof through `parlay landed`; got:\n%s", out)
+	}
+	if strings.Contains(out, "and `gh pr view <n> --json state,mergedAt` (state MERGED)") {
+		t.Errorf("robots DoD must not prescribe a bare `gh pr view` as the landing proof; got:\n%s", out)
+	}
 	// robots-jap6: the previous wording ("all required checks are green") was
 	// itself the merge-gate defect — CodeRabbit reports `pass` when it never
 	// ran. The contract must send the mechanic through `parlay merge-gate`
