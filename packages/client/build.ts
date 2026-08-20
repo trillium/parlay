@@ -1,4 +1,5 @@
 import { build } from "bun"
+import { copyFileSync } from "fs"
 
 // Bun.build() does NOT throw on a compile error — it returns {success:false,
 // logs} and leaves the previous output in place. Unchecked, that silently ships
@@ -52,16 +53,22 @@ await buildOrThrow({
   target: "browser",
 }, "index.js (library)")
 
-console.log("dist/parlay-agent.js + pulse-agent.js + index.js + plugins built")
+// shell.html → dist/index.html — the standalone panel page served by the Go server
+copyFileSync("./src/shell.html", "./dist/index.html")
+
+console.log("dist/parlay-agent.js + index.html + pulse-agent.js + index.js + plugins built")
 
 // Deploy = live upgrade: tell connected panels to reload; each page's SSE
 // reconnect also runs the version handshake, so even missed broadcasts heal.
+// Target: PARLAY_RELOAD_TARGET env var (default http://127.0.0.1:4242, the
+// Go server). Set to http://127.0.0.1:31337 to target the legacy bun server.
+const reloadTarget = process.env.PARLAY_RELOAD_TARGET ?? "http://127.0.0.1:4242"
 try {
-  await fetch("http://127.0.0.1:31337/api/chat/reload", {
+  await fetch(`${reloadTarget}/api/chat/reload`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
     signal: AbortSignal.timeout(2_000),
   })
-  console.log("live clients told to reload")
-} catch { console.log("(Pulse not reachable — clients will self-upgrade on next reconnect)") }
+  console.log(`live clients told to reload (${reloadTarget})`)
+} catch { console.log(`(server not reachable at ${reloadTarget} — clients will self-upgrade on next reconnect)`) }

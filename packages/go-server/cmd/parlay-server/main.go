@@ -29,6 +29,7 @@ import (
 
 	"parlay/go-server/internal/guard"
 	"parlay/go-server/internal/handlers"
+	"parlay/go-server/internal/static"
 	"parlay/go-server/internal/store"
 )
 
@@ -44,8 +45,9 @@ func main() {
 	log.SetPrefix("parlay-server: ")
 
 	var (
-		addrFlag = flag.String("addr", envOr("PARLAY_SERVER_ADDR", defaultAddr), "address to listen on")
-		dirFlag  = flag.String("state-dir", envOr("PARLAY_STATE_HOME", defaultStateHome()), "directory for persisted state (messages/agents/drafts/settings/uploads)")
+		addrFlag   = flag.String("addr", envOr("PARLAY_SERVER_ADDR", defaultAddr), "address to listen on")
+		dirFlag    = flag.String("state-dir", envOr("PARLAY_STATE_HOME", defaultStateHome()), "directory for persisted state (messages/agents/drafts/settings/uploads)")
+		assetsFlag = flag.String("assets-dir", envOr("PARLAY_ASSETS_DIR", defaultAssetsDir()), "directory containing the built packages/client/dist bundle (serves the panel HTML)")
 	)
 	flag.Parse()
 
@@ -63,6 +65,9 @@ func main() {
 	registerHealth(mux, st)
 	handlers.Register(mux, st)
 	handlers.RegisterData(mux, st)
+	// Static file serving — registered last so /api/* routes are never shadowed.
+	// Serves index.html at / and falls back to it for any unknown path (SPA).
+	mux.Handle("/", static.Handler(*assetsFlag))
 
 	// One guard in front of the whole mux (task-6ai1 / defect D7): this server
 	// previously had no origin boundary at all, so a hostile page could drive
@@ -75,7 +80,7 @@ func main() {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("listening on http://%s (state dir: %s)", *addrFlag, *dirFlag)
+		log.Printf("listening on http://%s (state dir: %s, assets: %s)", *addrFlag, *dirFlag, *assetsFlag)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
 			return
@@ -151,4 +156,22 @@ func defaultStateHome() string {
 		return filepath.Join(home, ".parlay")
 	}
 	return ".parlay"
+}
+
+// defaultAssetsDir resolves the packages/client/dist directory relative to
+// the executable's own location so the server can be run from any cwd.
+// Falls back to a bare "dist" (relative to cwd) if resolution fails.
+func defaultAssetsDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "dist"
+	}
+	// Walk up from <repo>/packages/go-server/bin/parlay-server to repo root,
+	// then descend into packages/client/dist.
+	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(exe)))
+	candidate := filepath.Join(repoRoot, "packages", "client", "dist")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return "dist"
 }
