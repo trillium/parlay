@@ -44,6 +44,17 @@ parlay spawn-account clear    # remove
 ```
 Env var `PARLAY_SPAWN_DEFAULT_ACCOUNT` overrides the config. `--account` overrides both.
 
+## Launcher
+
+Controls how the agent tab is created. Default is `herdr`. Override via:
+- Env: `PARLAY_SPAWN_LAUNCHER=gascity`
+- Config: `~/.parlay/config.toml` under `[spawn]` → `launcher = "gascity"`
+
+```toml
+[spawn]
+launcher = "gascity"   # or "herdr" (default)
+```
+
 ## Token injection
 
 `ccjuggler-resolve <account>` (from `packages/ccjuggler`) resolves the OAuth token:
@@ -79,8 +90,7 @@ parlay-spawn refactor-x "Refactor X" "#6366f1" \
 4. `herdr agent start` — launches the claude harness in the pane
 5. Retry loop — polls until agent state is `running`
 6. `herdr agent prompt` — delivers the task description as the startup prompt
-7. `sleep 3` — brief post-prompt settle
-8. `parlay identity --register` — seeds the launch spec (worktree, project, etc.)
+7. `parlay identity --register` — seeds the launch spec (worktree, project, etc.)
 9. Liveness watchdog — nudges if the agent goes idle > 60s
 
 ## Snapshot logs
@@ -89,7 +99,7 @@ Every spawn writes a hash-deduped JSONL log of pane content at each stage to:
 ```
 ~/.parlay/spawn-logs/<agent-id>.jsonl
 ```
-Useful for diagnosing stuck spawns. Capped at 1000 entries.
+Each snapshot fires in a background subshell (`&`) — pane logging never blocks the critical path. Useful for diagnosing stuck spawns. Capped at 1000 entries.
 
 ## Troubleshooting
 
