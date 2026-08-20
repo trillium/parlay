@@ -67,6 +67,9 @@ func main() {
 	handlers.RegisterData(mux, st)
 	// Static file serving — registered last so /api/* routes are never shadowed.
 	// Serves index.html at / and falls back to it for any unknown path (SPA).
+	// /fleet/ serves the packages/webview fleet dashboard from <assets-dir>/fleet/.
+	fleetDir := filepath.Join(*assetsFlag, "fleet")
+	mux.Handle("/fleet/", http.StripPrefix("/fleet", static.Handler(fleetDir)))
 	mux.Handle("/", static.Handler(*assetsFlag))
 
 	// One guard in front of the whole mux (task-6ai1 / defect D7): this server
