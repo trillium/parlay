@@ -34,8 +34,20 @@
 set -euo pipefail
 
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
-# Default account — resolved once here; any --account flag in any path overrides it.
-ACCOUNT="${PARLAY_SPAWN_DEFAULT_ACCOUNT:-}"
+# Default account — precedence: env var > ~/.parlay/config.toml spawnAccount > empty.
+# Set persistently with: parlay spawn-account set <name>
+_config_toml="${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml"
+_config_account=""
+if [ -z "${PARLAY_SPAWN_DEFAULT_ACCOUNT:-}" ] && [ -f "$_config_toml" ] && command -v python3 >/dev/null 2>&1; then
+  _config_account=$(python3 - "$_config_toml" <<'PYEOF' 2>/dev/null || true
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    print(tomllib.load(f).get("spawnAccount", ""), end="")
+PYEOF
+)
+fi
+ACCOUNT="${PARLAY_SPAWN_DEFAULT_ACCOUNT:-$_config_account}"
+unset _config_toml _config_account
 
 # Absolute path to THIS script, so the batch loop can re-exec us in single mode
 # regardless of the cwd or relative path used to invoke us (mirror fm-spawn.sh's
@@ -84,7 +96,10 @@ _herdr_use_rpc() {
 
 _herdr_agent_get() {  # <name> → JSON
   if _herdr_use_rpc; then
-    herdr_rpc "agent.get" "$(jq -nc --arg n "$1" '{"name":$n}')"
+    # NB: the RPC field is "target" (same word the CLI's `herdr agent get
+    # <target>` uses), NOT "name" — "name" is rejected with
+    # "missing field `target`". The response still nests under .result.agent.name.
+    herdr_rpc "agent.get" "$(jq -nc --arg n "$1" '{"target":$n}')"
   else
     herdr agent get "$1" 2>/dev/null
   fi
@@ -110,7 +125,7 @@ _herdr_pane_send_text() {  # <pane_id> <text>
 _herdr_pane_send_keys() {  # <pane_id> <keys>
   if _herdr_use_rpc; then
     herdr_rpc "pane.send_keys" \
-      "$(jq -nc --arg p "$1" --arg k "$2" '{"pane_id":$p,"keys":$k}')" >/dev/null 2>&1 || true
+      "$(jq -nc --arg p "$1" --arg k "$2" '{"pane_id":$p,"keys":[$k]}')" >/dev/null 2>&1 || true
   else
     herdr pane send-keys "$1" "$2" >/dev/null 2>&1 || true
   fi
@@ -120,9 +135,52 @@ _herdr_pane_wait_output() {  # <pane_id> <regex> <timeout_ms>
   if _herdr_use_rpc; then
     herdr_rpc "pane.wait_for_output" \
       "$(jq -nc --arg p "$1" --arg r "$2" --argjson t "$3" \
-        '{"pane_id":$p,"regex":$r,"timeout":$t}')" >/dev/null 2>&1 || true
+        '{"pane_id":$p,"match":{"type":"regex","value":$r},"timeout":$t,"source":"recent"}')" \
+        >/dev/null 2>&1 || true
   else
     herdr pane wait-output "$1" --regex "$2" --timeout "$3" >/dev/null 2>&1 || true
+  fi
+}
+
+_herdr_pane_read() {  # <pane_id> → pane text on stdout, best-effort
+  if _herdr_use_rpc; then
+    herdr_rpc "pane.read" \
+      "$(jq -nc --arg p "$1" '{"pane_id":$p,"source":"recent"}')" 2>/dev/null \
+      | jq -r '.result.read.text // empty' 2>/dev/null || true
+  else
+    herdr pane read "$1" --source recent 2>/dev/null || true
+  fi
+}
+
+# _spawn_snapshot <stage> <pane_id>
+# Captures the pane's current content. Only appends to the log when the content
+# has changed since the last entry (hash dedup). Trims to 1000 entries max.
+# Log: $PARLAY_STATE_HOME/spawn-logs/<agent_id>.jsonl  (best-effort, never fatal)
+_spawn_snapshot() {
+  local stage="$1" pane_id="$2"
+  [ -z "$pane_id" ] && return 0
+  local log_dir="${PARLAY_STATE_HOME:-$HOME/.parlay}/spawn-logs"
+  local log_file="$log_dir/$AGENT_ID.jsonl"
+  mkdir -p "$log_dir" 2>/dev/null || return 0
+
+  local content ts hash last_hash
+  content=$(_herdr_pane_read "$pane_id") || content=""
+  hash=$(printf '%s' "$content" | cksum | awk '{print $1}')
+  last_hash=$(tail -1 "$log_file" 2>/dev/null | jq -r '.hash // empty' 2>/dev/null || true)
+  [ "$hash" = "$last_hash" ] && return 0   # no change — skip
+
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
+  printf '%s\n' \
+    "$(jq -nc --arg ts "$ts" --arg stage "$stage" --arg hash "$hash" --arg content "$content" \
+      '{ts:$ts,stage:$stage,hash:$hash,content:$content}')" \
+    >> "$log_file" 2>/dev/null || return 0
+
+  # Trim to last 1000 entries (lines in the JSONL file).
+  local lc
+  lc=$(wc -l < "$log_file" 2>/dev/null || echo 0)
+  if [ "${lc:-0}" -gt 1000 ]; then
+    local tmp; tmp=$(mktemp "$log_dir/.trim.XXXXXX") && \
+      tail -1000 "$log_file" > "$tmp" && mv "$tmp" "$log_file" || rm -f "$tmp"
   fi
 }
 
@@ -152,7 +210,7 @@ _herdr_agent_wait() {  # <name> <until_state> <timeout_ms>
   if _herdr_use_rpc; then
     herdr_rpc "agent.wait" \
       "$(jq -nc --arg n "$1" --arg u "$2" --argjson t "$3" \
-        '{"name":$n,"until":[$u],"timeout":$t}')" >/dev/null 2>&1
+        '{"target":$n,"until":[$u],"timeout":$t}')" >/dev/null 2>&1
   else
     herdr agent wait "$1" --until "$2" --timeout "$3" >/dev/null 2>&1
   fi
@@ -162,7 +220,7 @@ _herdr_agent_prompt_wait() {  # <target> <text> <until_state> <timeout_ms>
   if _herdr_use_rpc; then
     herdr_rpc "agent.prompt" \
       "$(jq -nc --arg t "$1" --arg x "$2" --arg u "$3" --argjson to "$4" \
-        '{"target":$t,"text":$x,"wait":true,"until":[$u],"timeout":$to}')" >/dev/null 2>&1
+        '{"target":$t,"text":$x,"wait":{"until":[$u],"timeout":$to}}')" >/dev/null 2>&1
   else
     herdr agent prompt "$1" "$2" --wait --until "$3" --timeout "$4" >/dev/null 2>&1
   fi
@@ -478,6 +536,7 @@ EFFORT=""
 KIND="claude"
 WANT_WORKTREE=0
 CLAIM=""
+IN_PLACE_PANE=""
 WORKSPACE="${HERDR_WORKSPACE_ID:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -490,6 +549,7 @@ while [ $# -gt 0 ]; do
     --worktree)  WANT_WORKTREE=1; shift ;;
     --account)   ACCOUNT="$2"; shift 2 ;;
     --claim)     CLAIM="$2"; shift 2 ;;
+    --pane)      IN_PLACE_PANE="$2"; shift 2 ;;
     --workspace) WORKSPACE="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
@@ -815,7 +875,16 @@ fi
 # captain's current tab, and they launch unfocused/background). The tab's root
 # pane becomes the agent's pane directly — `agent start` targets it below via
 # --pane, so there is no redundant pane to close afterward.
-if _herdr_use_rpc; then
+#
+# In-place mode (--pane <ID>): skip tab creation and use the caller's pane
+# directly. The caller (yolo) backgrounds this script and returns so the pane
+# is idle by the time we reach the send-text/agent-start steps below.
+TAB_ID=""
+ROOT_PANE=""
+if [ -n "$IN_PLACE_PANE" ]; then
+  ROOT_PANE="$IN_PLACE_PANE"
+  echo "parlay-spawn: in-place mode — using caller's pane $ROOT_PANE" >&2
+elif _herdr_use_rpc; then
   # Build the env object from fixed vars + optionals + PROJECT_ENV_FLAGS pairs.
   _tab_env=$(jq -nc \
     --arg ps "$PARLAY" \
@@ -840,6 +909,8 @@ if _herdr_use_rpc; then
     '{"cwd":$c,"label":$l,"no_focus":$f,"env":$e}')
   [ -n "${WORKSPACE:-}" ] && _tab_params=$(printf '%s' "$_tab_params" | jq --arg w "$WORKSPACE" '.workspace_id=$w')
   TAB_JSON=$(herdr_rpc "tab.create" "$_tab_params" 2>/dev/null) || true
+  TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
+  ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
 else
   TAB_JSON=$(herdr tab create --cwd "$CWD" $FOCUS_FLAG --label "$AGENT_ID" \
     ${WORKSPACE:+--workspace "$WORKSPACE"} \
@@ -851,15 +922,16 @@ else
     ${OAUTH_ENV_FLAG[@]+"${OAUTH_ENV_FLAG[@]}"} \
     ${PROJECT_ENV_FLAGS[@]+"${PROJECT_ENV_FLAGS[@]}"} \
     2>/dev/null) || true
+  TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
+  ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
 fi
-TAB_ID=$(printf '%s' "$TAB_JSON" | jq -r '.result.tab.tab_id // empty')
-ROOT_PANE=$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty')
 
 if [ -z "$ROOT_PANE" ]; then
   echo "parlay-spawn: herdr tab create failed — no root pane returned." >&2
   [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
+_spawn_snapshot "pane-launched" "$ROOT_PANE"
 
 # Pre-clear the nesting-marker vars in the pane's login shell before handing
 # it to `agent start` — this is the `unset` half of the old bash wrapper.
@@ -870,10 +942,28 @@ fi
 # while merely typed-but-unsubmitted in the pane, and only expands to an
 # actual PID once the shell truly executes it — wait-output matches the
 # expanded (digits) form so it can't fire on the echoed keystrokes alone.
-_herdr_pane_send_text "$ROOT_PANE" \
-  "unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; echo READY_\$\$"
+#
+# In-place mode: the pane's env vars were NOT set via `herdr tab create --env`,
+# so export them explicitly here before launching the agent.
+_pane_prep="unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT"
+if [ -n "$IN_PLACE_PANE" ]; then
+  _pane_prep="$_pane_prep; export PARLAY_SERVER=$(shell_quote "$PARLAY")"
+  _pane_prep="$_pane_prep; export PARLAY_AGENT_ID=$(shell_quote "$AGENT_ID")"
+  _pane_prep="$_pane_prep; export PARLAY_AGENT_NAME=$(shell_quote "$NAME")"
+  _pane_prep="$_pane_prep; export PARLAY_AGENT_COLOR=$(shell_quote "$COLOR")"
+  [ -n "$MODEL" ] && _pane_prep="$_pane_prep; export PARLAY_AGENT_MODEL=$(shell_quote "$MODEL")"
+  [ -n "${_token:-}" ] && _pane_prep="$_pane_prep; export CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "$_token")"
+  _ip_i=1
+  while [ "$_ip_i" -lt "${#PROJECT_ENV_FLAGS[@]}" ]; do
+    _pane_prep="$_pane_prep; export $(shell_quote "${PROJECT_ENV_FLAGS[$_ip_i]}")"
+    _ip_i=$((_ip_i + 2))
+  done
+fi
+_pane_prep="$_pane_prep; echo READY_\$\$"
+_herdr_pane_send_text "$ROOT_PANE" "$_pane_prep"
 _herdr_pane_send_keys "$ROOT_PANE" enter
 _herdr_pane_wait_output "$ROOT_PANE" 'READY_[0-9]+' 5000
+_spawn_snapshot "pane-prep-done" "$ROOT_PANE"
 
 # Runs in YOLO mode (skip-permissions + sonnet fallback) — same as the `yolo`
 # command — so a remotely-driven agent never stalls on a permission prompt the
@@ -931,12 +1021,16 @@ if [ "$_start_ok" -ne 1 ]; then
   [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
+_spawn_snapshot "agent-started" "$ROOT_PANE"
 
 if ! _herdr_agent_prompt "$AGENT_ID" "$STARTUP_PROMPT"; then
   echo "parlay-spawn: herdr agent prompt failed to deliver the charter — rolling back the tab to avoid a ghost '$AGENT_ID' tab." >&2
   [ -n "$TAB_ID" ] && _herdr_tab_close "$TAB_ID" || true
   exit 1
 fi
+_spawn_snapshot "prompt-injected" "$ROOT_PANE"
+sleep 3
+_spawn_snapshot "post-prompt" "$ROOT_PANE"
 
 # Seed the identity's LAUNCH SPEC (frontmatter) so the agent can reconstitute itself
 # on context reset — the identity fully describes how to relaunch it. Best-effort.
