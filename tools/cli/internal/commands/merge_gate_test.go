@@ -743,6 +743,15 @@ func TestUnknownBaseComparisonIsNotedNotAssumedCurrent(t *testing.T) {
 	if !strings.Contains(strings.Join(v.Notes, " "), "UNKNOWN") {
 		t.Errorf("want an UNKNOWN note, got %v", v.Notes)
 	}
+	// FormatMergeGate must not claim "green against the current base" when
+	// freshness is unknown — that would contradict the UNKNOWN note above.
+	out := FormatMergeGate(s.PR, v)
+	if strings.Contains(out, "green against the current base") {
+		t.Errorf("ready summary must not assert 'green against the current base' when BehindKnown=false, got:\n%s", out)
+	}
+	if !strings.Contains(out, "base freshness unknown") {
+		t.Errorf("ready summary must qualify freshness when BehindKnown=false, got:\n%s", out)
+	}
 }
 
 // A merged PR is past gating entirely — do not tell the captain to rebase

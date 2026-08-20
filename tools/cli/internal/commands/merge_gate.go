@@ -271,10 +271,14 @@ type MergeGateVerdict struct {
 	// Pending is true when there ARE blockers but every one of them is the
 	// review still running. Nothing is known to be wrong with the code and
 	// nothing needs deciding — the caller re-runs the gate later.
-	Pending  bool           `json:"pending"`
-	Blockers []MergeBlocker `json:"blockers"`
-	Notes    []string       `json:"notes"`
-	ExitCode int            `json:"exitCode"`
+	Pending bool `json:"pending"`
+	// BehindKnown mirrors MergeGateSnapshot.BehindKnown: false when the
+	// base-comparison call failed, so FormatMergeGate can qualify the
+	// ready summary rather than asserting "green against the current base".
+	BehindKnown bool           `json:"behindKnown"`
+	Blockers    []MergeBlocker `json:"blockers"`
+	Notes       []string       `json:"notes"`
+	ExitCode    int            `json:"exitCode"`
 }
 
 func block(v *MergeGateVerdict, code, format string, a ...any) {
@@ -291,7 +295,7 @@ func blockAs(v *MergeGateVerdict, code, class, format string, a ...any) {
 
 // ComputeMergeGate is the whole decision, as a pure function of a snapshot.
 func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
-	v := MergeGateVerdict{Blockers: []MergeBlocker{}, Notes: []string{}}
+	v := MergeGateVerdict{Blockers: []MergeBlocker{}, Notes: []string{}, BehindKnown: s.BehindKnown}
 
 	// Which repository this answer is about comes FIRST, above even the
 	// merged short-circuit — the whole robots-g4qz defect was a verdict that
@@ -657,7 +661,11 @@ func FormatMergeGate(pr ghPRView, v MergeGateVerdict) string {
 		fmt.Fprintf(&b, "  · %s\n", n)
 	}
 	if v.Ready && !v.Merged {
-		b.WriteString("  · Checks green against the current base, a real review covered the current head, no unresolved threads.\n")
+		if v.BehindKnown {
+			b.WriteString("  · Checks green against the current base, a real review covered the current head, no unresolved threads.\n")
+		} else {
+			b.WriteString("  · Checks green (base freshness unknown — could not compare branch against base), a real review covered the current head, no unresolved threads.\n")
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
