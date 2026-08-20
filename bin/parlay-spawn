@@ -64,6 +64,7 @@ PYEOF
 fi
 LAUNCHER="${PARLAY_SPAWN_LAUNCHER:-${_config_launcher:-herdr}}"
 unset _config_toml _config_launcher
+# --gascity (parsed per-mode below) overrides all of the above — highest precedence.
 
 # Absolute path to THIS script, so the batch loop can re-exec us in single mode
 # regardless of the cwd or relative path used to invoke us (mirror fm-spawn.sh's
@@ -365,6 +366,11 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   workspace ID (e.g. w6T) or a label (e.g. "firstmate").
                   Label lookup: uses an existing workspace with that name, or
                   creates one. Falls back to \$HERDR_WORKSPACE_ID when not given.
+  --gascity       use the herdr-free detached-subprocess launcher for this spawn
+                  instead of herdr, regardless of PARLAY_SPAWN_LAUNCHER or
+                  ~/.parlay/config.toml [spawn] launcher. Escape hatch for
+                  herdr's SIGKILL failure mode in headless/no-WindowServer
+                  environments.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -413,6 +419,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --kind)      KIND="$2"; shift 2 ;;
       --worktree)  WANT_WORKTREE=1; shift ;;
       --account)   ACCOUNT="$2"; shift 2 ;;
+      --gascity)   LAUNCHER="gascity"; shift ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
     esac
@@ -467,6 +474,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_KIND=""
           BATCH_WORKTREE=0
           BATCH_ACCOUNT="$ACCOUNT"
+          BATCH_GASCITY=0
           while [ $# -gt 0 ]; do
             case "$1" in
               --prompt)    BATCH_PROMPT="$2"; shift 2 ;;
@@ -478,6 +486,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
               --kind)      BATCH_KIND="$2"; shift 2 ;;
               --worktree)  BATCH_WORKTREE=1; shift ;;
               --account)   BATCH_ACCOUNT="$2"; shift 2 ;;
+              --gascity)   BATCH_GASCITY=1; shift ;;
               --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
               --ephemeral) echo "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs" >&2; exit 2 ;;
               -*)       echo "parlay-spawn: unknown batch flag: $1" >&2; exit 2 ;;
@@ -514,6 +523,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             [ -n "$BATCH_KIND" ] && _shared+=(--kind "$BATCH_KIND")
             [ "$BATCH_WORKTREE" -eq 1 ] && _shared+=(--worktree)
             [ -n "$BATCH_ACCOUNT" ] && _shared+=(--account "$BATCH_ACCOUNT")
+            [ "$BATCH_GASCITY" -eq 1 ] && _shared+=(--gascity)
             if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
               :
             else
@@ -565,6 +575,7 @@ while [ $# -gt 0 ]; do
     --claim)     CLAIM="$2"; shift 2 ;;
     --pane)      IN_PLACE_PANE="$2"; shift 2 ;;
     --workspace) WORKSPACE="$2"; shift 2 ;;
+    --gascity)   LAUNCHER="gascity"; shift ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac

@@ -1496,10 +1496,14 @@ committing.
 ## `gascity` launcher: a herdr-free escape hatch in `bin/parlay-spawn` (`[spawn] launcher`)
 
 `bin/parlay-spawn` supports a second launcher path, selected by
-`LAUNCHER` — resolved as `PARLAY_SPAWN_LAUNCHER` env var >
-`~/.parlay/config.toml`'s `[spawn] launcher` (parsed via `python3 -c
-'import tomllib'`, so a missing `python3` silently falls through to the
-default) > `herdr`. Registration, hello-reply, `context.json`, worktree
+`LAUNCHER` — resolved as a per-invocation `--gascity` flag >
+`PARLAY_SPAWN_LAUNCHER` env var > `~/.parlay/config.toml`'s `[spawn]
+launcher` (parsed via `python3 -c 'import tomllib'`, so a missing `python3`
+silently falls through to the default) > `herdr`. `--gascity` is parsed in
+all three call shapes (single, `--ephemeral`, and batch `id=repo` dispatch,
+where it is a shared flag forwarded to every pair like `--worktree`) and is
+the cheapest way to try the launcher for one spawn without touching config
+or env. Registration, hello-reply, `context.json`, worktree
 setup (including the treehouse lease), DoD/prompt composition, pre-trust,
 `.env`/`.envrc` collection, and `identity --register` are all launcher-
 agnostic and run unconditionally regardless of `$LAUNCHER` — only the actual
