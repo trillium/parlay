@@ -73,6 +73,18 @@
 // reviewer will never come" (4); it is its own answer, and the only one of
 // the three that is genuinely transient. Re-run the gate; do not edit, do not
 // escalate, do not merge.
+//
+// Separately from all of that, the gate reports when merging is not the same
+// act as DEPLOYING (robots-oex0). The mechanic contract proves a fix landed by
+// showing origin/main contains the commit — which assumes origin/main is the
+// artifact that runs. In `pai-hooks` it is not: `~/.claude/hooks` symlinks
+// into the checkout, so local main is live and origin was 20 commits behind
+// it. Both halves of the proof failed at once — a merged commit satisfied
+// "FIXED" without going live, and a commit that WAS live was not on
+// origin/main at all. The gate cannot know what a repo deploys, but it can see
+// the drift that makes "merged" and "live" come apart, so it says so in the
+// header and leaves the exit code alone: the PR is still safe to merge, it is
+// the conclusion drawn afterwards that is not safe.
 
 package commands
 
@@ -187,9 +199,44 @@ type ghPRView struct {
 	Mergeable        string      `json:"mergeable"`
 	MergeStateStatus string      `json:"mergeStateStatus"`
 	HeadRefOid       string      `json:"headRefOid"`
+	BaseRefName      string      `json:"baseRefName"`
 	Author           ghAuthor    `json:"author"`
 	Reviews          []ghReview  `json:"reviews"`
 	Comments         []ghComment `json:"comments"`
+}
+
+// LiveBranchState compares the LOCAL base branch against `origin/<base>` —
+// the difference between "this PR merged" and "this fix is live" (robots-oex0).
+//
+// The mechanic contract proves a fix LANDED with `git branch -r --contains
+// <sha>` listing origin/main plus `gh pr view` reporting MERGED. That proof
+// silently assumes origin/main IS the deployed artifact. In a repo whose
+// working tree is itself the deployment target it is not: `~/.claude/hooks`
+// is a symlink into the `pai-hooks` checkout, so the hooks that actually run
+// are whatever local `main` says, and origin is a lagging mirror. Measured on
+// that repo, origin/main was 20 commits behind local main — so both halves of
+// the proof were wrong at once. A commit merged to origin/main satisfied
+// "FIXED" without ever going live, and a commit that WAS live (cdaf08f) was
+// not on origin/main at all and could never satisfy it.
+//
+// The gate cannot know what a given repo deploys, and must not guess. What it
+// CAN observe is the drift itself, which is exactly the condition under which
+// "merged" and "live" are allowed to disagree — so it reports the drift and
+// lets the caller stop equating the two.
+type LiveBranchState struct {
+	// Known is false when the comparison could not be made at all (not in a
+	// git work tree, no local branch of that name, no origin remote-tracking
+	// ref). The gate then says nothing rather than implying agreement.
+	Known bool `json:"known"`
+	// Branch is the PR's base branch, e.g. "main".
+	Branch string `json:"branch"`
+	// Ahead counts commits on the LOCAL base branch that origin's copy does
+	// not have — i.e. how far origin lags whatever this checkout runs.
+	Ahead int `json:"ahead"`
+	// Behind counts commits on origin's copy that the local branch does not
+	// have. Normal and harmless on its own (a `git pull` fixes it); reported
+	// only because a two-sided divergence needs a merge, not a fast-forward.
+	Behind int `json:"behind"`
 }
 
 // MergeGateSnapshot is everything the gate needs about a PR, already fetched.
@@ -205,6 +252,9 @@ type MergeGateSnapshot struct {
 	// Checks is empty when the PR has no checks reported at all — which is
 	// itself a blocker, not a pass.
 	Checks []ghCheck
+	// Live is the local origin-vs-deployed-branch comparison. Zero value
+	// (Known=false) means it could not be measured, and the gate stays quiet.
+	Live LiveBranchState
 	// UnresolvedThreads counts review threads still marked unresolved.
 	UnresolvedThreads int
 	// ThreadsKnown is false when the review-thread query could not be run;
@@ -233,10 +283,18 @@ type MergeGateVerdict struct {
 	// Pending is true when there ARE blockers but every one of them is the
 	// review still running. Nothing is known to be wrong with the code and
 	// nothing needs deciding — the caller re-runs the gate later.
-	Pending  bool           `json:"pending"`
-	Blockers []MergeBlocker `json:"blockers"`
-	Notes    []string       `json:"notes"`
-	ExitCode int            `json:"exitCode"`
+	Pending bool `json:"pending"`
+	// OriginLagsLive is true when the local base branch has commits origin's
+	// copy does not, so merging this PR is not the same act as deploying it
+	// (robots-oex0). It is NOT a blocker and never changes the exit code:
+	// nothing about the drift makes the PR unsafe to merge. What it makes
+	// unsafe is the sentence "merged, therefore fixed", so it is surfaced in
+	// the header instead — a mechanic who reads only the first line is exactly
+	// the one who needs it.
+	OriginLagsLive bool           `json:"originLagsLive"`
+	Blockers       []MergeBlocker `json:"blockers"`
+	Notes          []string       `json:"notes"`
+	ExitCode       int            `json:"exitCode"`
 }
 
 func block(v *MergeGateVerdict, code, format string, a ...any) {
@@ -270,6 +328,11 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			"WARNING: asked about %s but GitHub answered for %s — if that is not a repository rename, this verdict is about the wrong PR.",
 			s.Repo, got))
 	}
+
+	// Whether "merged" even means "live" comes before the MERGED
+	// short-circuit, because an already-merged PR in a lagging repo is the
+	// exact case the mechanic misreads as done (robots-oex0).
+	noteOriginLagsLive(&v, s)
 
 	switch strings.ToUpper(s.PR.State) {
 	case "MERGED":
@@ -485,6 +548,43 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 	return v
 }
 
+// noteOriginLagsLive records the merged-is-not-live warning when the local
+// base branch is ahead of origin's copy (robots-oex0).
+//
+// Deliberately notes, not blockers. The drift says nothing bad about the diff
+// and nothing on the branch can fix it, so making it exit non-zero would
+// refuse merges that are perfectly fine — and a gate that cries wolf on every
+// run of a repo like pai-hooks gets ignored on the run that matters. What the
+// drift breaks is the INFERENCE the mechanic draws afterwards, so the answer
+// is to say plainly that the inference is unavailable here.
+func noteOriginLagsLive(v *MergeGateVerdict, s MergeGateSnapshot) {
+	l := s.Live
+	if !l.Known || l.Ahead <= 0 {
+		return
+	}
+	v.OriginLagsLive = true
+	v.Notes = append(v.Notes, fmt.Sprintf(
+		"ORIGIN LAGS LIVE: local %s is %d commit(s) ahead of origin/%s, so origin/%s is a lagging mirror of the branch this checkout actually runs. Merging lands the commit on origin/%s — it does NOT put it in the deployed tree. `git branch -r --contains <sha>` will list origin/%s and still be wrong about liveness (robots-oex0).",
+		l.Branch, l.Ahead, l.Branch, l.Branch, l.Branch, l.Branch))
+	reconcile := fmt.Sprintf("git checkout %s && git pull --ff-only origin %s", l.Branch, l.Branch)
+	if l.Behind > 0 {
+		// Two-sided divergence: a fast-forward is impossible, so do not
+		// suggest one — that is the shape that leaves a mechanic stuck.
+		reconcile = fmt.Sprintf("git checkout %s && git merge origin/%s", l.Branch, l.Branch)
+	}
+	v.Notes = append(v.Notes, fmt.Sprintf(
+		"Before claiming FIXED, make the DEPLOYED branch contain the commit and stop the two diverging: after this lands, `%s`, then push local %s to origin. If you cannot, say plainly that the fix is merged but not live — do not report it as done.",
+		reconcile, l.Branch))
+	if strings.EqualFold(s.PR.Mergeable, "CONFLICTING") {
+		// Same root cause, different symptom: a branch cut from the local
+		// base drags every unpushed commit into the PR, which GitHub reports
+		// as a conflict against a base that never saw them.
+		v.Notes = append(v.Notes, fmt.Sprintf(
+			"The CONFLICTING status above is most likely this same drift: a branch cut from local %s carries those %d unpushed commit(s) into the PR. `git rebase --onto origin/%s %s <branch>` gives the real diff.",
+			l.Branch, l.Ahead, l.Branch, l.Branch))
+	}
+}
+
 // hasClass reports whether any blocker carries exactly this class.
 func hasClass(bs []MergeBlocker, class string) bool {
 	for _, b := range bs {
@@ -573,8 +673,14 @@ func FormatMergeGate(pr ghPRView, v MergeGateVerdict) string {
 		head = pr.URL
 	}
 	switch {
+	case v.Merged && v.OriginLagsLive:
+		// The whole point of robots-oex0: "MERGED" alone is what a mechanic
+		// converts into "FIXED", and here that conversion is invalid.
+		fmt.Fprintf(&b, "MERGED — BUT NOT LIVE (origin lags the deployed branch) — %s\n", head)
 	case v.Merged:
 		fmt.Fprintf(&b, "MERGED — %s\n", head)
+	case v.Ready && v.OriginLagsLive:
+		fmt.Fprintf(&b, "READY TO MERGE — BUT MERGING WILL NOT MAKE IT LIVE — %s\n", head)
 	case v.Ready:
 		fmt.Fprintf(&b, "READY — %s\n", head)
 	case v.NeedsDecision:
@@ -637,8 +743,9 @@ func MergeGate(argv []string) {
 			RepoSource string           `json:"repoSource"`
 			Verdict    MergeGateVerdict `json:"verdict"`
 			Checks     []ghCheck        `json:"checks"`
+			Live       LiveBranchState  `json:"live"`
 			Unresolv   int              `json:"unresolvedThreads"`
-		}{snap.PR.Number, snap.PR.URL, snap.Repo, snap.RepoSource, v, snap.Checks, snap.UnresolvedThreads}, "", "  ")
+		}{snap.PR.Number, snap.PR.URL, snap.Repo, snap.RepoSource, v, snap.Checks, snap.Live, snap.UnresolvedThreads}, "", "  ")
 		fmt.Println(string(out))
 	} else {
 		fmt.Println(FormatMergeGate(snap.PR, v))
@@ -650,7 +757,7 @@ func MergeGate(argv []string) {
 }
 
 // prViewFields is the exact --json field set fetchMergeGateSnapshot requests.
-const prViewFields = "number,url,state,mergeable,mergeStateStatus,headRefOid,author,reviews,comments"
+const prViewFields = "number,url,state,mergeable,mergeStateStatus,headRefOid,baseRefName,author,reviews,comments"
 
 // reviewThreadsQuery counts unresolved review threads. `gh pr view` has no
 // field for thread resolution, so this is the one place GraphQL is needed.
@@ -692,6 +799,10 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 	// No stdout means gh reported "no checks reported" — leave Checks empty
 	// so the no-checks blocker fires, rather than erroring out.
 
+	// Local, read-only, and never fatal: a checkout that cannot answer this
+	// leaves Live.Known false and the gate simply says nothing about liveness.
+	s.Live = detectLiveBranchDrift(s.PR.BaseRefName)
+
 	if owner, name, ok := splitRepo(repo); ok {
 		q := sh("gh", "api", "graphql", "-f", "query="+reviewThreadsQuery,
 			"-F", "o="+owner, "-F", "r="+name, "-F", "n="+strconv.Itoa(pr),
@@ -703,6 +814,53 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 		}
 	}
 	return s, nil
+}
+
+// detectLiveBranchDrift measures the local base branch against
+// origin/<base>. Every failure path returns Known=false rather than a zero
+// count: "could not tell" and "they agree" are different answers, and only
+// one of them licenses the merged-means-fixed inference.
+//
+// Refs are shared across every linked worktree of a repo, so this reads the
+// same answer from a mechanic's isolated worktree as from the primary
+// checkout — which matters, because the contract sends every mechanic into a
+// worktree. It never checks anything out and never writes.
+func detectLiveBranchDrift(base string) LiveBranchState {
+	st := LiveBranchState{Branch: strings.TrimSpace(base)}
+	if st.Branch == "" {
+		return st
+	}
+	if res := sh("git", "rev-parse", "--is-inside-work-tree"); !res.ok || strings.TrimSpace(res.out) != "true" {
+		return st
+	}
+	local := "refs/heads/" + st.Branch
+	remote := "refs/remotes/origin/" + st.Branch
+	// A repo with no local copy of the base branch has no deployed branch to
+	// disagree with origin, and one with no remote-tracking ref has nothing
+	// to compare against. Neither is a defect; both are unknowable.
+	if r := sh("git", "rev-parse", "--verify", "--quiet", local); !r.ok {
+		return st
+	}
+	if r := sh("git", "rev-parse", "--verify", "--quiet", remote); !r.ok {
+		return st
+	}
+	// --left-right --count over the symmetric difference: left = commits only
+	// on origin (local is behind), right = commits only on local (origin lags).
+	r := sh("git", "rev-list", "--left-right", "--count", remote+"..."+local)
+	if !r.ok {
+		return st
+	}
+	f := strings.Fields(r.out)
+	if len(f) != 2 {
+		return st
+	}
+	behind, err1 := strconv.Atoi(f[0])
+	ahead, err2 := strconv.Atoi(f[1])
+	if err1 != nil || err2 != nil {
+		return st
+	}
+	st.Known, st.Behind, st.Ahead = true, behind, ahead
+	return st
 }
 
 // splitRepo splits "owner/name" (tolerating a trailing .git and any leading

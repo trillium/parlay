@@ -476,6 +476,17 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 	if !strings.Contains(out, "re-run the gate") {
 		t.Errorf("robots DoD should tell the mechanic to re-run rather than edit on exit 5; got:\n%s", out)
 	}
+	// robots-oex0: the LANDED proof above assumes origin/main is what runs.
+	// Where the working tree is the deployment target (pai-hooks symlinks
+	// ~/.claude/hooks into the checkout) origin can lag it by 20 commits, so
+	// "merged to origin/main" is satisfiable without the fix ever going live.
+	// The contract has to name that case and refuse the inference.
+	if !strings.Contains(out, "ORIGIN LAGS LIVE") {
+		t.Errorf("robots DoD should name the gate's origin-lags-live signal; got:\n%s", out)
+	}
+	if !strings.Contains(out, "merged but NOT live") {
+		t.Errorf("robots DoD should require saying so when a fix is merged but not deployed; got:\n%s", out)
+	}
 }
 
 // --- no-work claims (robots-4ek1) -------------------------------------------

@@ -1061,6 +1061,30 @@ usable origin) and passes that one answer to every gh call, and every verdict
 prints the repo it answered about. Any new code here that shells out to `gh`
 against a PR must pass `--repo` explicitly for the same reason.
 
+**Merged is not always LIVE (robots-oex0).** The contract's landed-proof
+(`git branch -r --contains <sha>` lists `origin/main`, `gh pr view` says
+`MERGED`) assumes `origin/main` is the artifact that runs. Where the working
+tree *is* the deployment target it is not: `~/.claude/hooks` symlinks into the
+`pai-hooks` checkout, so local `main` is live, and origin sat **20 commits
+behind** it (and 1 ahead — the squash of its PR #5). Both halves failed at
+once — a merged commit satisfied "FIXED" without going live, and a commit that
+*was* live was not on `origin/main` at all. Same drift, second symptom: a
+branch cut from local `main` carries every unpushed commit into the PR, which
+GitHub reports as `CONFLICTING`.
+
+`detectLiveBranchDrift` measures it read-only (`git rev-list --left-right
+--count origin/<base>...<base>`, using the PR's `baseRefName`; refs are shared
+across linked worktrees, so a mechanic's worktree reads the same answer as the
+primary). When the local base branch is ahead, the header says
+`MERGED — BUT NOT LIVE` / `READY TO MERGE — BUT MERGING WILL NOT MAKE IT LIVE`,
+checked *before* the already-MERGED short-circuit. It is a **note, never a
+blocker**, and never changes the exit code: the drift says nothing bad about
+the diff and nothing on the branch can fix it, so blocking would refuse fine
+merges and get the whole signal ignored in the repos where it fires every run.
+What it invalidates is the inference drawn afterwards, and that is what the
+robots DoD now forbids. An unmeasurable checkout leaves `Known` false and the
+gate stays silent — "could not tell" is not "they agree".
+
 Decision logic lives in the pure `ComputeMergeGate(MergeGateSnapshot)` so
 `merge_gate_test.go` pins the regressions with no gh binary and no network;
 `fetchMergeGateSnapshot` is the only part that shells out. **Go-only, no TS
