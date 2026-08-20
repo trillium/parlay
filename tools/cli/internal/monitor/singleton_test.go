@@ -4,6 +4,7 @@
 package monitor
 
 import (
+	"errors"
 	"syscall"
 	"testing"
 	"time"
@@ -279,5 +280,72 @@ func TestReapDuplicateListenersRespectsTheOptOut(t *testing.T) {
 
 	if len(rec.sent) != 0 {
 		t.Errorf("PARLAY_LISTEN_NO_SINGLETON must suppress every signal, got %v", rec.sent)
+	}
+}
+
+// ── LiveListenerAgents: ground truth for "who is actually listening" ─────────
+//
+// robots-jkwc: the registry reported 148 mc-robots agents [live] while only 11
+// had a real poll loop. These pin the process-table half of that answer.
+
+func TestLiveListenerAgentsCollectsEveryRealListener(t *testing.T) {
+	stubProcessTable(t, []procEntry{
+		{pid: 100, ppid: 1, args: "parlay-cli listen --agent mayor"},
+		{pid: 101, ppid: 1, args: "/usr/local/bin/parlay monitor --agent=mc-robots-jkwc --notify-safe"},
+		{pid: 102, ppid: 1, args: "parlay-cli agent-up --agent deckhand"},
+		{pid: 103, ppid: 1, args: "vim notes-about-parlay-listen.md"},
+		{pid: 104, ppid: 1, args: "grep listen --agent mayor"}, // not a parlay binary
+	}, nil)
+
+	got, ok := LiveListenerAgents()
+	if !ok {
+		t.Fatal("a readable process table must report ok")
+	}
+	want := map[string]bool{"mayor": true, "mc-robots-jkwc": true, "deckhand": true}
+	if len(got) != len(want) {
+		t.Fatalf("LiveListenerAgents = %v, want exactly %v", got, want)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("LiveListenerAgents missed the live listener for %q", id)
+		}
+	}
+}
+
+func TestLiveListenerAgentsReportsNotOkWhenPsFails(t *testing.T) {
+	stubProcessTable(t, nil, errors.New("ps unavailable"))
+	got, ok := LiveListenerAgents()
+	if ok {
+		t.Errorf("a failed ps must report not-ok, got ok with %v", got)
+	}
+	if got != nil {
+		t.Errorf("a failed ps must return no set, got %v", got)
+	}
+}
+
+func TestLiveListenerAgentsIsEmptyNotUnknownOnACleanBox(t *testing.T) {
+	// The distinction callers depend on: "ps worked and found nothing" is a
+	// real answer (every registration is a ghost); "ps failed" is not.
+	stubProcessTable(t, []procEntry{{pid: 100, ppid: 1, args: "zsh"}}, nil)
+	got, ok := LiveListenerAgents()
+	if !ok || len(got) != 0 {
+		t.Errorf("LiveListenerAgents = %v, ok=%v; want an empty set with ok=true", got, ok)
+	}
+}
+
+func TestListenerAgentReturnsTheIdItIsPolling(t *testing.T) {
+	cases := []struct{ args, want string }{
+		{"parlay-cli listen --agent mayor", "mayor"},
+		{"parlay monitor --agent=mc-robots-jkwc", "mc-robots-jkwc"},
+		{"parlay-cli listen --notify-safe --agent mayor", "mayor"},
+		{"parlay-cli listen --agent", ""},            // truncated argv
+		{"parlay-cli listen --notify-safe", ""},      // a loop with no --agent
+		{"parlay-cli listen --name a --agent m", ""}, // free text: unparseable
+		{"parlay-cli send --agent mayor hi", ""},     // not a loop verb
+	}
+	for _, tc := range cases {
+		if got := listenerAgent(tc.args); got != tc.want {
+			t.Errorf("listenerAgent(%q) = %q, want %q", tc.args, got, tc.want)
+		}
 	}
 }

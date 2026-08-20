@@ -116,8 +116,8 @@ func TestPollOnceNetworkErrorSleeps3s(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce("http://127.0.0.1:1", "", &lastID, false, 400, &out)
-	if got != 3*time.Second {
-		t.Errorf("sleep = %v, want 3s", got)
+	if got.sleep != 3*time.Second {
+		t.Errorf("sleep = %v, want 3s", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output on network error, got %q", out.String())
@@ -133,8 +133,8 @@ func TestPollOnceNon2xxSleeps2s(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 2*time.Second {
-		t.Errorf("sleep = %v, want 2s", got)
+	if got.sleep != 2*time.Second {
+		t.Errorf("sleep = %v, want 2s", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output on non-2xx, got %q", out.String())
@@ -150,8 +150,8 @@ func TestPollOnceInvalidJSONSleeps3s(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 3*time.Second {
-		t.Errorf("sleep = %v, want 3s", got)
+	if got.sleep != 3*time.Second {
+		t.Errorf("sleep = %v, want 3s", got.sleep)
 	}
 }
 
@@ -165,8 +165,8 @@ func TestPollOnceTimeoutMessageIsQuietAndImmediate(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 0 {
-		t.Errorf("sleep = %v, want 0 (no delay on bare timeout)", got)
+	if got.sleep != 0 {
+		t.Errorf("sleep = %v, want 0 (no delay on bare timeout)", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output on timeout, got %q", out.String())
@@ -187,8 +187,8 @@ func TestPollOnceEmitsChatMsgAndAdvancesLastID(t *testing.T) {
 	lastID := "msg-0"
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 0 {
-		t.Errorf("sleep = %v, want 0", got)
+	if got.sleep != 0 {
+		t.Errorf("sleep = %v, want 0", got.sleep)
 	}
 	if gotAfter != "msg-0" {
 		t.Errorf("server saw after=%q, want msg-0", gotAfter)
@@ -212,8 +212,8 @@ func TestPollOnceSkipsIncompleteMessage(t *testing.T) {
 	lastID := ""
 	var out strings.Builder
 	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
-	if got != 0 {
-		t.Errorf("sleep = %v, want 0", got)
+	if got.sleep != 0 {
+		t.Errorf("sleep = %v, want 0", got.sleep)
 	}
 	if out.Len() != 0 {
 		t.Errorf("expected no output for an incomplete message, got %q", out.String())
@@ -276,5 +276,49 @@ func TestPollOnceNotifySafeLeavesShortLinesAlone(t *testing.T) {
 	want := "CHAT_MSG|msg-1|user|short\n"
 	if out.String() != want {
 		t.Errorf("output = %q, want %q", out.String(), want)
+	}
+}
+
+func TestPollOnceStopsOn410Gone(t *testing.T) {
+	// robots-ycfa: a tombstoned channel answers 410, and retrying re-creates
+	// it and polls forever. The Go port used to fold 410 into the generic
+	// non-2xx 2s retry, which kept the leak alive on the path bin/parlay
+	// actually execs (robots-jkwc).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+		w.Write([]byte(`{"gone":true,"error":"channel was unregistered; stop polling"}`))
+	}))
+	defer srv.Close()
+
+	lastID := ""
+	var out strings.Builder
+	got := pollOnce(srv.URL, "&channel=ghost-z1", &lastID, false, 400, &out)
+	if !got.stop {
+		t.Error("410 Gone must be terminal for the poll loop")
+	}
+	if got.sleep != 0 {
+		t.Errorf("a terminal answer must not also ask for a retry sleep, got %v", got.sleep)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected no CHAT_MSG output on 410, got %q", out.String())
+	}
+}
+
+func TestPollOnceKeepsRetryingOnAServerError(t *testing.T) {
+	// 410 is the ONLY terminal status — a 500 is a transient server problem
+	// and must never retire a live agent's monitor.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	lastID := ""
+	var out strings.Builder
+	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
+	if got.stop {
+		t.Error("a 500 must not stop the poll loop")
+	}
+	if got.sleep != 2*time.Second {
+		t.Errorf("sleep = %v, want 2s", got.sleep)
 	}
 }

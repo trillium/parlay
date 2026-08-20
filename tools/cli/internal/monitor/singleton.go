@@ -89,9 +89,15 @@ var (
 // `--agent <agent>` (or `--agent=<agent>`) among the flags that follow it,
 // with an exact token compare so `--agent mayor` never matches `mayor-2`.
 func listensForAgent(args, agent string) bool {
-	if agent == "" {
-		return false
-	}
+	return agent != "" && listenerAgent(args) == agent
+}
+
+// listenerAgent returns the agent id one `ps` args line is polling for, or ""
+// if the line is not a parlay poll loop at all. Same strictness as
+// listensForAgent — which is now a thin equality on top of it — factored out
+// so a caller with MANY agent ids to classify (`parlay launch`, robots-jkwc)
+// parses each process line once instead of once per candidate id.
+func listenerAgent(args string) string {
 	tokens := strings.Fields(args)
 
 	sub := -1
@@ -105,22 +111,52 @@ func listensForAgent(args, agent string) bool {
 		}
 	}
 	if sub < 0 {
-		return false
+		return ""
 	}
 
 	for i := sub + 1; i < len(tokens); i++ {
 		tok := tokens[i]
 		if freeTextFlagValues[tok] {
-			return false // past here, argv is unparseable from a flattened string
+			return "" // past here, argv is unparseable from a flattened string
 		}
 		if value, found := strings.CutPrefix(tok, "--agent="); found {
-			return value == agent
+			return value
 		}
 		if tok == "--agent" {
-			return i+1 < len(tokens) && tokens[i+1] == agent
+			if i+1 < len(tokens) {
+				return tokens[i+1]
+			}
+			return ""
 		}
 	}
-	return false
+	return ""
+}
+
+// LiveListenerAgents returns the set of agent ids that have a real poll loop
+// running on this host right now, and whether the process table could be read
+// at all.
+//
+// This is the ground truth the agent REGISTRY cannot supply: a registration is
+// just a row on the server, so an agent whose listener died — or was never
+// armed — stays "registered" forever with nothing reading its channel
+// (robots-jkwc: 148 registrations marked live against 11 real listeners). A
+// caller that reports liveness must intersect the two.
+//
+// Local by construction: `ps` sees only this host, so a caller must treat
+// `false` here as "no listener HERE", not "no listener anywhere". When ok is
+// false, nothing is known and the caller must not downgrade anything.
+func LiveListenerAgents() (agents map[string]bool, ok bool) {
+	procs, err := listProcesses()
+	if err != nil {
+		return nil, false
+	}
+	agents = make(map[string]bool)
+	for _, p := range procs {
+		if id := listenerAgent(p.args); id != "" {
+			agents[id] = true
+		}
+	}
+	return agents, true
 }
 
 func baseName(path string) string {
