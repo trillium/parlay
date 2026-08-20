@@ -17,6 +17,11 @@
 # Usage:  install.sh [--rebuild] [--addr <host:port>] [--state-dir <path>]
 # Env:    PARLAY_SERVER_ADDR  listen addr (default 127.0.0.1:4242)
 #         PARLAY_STATE_HOME   state dir   (default ~/.parlay)
+#
+# The client bundle (packages/client/dist/) is copied to a stable location
+# (~/Library/Application Support/parlay/dist/) so dev builds never disturb
+# the live server. To deploy a new client build: re-run install.sh (or just
+# copy manually: cp -r packages/client/dist/. "~/Library/Application Support/parlay/dist/").
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -56,13 +61,22 @@ if [ "${REBUILD}" = 1 ] || [ ! -x "${REPO_BIN}" ]; then
 fi
 [ -x "${REPO_BIN}" ] || { echo "install.sh: build did not produce ${REPO_BIN}" >&2; exit 1; }
 
-# ── 2. Install binary + lib to the stable support dir ───────────────────────────
+# ── 2. Install binary + lib + client dist to the stable support dir ─────────────
 echo "==> installing to ${PARLAY_GOSERVER_BIN_DIR}" >&2
-mkdir -p "${PARLAY_GOSERVER_BIN_DIR}" "${PARLAY_GOSERVER_LOG_DIR}" "$(dirname "${PARLAY_GOSERVER_PLIST}")"
+mkdir -p "${PARLAY_GOSERVER_BIN_DIR}" "${PARLAY_GOSERVER_LOG_DIR}" "${PARLAY_GOSERVER_ASSETS_DIR}" "$(dirname "${PARLAY_GOSERVER_PLIST}")"
 # Copy to a temp name then mv, so an install over a running server swaps the
 # file atomically rather than truncating a binary that may be exec'd on restart.
 install -m 0755 "${REPO_BIN}" "${PARLAY_GOSERVER_BIN}.new" && mv -f "${PARLAY_GOSERVER_BIN}.new" "${PARLAY_GOSERVER_BIN}"
 install -m 0644 "${HERE}/lib.sh" "${PARLAY_GOSERVER_LIB}"
+# Copy the client bundle to the stable assets dir so dev builds in the repo
+# (which write to packages/client/dist) never disturb the live server.
+CLIENT_DIST="$(cd "${MODULE_DIR}/../.." && pwd)/packages/client/dist"
+if [ -d "${CLIENT_DIST}" ]; then
+  echo "==> copying client dist to ${PARLAY_GOSERVER_ASSETS_DIR}" >&2
+  cp -r "${CLIENT_DIST}/." "${PARLAY_GOSERVER_ASSETS_DIR}/"
+else
+  echo "install.sh: warning: packages/client/dist not found at ${CLIENT_DIST} — run 'bun run build' in packages/client first" >&2
+fi
 
 # ── 3. Render the plist from the template ──────────────────────────────────────
 echo "==> writing ${PARLAY_GOSERVER_PLIST}" >&2
@@ -75,6 +89,7 @@ sed \
   -e "s|__BIN__|${PARLAY_GOSERVER_BIN}|g" \
   -e "s|__ADDR__|${ADDR}|g" \
   -e "s|__STATE_DIR__|${STATE_DIR}|g" \
+  -e "s|__ASSETS_DIR__|${PARLAY_GOSERVER_ASSETS_DIR}|g" \
   -e "s|__OUT_LOG__|${PARLAY_GOSERVER_OUT_LOG}|g" \
   -e "s|__ERR_LOG__|${PARLAY_GOSERVER_ERR_LOG}|g" \
   "${TEMPLATE}" > "${PARLAY_GOSERVER_PLIST}.new"
@@ -117,9 +132,10 @@ for _ in $(seq 1 20); do
 done
 if [ "${ok}" = 1 ]; then
   echo "OK: parlay-server is up under launchd (${TARGET})" >&2
-  echo "    addr  : http://${ADDR}" >&2
-  echo "    state : ${STATE_DIR}" >&2
-  echo "    logs  : ${PARLAY_GOSERVER_OUT_LOG} / ${PARLAY_GOSERVER_ERR_LOG}" >&2
+  echo "    addr   : http://${ADDR}" >&2
+  echo "    state  : ${STATE_DIR}" >&2
+  echo "    assets : ${PARLAY_GOSERVER_ASSETS_DIR}" >&2
+  echo "    logs   : ${PARLAY_GOSERVER_OUT_LOG} / ${PARLAY_GOSERVER_ERR_LOG}" >&2
   launchctl print "${TARGET}" 2>/dev/null | grep -E '^\s*(state|pid|program|last exit) ' || true
 else
   echo "install.sh: parlay-server did not answer /health within 5s — check ${PARLAY_GOSERVER_ERR_LOG}" >&2

@@ -37,6 +37,8 @@
     <string>__ADDR__</string>
     <string>-state-dir</string>
     <string>__STATE_DIR__</string>
+    <string>-assets-dir</string>
+    <string>__ASSETS_DIR__</string>
   </array>
 
   <key>RunAtLoad</key>

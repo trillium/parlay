@@ -25,6 +25,9 @@ PARLAY_GOSERVER_SUPPORT_DIR="${HOME}/Library/Application Support/parlay"
 PARLAY_GOSERVER_BIN_DIR="${PARLAY_GOSERVER_SUPPORT_DIR}/bin"
 PARLAY_GOSERVER_BIN="${PARLAY_GOSERVER_BIN_DIR}/parlay-server"
 PARLAY_GOSERVER_LIB="${PARLAY_GOSERVER_BIN_DIR}/parlay-server-lib.sh"
+# Stable asset directory: built client bundle copied here at install time so
+# dev builds in the repo's packages/client/dist never disturb production.
+PARLAY_GOSERVER_ASSETS_DIR="${PARLAY_GOSERVER_SUPPORT_DIR}/dist"
 
 # Installed LaunchAgent plist (machine config, outside the repo by design).
 PARLAY_GOSERVER_PLIST="${HOME}/Library/LaunchAgents/${PARLAY_GOSERVER_LABEL}.plist"
