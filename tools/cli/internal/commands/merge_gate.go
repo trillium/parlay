@@ -32,10 +32,11 @@
 //
 // Exit codes are deliberately fail-closed in every direction: 0 only when
 // the PR is genuinely ready (or already merged), 3 when a real blocker in the
-// code is found, 5 when the reviewer simply has not finished yet, 4 when the
+// code is found, 5 when the reviewer simply has not finished yet, 6 when the
+// only red is a check that failed without ever running the code, 4 when the
 // only thing missing is a reviewer that is unavailable, 1 when gh/network
 // could not answer, 2 on usage. A caller that just branches on non-zero
-// refuses the merge in all five failure modes, which is the correct default
+// refuses the merge in all six failure modes, which is the correct default
 // for a gate.
 //
 // 4 exists because 3 alone gave the fleet no bounded answer (robots-8kkq).
@@ -62,6 +63,29 @@
 // does. `no-review-evidence` keeping the harsher code was only ever justified
 // by the gate not knowing WHY nothing reviewed the PR; a check that states the
 // reason is that knowledge.
+//
+// 6 exists because a check can also fail WITHOUT EVER RUNNING THE CODE
+// (robots-6mw2). GitHub Actions jobs die during action setup —
+//
+//	##[error]Failed to resolve action download info. Error: Service Unavailable
+//	##[error]Service Unavailable
+//
+// — before a single line of the repo executes, and the check reports
+// bucket=fail with an empty description, indistinguishable by status alone
+// from a genuinely failing test. Three trillium/firstmate runs failed that way
+// in one afternoon, and every PR open at the time showed red that had nothing
+// to do with its diff. Landing that in 3 tells a mechanic to "fix it on the
+// branch" — hunting a defect in code that never executed, on a branch whose
+// only real problem is GitHub's availability. This is the exact sibling of the
+// vacuous pass: a check that failed without running says as little about the
+// diff as a check that passed without running.
+//
+// The discriminator is the check run's ANNOTATIONS, not its description (which
+// GitHub Actions leaves empty). An infra death annotates only GitHub's own
+// errors; a real failure always annotates "Process completed with exit code N"
+// from the step that ran. So the downgrade requires positive evidence — at
+// least one infra annotation and no annotation that looks like the code
+// failing — and anything unreadable stays code-class.
 //
 // 5 exists for the same reason in the opposite direction (robots-rwf8). A
 // check that is STILL RUNNING was landing in 3 — the code the mechanic
@@ -136,16 +160,27 @@ const ExitMergeNeedsDecision = 4
 // correct response is to re-run the gate later (robots-rwf8).
 const ExitMergePending = 5
 
+// ExitMergeInfra is the gate's answer when every blocker it found is a check
+// that failed WITHOUT EVALUATING THE DIFF — a GitHub-side error during action
+// setup, or a job cancelled before it reported. Non-zero, so the naive
+// "non-zero = do not merge" caller is unchanged and still fails closed. Unlike
+// 3 it says nothing about the code, and unlike 4 the caller can act on it
+// alone: re-run the failed jobs, then re-run the gate (robots-6mw2).
+const ExitMergeInfra = 6
+
 // Blocker classes. ClassCode is the default and means the finding is about
 // this PR — fix it here. ClassReviewerUnavailable means the PR may be
 // perfectly fine and the reviewing service simply did not participate; no
 // amount of work on the branch changes it. ClassPending means the review has
 // not finished yet: nothing is known to be wrong, no action on the branch
-// helps, and the answer will change on its own.
+// helps, and the answer will change on its own. ClassInfra means a check
+// failed before it ever looked at the diff, so it is evidence about GitHub,
+// not about this code — a re-run, not an edit.
 const (
 	ClassCode                = "code"
 	ClassReviewerUnavailable = "reviewer-unavailable"
 	ClassPending             = "pending"
+	ClassInfra               = "infra"
 )
 
 // vacuousCheckDesc matches a status-check description that ADMITS the check
@@ -153,6 +188,44 @@ const (
 // only field CodeRabbit fills in truthfully when it is rate limited, so it is
 // the field this gate reads.
 var vacuousCheckDesc = regexp.MustCompile(`(?i)rate[ -]?limit|limit reached|review skipped|skipping review|not reviewed|never ran|review unavailable`)
+
+// infraAnnotation matches a check-run annotation that names a GITHUB-side
+// failure — the job died in the runner or during action setup, before any of
+// this repository's code ran. Deliberately narrow: every entry here is a
+// message GitHub's own infrastructure emits, never something a repo's test
+// harness prints. A test that legitimately fails while asserting on, say, a
+// 503 response still annotates "Process completed with exit code 1", which is
+// not in this set and therefore keeps the whole check code-class.
+var infraAnnotation = regexp.MustCompile(`(?i)` + strings.Join([]string{
+	`failed to resolve action download info`,
+	`unable to resolve action`,
+	`service unavailable`,
+	`internal server error`,
+	`bad gateway`,
+	`gateway time-?out`,
+	`received a shutdown signal`,
+	`lost communication with the server`,
+	`the runner has received`,
+	`not acquired by runner`,
+	`you have exceeded a secondary rate limit`,
+}, "|"))
+
+// Deliberately NOT in that set: "The job has exceeded the maximum execution
+// time of …". A job that ran out of wall clock DID run this repository's code
+// — an infinite loop or a hung test in the diff produces exactly that
+// annotation — so it stays code-class even though a starved runner can produce
+// it too. Fail closed: the gate may send a mechanic to look at a timeout that
+// turns out to be GitHub's fault, but it must never wave off a hang that is
+// the diff's fault.
+
+// checkRunIDRe pulls the check-run id out of a GitHub Actions check link
+// (.../actions/runs/<run>/job/<id>). For Actions, the job id in that URL IS
+// the check-run id the annotations API takes.
+var checkRunIDRe = regexp.MustCompile(`/(?:job|check-runs)/(\d+)`)
+
+// actionsRunIDRe pulls the workflow RUN id out of the same link, so the gate
+// can print the exact `gh run rerun` command rather than a shape to fill in.
+var actionsRunIDRe = regexp.MustCompile(`/actions/runs/(\d+)`)
 
 // coderabbitRateLimited matches CodeRabbit's rate-limit comment. The HTML
 // marker is machine-generated and stable; the human heading is the fallback
@@ -198,7 +271,7 @@ type ghReview struct {
 	State  string   `json:"state"`
 }
 
-// ghCheck is one row of `gh pr checks --json name,state,bucket,description`.
+// ghCheck is one row of `gh pr checks --json name,state,bucket,description,link`.
 // Bucket is gh's normalization of the many per-provider states into
 // pass/fail/pending/skipping/cancel.
 type ghCheck struct {
@@ -206,6 +279,24 @@ type ghCheck struct {
 	State       string `json:"state"`
 	Bucket      string `json:"bucket"`
 	Description string `json:"description"`
+	// Link is the check's target URL. For GitHub Actions it is
+	// .../actions/runs/<run>/job/<checkRunID>, which is the only place the
+	// annotations API's id is available from a `gh pr checks` row.
+	Link string `json:"link"`
+	// Annotations are the check run's own annotations, fetched separately for
+	// failing checks only. AnnotationsKnown distinguishes "fetched, and there
+	// were none" from "could not read them" — the second must never be
+	// mistaken for the first, since only positive evidence may downgrade a
+	// failure out of code class.
+	Annotations      []ghAnnotation `json:"annotations,omitempty"`
+	AnnotationsKnown bool           `json:"annotationsKnown,omitempty"`
+}
+
+// ghAnnotation is one entry of `gh api repos/<repo>/check-runs/<id>/annotations`.
+type ghAnnotation struct {
+	Level   string `json:"annotation_level"`
+	Message string `json:"message"`
+	Title   string `json:"title"`
 }
 
 // ghPRView is the subset of `gh pr view --json …` this gate reads.
@@ -275,10 +366,14 @@ type MergeGateVerdict struct {
 	// BehindKnown mirrors MergeGateSnapshot.BehindKnown: false when the
 	// base-comparison call failed, so FormatMergeGate can qualify the
 	// ready summary rather than asserting "green against the current base".
-	BehindKnown bool           `json:"behindKnown"`
-	Blockers    []MergeBlocker `json:"blockers"`
-	Notes       []string       `json:"notes"`
-	ExitCode    int            `json:"exitCode"`
+	BehindKnown bool `json:"behindKnown"`
+	// Infra is true when there ARE blockers but every one of them is a check
+	// that failed without evaluating the diff. Nothing is known to be wrong
+	// with the code; the caller re-runs the failed jobs (robots-6mw2).
+	Infra    bool           `json:"infra"`
+	Blockers []MergeBlocker `json:"blockers"`
+	Notes    []string       `json:"notes"`
+	ExitCode int            `json:"exitCode"`
 }
 
 func block(v *MergeGateVerdict, code, format string, a ...any) {
@@ -364,6 +459,7 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 	}
 	checkPending := false
 	checkVacuous := false
+	rerunHint := ""
 	for _, c := range s.Checks {
 		name := c.Name
 		if name == "" {
@@ -371,6 +467,20 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 		}
 		switch strings.ToLower(c.Bucket) {
 		case "fail", "cancel":
+			// A failing check is a finding about the diff ONLY if it got far
+			// enough to have an opinion about it (robots-6mw2). classifyFailedCheck
+			// demands positive evidence for anything softer, so an unreadable
+			// or ambiguous failure stays code-class.
+			class, why := classifyFailedCheck(c)
+			if class == ClassInfra {
+				if m := actionsRunIDRe.FindStringSubmatch(c.Link); m != nil && rerunHint == "" {
+					rerunHint = m[1]
+				}
+				blockAs(&v, "check-did-not-run", ClassInfra,
+					"check %q is %s, but %s — GitHub-side, not a finding about this diff.",
+					name, c.Bucket, why)
+				break
+			}
 			block(&v, "check-failed", "check %q is %s (%s).", name, c.Bucket, describeOrState(c))
 		case "pending":
 			// Classed pending, not code (robots-rwf8): a check that has not
@@ -517,18 +627,24 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			s.UnresolvedThreads)
 	}
 
-	// Class precedence, harshest first: code (3) > pending (5) > reviewer
-	// unavailable (4). Each arm only runs when no harsher class is present.
+	// Class precedence, harshest first: code (3) > pending (5) > infra (6) >
+	// reviewer unavailable (4). Each arm only runs when no harsher class is
+	// present.
 	//
 	// Code first for the reason it always was: a failing test is still a
 	// failing test whatever else is also wrong, and no downgrade may ever
 	// launder it into somebody else's problem.
 	//
-	// Pending outranks reviewer-unavailable because a running check means the
+	// Pending outranks both of the rest because a running check means the
 	// picture is still incomplete — asking the captain to choose
 	// merge-and-disclose while a review is mid-flight is a decision made on
-	// information that is about to arrive. Wait, re-run, and the verdict
-	// resolves into a real 0/3/4.
+	// information that is about to arrive, and `gh run rerun` refuses a run
+	// that still has jobs in flight anyway. Wait, re-run, and the verdict
+	// resolves into a real 0/3/4/6.
+	//
+	// Infra outranks reviewer-unavailable because it is the one the caller can
+	// still act on alone: re-running the failed jobs is a bounded, mechanical
+	// step, where reviewer-unavailability is terminal until the captain picks.
 	switch {
 	case len(v.Blockers) == 0:
 		v.Ready, v.ExitCode = true, config.ExitOK
@@ -542,6 +658,24 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			"Every blocker above is the review still RUNNING, not a finding about this code — exit 5, not 3.",
 			"Do NOT edit the branch to clear this: there is no defect to fix yet, and a new push restarts whatever review is in flight.",
 			"Re-run `parlay merge-gate` after the check reports. Bound the wait — if it never finishes, that is reviewer unavailability, so signal `parlay status needs-decision` rather than polling forever (robots-8kkq).")
+	case hasClass(v.Blockers, ClassInfra):
+		// The checks failed, but not at anything in this diff — they died in
+		// GitHub before the repo's code ran, or were cancelled without
+		// reporting. Do not send a mechanic hunting a defect in code that
+		// never executed.
+		v.Infra, v.ExitCode = true, ExitMergeInfra
+		rerun := "gh run rerun <run-id> --failed"
+		if rerunHint != "" {
+			rerun = fmt.Sprintf("gh run rerun %s --failed", rerunHint)
+		}
+		if s.Repo != "" {
+			rerun += " --repo " + s.Repo
+		}
+		v.Notes = append(v.Notes,
+			"Every blocker above is a check that failed WITHOUT EVALUATING THIS DIFF — a GitHub-side error during job setup, or a job cancelled before it reported. Nothing here is a finding about your code, and no edit to the branch can clear it.",
+			"Do NOT go hunting a defect: the failing jobs never ran this repository's code. A check that failed without running says as little about the diff as one that passed without running (robots-jap6).",
+			fmt.Sprintf("Re-run the failed jobs — `%s` — then re-run `parlay merge-gate`.", rerun),
+			"Bound it (robots-8kkq): if a re-run dies on the same infra signature, that is a GitHub incident, not your branch. Signal `parlay status needs-decision` with that reason instead of re-running forever.")
 	default:
 		// Nothing here is about the diff, and nothing on the branch will
 		// change it. Say so, and say what the two honest answers are, so the
@@ -555,6 +689,70 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 	return v
 }
 
+// classifyFailedCheck decides whether a failing or cancelled check is a
+// statement about THIS DIFF or about GitHub (robots-6mw2).
+//
+// The check row itself cannot answer that: a GitHub Actions check reports
+// bucket=fail with an EMPTY description whether a test failed or the runner
+// could not download an action. The check run's annotations can. A job that
+// ran the repo's code and failed always annotates the step's exit
+// ("Process completed with exit code 1"); a job that died in setup annotates
+// only GitHub's own error text.
+//
+// The downgrade is deliberately evidence-gated in both directions: it needs at
+// least one infra annotation AND no annotation that looks like the code
+// failing. Unreadable annotations, an empty annotation list on a failed job, or
+// any unrecognized failure text all keep the check code-class — the
+// conservative direction for a gate, and the same rule the rest of this file
+// follows.
+//
+// A CANCELLED job is the one case that needs no annotation: cancellation is by
+// definition an ending before a verdict, so it is never evidence about the
+// code. In practice it is the cascade half of this same incident — GitHub
+// cancels the remaining jobs of a run whose siblings died in setup. A real
+// failure alongside it still keeps its own code class and, by precedence,
+// keeps the whole verdict at 3.
+func classifyFailedCheck(c ghCheck) (class string, why string) {
+	cancelled := strings.EqualFold(strings.TrimSpace(c.Bucket), "cancel")
+	cancelWhy := "the job was cancelled and never reported on this code"
+
+	if !c.AnnotationsKnown {
+		if cancelled {
+			return ClassInfra, cancelWhy
+		}
+		return ClassCode, ""
+	}
+
+	infraMsg := ""
+	sawCodeEvidence := false
+	for _, a := range c.Annotations {
+		// Only failure-level annotations are evidence. Warnings (deprecated
+		// runner images, and so on) sit on perfectly healthy jobs.
+		if !strings.EqualFold(a.Level, "failure") {
+			continue
+		}
+		msg := strings.TrimSpace(a.Message + " " + a.Title)
+		if infraAnnotation.MatchString(msg) {
+			if infraMsg == "" {
+				infraMsg = strings.TrimSpace(firstLine(a.Message))
+			}
+			continue
+		}
+		sawCodeEvidence = true
+	}
+
+	switch {
+	case sawCodeEvidence:
+		return ClassCode, ""
+	case infraMsg != "":
+		return ClassInfra, fmt.Sprintf("nothing in this repo ran: it died in GitHub with %q", infraMsg)
+	case cancelled:
+		return ClassInfra, cancelWhy
+	default:
+		return ClassCode, ""
+	}
+}
+
 // hasClass reports whether any blocker carries exactly this class.
 func hasClass(bs []MergeBlocker, class string) bool {
 	for _, b := range bs {
@@ -566,13 +764,15 @@ func hasClass(bs []MergeBlocker, class string) bool {
 }
 
 // hasUnclassifiedOrCode reports whether any blocker is a hard block on the
-// code. Anything not positively identified as pending or reviewer
-// unavailability counts — an unrecognized or empty class keeps the harshest
-// exit code, which is the conservative direction for a gate. A downgrade must
-// be something the code deliberately decided, never something it forgot.
+// code. Anything not positively identified as one of the softer classes counts
+// — an unrecognized or empty class keeps the harshest exit code, which is the
+// conservative direction for a gate. A downgrade must be something the code
+// deliberately decided, never something it forgot.
 func hasUnclassifiedOrCode(bs []MergeBlocker) bool {
 	for _, b := range bs {
-		if b.Class != ClassPending && b.Class != ClassReviewerUnavailable {
+		switch b.Class {
+		case ClassPending, ClassReviewerUnavailable, ClassInfra:
+		default:
 			return true
 		}
 	}
@@ -651,6 +851,8 @@ func FormatMergeGate(pr ghPRView, v MergeGateVerdict) string {
 		fmt.Fprintf(&b, "NEEDS-DECISION (%d) — %s\n", len(v.Blockers), head)
 	case v.Pending:
 		fmt.Fprintf(&b, "PENDING (%d) — %s\n", len(v.Blockers), head)
+	case v.Infra:
+		fmt.Fprintf(&b, "INFRA (%d) — %s\n", len(v.Blockers), head)
 	default:
 		fmt.Fprintf(&b, "BLOCKED (%d) — %s\n", len(v.Blockers), head)
 	}
@@ -769,7 +971,7 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 	// `gh pr checks` exits non-zero whenever any check is failing or pending,
 	// which is a normal input to this gate — read stdout regardless of code,
 	// and only treat unparseable output as an error.
-	checkArgs := []string{"pr", "checks", strconv.Itoa(pr), "--json", "name,state,bucket,description"}
+	checkArgs := []string{"pr", "checks", strconv.Itoa(pr), "--json", "name,state,bucket,description,link"}
 	if repo != "" {
 		checkArgs = append(checkArgs, "--repo", repo)
 	}
@@ -799,6 +1001,16 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 		}
 	}
 
+	// Only failing checks need annotations, and only they pay for the extra
+	// API call — a green PR still costs exactly the same three requests it
+	// always did.
+	for i := range s.Checks {
+		switch strings.ToLower(s.Checks[i].Bucket) {
+		case "fail", "cancel":
+			loadCheckAnnotations(repo, &s.Checks[i])
+		}
+	}
+
 	if owner, name, ok := splitRepo(repo); ok {
 		q := sh("gh", "api", "graphql", "-f", "query="+reviewThreadsQuery,
 			"-F", "o="+owner, "-F", "r="+name, "-F", "n="+strconv.Itoa(pr),
@@ -810,6 +1022,43 @@ func fetchMergeGateSnapshot(repo, repoSource string, pr int) (MergeGateSnapshot,
 		}
 	}
 	return s, nil
+}
+
+// annotationPageSize is what loadCheckAnnotations asks for, and also its
+// truncation tripwire: a full page might have a second page behind it holding
+// the one annotation that would have proved the check code-class, so a full
+// page is treated as unreadable rather than paginated. Real jobs annotate a
+// handful of lines; this only ever fires on pathological output.
+const annotationPageSize = 100
+
+// loadCheckAnnotations fills in a failing check's annotations in place, which
+// is what lets classifyFailedCheck tell a GitHub-side death from a real
+// failure (robots-6mw2). Every failure path leaves AnnotationsKnown false, so
+// an unreachable API, an unparseable body, a non-Actions check, or a
+// suspiciously full page all keep the check code-class.
+func loadCheckAnnotations(repo string, c *ghCheck) {
+	if repo == "" {
+		return
+	}
+	m := checkRunIDRe.FindStringSubmatch(c.Link)
+	if m == nil {
+		// Not a GitHub Actions check (CodeRabbit's link is empty, third-party
+		// checks point at their own dashboards) — there is no annotations
+		// endpoint to ask, so this stays a code-class failure.
+		return
+	}
+	res := sh("gh", "api", fmt.Sprintf("repos/%s/check-runs/%s/annotations?per_page=%d", repo, m[1], annotationPageSize))
+	if !res.ok {
+		return
+	}
+	var anns []ghAnnotation
+	if err := json.Unmarshal([]byte(res.out), &anns); err != nil {
+		return
+	}
+	if len(anns) >= annotationPageSize {
+		return
+	}
+	c.Annotations, c.AnnotationsKnown = anns, true
 }
 
 // splitRepo splits "owner/name" (tolerating a trailing .git and any leading
