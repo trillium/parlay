@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-19 — session 889aed33
+
+Files: bin/herdr-rpc, bin/parlay-spawn, bin/herdr-rpc.test.sh, VISION.md, VISION-answers.md
+## 2026-08-18 — session 1eb8dc35
+
+Files: bin/herdr-contract, bin/parlay-spawn, tools/cli/main.go, tools/cli/internal/commands/spawn.go, bin/herdr-rpc, tools/cli/internal/help/help.go, tools/cli/parity/run.sh
 ## 2026-08-17 — session d06df28f
 
 Files: bin/parlay-spawn-triage
