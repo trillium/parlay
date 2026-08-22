@@ -116,9 +116,10 @@ else
 fi
 
 # --- case 4: a BARE ticket id is qualified before binding ---------------------
-# `mechanic-dispatch tnwd` is a legal call (robots resolves bare ids), but
-# parlay-spawn derives the store from the id's leading token, so an unqualified
-# --bead would resolve to no store at all.
+# `mechanic-dispatch test` (below) is a legal call — the robots store resolves a
+# bare id — but parlay-spawn derives the store from the id's LEADING TOKEN, so a
+# bare --bead would resolve to no store at all. The original repro was the same
+# shape: `mechanic-dispatch tnwd`.
 : > "$CAPTURE"
 bash "$SCRIPT" test default >/dev/null 2>&1
 if [ "$(bead_arg)" = robots-test ]; then
