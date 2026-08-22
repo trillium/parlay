@@ -153,12 +153,12 @@ echo "liveness: $AGENT = $STATUS"
 # work (robots tickets default to a "fix + robots close" contract). No task
 # prose is duplicated here — it lives on the ticket.
 if [ "$STATUS" = "absent" ]; then
-  echo "-> mechanic is dead; launching via parlay-spawn (--claim $TICKET)${WORKTREE_ARG:+ in isolated worktree}"
-  exec parlay-spawn "$AGENT" "$NAME" "$COLOR" --claim "$TICKET" --bead "$BEAD" \
+  echo "-> mechanic is dead; launching via parlay-spawn (--claim $BEAD)${WORKTREE_ARG:+ in isolated worktree}"
+  exec parlay-spawn "$AGENT" "$NAME" "$COLOR" --claim "$BEAD" --bead "$BEAD" \
     --cwd "$CWD" --model opus \
     $WORKTREE_ARG \
     ${MECHANIC_WS:+--workspace "$MECHANIC_WS"}
 else
   echo "-> mechanic is live ($STATUS); handing it the ticket"
-  exec parlay send --"$AGENT" "Claim your next ticket: run 'parlay claim $TICKET'."
+  exec parlay send --"$AGENT" "Claim your next ticket: run 'parlay claim $BEAD'."
 fi

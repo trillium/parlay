@@ -98,6 +98,7 @@ fi
 # Without it, parlay-spawn's beads-required mode refuses the launch (exit 2) and
 # no mechanic starts at all — the robots-aswz defect.
 bead_arg() { grep -A1 -Fx -- '--bead' "$CAPTURE" | tail -1; }
+claim_arg() { grep -A1 -Fx -- '--claim' "$CAPTURE" | tail -1; }
 
 : > "$CAPTURE"
 bash "$SCRIPT" robots-test parlay >/dev/null 2>&1
@@ -126,6 +127,12 @@ if [ "$(bead_arg)" = robots-test ]; then
   pass "bare ticket id qualified to robots-test for --bead"
 else
   fault "bare ticket id was not qualified for --bead"
+fi
+
+if [ "$(claim_arg)" = robots-test ]; then
+  pass "bare ticket id qualified to robots-test for --claim"
+else
+  fault "bare ticket id was not qualified for --claim"
 fi
 
 if [ "$fail" -eq 0 ]; then
