@@ -1562,6 +1562,19 @@ closed-ticket skip, liveness re-dispatch). Test:
 `tools/mechanic-dispatch/mechanic-dispatch.test.sh`. Phase-1 (isolation) only —
 firstmate state-meta bridging and worktree teardown/landing are follow-ups.
 
+Every launch also **names its bead**: `parlay-spawn` runs in beads-required
+mode, where a spawn with no `--bead` is refused with **exit 2** before anything
+registers. `mechanic-dispatch` was passing `--claim <ticket>` but no `--bead`,
+so the whole dead-mechanic branch launched *nothing* — and because the
+`robots-tail`/`robots-watch` daemon converges on that same branch, every
+auto-dispatch for a newly filed ticket failed the same way and silently
+(robots-aswz). The live-mechanic branch (`parlay send`) was unaffected, which is
+why the fleet looked healthy. `--bead` now carries the store-qualified id
+(`robots-<x>`), read back off the `robots show` status line so a bare
+`mechanic-dispatch <x>` — legal, since the store resolves bare ids — is
+qualified before it reaches `parlay-spawn`, which derives the store from the
+id's leading token.
+
 ## CI is `.github/workflows/ci.yml` — and a green check was never proof before it
 
 Until this landed the repo had no `.github` directory at all: the only PR check
