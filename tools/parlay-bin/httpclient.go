@@ -55,7 +55,8 @@ func postHello(server, agent, name, color, text string) {
 
 // subscriberChannelLive polls GET /api/chat/subscribers once and reports
 // whether agentID appears as a live poll channel. Used by `parlay reset`'s
-// self-verify loop (context-reset lines 126–141).
+// self-verify loop (the watcher's `verified`/`verify_failed` poll in
+// context-reset — cited by receipt name, not line number, which drifts).
 func subscriberChannelLive(server, agentID string) (bool, error) {
 	req, err := http.NewRequest(http.MethodGet, server+"/api/chat/subscribers", nil)
 	if err != nil {

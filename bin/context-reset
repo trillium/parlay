@@ -14,7 +14,54 @@
 #   context-reset --reboot                    reboot a parlay panel agent (relaunch auto-derived from PARLAY_* env)
 #   context-reset --reboot --cmd '<launch>'   reboot with an explicit relaunch command (firstmate / custom hosts)
 #   context-reset                             no reboot — verify shutdown only (deliberate end, == sudoku + a receipt)
+#   context-reset --handoff <id>              echo THIS handoff on a clean end (explicit override, hand-invocation)
+#   PARLAY_PINNED_HANDOFF=<id> context-reset  same, as an env var — how the CLI passes the id it just pinned
 #   context-reset --dry                       print the plan; spawn nothing, kill nothing
+#
+# On a clean end (no --reboot — i.e. `identity --park`/`identity --complete`), nothing
+# relaunches to read the handoff back, and the watcher's own output is redirected to a
+# log file nobody looks at (see LOG below) — so the pinned handoff's content was being
+# recorded but never actually SEEN. Once claude is confirmed closed, the watcher now
+# also echoes the pinned handoff's full content directly to this session's tty (not the
+# log), so it lands in the pane's own scrollback as claude's last visible act.
+#
+# WHICH handoff is settled by the caller, not inferred. The only paths that pin
+# (`identity --submit`, `identity --park`) hand the id over in the environment, as
+# PARLAY_PINNED_HANDOFF; `--handoff <id>` is the explicit override and wins when both
+# are present. The env var is the CLI's transport because the two sides are versioned
+# apart — the Go binary is built per checkout, this script is resolved on PATH — and an
+# older copy ignores an unknown env var while it REFUSES an unknown flag with exit 2,
+# which the caller does not inspect: the agent would report a park it never performed.
+# With neither — `identity --complete`, which closes the work item and never pins — the
+# agent's identity.md is scraped instead; that pointer can belong to an earlier session,
+# so it is announced as the agent's LAST KNOWN handoff and is dropped entirely when it
+# predates this claude process.
+#
+# The env transport has one transitional hazard, and it is guarded here. An OLDER copy
+# of this script on PATH does not unset PARLAY_PINNED_HANDOFF, so the session it reboots
+# inherits the previous session's pin AMBIENTLY, for its whole life — and that session's
+# later `--complete` would then echo its predecessor's handoff under the "pinned by this
+# session" banner. So an env pin is CORROBORATED before it is trusted: the pinning
+# callers write identity.md's pointer immediately before invoking, so a trustworthy env
+# value both matches that pointer and finds it written after this claude process
+# started. A value failing either test is treated as inherited and demoted — identity.md
+# is scraped instead, with the last-known banner and the staleness guard that go with it.
+# Corroboration that cannot be performed at all (no identity.md, unreadable mtime) fails
+# OPEN, matching the staleness guard below: a missing measurement must not silently
+# disable the echo this whole path exists for. The `--handoff <id>` FLAG is never
+# corroborated — argv does not leak into descendants, so it cannot be inherited.
+#
+# WHAT REACHES THE TERMINAL IS FILTERED. A handoff body is agent-authored free text and
+# the destination has just returned to a shell prompt, so the watcher strips C0 controls
+# (all but newline and tab), DEL, and the UTF-8 encoding of the C1 block before writing —
+# removing every escape sequence's introducer. Unfiltered, an OSC could retitle the
+# window or reach the clipboard, and a terminal QUERY would make the terminal write its
+# answer onto the tty's INPUT, where the waiting shell reads it as typed characters.
+#
+# COVERAGE BOUNDARY: this echo needs a controlling terminal. An agent whose claude has
+# none — the gascity launcher runs `exec claude` inside a detached `sh -c` child, so
+# `ps -o tty=` answers `??` — has no pane to write to, and its handoff is recorded in
+# the watcher log only. Terminal/herdr-launched agents are the covered case.
 #
 # HARD RULE: never call this before a handoff bead exists and is pinned, or the
 # rebooted you wakes with amnesia. Prefer the atomic path: `handoff` skill to mint the
@@ -24,13 +71,16 @@
 # killed in. Order: handoff -> submit (which pins + resets your context in one act).
 set -uo pipefail
 
-REBOOT=0; DRY=0; CMD=""
+REBOOT=0; DRY=0; CMD=""; PIN_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --reboot) REBOOT=1; shift ;;
-    --cmd)    CMD="${2:-}"; shift 2 ;;
-    --dry)    DRY=1; shift ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --reboot)  REBOOT=1; shift ;;
+    --cmd)     [ $# -ge 2 ] || { echo "context-reset: --cmd needs a launch command" >&2; exit 2; }
+               CMD="$2"; shift 2 ;;
+    --handoff) [ $# -ge 2 ] || { echo "context-reset: --handoff needs an id" >&2; exit 2; }
+               PIN_ARG="$2"; shift 2 ;;
+    --dry)     DRY=1; shift ;;
+    -h|--help) awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; exit 0 ;;
     *) echo "context-reset: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -50,12 +100,33 @@ while [ "$pid" -gt 1 ]; do
 done
 [ -n "$CLAUDE_PID" ] || { echo "context-reset: could not find claude ancestor process." >&2; exit 1; }
 
+# ── capture the PANE's tty NOW — the writable target for the post-exit handoff
+# echo below. Resolved from the CLAUDE process, never from this script's own fd 0:
+# on the real path (claude's Bash tool -> `parlay identity --park/--submit` -> here)
+# stdin is a pipe, so `tty` answers "not a tty" and the echo would never fire. Must
+# be resolved here (parent, still attached) since the watcher runs detached with its
+# own stdio redirected to $LOG. PANE_PID (claude's parent, i.e. the pane's shell) is
+# recorded alongside so the watcher can tell a still-open pane from a closed one
+# whose /dev/ttysNNN has since been handed to somebody else. ──
+_dev_path() { case "${1:-}" in ""|"?"|"??") printf '' ;; /dev/*) printf '%s' "$1" ;; *) printf '/dev/%s' "$1" ;; esac; }
+PANE_PID=$(ps -o ppid= -p "$CLAUDE_PID" 2>/dev/null | tr -d ' ')
+TTY_DEV=$(_dev_path "$(ps -o tty= -p "$CLAUDE_PID" 2>/dev/null | tr -d ' ')")
+[ -n "$TTY_DEV" ] && [ -c "$TTY_DEV" ] && [ -w "$TTY_DEV" ] || TTY_DEV=""
+
+# ── who is this? (needed on EVERY path, not just --reboot) ──
+# Previously only resolved inside the --reboot branch below, so a --park/--complete
+# (or bare) call never had it: RECEIPT_DIR fell back to the generic, non-per-agent
+# $HOME/.parlay, the receipt's own "agent" field was written blank, and the pinned-
+# handoff lookup below (which needs the agent's own identity.md) had nothing to key
+# off. Resolve it once, unconditionally, from the env every parlay-launched session
+# already carries.
+AID="${PARLAY_AGENT_ID:-}"
+
 # ── derive the reboot command (only used with --reboot) ──
 # The identity IS the launch spec: reconstitute from it with one command. All the
 # vars (name/color/model/cwd/recovery prompt) live in the identity frontmatter and
 # template, not here — this just says "run the identity".
 if [ "$REBOOT" = "1" ] && [ -z "$CMD" ]; then
-  AID="${PARLAY_AGENT_ID:-}"
   if [ -z "$AID" ]; then
     echo "context-reset: --reboot needs either --cmd '<launch>' or PARLAY_AGENT_ID (so it knows which identity to run)." >&2
     exit 2
@@ -77,6 +148,183 @@ if [ -n "${AID:-}" ]; then RECEIPT_DIR="${PARLAY_AGENT_HOME:-$HOME/.parlay/agent
 RECEIPT="$RECEIPT_DIR/reincarnations.log"   # legacy name kept deliberately (see note above)
 mkdir -p "$RECEIPT_DIR" 2>/dev/null || true
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"   # for Change 3 self-verify
+
+# ── measurements the pin resolution below depends on ────────────────────────
+# Elapsed-time -> epoch for claude's own start. `ps -o etime=` ([[DD-]HH:]MM:SS) is
+# portable where `lstart`'s locale-dependent date string is not. Prints nothing when
+# it cannot be determined.
+_claude_start_epoch() {
+  local et rest dd=0 hh=0 mm=0 ss=0
+  et=$(ps -o etime= -p "$CLAUDE_PID" 2>/dev/null | tr -d ' ')
+  [ -n "$et" ] || return 0
+  case "$et" in *-*) dd="${et%%-*}"; et="${et#*-}" ;; esac
+  rest="$et"
+  case "$rest" in
+    *:*:*) hh="${rest%%:*}"; rest="${rest#*:}"; mm="${rest%%:*}"; ss="${rest##*:}" ;;
+    *:*)   mm="${rest%%:*}"; ss="${rest##*:}" ;;
+    *)     ss="$rest" ;;
+  esac
+  case "$dd$hh$mm$ss" in ""|*[!0-9]*) return 0 ;; esac
+  echo $(( $(date +%s) - (10#$dd * 86400 + 10#$hh * 3600 + 10#$mm * 60 + 10#$ss) ))
+}
+
+# `stat -f %m` (BSD) and `stat -c %Y` (GNU) are not an exit-status fallback pair: GNU's
+# -f is --file-system, which prints to stdout AND exits non-zero, so chaining them
+# concatenates two answers into one unusable value. Probe the form once instead, and
+# compare only a bare integer — an unreadable mtime is unknown, never an error.
+_file_mtime() {
+  case "${_STAT_FORM:-}" in
+    "") if stat -f %m . >/dev/null 2>&1; then _STAT_FORM=bsd
+        elif stat -c %Y . >/dev/null 2>&1; then _STAT_FORM=gnu
+        else _STAT_FORM=none; fi ;;
+  esac
+  local _m=""
+  case "$_STAT_FORM" in
+    bsd) _m=$(stat -f %m "$1" 2>/dev/null) ;;
+    gnu) _m=$(stat -c %Y "$1" 2>/dev/null) ;;
+  esac
+  case "${_m:-}" in ""|*[!0-9]*) return 0 ;; esac
+  echo "$_m"
+}
+
+# ── resolve which handoff the clean-end branch should echo ──
+# Three sources, in precedence order. `--handoff <id>` comes from a hand invocation and
+# is authoritative outright: argv does not leak into descendants, so it can only have
+# come from this call. PARLAY_PINNED_HANDOFF comes from the caller that just pinned
+# (identity --submit/--park) and is authoritative ONCE CORROBORATED (see the header):
+# it does leak into descendants, so an ambient value has to be told apart from a fresh
+# one. Falling back to identity.md's marker line covers --complete, which never pins,
+# and covers a demoted env value; that is only ever the agent's LAST KNOWN handoff.
+# A bead id is <store>-<suffix> over [A-Za-z0-9_-]. Anything else — a bare marker
+# line, a hand-edited pointer, a value carrying shell metacharacters — is not an id
+# and is treated as unpinned rather than handed to `handoff show` as garbage.
+PINNED_HANDOFF=""
+HANDOFF_STALE=0
+HANDOFF_MALFORMED=0
+HANDOFF_INHERITED=0
+HANDOFF_SRC=""
+HANDOFF_DROPPED=""
+HANDOFF_DROP_WHY=""
+IDENTITY_MD="$RECEIPT_DIR/identity.md"
+
+# Everything below that names a REJECTED value has to survive being written to a live
+# terminal, so it goes through the same filter the watcher applies to a handoff body:
+# every C0 control but newline and tab, DEL, and the UTF-8 encoding of the C1 block are
+# deleted, which removes the introducer of every escape sequence while leaving printable
+# UTF-8 intact. A value that filters away to nothing is named as unprintable rather than
+# printed as an empty string, so the diagnostic never loses its subject.
+_printable() {
+  local _in="$1" _out _c1
+  [ -n "$_in" ] || return 0
+  _c1="$(printf '\302')[$(printf '\200')-$(printf '\237')]"
+  _out=$(printf '%s' "$_in" | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' 2>/dev/null \
+         | LC_ALL=C sed "s/$_c1//g" 2>/dev/null)
+  if [ -n "$_out" ]; then printf '%s' "$_out"; else printf '%s' "<unprintable>"; fi
+}
+
+# A dropped pointer is announced on the way out AND carried to the watcher, so the
+# same contract the watcher keeps — every shortfall names the handoff it could not
+# surface — holds for the drops decided here, where nothing is left to report them.
+_drop_handoff() {
+  local _v
+  _v="$(_printable "$1")"
+  [ "${#_v}" -le 120 ] || _v="$(printf '%.120s' "$_v")..."
+  HANDOFF_DROPPED="$_v"; HANDOFF_DROP_WHY="$2"
+  echo "context-reset: handoff '$_v' will not be echoed — $2." >&2
+}
+
+_is_bead_id() {
+  case "${1:-}" in
+    ""|*[!A-Za-z0-9_-]*) return 1 ;;
+    ?*-?*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# identity.md's own pointer line, empty when there is no agent, no file, or no marker.
+_disk_pin() {
+  [ -n "${AID:-}" ] && [ -f "$IDENTITY_MD" ] || return 0
+  grep -m1 '^> 📎 Handoff: ' "$IDENTITY_MD" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^[:space:]]+)([[:space:]].*)?$/\1/'
+}
+
+# Adopt identity.md's pointer as the (last-known) answer, or name it as unusable.
+_use_disk_pin() {
+  local _pin
+  _pin=$(_disk_pin)
+  if _is_bead_id "${_pin:-}"; then
+    PINNED_HANDOFF="$_pin"; HANDOFF_SRC="scrape"
+  elif [ -n "${_pin:-}" ]; then
+    HANDOFF_MALFORMED=1
+    _drop_handoff "$_pin" "the pointer in $IDENTITY_MD is not a bead id"
+  fi
+}
+
+# Was this env value pinned by THIS session, or inherited from an earlier one? The
+# pinning callers write identity.md's pointer immediately before invoking, so a fresh
+# pin both matches that pointer and post-dates this claude process. Unmeasurable on
+# either axis → fail OPEN, the same direction the staleness guard fails. Both stamps
+# are second-truncated from independent sources (`ps -o etime=` rounds DOWN, so the
+# derived start can land up to a second late), so one second of slack is allowed; the
+# inheritance this separates is a whole session wide.
+_env_pin_is_this_session() {
+  local _want="$1" _disk _mt _st
+  _disk=$(_disk_pin)
+  [ -n "${_disk:-}" ] || return 0
+  [ "$_disk" = "$_want" ] || return 1
+  _mt=$(_file_mtime "$IDENTITY_MD")
+  _st=$(_claude_start_epoch)
+  case "${_st:-}" in *[!0-9]*) _st="" ;; esac
+  [ -n "${_mt:-}" ] && [ -n "${_st:-}" ] || return 0
+  [ "$_mt" -lt "$(( _st - 1 ))" ] && return 1
+  return 0
+}
+
+# Consumed HERE and unset unconditionally, before anything this script starts can see
+# it: the watcher, the reboot command it evals, and the agent that command relaunches
+# must not inherit this session's pin (which is the very hazard corroboration guards
+# against on the way in).
+PIN_ENV="${PARLAY_PINNED_HANDOFF:-}"
+unset PARLAY_PINNED_HANDOFF
+if [ -n "$PIN_ARG" ]; then
+  if _is_bead_id "$PIN_ARG"; then
+    PINNED_HANDOFF="$PIN_ARG"; HANDOFF_SRC="flag"
+  else
+    HANDOFF_MALFORMED=1
+    _drop_handoff "$PIN_ARG" "--handoff was not given a bead id"
+  fi
+elif [ -n "$PIN_ENV" ]; then
+  if ! _is_bead_id "$PIN_ENV"; then
+    HANDOFF_MALFORMED=1
+    _drop_handoff "$PIN_ENV" "PARLAY_PINNED_HANDOFF is not a bead id"
+  elif _env_pin_is_this_session "$PIN_ENV"; then
+    PINNED_HANDOFF="$PIN_ENV"; HANDOFF_SRC="flag"
+  else
+    HANDOFF_INHERITED=1
+    _use_disk_pin
+    if [ -n "$PINNED_HANDOFF" ]; then
+      echo "context-reset: PARLAY_PINNED_HANDOFF='$PIN_ENV' was not pinned by this session — using $IDENTITY_MD's own pointer ($PINNED_HANDOFF) instead." >&2
+    elif [ -z "$HANDOFF_DROPPED" ]; then
+      _drop_handoff "$PIN_ENV" "it was inherited from an earlier session rather than pinned by this one"
+    fi
+  fi
+else
+  _use_disk_pin
+fi
+
+# Staleness guard, scrape-only: a pointer older than this claude process belongs to a
+# previous session on this agent id and must not be echoed at all. It is best-effort
+# (identity.md's mtime moves on ANY write, not just a pin) which is exactly why it is
+# the fallback and --handoff is the authoritative signal. Unmeasurable timestamps fail
+# OPEN — a missing ps/stat field must not silently disable the echo this exists for.
+if [ -n "$PINNED_HANDOFF" ] && [ "$HANDOFF_SRC" = "scrape" ]; then
+  _md_mtime=$(_file_mtime "$IDENTITY_MD")
+  _cl_start=$(_claude_start_epoch)
+  case "${_cl_start:-}" in *[!0-9]*) _cl_start="" ;; esac
+  if [ -n "${_md_mtime:-}" ] && [ -n "${_cl_start:-}" ] && [ "$_md_mtime" -lt "$_cl_start" ]; then
+    _drop_handoff "$PINNED_HANDOFF" "it predates this claude process, so it belongs to an earlier session"
+    PINNED_HANDOFF=""; HANDOFF_STALE=1
+  fi
+fi
 
 # ── the external watcher: verify claude closed, then optionally reboot ──
 # A panel-agent reboot first clears any lingering dead herdr tab so parlay-spawn's
@@ -146,6 +394,120 @@ if [ "$REBOOT" = "1" ]; then
 else
   echo "[\$(date '+%H:%M:%S')] no --reboot; staying dead. Clean end."
   _receipt clean_end ""
+  # Nothing relaunches to read this back, so surface it now or it's gone: echo the
+  # pinned handoff's full content straight to the pane's tty (not \$LOG, which nobody
+  # tails) as claude's last visible act in this session. CR_* arrive through the
+  # ENVIRONMENT rather than spliced into this script, so a handoff id or device path
+  # containing \$( ) or a backtick cannot be evaluated by this shell.
+  #
+  # Every way this can fall short writes a line naming the handoff it could not
+  # surface — a handoff lost SILENTLY is the exact failure this whole path exists to
+  # end, so an unreadable body degrades to echoing the pointer rather than to nothing.
+  _HO_TIMEOUT=10
+  # \`handoff show\` reaches a beads store that can be a server-mode backend, and this
+  # watcher is nohup'd, disowned and unsupervised — an unbounded call here is a
+  # process nothing is left to end. Bounded via timeout/gtimeout, or a background
+  # child plus a killer when neither exists.
+  _handoff_show() {
+    local _id="\$1" _out="\$2" _rc=0 _hp="" _kp=""
+    if command -v timeout >/dev/null 2>&1; then
+      timeout "\$_HO_TIMEOUT" handoff show "\$_id" >"\$_out" 2>/dev/null; _rc=\$?
+    elif command -v gtimeout >/dev/null 2>&1; then
+      gtimeout "\$_HO_TIMEOUT" handoff show "\$_id" >"\$_out" 2>/dev/null; _rc=\$?
+    else
+      handoff show "\$_id" >"\$_out" 2>/dev/null &
+      _hp=\$!
+      ( sleep "\$_HO_TIMEOUT"; kill "\$_hp" 2>/dev/null ) >/dev/null 2>&1 &
+      _kp=\$!
+      wait "\$_hp"; _rc=\$?
+      kill "\$_kp" 2>/dev/null
+      wait "\$_kp" 2>/dev/null
+    fi
+    return \$_rc
+  }
+  # A handoff body is agent-authored free text, and the device it is about to be
+  # written to is a LIVE terminal that has just returned to a shell prompt. So it is
+  # filtered HERE, on the way out, rather than trusted from the store: every C0
+  # control but newline and tab is deleted (which removes ESC, and with it the
+  # introducer of every escape sequence), along with DEL and the UTF-8 encoding of
+  # the C1 block (\\302\\200-\\302\\237, which carries a second CSI/OSC introducer);
+  # printable UTF-8 is left intact. Unfiltered, an OSC in a body could retitle the
+  # window or reach the clipboard, and a terminal QUERY would make the terminal write
+  # its answer onto this tty's INPUT, where the waiting shell reads it as typed
+  # characters. A body that cannot be filtered is treated as no body at all — the
+  # pointer fallback is the safe degradation, never the raw bytes. The FILTER RESULT is
+  # what gates the terminal write below, not the file's size: a filter that fails part
+  # way through must not be able to leave readable bytes behind and have them mistaken
+  # for a filtered body.
+  _sanitize_body() {
+    local _f="\$1" _raw="\$1.raw" _c1
+    _c1="\$(printf '\302')[\$(printf '\200')-\$(printf '\237')]"
+    mv -f "\$_f" "\$_raw" 2>/dev/null || { : > "\$_f" 2>/dev/null; return 1; }
+    : > "\$_f" 2>/dev/null || { rm -f "\$_raw" 2>/dev/null; return 1; }
+    if LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' < "\$_raw" 2>/dev/null \
+       | LC_ALL=C sed "s/\$_c1//g" > "\$_f" 2>/dev/null; then
+      rm -f "\$_raw" 2>/dev/null
+      return 0
+    fi
+    : > "\$_f" 2>/dev/null
+    rm -f "\$_raw" 2>/dev/null
+    return 1
+  }
+  if [ -n "\${CR_HANDOFF:-}" ] && [ -n "\${CR_TTY:-}" ]; then
+    # The pane may have exited with claude, and a released /dev/ttysNNN is handed to
+    # the next session — writable is NOT proof it is still ours. Require the pane's
+    # own shell to still be alive AND still hold that exact device.
+    _pane_tty=\$(ps -o tty= -p "\${CR_PANE_PID:-0}" 2>/dev/null | tr -d ' ')
+    case "\$_pane_tty" in ""|"?"|"??") _pane_tty="" ;; /dev/*) ;; *) _pane_tty="/dev/\$_pane_tty" ;; esac
+    if [ -n "\$_pane_tty" ] && [ "\$_pane_tty" = "\$CR_TTY" ] && [ -c "\$CR_TTY" ] && [ -w "\$CR_TTY" ]; then
+      _bar="════════════════════════════════════════════════════════════"
+      if [ "\${CR_HANDOFF_SRC:-}" = "flag" ]; then
+        _banner="📎 \$CR_HANDOFF — session ended, full handoff below:"
+      else
+        _banner="📎 \$CR_HANDOFF — session ended; this agent's LAST KNOWN handoff (not pinned by this session):"
+      fi
+      _body="$LOG.handoff"
+      _san_rc=0
+      : > "\$_body" 2>/dev/null || true
+      if ! command -v handoff >/dev/null 2>&1; then
+        echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: 'handoff' is not on the watcher's PATH — showing the pointer for \$CR_HANDOFF instead of its body"
+      else
+        _handoff_show "\$CR_HANDOFF" "\$_body"; _rc=\$?
+        _had_body=0; [ -s "\$_body" ] && _had_body=1
+        if [ "\$_had_body" = "1" ]; then
+          _sanitize_body "\$_body"; _san_rc=\$?
+        fi
+        if [ "\$_san_rc" != "0" ]; then
+          : > "\$_body" 2>/dev/null || rm -f "\$_body" 2>/dev/null
+          echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: the body of \$CR_HANDOFF could not be filtered for a terminal — showing the pointer instead"
+        elif [ "\$_had_body" = "1" ] && [ ! -s "\$_body" ]; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: the body of \$CR_HANDOFF was entirely non-printable and filtered away — showing the pointer instead"
+        elif [ "\$_had_body" = "0" ]; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: 'handoff show \$CR_HANDOFF' produced no output (exit \$_rc; timeout is \${_HO_TIMEOUT}s) — showing the pointer instead"
+        fi
+      fi
+      if [ "\$_san_rc" = "0" ] && [ -s "\$_body" ]; then
+        if { echo; echo "\$_bar"; echo "\$_banner"; echo "\$_bar"; cat "\$_body"; echo "\$_bar"; } > "\$CR_TTY" 2>/dev/null; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo: \$CR_HANDOFF written to \$CR_TTY"
+        else
+          echo "[\$(date '+%H:%M:%S')] handoff echo FAILED: could not write \$CR_HANDOFF to \$CR_TTY (body was available)"
+        fi
+      else
+        if { echo; echo "\$_bar"; echo "\$_banner"; echo "📎 \$CR_HANDOFF — run \\\`handoff show \$CR_HANDOFF\\\` for full session state"; echo "\$_bar"; } > "\$CR_TTY" 2>/dev/null; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo: pointer for \$CR_HANDOFF written to \$CR_TTY (body unavailable)"
+        else
+          echo "[\$(date '+%H:%M:%S')] handoff echo FAILED: could not write \$CR_HANDOFF to \$CR_TTY"
+        fi
+      fi
+      rm -f "\$_body" "\$_body.raw" 2>/dev/null || true
+    else
+      echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: pane \${CR_PANE_PID:-?} no longer holds \$CR_TTY (\$CR_HANDOFF not shown)"
+    fi
+  elif [ -n "\${CR_HANDOFF:-}" ]; then
+    echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: no writable pane tty was resolvable (\$CR_HANDOFF not shown)"
+  elif [ -n "\${CR_HANDOFF_DROP:-}" ]; then
+    echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: '\$CR_HANDOFF_DROP' not surfaced — \${CR_HANDOFF_DROP_WHY:-unusable}"
+  fi
 fi
 WSCRIPT
 
@@ -155,12 +517,44 @@ if [ "$DRY" = "1" ]; then
   echo "reboot     : $REBOOT"
   [ "$REBOOT" = "1" ] && echo "relaunch   : $CMD"
   echo "watcher log: $LOG"
+  if [ "$REBOOT" = "1" ]; then
+    # A --reboot never echoes — the relaunched agent reloads identity -> handoff
+    # itself. Say so anyway: a pin passed alongside --reboot is deliberately not
+    # surfaced here, and silence would read as the id having been lost.
+    if [ -n "$PINNED_HANDOFF" ]; then
+      echo "handoff echo: none — $PINNED_HANDOFF is deliberately not echoed on a --reboot; the relaunched agent reads it back from $IDENTITY_MD"
+    elif [ -n "$HANDOFF_DROPPED" ]; then
+      echo "handoff echo: none — '$HANDOFF_DROPPED' was dropped ($HANDOFF_DROP_WHY), and a --reboot would not have echoed it in any case"
+    else
+      echo "handoff echo: none — a --reboot never echoes; the relaunched agent reads its own handoff back"
+    fi
+  else
+    if [ -n "$PINNED_HANDOFF" ] && [ -n "$TTY_DEV" ]; then
+      if [ "$HANDOFF_SRC" = "flag" ]; then
+        echo "handoff echo: $PINNED_HANDOFF would be echoed to $TTY_DEV on clean end (id passed by the caller)"
+      else
+        echo "handoff echo: $PINNED_HANDOFF would be echoed to $TTY_DEV on clean end (last known — scraped from identity.md, not pinned by this run)"
+      fi
+    elif [ "$HANDOFF_STALE" = "1" ]; then
+      echo "handoff echo: none (pinned handoff predates this session — nothing pinned by this run)"
+    elif [ "$HANDOFF_MALFORMED" = "1" ]; then
+      echo "handoff echo: none (handoff pointer is not a bead id — treated as unpinned)"
+    elif [ -z "$TTY_DEV" ]; then
+      echo "handoff echo: none (no writable tty for claude $CLAUDE_PID)"
+    elif [ "$HANDOFF_INHERITED" = "1" ]; then
+      echo "handoff echo: none (PARLAY_PINNED_HANDOFF was inherited from an earlier session, and $IDENTITY_MD holds no usable pointer)"
+    else
+      echo "handoff echo: none (no pinned handoff in $IDENTITY_MD)"
+    fi
+  fi
   echo "(dry: no external process spawned, no sudoku, nothing killed)"
   exit 0
 fi
 
 # ── spawn the external watcher DETACHED (survives claude's death), then sudoku ──
-nohup bash -c "$WATCHER" >"$LOG" 2>&1 </dev/null &
+CR_HANDOFF="$PINNED_HANDOFF" CR_TTY="$TTY_DEV" CR_PANE_PID="${PANE_PID:-}" CR_HANDOFF_SRC="$HANDOFF_SRC" \
+  CR_HANDOFF_DROP="$HANDOFF_DROPPED" CR_HANDOFF_DROP_WHY="$HANDOFF_DROP_WHY" \
+  nohup bash -c "$WATCHER" >"$LOG" 2>&1 </dev/null &
 disown 2>/dev/null || true
 echo "context-reset: external watcher launched (log: $LOG). Terminating claude $CLAUDE_PID (sudoku)..."
 sleep 1

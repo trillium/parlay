@@ -239,16 +239,19 @@ jobs:
         working-directory: tools/split-test
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
-  # Only the eight harnesses that were verified to be genuinely side-effect-free
+  # Only the nine harnesses that were verified to be genuinely side-effect-free
   # are here. Seven were trial-run against a redirected HOME with the live
   # ~/.parlay/agents and ~/.treehouse snapshotted before and after, producing
   # zero drift in either. tools/hooks/hooks.test.sh meets the same bar: it
   # redirects HOME into its own mktemp scratch dir, stubs bun on PATH so no real
   # build can run, needs only git and bash, and names neither ~/.parlay nor
-  # ~/.treehouse at all. Everything else that runs as a shell script
-  # is excluded because it drives live or macOS-only state or stands up a real
-  # server fixture — AGENTS.md owns that "not covered" list and its per-entry
-  # reasons; do not re-enumerate it here. The three nearest misses, for context:
+  # ~/.treehouse at all. bin/context-reset.test.sh does the same: it redirects
+  # HOME, TMPDIR and PARLAY_AGENT_HOME into one mktemp root, stubs the handoff
+  # CLI, and asserts the pid it resolved is its own fixture before any kill.
+  # Everything else that runs as a shell script is excluded because it drives
+  # live or macOS-only state or stands up a real server fixture — AGENTS.md
+  # owns that "not covered" list and its per-entry reasons; do not re-enumerate
+  # it here. The three nearest misses, for context:
   #
   #   tools/monitor/parlay-monitor.test.sh   — enrols over a relay control
   #       socket and spawns relay processes; touches live relay state.
@@ -276,11 +279,16 @@ jobs:
           # exit 0` skip, which is right on a developer laptop and wrong here:
           # if jq ever left the runner image the harness would report success
           # having asserted nothing, and the gate would read green. The other
-          # harnesses lean on git and curl the same way. ubuntu-latest is a
-          # rolling image, so assert the dependencies rather than assume them —
-          # a missing one must fail loudly, not silently pass.
+          # harnesses lean on git and curl the same way, and
+          # bin/context-reset.test.sh needs python3 (it allocates a real pty to
+          # reproduce the pane the handoff echo writes to). That one harness
+          # also refuses to skip green when $CI is set — it errors instead — but
+          # that is the belt, not the braces: the preflight is what names the
+          # missing binary before any harness runs.
+          # ubuntu-latest is a rolling image, so assert the dependencies rather
+          # than assume them — a missing one must fail loudly, not silently pass.
           missing=""
-          for b in git jq curl; do
+          for b in git jq curl python3; do
             command -v "$b" >/dev/null 2>&1 || missing="$missing $b"
           done
           if [ -n "$missing" ]; then
@@ -301,6 +309,7 @@ jobs:
                    bin/parlay-spawn.batch.test.sh \
                    bin/parlay-spawn.worktree.test.sh \
                    bin/parlay-treehouse-guard.test.sh \
+                   bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
                    tools/hooks/hooks.test.sh; do
             echo "::group::$t"

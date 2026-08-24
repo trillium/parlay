@@ -37,7 +37,8 @@ func recordingContextReset(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "reset-args")
-	script := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\nexit 0\n"
+	script := "#!/bin/sh\necho \"$@\" >> " + argsFile +
+		"\necho \"${PARLAY_PINNED_HANDOFF-<unset>}\" >> " + argsFile + ".env\nexit 0\n"
 	for _, name := range []string{"reincarnate", "context-reset"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
@@ -51,6 +52,22 @@ func recordingContextReset(t *testing.T) string {
 func resetArgs(t *testing.T, argsFile string) string {
 	t.Helper()
 	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// resetPin returns the PARLAY_PINNED_HANDOFF the reset actually saw — the
+// transport the pinned id travels on, so an argv assertion alone would no
+// longer prove the id reached the script ("" when the reset never ran,
+// "<unset>" when it ran without the variable).
+func resetPin(t *testing.T, argsFile string) string {
+	t.Helper()
+	data, err := os.ReadFile(argsFile + ".env")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ""
@@ -153,6 +170,9 @@ func TestSubmitClosesBoundBeadAndEndsWithoutRelaunch(t *testing.T) {
 	if got := resetArgs(t, argsFile); got != "" {
 		t.Errorf("reset ran with %q, want no args (--reboot must be dropped)", got)
 	}
+	if got := resetPin(t, argsFile); got != "handoff-abc" {
+		t.Errorf("reset saw PARLAY_PINNED_HANDOFF=%q, want handoff-abc", got)
+	}
 	// The handoff pointer is still pinned — the state stays recoverable.
 	raw, _ := os.ReadFile(filepath.Join(home, "worker", "identity.md"))
 	if !strings.Contains(string(raw), "📎 Handoff: handoff-abc") {
@@ -187,6 +207,9 @@ func TestSubmitStillResetsWhenBeadCloseFails(t *testing.T) {
 	if got := resetArgs(t, argsFile); got != "--reboot" {
 		t.Errorf("reset ran with %q, want --reboot", got)
 	}
+	if got := resetPin(t, argsFile); got != "handoff-abc" {
+		t.Errorf("reset saw PARLAY_PINNED_HANDOFF=%q, want handoff-abc", got)
+	}
 }
 
 func TestSubmitDryRunDoesNotCloseBead(t *testing.T) {
@@ -210,6 +233,68 @@ func TestSubmitDryRunDoesNotCloseBead(t *testing.T) {
 	}
 	if !strings.Contains(logs, "would close bound bead task-oyaj") {
 		t.Errorf("expected the dry run to PREVIEW the close, got: %s", logs)
+	}
+}
+
+// legacyContextReset stands in for a context-reset resolved on PATH from an
+// older checkout: it understands only the flags that predate the pinned-handoff
+// work and refuses anything else with exit 2, before doing any of its job. That
+// refusal is invisible to the caller, which inspects only the start error — so a
+// reset argv this shim rejects is a park/submit that reports success while the
+// session keeps running.
+func legacyContextReset(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "reset-args")
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do\n" +
+		"  case \"$a\" in --reboot|--dry|--cmd) ;; *) echo \"context-reset: unknown arg: $a\" >&2; exit 2 ;; esac\n" +
+		"done\n" +
+		"echo \"$@\" >> " + argsFile + "\n" +
+		"echo \"${PARLAY_PINNED_HANDOFF-<unset>}\" >> " + argsFile + ".env\n" +
+		"exit 0\n"
+	for _, name := range []string{"reincarnate", "context-reset"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argsFile
+}
+
+func TestParkResetsThroughAContextResetThatPredatesThePin(t *testing.T) {
+	argsFile := legacyContextReset(t)
+	home := freshHome(t)
+	seedAgent(t, home, "worker", seedOpts{})
+	t.Setenv("PARLAY_AGENT_ID", "worker")
+
+	captureStdout(t, func() { CmdIdentity([]string{"--park", "handoff-abc"}) })
+
+	if got := resetPin(t, argsFile); got == "" {
+		t.Fatalf("the reset never ran to completion — an older context-reset refused this argv, and --park reported success anyway")
+	} else if got != "handoff-abc" {
+		t.Errorf("reset saw PARLAY_PINNED_HANDOFF=%q, want handoff-abc", got)
+	}
+	if got := resetArgs(t, argsFile); got != "" {
+		t.Errorf("park reset ran with %q, want no args", got)
+	}
+}
+
+func TestSubmitResetsThroughAContextResetThatPredatesThePin(t *testing.T) {
+	argsFile := legacyContextReset(t)
+	home := freshHome(t)
+	seedAgent(t, home, "worker", seedOpts{})
+	t.Setenv("PARLAY_AGENT_ID", "worker")
+
+	captureStdout(t, func() { CmdIdentity([]string{"--submit", "handoff-abc"}) })
+
+	if got := resetPin(t, argsFile); got == "" {
+		t.Fatalf("the reset never ran to completion — an older context-reset refused this argv, and --submit reported success anyway")
+	} else if got != "handoff-abc" {
+		t.Errorf("reset saw PARLAY_PINNED_HANDOFF=%q, want handoff-abc", got)
+	}
+	if got := resetArgs(t, argsFile); got != "--reboot" {
+		t.Errorf("reset ran with %q, want --reboot", got)
 	}
 }
 
@@ -240,6 +325,9 @@ func TestParkNeverClosesBoundBead(t *testing.T) {
 	}
 	if got := resetArgs(t, argsFile); got != "" {
 		t.Errorf("park reset ran with %q, want no args", got)
+	}
+	if got := resetPin(t, argsFile); got != "handoff-abc" {
+		t.Errorf("park reset saw PARLAY_PINNED_HANDOFF=%q, want handoff-abc", got)
 	}
 	// And the binding itself survives, so a later spawn still resolves it.
 	if got := ReadFrontmatter(file).Get(BeadKey); got != "task-oyaj" {

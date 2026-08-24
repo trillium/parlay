@@ -23,8 +23,10 @@ handoff AND runs this), with nothing interposed.
 `
 
 // findAncestorClaudePID walks the process tree upward from pid, same as
-// context-reset's `sudoku` walk (lines 43–50): looks for an ancestor whose
-// `comm` is exactly "claude".
+// context-reset's `sudoku` walk: it looks for an ancestor whose `comm` is
+// exactly "claude". That walk is the script's "locate this session's claude
+// process" block — cited by section header rather than line number, which
+// drifts every time the script grows.
 func findAncestorClaudePID(pid int) (int, error) {
 	claudePID := 0
 	for pid > 1 {
@@ -201,13 +203,20 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// buildWatcherScript renders the detached watcher, matching
-// context-reset's WATCHER heredoc (lines 84–150) byte-for-byte once its own
-// heredoc substitution is accounted for: claudePID/cmd/receiptPath/aid/
-// server/reboot are baked in here (equivalent to the outer script's
-// unescaped $VAR heredoc refs); every other $-token below is left literal
-// for the watcher's OWN bash runtime to evaluate (equivalent to the outer
-// script's `\$`-escaped refs).
+// buildWatcherScript renders the detached watcher, modelled on
+// context-reset's WATCHER heredoc: claudePID/cmd/receiptPath/aid/server/reboot
+// are baked in here (equivalent to the outer script's unescaped $VAR heredoc
+// refs); every other $-token below is left literal for the watcher's OWN bash
+// runtime to evaluate (equivalent to the outer script's `\$`-escaped refs).
+//
+// This is NOT byte-for-byte parity with bin/context-reset and must not be
+// described as such. Nothing in this repo execs `parlay reset` today —
+// bin/reincarnate execs bin/context-reset, and bin/parlay-spawn only uses the
+// gascity subcommands — so this port has been allowed to drift: the bash side's
+// clean-end pinned-handoff echo to the pane tty (robots-q5yx) has no equivalent
+// here (nor its --handoff <id> flag), and runResetCommand's --dry output omits
+// its handoff-echo line. Wiring
+// this subcommand up to a real caller means reconciling both first.
 func buildWatcherScript(claudePID int, cmd, receiptPath, aid, server string, reboot bool) string {
 	rebootFlag := "0"
 	if reboot {

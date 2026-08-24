@@ -13,6 +13,8 @@ const topUsage = `parlay-bin — Go port of bin/parlay-spawn + bin/context-reset
 Usage:
   parlay-bin spawn ...        launch a new background claude agent (bin/parlay-spawn)
   parlay-bin reset ...        clean self-restart for a persistent agent (bin/context-reset)
+                              note: unlike bin/context-reset, this port does not echo
+                              the pinned handoff to the pane on a clean end
   parlay-bin reincarnate ...  alias for 'reset' (legacy invocation name)
   parlay-bin gascity-spawn ...  start a detached headless session (herdr-free launcher path)
   parlay-bin gascity-stop ...   stop a gascity-spawn session

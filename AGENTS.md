@@ -1588,11 +1588,13 @@ contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
 all five modules), **bun** (tests for `packages/{input,client,server,cli}` and
 `tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
 dependencies — plus typecheck for `packages/input` and `tools/split-test`),
-**shell** (eight hermetic harnesses, preceded by a `jq`/`curl`/`git` presence
-check so a binary missing from the rolling runner image fails the step instead
-of letting a harness skip itself green), **hygiene** (conflict markers, 2 MiB
-tracked-file ceiling measured on the tracked *blob* via `git ls-tree -l`, never
-`stat` on the worktree path, which would follow this repo's tracked symlinks).
+**shell** (nine hermetic harnesses, preceded by a `git`/`jq`/`curl`/`python3`
+presence check so a binary missing from the rolling runner image fails the step
+instead of letting a harness skip itself green — `python3` is on that list
+because `bin/context-reset.test.sh` needs a real pty), **hygiene** (conflict
+markers, 2 MiB tracked-file ceiling measured on the tracked *blob* via `git
+ls-tree -l`, never `stat` on the worktree path, which would follow this repo's
+tracked symlinks).
 Both hygiene gates distinguish "the tool failed" from "the tree is clean" —
 `git grep`'s status 2+ and a failed or empty `git ls-tree` each fail the step.
 Read the file's own comments for per-step rationale rather than re-deriving it.
