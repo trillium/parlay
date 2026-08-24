@@ -239,16 +239,19 @@ jobs:
         working-directory: tools/split-test
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
-  # Only the eight harnesses that were verified to be genuinely side-effect-free
+  # Only the nine harnesses that were verified to be genuinely side-effect-free
   # are here. Seven were trial-run against a redirected HOME with the live
   # ~/.parlay/agents and ~/.treehouse snapshotted before and after, producing
   # zero drift in either. tools/hooks/hooks.test.sh meets the same bar: it
   # redirects HOME into its own mktemp scratch dir, stubs bun on PATH so no real
   # build can run, needs only git and bash, and names neither ~/.parlay nor
-  # ~/.treehouse at all. Everything else that runs as a shell script
-  # is excluded because it drives live or macOS-only state or stands up a real
-  # server fixture — AGENTS.md owns that "not covered" list and its per-entry
-  # reasons; do not re-enumerate it here. The three nearest misses, for context:
+  # ~/.treehouse at all. bin/context-reset.test.sh does the same: it redirects
+  # HOME, TMPDIR and PARLAY_AGENT_HOME into one mktemp root, stubs the handoff
+  # CLI, and asserts the pid it resolved is its own fixture before any kill.
+  # Everything else that runs as a shell script is excluded because it drives
+  # live or macOS-only state or stands up a real server fixture — AGENTS.md
+  # owns that "not covered" list and its per-entry reasons; do not re-enumerate
+  # it here. The three nearest misses, for context:
   #
   #   tools/monitor/parlay-monitor.test.sh   — enrols over a relay control
   #       socket and spawns relay processes; touches live relay state.
