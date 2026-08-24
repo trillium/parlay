@@ -150,8 +150,8 @@ func TestSubmitClosesBoundBeadAndEndsWithoutRelaunch(t *testing.T) {
 		t.Errorf("closing the bead must end the lifecycle, got: %s", logs)
 	}
 	// The evidence that matters is the reset's ARGV, not the message beside it.
-	if got := resetArgs(t, argsFile); got != "" {
-		t.Errorf("reset ran with %q, want no args (--reboot must be dropped)", got)
+	if got := resetArgs(t, argsFile); got != "--handoff handoff-abc" {
+		t.Errorf("reset ran with %q, want --handoff handoff-abc (--reboot must be dropped, the pin still passed)", got)
 	}
 	// The handoff pointer is still pinned — the state stays recoverable.
 	raw, _ := os.ReadFile(filepath.Join(home, "worker", "identity.md"))
@@ -184,8 +184,8 @@ func TestSubmitStillResetsWhenBeadCloseFails(t *testing.T) {
 	if strings.Contains(logs, "WITHOUT relaunch") {
 		t.Errorf("a failed close must not downgrade the submit, got: %s", logs)
 	}
-	if got := resetArgs(t, argsFile); got != "--reboot" {
-		t.Errorf("reset ran with %q, want --reboot", got)
+	if got := resetArgs(t, argsFile); got != "--reboot --handoff handoff-abc" {
+		t.Errorf("reset ran with %q, want --reboot --handoff handoff-abc", got)
 	}
 }
 
@@ -238,8 +238,8 @@ func TestParkNeverClosesBoundBead(t *testing.T) {
 	if !strings.Contains(logs, "bead left OPEN") {
 		t.Errorf("expected the park message to state the bead is left open, got: %s", logs)
 	}
-	if got := resetArgs(t, argsFile); got != "" {
-		t.Errorf("park reset ran with %q, want no args", got)
+	if got := resetArgs(t, argsFile); got != "--handoff handoff-abc" {
+		t.Errorf("park reset ran with %q, want --handoff handoff-abc", got)
 	}
 	// And the binding itself survives, so a later spawn still resolves it.
 	if got := ReadFrontmatter(file).Get(BeadKey); got != "task-oyaj" {

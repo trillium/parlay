@@ -74,7 +74,7 @@ chmod +x "$ROOT/bin/handoff"
 # timer). Captured pty output — everything the pane would have shown — lands in $2.
 run_in_fake_pane() {
   local inner="$1" capture="$2" until_re="${3:-}"
-  rm -f "$ROOT/inner.done"
+  rm -f "$ROOT/inner.done" "$ROOT/guard.fail"
   printf '%s\n' "$inner" > "$ROOT/inner.sh"
   printf '%s' "$until_re" > "$ROOT/until.re"
   cat > "$ROOT/pane.sh" <<PANE
@@ -105,6 +105,32 @@ run_bounded() {
   return "$rc"
 }
 
+# The ancestor walk in context-reset keeps the OUTERMOST process whose `comm` is
+# `claude`. Until the fixture chain has finished reparenting, that walk can climb
+# past the fixture — so a harness run by hand from inside a real claude session
+# could resolve the operator's own process, which a non-dry case would then KILL.
+# Every destructive invocation therefore proves its target first: a --dry run in the
+# same pane reports the pid the walk resolves, and the real command runs only when
+# that pid is this fixture's claude ($$ of the script claude is executing). A
+# mismatch records why and aborts the case with nothing killed.
+guarded() {
+  cat <<GUARD
+_resolved=\$("$SCRIPT" --dry 2>/dev/null | sed -n 's/^claude PID *: *//p')
+if [ "\$_resolved" != "\$\$" ]; then
+  echo "resolved=\$_resolved fixture=\$\$" > $ROOT/guard.fail
+  touch $ROOT/inner.done
+  exit 1
+fi
+$1
+GUARD
+}
+
+guard_held() {
+  [ -f "$ROOT/guard.fail" ] || return 0
+  fail "$1: the ancestor walk did not resolve the fixture ($(cat "$ROOT/guard.fail")) — no kill was issued"
+  return 1
+}
+
 pin_handoff() {
   { echo "---"; echo "id: $AID"; echo "---"; echo; echo "> 📎 Handoff: $1 — pinned"; } > "$AGENT_DIR/identity.md"
 }
@@ -113,7 +139,7 @@ watcher_logs() { cat "$ROOT"/reincarnate-*.log 2>/dev/null; }
 
 # ── 1. the regression: a non-tty stdin must not hide the pane's tty ──────────
 pin_handoff "handoff-abc1"
-run_in_fake_pane "$SCRIPT --dry > $ROOT/dry1.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty1.log"
+run_in_fake_pane "echo \$\$ > $ROOT/fixture.pid; $SCRIPT --dry > $ROOT/dry1.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty1.log"
 DRY1="$(cat "$ROOT/dry1.out" 2>/dev/null || true)"
 if printf '%s' "$DRY1" | grep -q 'could not find claude ancestor'; then
   fail "fixture did not present a claude ancestor: $DRY1"
@@ -126,6 +152,12 @@ if printf '%s' "$DRY1" | grep -q 'last known — scraped from identity.md'; then
   pass "a scraped pointer is reported as last-known, not as pinned by this run"
 else
   fail "a scraped pointer was not labelled last-known: $(printf '%s' "$DRY1" | grep 'handoff echo' || echo '<none>')"
+fi
+RESOLVED1="$(printf '%s' "$DRY1" | sed -n 's/^claude PID *: *//p')"
+if [ -n "$RESOLVED1" ] && [ "$RESOLVED1" = "$(cat "$ROOT/fixture.pid" 2>/dev/null)" ]; then
+  pass "the walk resolves the fixture's own claude, not an outer one"
+else
+  fail "walk resolved pid '$RESOLVED1', fixture was '$(cat "$ROOT/fixture.pid" 2>/dev/null)'"
 fi
 
 # ── 2. a pin that predates this session is not presented as this session's ──
@@ -196,8 +228,9 @@ fi
 # Not --dry: the watcher spawns, kills the fake claude, verifies closure, and
 # writes to the pane device.
 { echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
-run_in_fake_pane "$SCRIPT --handoff handoff-live1 > $ROOT/live1.out 2>&1" "$ROOT/pty6.log" \
+run_in_fake_pane "$(guarded "$SCRIPT --handoff handoff-live1 > $ROOT/live1.out 2>&1")" "$ROOT/pty6.log" \
   'handoff echo: handoff-live1 written'
+guard_held "case 6" || true
 PANE6="$(cat "$ROOT/pty6.log" 2>/dev/null || true)"
 if printf '%s' "$PANE6" | grep -q 'HANDOFF-BODY-MARKER'; then
   pass "the watcher echoes the handoff body onto the pane after claude closes"
@@ -214,8 +247,9 @@ fi
 # handoff-gone9 makes the stub exit non-zero with no output — the store-error /
 # deleted-bead / handoff-not-on-PATH class. The id must still reach the pane, and
 # the failure must leave a trace naming it instead of vanishing.
-run_in_fake_pane "$SCRIPT --handoff handoff-gone9 > $ROOT/live2.out 2>&1" "$ROOT/pty7.log" \
+run_in_fake_pane "$(guarded "$SCRIPT --handoff handoff-gone9 > $ROOT/live2.out 2>&1")" "$ROOT/pty7.log" \
   'handoff echo: pointer for handoff-gone9'
+guard_held "case 7" || true
 PANE7="$(cat "$ROOT/pty7.log" 2>/dev/null || true)"
 if printf '%s' "$PANE7" | grep -q 'run .handoff show handoff-gone9.'; then
   pass "an unavailable handoff body still puts the id on the pane"
@@ -232,7 +266,8 @@ fi
 # A live --complete-shaped run (no --handoff, unusable pointer on disk): nothing is
 # echoed, and the watcher — the only thing still alive — has to say which id it was.
 pin_handoff 'nodashhere'
-run_in_fake_pane "$SCRIPT > $ROOT/live3.out 2>&1" "$ROOT/pty8.log" 'handoff echo SKIPPED'
+run_in_fake_pane "$(guarded "$SCRIPT > $ROOT/live3.out 2>&1")" "$ROOT/pty8.log" 'handoff echo SKIPPED'
+guard_held "case 8" || true
 if watcher_logs | grep -q "handoff echo SKIPPED: 'nodashhere' not surfaced"; then
   pass "a pointer dropped before the spawn is still named in the watcher log"
 else
@@ -302,6 +337,18 @@ if printf '%s' "$HELP" | grep -q 'COVERAGE BOUNDARY: this echo needs a controlli
   pass "--help states the no-tty coverage boundary"
 else
   fail "--help does not mention the no-tty coverage boundary"
+fi
+
+# ── 12. --help follows the header block, not a fixed line count ─────────────
+# The extraction used to be a hardcoded line range, so text appended to the header
+# silently vanished from --help. Grow the header on a COPY and it must show up.
+awk '/^set -uo pipefail$/ && !g { print "# SENTINEL-HEADER-LINE"; g=1 } { print }' \
+  "$SCRIPT" > "$ROOT/grown-help"
+chmod +x "$ROOT/grown-help"
+if "$ROOT/grown-help" --help 2>&1 | grep -q 'SENTINEL-HEADER-LINE'; then
+  pass "--help tracks the header block when it grows"
+else
+  fail "a line appended to the header never reached --help"
 fi
 
 [ "$FAILED" = "0" ] && echo "ALL PASS" || echo "SOME TESTS FAILED" >&2
