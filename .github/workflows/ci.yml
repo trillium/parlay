@@ -280,8 +280,11 @@ jobs:
           # if jq ever left the runner image the harness would report success
           # having asserted nothing, and the gate would read green. The other
           # harnesses lean on git and curl the same way, and
-          # bin/context-reset.test.sh skips itself without python3 (it needs a
-          # real pty to reproduce the pane the handoff echo writes to).
+          # bin/context-reset.test.sh needs python3 (it allocates a real pty to
+          # reproduce the pane the handoff echo writes to). That one harness
+          # also refuses to skip green when $CI is set — it errors instead — but
+          # that is the belt, not the braces: the preflight is what names the
+          # missing binary before any harness runs.
           # ubuntu-latest is a rolling image, so assert the dependencies rather
           # than assume them — a missing one must fail loudly, not silently pass.
           missing=""
