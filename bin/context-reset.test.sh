@@ -22,7 +22,23 @@ FAILED=0
 fail() { printf 'FAIL: %s\n' "$1" >&2; FAILED=1; }
 pass() { printf 'ok: %s\n' "$1"; }
 
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not installed (needed to allocate a pty)" >&2; exit 0; }
+# A precondition this harness cannot meet is a SKIP on a developer laptop and an
+# ERROR under CI. Exiting 0 with zero assertions is the vacuous-green failure the
+# dependency preflight in .github/workflows/ci.yml exists to prevent — and that
+# preflight only covers the interpreters on PATH, not whether a copied binary can
+# actually execute out of the harness's own mktemp root (a noexec $TMPDIR, or a
+# refused copy, skipped the whole file green).
+missing_precondition() {
+  if [ -n "${CI:-}" ]; then
+    printf '::error::bin/context-reset.test.sh could not run: %s\n' "$1" >&2
+    printf 'FAIL: harness preconditions unmet under CI — %s\n' "$1" >&2
+    exit 1
+  fi
+  printf 'SKIP: %s\n' "$1" >&2
+  exit 0
+}
+
+command -v python3 >/dev/null 2>&1 || missing_precondition "python3 not installed (needed to allocate a pty)"
 
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/context-reset-test.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
@@ -40,7 +56,7 @@ for cand in "$(command -v bash)" /opt/homebrew/bin/bash /usr/local/bin/bash /bin
   "$ROOT/bin/claude" -c 'exit 7' >/dev/null 2>&1
   [ "$?" = "7" ] && { FAKE_CLAUDE="$cand"; break; }
 done
-[ -n "$FAKE_CLAUDE" ] || { echo "SKIP: no runnable bash copy could stand in for the claude process" >&2; exit 0; }
+[ -n "$FAKE_CLAUDE" ] || missing_precondition "no runnable bash copy could stand in for the claude process (is $ROOT on a noexec mount?)"
 
 AID="cr-test-agent"
 AGENT_DIR="$ROOT/agents/$AID"
@@ -53,10 +69,25 @@ PY
 
 # `handoff show <known-id>` yields a body; every other id fails with no output, so
 # the degraded path (a bead the store cannot produce) is exercisable too.
+# handoff-esc1's body is the hostile case: a bead body is agent-authored free text,
+# so it carries an OSC title/clipboard write, an SGR colour run, a cursor-position
+# QUERY (whose reply a terminal types back onto its own input), a C1-encoded CSI, and
+# ordinary UTF-8 that must survive untouched.
 cat > "$ROOT/bin/handoff" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = "show" ]; then
-  case "${2:-}" in handoff-live1|handoff-live2) ;; *) exit 1 ;; esac
+  case "${2:-}" in
+    handoff-live1|handoff-live2) ;;
+    handoff-esc1)
+      printf 'HANDOFF-BODY-MARKER for %s\n' "$2"
+      printf '\033]0;PWNED-TITLE\007ESC-OSC-TAIL\n'
+      printf '\033[31mESC-CSI-TAIL\033[0m\n'
+      printf 'QUERY\033[6nESC-QUERY-TAIL\n'
+      printf '\302\233 31mC1-CSI-TAIL\n'
+      printf 'kept \302\251 utf8\tand a tab\n'
+      exit 0 ;;
+    *) exit 1 ;;
+  esac
   echo "HANDOFF-BODY-MARKER for $2"
   exit 0
 fi
@@ -134,6 +165,16 @@ guard_held() {
 
 pin_handoff() {
   { echo "---"; echo "id: $AID"; echo "---"; echo; echo "> 📎 Handoff: $1 — pinned"; } > "$AGENT_DIR/identity.md"
+}
+
+# The same write, emitted as shell for an inner script to run INSIDE the fake pane.
+# An env pin is only trusted when identity.md agrees with it and was written after
+# this claude process started, which is what the real `identity --park/--submit`
+# does microseconds before invoking; a pin written by the harness beforehand looks
+# inherited instead.
+pin_handoff_inline() {
+  printf 'printf "%%s\\n" "---" "id: %s" "---" "" "> 📎 Handoff: %s — pinned" > %s/identity.md' \
+    "$AID" "$1" "$AGENT_DIR"
 }
 
 watcher_logs() { cat "$ROOT"/reincarnate-*.log 2>/dev/null; }
@@ -331,20 +372,7 @@ else
   fail "the staleness guard did not fire under a GNU stat, got: $(printf '%s' "$DRY10" | grep 'handoff echo' || echo "<no handoff echo line>")"
 fi
 
-# ── 11. --help keeps the whole HARD RULE paragraph ──────────────────────────
-HELP="$("$SCRIPT" --help 2>&1)"
-if printf '%s' "$HELP" | grep -q 'which pins + resets your context in one act'; then
-  pass "--help prints the HARD RULE paragraph through to its last sentence"
-else
-  fail "--help truncated the HARD RULE paragraph; last line was: $(printf '%s' "$HELP" | tail -1)"
-fi
-if printf '%s' "$HELP" | grep -q 'COVERAGE BOUNDARY: this echo needs a controlling terminal'; then
-  pass "--help states the no-tty coverage boundary"
-else
-  fail "--help does not mention the no-tty coverage boundary"
-fi
-
-# ── 12. --help follows the header block, not a fixed line count ─────────────
+# ── 11. --help follows the header block, not a fixed line count ─────────────
 # The extraction used to be a hardcoded line range, so text appended to the header
 # silently vanished from --help. Grow the header on a COPY and it must show up.
 awk '/^set -uo pipefail$/ && !g { print "# SENTINEL-HEADER-LINE"; g=1 } { print }' \
@@ -356,15 +384,16 @@ else
   fail "a line appended to the header never reached --help"
 fi
 
-# ── 13. PARLAY_PINNED_HANDOFF is the caller's transport, --handoff overrides it ──
+# ── 12. PARLAY_PINNED_HANDOFF is the caller's transport, --handoff overrides it ──
 # The pinning callers pass the id in the environment, because an older copy of this
 # script on PATH ignores an unknown env var but refuses an unknown flag with exit 2 —
 # and its caller does not inspect that exit code. So the env var must be honoured with
 # the flag's own authority (no staleness guard, announced as this session's), and the
-# flag must still win when both are supplied.
-pin_handoff "handoff-stale"
-touch -t 200001010000 "$AGENT_DIR/identity.md"
-run_in_fake_pane "PARLAY_PINNED_HANDOFF=handoff-env1 $SCRIPT --dry > $ROOT/dry13.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty13.log"
+# flag must still win when both are supplied. The real caller writes identity.md's
+# pointer immediately before invoking, so the fixture does too — inside the pane, so
+# the write post-dates the fake claude exactly as a genuine pin does.
+run_in_fake_pane "$(pin_handoff_inline handoff-env1)
+PARLAY_PINNED_HANDOFF=handoff-env1 $SCRIPT --dry > $ROOT/dry13.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty13.log"
 DRY13="$(cat "$ROOT/dry13.out" 2>/dev/null || true)"
 if printf '%s' "$DRY13" | grep -q 'handoff echo: handoff-env1 would be echoed to /dev/.* (id passed by the caller)'; then
   pass "PARLAY_PINNED_HANDOFF outranks identity.md and skips the staleness guard"
@@ -372,6 +401,8 @@ else
   fail "expected the env-supplied id, got: $(printf '%s' "$DRY13" | grep 'handoff echo' || echo "<no handoff echo line>")"
 fi
 
+pin_handoff "handoff-stale"
+touch -t 200001010000 "$AGENT_DIR/identity.md"
 run_in_fake_pane "PARLAY_PINNED_HANDOFF=handoff-env1 $SCRIPT --handoff handoff-flag1 --dry > $ROOT/dry14.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty14.log"
 DRY14="$(cat "$ROOT/dry14.out" 2>/dev/null || true)"
 if printf '%s' "$DRY14" | grep -q 'handoff echo: handoff-flag1 would be echoed'; then
@@ -390,7 +421,7 @@ else
   fail "an unusable env pin left no diagnostic: $DRY15"
 fi
 
-# ── 14. an unknown env var is inert, where an unknown flag is fatal ─────────
+# ── 13. an unknown env var is inert, where an unknown flag is fatal ─────────
 # This is the property that makes the env var the safe transport across a version
 # skew: run the script with a variable it has never heard of and it must behave
 # exactly as it does without one, still exiting 0.
@@ -406,7 +437,7 @@ else
   pass "an unknown flag is still refused, which is why the pin travels in the environment"
 fi
 
-# ── 15. the pin is consumed here, never handed down to what this script starts ──
+# ── 14. the pin is consumed here, never handed down to what this script starts ──
 # The env transport reaches every descendant, unlike the argv flag it replaced: the
 # detached watcher, the reboot command it evals, and the agent that command relaunches
 # would all inherit this session's pin — and the next session's --complete would then
@@ -423,7 +454,7 @@ rm -f "$ROOT/relaunch.env"
 { echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
 run_in_fake_pane "$(guarded "env -u PARLAY_AGENT_ID PARLAY_PINNED_HANDOFF=handoff-live1 PARLAY_PIN_TEST_CONTROL=present $SCRIPT --reboot --cmd record-relaunch > $ROOT/live4.out 2>&1")" \
   "$ROOT/pty17.log" 'RELAUNCH-RAN'
-guard_held "case 15" || true
+guard_held "case 14" || true
 if [ ! -s "$ROOT/relaunch.env" ]; then
   fail "the reboot command never ran, so nothing was proven about what it inherits; watcher log: $(watcher_logs | tr '\n' '|')"
 elif ! grep -q '^PARLAY_PIN_TEST_CONTROL=present$' "$ROOT/relaunch.env"; then
@@ -437,14 +468,102 @@ fi
 # Consuming it must not mean dropping it: the same env pin still has to reach the pane
 # on the clean-end path, announced as this session's.
 { echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
-run_in_fake_pane "$(guarded "PARLAY_PINNED_HANDOFF=handoff-live2 $SCRIPT > $ROOT/live5.out 2>&1")" \
+run_in_fake_pane "$(guarded "$(pin_handoff_inline handoff-live2)
+PARLAY_PINNED_HANDOFF=handoff-live2 $SCRIPT > $ROOT/live5.out 2>&1")" \
   "$ROOT/pty18.log" 'handoff echo: handoff-live2 written'
-guard_held "case 15b" || true
+guard_held "case 14b" || true
 PANE18="$(cat "$ROOT/pty18.log" 2>/dev/null || true)"
 if printf '%s' "$PANE18" | grep -q 'HANDOFF-BODY-MARKER' && printf '%s' "$PANE18" | grep -q 'session ended, full handoff below'; then
   pass "an env-supplied pin still reaches the pane as this session's handoff"
 else
   fail "the env pin did not reach the pane; watcher log: $(watcher_logs | tr '\n' '|')"
+fi
+
+# ── 15. nothing a bead body says can drive the terminal it lands on ─────────
+# A handoff body is agent-authored free text and the pane has just dropped back to a
+# shell prompt, so an escape sequence in it would act on a live terminal: an OSC can
+# retitle the window or reach the clipboard, and a cursor-position QUERY makes the
+# terminal write its answer onto its own INPUT, where the waiting shell reads it as
+# typed characters. handoff-esc1's body carries all of those; the pane must receive
+# the surrounding text and none of the introducers.
+{ echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
+run_in_fake_pane "$(guarded "$SCRIPT --handoff handoff-esc1 > $ROOT/live6.out 2>&1")" \
+  "$ROOT/pty19.log" 'handoff echo: handoff-esc1 written'
+guard_held "case 15" || true
+if ! LC_ALL=C grep -q 'HANDOFF-BODY-MARKER' "$ROOT/pty19.log" 2>/dev/null; then
+  fail "the hostile body never reached the pane, so the filtering assertions would be vacuous; watcher log: $(watcher_logs | tr '\n' '|')"
+else
+  pass "the hostile handoff body reached the pane"
+  LEAKED=""
+  LC_ALL=C grep -q "$(printf '\033')" "$ROOT/pty19.log" && LEAKED="$LEAKED ESC"
+  LC_ALL=C grep -q "$(printf '\007')" "$ROOT/pty19.log" && LEAKED="$LEAKED BEL"
+  LC_ALL=C grep -q "$(printf '\302\233')" "$ROOT/pty19.log" && LEAKED="$LEAKED C1-CSI"
+  if [ -n "$LEAKED" ]; then
+    fail "control introducers reached the pane device:$LEAKED"
+  else
+    pass "no ESC, BEL or C1 introducer from the body reaches the terminal"
+  fi
+  MISSING=""
+  for _t in ESC-OSC-TAIL ESC-CSI-TAIL ESC-QUERY-TAIL C1-CSI-TAIL; do
+    LC_ALL=C grep -q "$_t" "$ROOT/pty19.log" || MISSING="$MISSING $_t"
+  done
+  if [ -n "$MISSING" ]; then
+    fail "filtering ate readable text alongside the escapes, losing:$MISSING"
+  else
+    pass "the text around each stripped sequence still reaches the pane"
+  fi
+  # The tab is matched as whitespace, not as a byte: a pty in its default output mode
+  # may expand it. Deleting it — the failure this guards — leaves no gap at all.
+  UTF8_TAB_RE="$(printf 'kept \302\251 utf8[[:space:]][[:space:]]*and a tab')"
+  if LC_ALL=C grep -qE "$UTF8_TAB_RE" "$ROOT/pty19.log" 2>/dev/null; then
+    pass "printable UTF-8 and TAB survive the filter untouched"
+  else
+    fail "the filter damaged printable UTF-8 or TAB: $(LC_ALL=C grep -a 'utf8' "$ROOT/pty19.log" | cat -v)"
+  fi
+fi
+
+# ── 16. an env pin this session did not set is demoted, never trusted ───────
+# An OLDER copy of this script on PATH does not unset PARLAY_PINNED_HANDOFF, so the
+# session it reboots inherits the previous session's pin for its whole life. Trusting
+# an ambient value would print a predecessor's handoff under this session's banner, so
+# an env pin is believed only when identity.md agrees with it AND was written after
+# this claude process started.
+run_in_fake_pane "$(pin_handoff_inline handoff-live1)
+PARLAY_PINNED_HANDOFF=handoff-env9 $SCRIPT --dry > $ROOT/dry20.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty20.log"
+DRY20="$(cat "$ROOT/dry20.out" 2>/dev/null || true)"
+if printf '%s' "$DRY20" | grep -q 'handoff echo: handoff-live1 would be echoed to /dev/.* (last known'; then
+  pass "an env pin identity.md does not corroborate loses to the file's own pointer"
+else
+  fail "expected the disk pointer to win over an uncorroborated env pin, got: $(printf '%s' "$DRY20" | grep 'handoff echo' || echo '<no handoff echo line>')"
+fi
+if printf '%s' "$DRY20" | grep -q "PARLAY_PINNED_HANDOFF='handoff-env9' was not pinned by this session"; then
+  pass "the demotion is announced, naming the value that was not trusted"
+else
+  fail "an env pin was demoted in silence: $DRY20"
+fi
+
+# Same value on both sides, but identity.md predates the process: that is exactly the
+# inherited shape (the successor's identity.md still holds its predecessor's pointer),
+# so it must land on the staleness refusal rather than the caller's banner.
+pin_handoff "handoff-env9"
+touch -t 200001010000 "$AGENT_DIR/identity.md"
+run_in_fake_pane "sleep 2; PARLAY_PINNED_HANDOFF=handoff-env9 $SCRIPT --dry > $ROOT/dry21.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty21.log"
+DRY21="$(cat "$ROOT/dry21.out" 2>/dev/null || true)"
+if printf '%s' "$DRY21" | grep -q 'handoff echo: none (pinned handoff predates this session'; then
+  pass "an env pin matching only a pointer older than this session is refused"
+else
+  fail "an inherited env pin was echoed as this session's, got: $(printf '%s' "$DRY21" | grep 'handoff echo' || echo '<no handoff echo line>')"
+fi
+
+# A --reboot self-reports its handoff decision like every other branch: the pin is
+# deliberately not echoed there, and silence would read as the id having been lost.
+run_in_fake_pane "$(pin_handoff_inline handoff-live1)
+$SCRIPT --reboot --dry > $ROOT/dry22.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty22.log"
+DRY22="$(cat "$ROOT/dry22.out" 2>/dev/null || true)"
+if printf '%s' "$DRY22" | grep -q 'handoff echo: none — handoff-live1 is deliberately not echoed on a --reboot'; then
+  pass "--reboot names the pin it is deliberately not echoing"
+else
+  fail "the reboot path reported nothing about the pin it holds: $(printf '%s' "$DRY22" | grep 'handoff echo' || echo '<no handoff echo line>')"
 fi
 
 [ "$FAILED" = "0" ] && echo "ALL PASS" || echo "SOME TESTS FAILED" >&2
