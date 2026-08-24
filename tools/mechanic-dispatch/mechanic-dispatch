@@ -48,6 +48,24 @@ case "$STATUS_LINE" in
     exit 0 ;;
 esac
 
+# --- resolve the store-qualified bead id --------------------------------------
+# parlay-spawn runs in beads-required mode: every spawn must name an OPEN beads
+# work item via --bead, and it resolves the store from the id's leading token
+# (robots-aswz -> the `robots` wrapper). Omitting it made the dead-mechanic
+# launch branch below refuse with exit 2 and launch NOTHING — including every
+# daemon auto-dispatch, which goes through that same branch (robots-aswz). The
+# ticket is always an open robots bead, so name it.
+# `robots show` accepts a bare id ("aswz") as well as a qualified one, so read
+# the canonical id back off the status line rather than trusting the argument's
+# shape; fall back to prefixing only if the line carries no id.
+BEAD=$(printf '%s' "$STATUS_LINE" | grep -oE 'robots-[A-Za-z0-9_]+' | head -1 || true)
+if [ -z "$BEAD" ]; then
+  case "$TICKET" in
+    robots-*) BEAD="$TICKET" ;;
+    *)        BEAD="robots-$TICKET" ;;
+  esac
+fi
+
 # --- zone -> (agent-id, display, color, cwd) routing table --------------------
 # NOTE: a `case` map, not a bash-4 `declare -A`. macOS /bin/bash is 3.2, where
 # associative arrays are unsupported and `[beads]=...` parses as an arithmetic
@@ -135,11 +153,12 @@ echo "liveness: $AGENT = $STATUS"
 # work (robots tickets default to a "fix + robots close" contract). No task
 # prose is duplicated here — it lives on the ticket.
 if [ "$STATUS" = "absent" ]; then
-  echo "-> mechanic is dead; launching via parlay-spawn (--claim $TICKET)${WORKTREE_ARG:+ in isolated worktree}"
-  exec parlay-spawn "$AGENT" "$NAME" "$COLOR" --claim "$TICKET" --cwd "$CWD" --model opus \
+  echo "-> mechanic is dead; launching via parlay-spawn (--claim $BEAD)${WORKTREE_ARG:+ in isolated worktree}"
+  exec parlay-spawn "$AGENT" "$NAME" "$COLOR" --claim "$BEAD" --bead "$BEAD" \
+    --cwd "$CWD" --model opus \
     $WORKTREE_ARG \
     ${MECHANIC_WS:+--workspace "$MECHANIC_WS"}
 else
   echo "-> mechanic is live ($STATUS); handing it the ticket"
-  exec parlay send --"$AGENT" "Claim your next ticket: run 'parlay claim $TICKET'."
+  exec parlay send --"$AGENT" "Claim your next ticket: run 'parlay claim $BEAD'."
 fi

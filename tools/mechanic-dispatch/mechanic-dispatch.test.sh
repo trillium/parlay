@@ -2,6 +2,10 @@
 # mechanic-dispatch.test.sh — proves the worktree-isolation behavior:
 #   • a git-repo zone (parlay) dispatches with --worktree AND keeps --cwd <repo>
 #   • the default/~ zone dispatches WITHOUT --worktree
+# ...and the beads-required binding (robots-aswz):
+#   • --bead <store-qualified id> is always passed, so parlay-spawn's
+#     beads-required gate cannot refuse the launch with exit 2
+#   • a bare ticket id ("test") still yields the qualified "robots-test"
 # parlay-spawn/herdr/robots/parlay are stubbed and $HOME is redirected to a
 # sandbox, so no real agent launches and no real repo is touched.
 #
@@ -44,10 +48,14 @@ EOF
 
 # robots: `robots show <id>` prints a non-closed [OPEN] status line so the
 # dispatch is not skipped; other subcommands are no-ops.
+# Mirrors the real status line: "<glyph> robots-<id> · <title> [... OPEN]", and
+# resolves a bare id to its store-qualified form exactly as the real store does.
 cat >"$STUB/robots" <<'EOF'
 #!/bin/sh
 if [ "$1" = show ]; then
-  printf '%s\n' "robots-test - Fix the thing [OPEN]"
+  id=$2
+  case "$id" in robots-*) : ;; *) id="robots-$id" ;; esac
+  printf '%s\n' "o $id · Fix the thing   [P2 · OPEN]"
 fi
 EOF
 
@@ -84,6 +92,47 @@ if grep -Fxq -- '--worktree' "$CAPTURE"; then
   fault "default/~ zone must NOT be isolated but got --worktree"
 else
   pass "default/~ zone dispatched WITHOUT --worktree"
+fi
+
+# --- case 3: --bead is always passed, store-qualified -------------------------
+# Without it, parlay-spawn's beads-required mode refuses the launch (exit 2) and
+# no mechanic starts at all — the robots-aswz defect.
+bead_arg() { grep -A1 -Fx -- '--bead' "$CAPTURE" | tail -1; }
+claim_arg() { grep -A1 -Fx -- '--claim' "$CAPTURE" | tail -1; }
+
+: > "$CAPTURE"
+bash "$SCRIPT" robots-test parlay >/dev/null 2>&1
+if [ "$(bead_arg)" = robots-test ]; then
+  pass "git-repo zone bound --bead robots-test"
+else
+  fault "git-repo zone did not pass --bead robots-test"
+fi
+
+: > "$CAPTURE"
+bash "$SCRIPT" robots-test default >/dev/null 2>&1
+if [ "$(bead_arg)" = robots-test ]; then
+  pass "default/~ zone bound --bead robots-test"
+else
+  fault "default/~ zone did not pass --bead robots-test"
+fi
+
+# --- case 4: a BARE ticket id is qualified before binding ---------------------
+# `mechanic-dispatch test` (below) is a legal call — the robots store resolves a
+# bare id — but parlay-spawn derives the store from the id's LEADING TOKEN, so a
+# bare --bead would resolve to no store at all. The original repro was the same
+# shape: `mechanic-dispatch tnwd`.
+: > "$CAPTURE"
+bash "$SCRIPT" test default >/dev/null 2>&1
+if [ "$(bead_arg)" = robots-test ]; then
+  pass "bare ticket id qualified to robots-test for --bead"
+else
+  fault "bare ticket id was not qualified for --bead"
+fi
+
+if [ "$(claim_arg)" = robots-test ]; then
+  pass "bare ticket id qualified to robots-test for --claim"
+else
+  fault "bare ticket id was not qualified for --claim"
 fi
 
 if [ "$fail" -eq 0 ]; then
