@@ -276,11 +276,13 @@ jobs:
           # exit 0` skip, which is right on a developer laptop and wrong here:
           # if jq ever left the runner image the harness would report success
           # having asserted nothing, and the gate would read green. The other
-          # harnesses lean on git and curl the same way. ubuntu-latest is a
-          # rolling image, so assert the dependencies rather than assume them —
-          # a missing one must fail loudly, not silently pass.
+          # harnesses lean on git and curl the same way, and
+          # bin/context-reset.test.sh skips itself without python3 (it needs a
+          # real pty to reproduce the pane the handoff echo writes to).
+          # ubuntu-latest is a rolling image, so assert the dependencies rather
+          # than assume them — a missing one must fail loudly, not silently pass.
           missing=""
-          for b in git jq curl; do
+          for b in git jq curl python3; do
             command -v "$b" >/dev/null 2>&1 || missing="$missing $b"
           done
           if [ -n "$missing" ]; then
@@ -301,6 +303,7 @@ jobs:
                    bin/parlay-spawn.batch.test.sh \
                    bin/parlay-spawn.worktree.test.sh \
                    bin/parlay-treehouse-guard.test.sh \
+                   bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
                    tools/hooks/hooks.test.sh; do
             echo "::group::$t"

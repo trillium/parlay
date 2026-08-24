@@ -14,6 +14,7 @@
 #   context-reset --reboot                    reboot a parlay panel agent (relaunch auto-derived from PARLAY_* env)
 #   context-reset --reboot --cmd '<launch>'   reboot with an explicit relaunch command (firstmate / custom hosts)
 #   context-reset                             no reboot — verify shutdown only (deliberate end, == sudoku + a receipt)
+#   context-reset --handoff <id>              echo THIS handoff on a clean end (passed by the caller that just pinned it)
 #   context-reset --dry                       print the plan; spawn nothing, kill nothing
 #
 # On a clean end (no --reboot — i.e. `identity --park`/`identity --complete`), nothing
@@ -23,6 +24,13 @@
 # also echoes the pinned handoff's full content directly to this session's tty (not the
 # log), so it lands in the pane's own scrollback as claude's last visible act.
 #
+# WHICH handoff is settled by the caller, not inferred: `--handoff <id>` is
+# authoritative and is passed by the only paths that pin (`identity --submit`,
+# `identity --park`). Without it — `identity --complete`, which closes the work item
+# and never pins — the agent's identity.md is scraped instead; that pointer can belong
+# to an earlier session, so it is announced as the agent's LAST KNOWN handoff and is
+# dropped entirely when it predates this claude process.
+#
 # HARD RULE: never call this before a handoff bead exists and is pinned, or the
 # rebooted you wakes with amnesia. Prefer the atomic path: `handoff` skill to mint the
 # bead, then IMMEDIATELY `identity --submit` (no id — it resolves+pins the current
@@ -31,13 +39,14 @@
 # killed in. Order: handoff -> submit (which pins + resets your context in one act).
 set -uo pipefail
 
-REBOOT=0; DRY=0; CMD=""
+REBOOT=0; DRY=0; CMD=""; PIN_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --reboot) REBOOT=1; shift ;;
-    --cmd)    CMD="${2:-}"; shift 2 ;;
-    --dry)    DRY=1; shift ;;
-    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --reboot)  REBOOT=1; shift ;;
+    --cmd)     CMD="${2:-}"; shift 2 ;;
+    --handoff) PIN_ARG="${2:-}"; shift 2 ;;
+    --dry)     DRY=1; shift ;;
+    -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "context-reset: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -106,15 +115,42 @@ RECEIPT="$RECEIPT_DIR/reincarnations.log"   # legacy name kept deliberately (see
 mkdir -p "$RECEIPT_DIR" 2>/dev/null || true
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"   # for Change 3 self-verify
 
-# ── resolve the currently pinned handoff (if any), so the clean-end branch below can
-# echo its full content to the terminal. `identity --submit`/`--park` write this exact
-# marker line (packages/cli's mem.ts / tools/cli's mem.go, kept in parity) just before
-# calling this script, so it is already on disk by the time we get here.
+# ── resolve which handoff the clean-end branch should echo ──
+# Two sources, in precedence order. `--handoff <id>` comes from the caller that just
+# pinned it (identity --submit/--park), so it needs neither scraping nor a timestamp
+# inference. Falling back to identity.md's marker line covers --complete, which never
+# pins; that value is only ever the agent's LAST KNOWN handoff.
+# A bead id is <store>-<suffix> over [A-Za-z0-9_-]. Anything else — a bare marker
+# line, a hand-edited pointer, a value carrying shell metacharacters — is not an id
+# and is treated as unpinned rather than handed to `handoff show` as garbage.
 PINNED_HANDOFF=""
 HANDOFF_STALE=0
+HANDOFF_MALFORMED=0
+HANDOFF_SRC=""
 IDENTITY_MD="$RECEIPT_DIR/identity.md"
-if [ -n "${AID:-}" ] && [ -f "$IDENTITY_MD" ]; then
-  PINNED_HANDOFF=$(grep -m1 '^> 📎 Handoff:' "$IDENTITY_MD" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^ ]+).*/\1/')
+
+_is_bead_id() {
+  case "${1:-}" in
+    ""|*[!A-Za-z0-9_-]*) return 1 ;;
+    ?*-?*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ -n "$PIN_ARG" ]; then
+  if _is_bead_id "$PIN_ARG"; then
+    PINNED_HANDOFF="$PIN_ARG"; HANDOFF_SRC="flag"
+  else
+    HANDOFF_MALFORMED=1
+    echo "context-reset: --handoff '$PIN_ARG' is not a bead id — ignoring it." >&2
+  fi
+elif [ -n "${AID:-}" ] && [ -f "$IDENTITY_MD" ]; then
+  _pin=$(grep -m1 '^> 📎 Handoff: ' "$IDENTITY_MD" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^[:space:]]+)([[:space:]].*)?$/\1/')
+  if _is_bead_id "${_pin:-}"; then
+    PINNED_HANDOFF="$_pin"; HANDOFF_SRC="scrape"
+  elif [ -n "${_pin:-}" ]; then
+    HANDOFF_MALFORMED=1
+  fi
 fi
 
 # Elapsed-time -> epoch for claude's own start. `ps -o etime=` ([[DD-]HH:]MM:SS) is
@@ -135,13 +171,12 @@ _claude_start_epoch() {
   echo $(( $(date +%s) - (10#$dd * 86400 + 10#$hh * 3600 + 10#$mm * 60 + 10#$ss) ))
 }
 
-# Staleness guard: `identity --complete` closes the store item WITHOUT pinning (only
-# --handoff/--submit/--park pin), so a pointer left by an EARLIER session would
-# otherwise be echoed under this session's "session ended" banner. A pin written by
-# this run necessarily post-dates the claude process; anything older predates it and
-# is dropped. Unmeasurable timestamps fail OPEN — a missing ps/stat field must not
-# silently disable the echo this script exists for.
-if [ -n "$PINNED_HANDOFF" ]; then
+# Staleness guard, scrape-only: a pointer older than this claude process belongs to a
+# previous session on this agent id and must not be echoed at all. It is best-effort
+# (identity.md's mtime moves on ANY write, not just a pin) which is exactly why it is
+# the fallback and --handoff is the authoritative signal. Unmeasurable timestamps fail
+# OPEN — a missing ps/stat field must not silently disable the echo this exists for.
+if [ -n "$PINNED_HANDOFF" ] && [ "$HANDOFF_SRC" = "scrape" ]; then
   _md_mtime=$(stat -f %m "$IDENTITY_MD" 2>/dev/null || stat -c %Y "$IDENTITY_MD" 2>/dev/null || true)
   _cl_start=$(_claude_start_epoch)
   if [ -n "${_md_mtime:-}" ] && [ -n "${_cl_start:-}" ] && [ "$_md_mtime" -lt "$_cl_start" ]; then
@@ -222,6 +257,32 @@ else
   # tails) as claude's last visible act in this session. CR_* arrive through the
   # ENVIRONMENT rather than spliced into this script, so a handoff id or device path
   # containing \$( ) or a backtick cannot be evaluated by this shell.
+  #
+  # Every way this can fall short writes a line naming the handoff it could not
+  # surface — a handoff lost SILENTLY is the exact failure this whole path exists to
+  # end, so an unreadable body degrades to echoing the pointer rather than to nothing.
+  _HO_TIMEOUT=10
+  # \`handoff show\` reaches a beads store that can be a server-mode backend, and this
+  # watcher is nohup'd, disowned and unsupervised — an unbounded call here is a
+  # process nothing is left to end. Bounded via timeout/gtimeout, or a background
+  # child plus a killer when neither exists.
+  _handoff_show() {
+    local _id="\$1" _out="\$2" _rc=0 _hp="" _kp=""
+    if command -v timeout >/dev/null 2>&1; then
+      timeout "\$_HO_TIMEOUT" handoff show "\$_id" >"\$_out" 2>/dev/null; _rc=\$?
+    elif command -v gtimeout >/dev/null 2>&1; then
+      gtimeout "\$_HO_TIMEOUT" handoff show "\$_id" >"\$_out" 2>/dev/null; _rc=\$?
+    else
+      handoff show "\$_id" >"\$_out" 2>/dev/null &
+      _hp=\$!
+      ( sleep "\$_HO_TIMEOUT"; kill "\$_hp" 2>/dev/null ) >/dev/null 2>&1 &
+      _kp=\$!
+      wait "\$_hp"; _rc=\$?
+      kill "\$_kp" 2>/dev/null
+      wait "\$_kp" 2>/dev/null
+    fi
+    return \$_rc
+  }
   if [ -n "\${CR_HANDOFF:-}" ] && [ -n "\${CR_TTY:-}" ]; then
     # The pane may have exited with claude, and a released /dev/ttysNNN is handed to
     # the next session — writable is NOT proof it is still ours. Require the pane's
@@ -229,20 +290,41 @@ else
     _pane_tty=\$(ps -o tty= -p "\${CR_PANE_PID:-0}" 2>/dev/null | tr -d ' ')
     case "\$_pane_tty" in ""|"?"|"??") _pane_tty="" ;; /dev/*) ;; *) _pane_tty="/dev/\$_pane_tty" ;; esac
     if [ -n "\$_pane_tty" ] && [ "\$_pane_tty" = "\$CR_TTY" ] && [ -c "\$CR_TTY" ] && [ -w "\$CR_TTY" ]; then
-      HANDOFF_TEXT=\$(handoff show "\$CR_HANDOFF" 2>/dev/null)
-      if [ -n "\$HANDOFF_TEXT" ]; then
-        {
-          echo
-          echo "════════════════════════════════════════════════════════════"
-          echo "📎 \$CR_HANDOFF — session ended, full handoff below:"
-          echo "════════════════════════════════════════════════════════════"
-          echo "\$HANDOFF_TEXT"
-          echo "════════════════════════════════════════════════════════════"
-        } > "\$CR_TTY" 2>/dev/null || true
+      _bar="════════════════════════════════════════════════════════════"
+      if [ "\${CR_HANDOFF_SRC:-}" = "flag" ]; then
+        _banner="📎 \$CR_HANDOFF — session ended, full handoff below:"
+      else
+        _banner="📎 \$CR_HANDOFF — session ended; this agent's LAST KNOWN handoff (not pinned by this session):"
       fi
+      _body="$LOG.handoff"
+      : > "\$_body" 2>/dev/null || true
+      if ! command -v handoff >/dev/null 2>&1; then
+        echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: 'handoff' is not on the watcher's PATH — showing the pointer for \$CR_HANDOFF instead of its body"
+      else
+        _handoff_show "\$CR_HANDOFF" "\$_body"; _rc=\$?
+        if [ ! -s "\$_body" ]; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: 'handoff show \$CR_HANDOFF' produced no output (exit \$_rc; timeout is \${_HO_TIMEOUT}s) — showing the pointer instead"
+        fi
+      fi
+      if [ -s "\$_body" ]; then
+        if { echo; echo "\$_bar"; echo "\$_banner"; echo "\$_bar"; cat "\$_body"; echo "\$_bar"; } > "\$CR_TTY" 2>/dev/null; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo: \$CR_HANDOFF written to \$CR_TTY"
+        else
+          echo "[\$(date '+%H:%M:%S')] handoff echo FAILED: could not write \$CR_HANDOFF to \$CR_TTY (body was available)"
+        fi
+      else
+        if { echo; echo "\$_bar"; echo "\$_banner"; echo "📎 \$CR_HANDOFF — run \\\`handoff show \$CR_HANDOFF\\\` for full session state"; echo "\$_bar"; } > "\$CR_TTY" 2>/dev/null; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo: pointer for \$CR_HANDOFF written to \$CR_TTY (body unavailable)"
+        else
+          echo "[\$(date '+%H:%M:%S')] handoff echo FAILED: could not write \$CR_HANDOFF to \$CR_TTY"
+        fi
+      fi
+      rm -f "\$_body" 2>/dev/null || true
     else
       echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: pane \${CR_PANE_PID:-?} no longer holds \$CR_TTY (\$CR_HANDOFF not shown)"
     fi
+  elif [ -n "\${CR_HANDOFF:-}" ]; then
+    echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: no writable pane tty was resolvable (\$CR_HANDOFF not shown)"
   fi
 fi
 WSCRIPT
@@ -255,9 +337,15 @@ if [ "$DRY" = "1" ]; then
   echo "watcher log: $LOG"
   if [ "$REBOOT" != "1" ]; then
     if [ -n "$PINNED_HANDOFF" ] && [ -n "$TTY_DEV" ]; then
-      echo "handoff echo: $PINNED_HANDOFF would be echoed to $TTY_DEV on clean end"
+      if [ "$HANDOFF_SRC" = "flag" ]; then
+        echo "handoff echo: $PINNED_HANDOFF would be echoed to $TTY_DEV on clean end (id passed by the caller)"
+      else
+        echo "handoff echo: $PINNED_HANDOFF would be echoed to $TTY_DEV on clean end (last known — scraped from identity.md, not pinned by this run)"
+      fi
     elif [ "$HANDOFF_STALE" = "1" ]; then
       echo "handoff echo: none (pinned handoff predates this session — nothing pinned by this run)"
+    elif [ "$HANDOFF_MALFORMED" = "1" ]; then
+      echo "handoff echo: none (handoff pointer is not a bead id — treated as unpinned)"
     elif [ -z "$TTY_DEV" ]; then
       echo "handoff echo: none (no writable tty for claude $CLAUDE_PID)"
     else
@@ -269,7 +357,7 @@ if [ "$DRY" = "1" ]; then
 fi
 
 # ── spawn the external watcher DETACHED (survives claude's death), then sudoku ──
-CR_HANDOFF="$PINNED_HANDOFF" CR_TTY="$TTY_DEV" CR_PANE_PID="${PANE_PID:-}" \
+CR_HANDOFF="$PINNED_HANDOFF" CR_TTY="$TTY_DEV" CR_PANE_PID="${PANE_PID:-}" CR_HANDOFF_SRC="$HANDOFF_SRC" \
   nohup bash -c "$WATCHER" >"$LOG" 2>&1 </dev/null &
 disown 2>/dev/null || true
 echo "context-reset: external watcher launched (log: $LOG). Terminating claude $CLAUDE_PID (sudoku)..."

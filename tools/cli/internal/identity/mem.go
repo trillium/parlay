@@ -271,9 +271,9 @@ func cmdMem(kind MemKind, argv []string) {
 				verb = "previewing"
 			}
 			fmt.Printf("identity parked for %s — handoff %s pinned, bead left OPEN; %s shutdown WITHOUT restart…\n", agent, pinID, verb)
-			var parkArgs []string
+			parkArgs := []string{"--handoff", pinID}
 			if dry {
-				parkArgs = []string{"--dry"}
+				parkArgs = append(parkArgs, "--dry")
 			}
 			if err := runInheritIgnoreExit(cmdName, parkArgs...); err != nil {
 				httpc.Die(fmt.Sprintf("identity --park: could not run %s — %v", cmdName, err), config.ExitRuntime)
@@ -290,7 +290,7 @@ func cmdMem(kind MemKind, argv []string) {
 		if dry {
 			verb = "previewing"
 		}
-		submitArgs := []string{"--reboot"}
+		submitArgs := []string{"--reboot", "--handoff", pinID}
 		item, closed := BoundWorkItemClosed(file)
 		// beads-required mode: for a SPAWN-bound bead (`bead:`, written by
 		// parlay-spawn --bead), --submit is the "this work is finished" exit,
@@ -331,7 +331,7 @@ func cmdMem(kind MemKind, argv []string) {
 			}
 		}
 		if closed {
-			submitArgs = []string{} // drop --reboot → clean end, no relaunch
+			submitArgs = []string{"--handoff", pinID} // drop --reboot → clean end, no relaunch
 			fmt.Printf("identity submitted for %s — handoff %s pinned; bound work item %s is CLOSED, so %s shutdown WITHOUT relaunch (use --complete next time)…\n", agent, pinID, item, verb)
 		} else {
 			fmt.Printf("identity submitted for %s — handoff %s pinned; %s context reset…\n", agent, pinID, verb)

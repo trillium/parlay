@@ -116,13 +116,13 @@ async function cmdMem(kind: MemKind, args: string[]) {
     // --park: shut down WITHOUT --reboot, leaving the bead OPEN to resume later.
     if (wantPark) {
       console.log(`identity parked for ${agent} — handoff ${pinId} pinned, bead left OPEN; ${dry ? "previewing" : "triggering"} shutdown WITHOUT restart…`)
-      const res = spawnSync(cmd, dry ? ["--dry"] : [], { stdio: "inherit" })
+      const res = spawnSync(cmd, dry ? ["--handoff", pinId, "--dry"] : ["--handoff", pinId], { stdio: "inherit" })
       if (res.error) return die(`identity --park: could not run ${cmd} — ${res.error.message}`)
       return
     }
     // --submit: reset WITH --reboot — relaunch fresh, recovering itself.
     console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} context reset…`)
-    const res = spawnSync(cmd, dry ? ["--reboot", "--dry"] : ["--reboot"], { stdio: "inherit" })
+    const res = spawnSync(cmd, dry ? ["--reboot", "--handoff", pinId, "--dry"] : ["--reboot", "--handoff", pinId], { stdio: "inherit" })
     if (res.error) return die(`identity --submit: could not run ${cmd} — ${res.error.message}`)
     return
   }

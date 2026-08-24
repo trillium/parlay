@@ -212,7 +212,8 @@ func shellQuote(s string) string {
 // bin/reincarnate execs bin/context-reset, and bin/parlay-spawn only uses the
 // gascity subcommands — so this port has been allowed to drift: the bash side's
 // clean-end pinned-handoff echo to the pane tty (robots-q5yx) has no equivalent
-// here, and runResetCommand's --dry output omits its handoff-echo line. Wiring
+// here (nor its --handoff <id> flag), and runResetCommand's --dry output omits
+// its handoff-echo line. Wiring
 // this subcommand up to a real caller means reconciling both first.
 func buildWatcherScript(claudePID int, cmd, receiptPath, aid, server string, reboot bool) string {
 	rebootFlag := "0"
