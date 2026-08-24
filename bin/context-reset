@@ -16,6 +16,13 @@
 #   context-reset                             no reboot — verify shutdown only (deliberate end, == sudoku + a receipt)
 #   context-reset --dry                       print the plan; spawn nothing, kill nothing
 #
+# On a clean end (no --reboot — i.e. `identity --park`/`identity --complete`), nothing
+# relaunches to read the handoff back, and the watcher's own output is redirected to a
+# log file nobody looks at (see LOG below) — so the pinned handoff's content was being
+# recorded but never actually SEEN. Once claude is confirmed closed, the watcher now
+# also echoes the pinned handoff's full content directly to this session's tty (not the
+# log), so it lands in the pane's own scrollback as claude's last visible act.
+#
 # HARD RULE: never call this before a handoff bead exists and is pinned, or the
 # rebooted you wakes with amnesia. Prefer the atomic path: `handoff` skill to mint the
 # bead, then IMMEDIATELY `identity --submit` (no id — it resolves+pins the current
@@ -50,12 +57,26 @@ while [ "$pid" -gt 1 ]; do
 done
 [ -n "$CLAUDE_PID" ] || { echo "context-reset: could not find claude ancestor process." >&2; exit 1; }
 
+# ── capture this session's tty NOW — the writable target for the post-exit handoff
+# echo below. Must be resolved here (parent, still attached) since the watcher runs
+# detached with its own stdio redirected to $LOG. ──
+TTY_DEV=$(tty 2>/dev/null || true)
+[ -c "${TTY_DEV:-}" ] && [ -w "${TTY_DEV:-}" ] || TTY_DEV=""
+
+# ── who is this? (needed on EVERY path, not just --reboot) ──
+# Previously only resolved inside the --reboot branch below, so a --park/--complete
+# (or bare) call never had it: RECEIPT_DIR fell back to the generic, non-per-agent
+# $HOME/.parlay, the receipt's own "agent" field was written blank, and the pinned-
+# handoff lookup below (which needs the agent's own identity.md) had nothing to key
+# off. Resolve it once, unconditionally, from the env every parlay-launched session
+# already carries.
+AID="${PARLAY_AGENT_ID:-}"
+
 # ── derive the reboot command (only used with --reboot) ──
 # The identity IS the launch spec: reconstitute from it with one command. All the
 # vars (name/color/model/cwd/recovery prompt) live in the identity frontmatter and
 # template, not here — this just says "run the identity".
 if [ "$REBOOT" = "1" ] && [ -z "$CMD" ]; then
-  AID="${PARLAY_AGENT_ID:-}"
   if [ -z "$AID" ]; then
     echo "context-reset: --reboot needs either --cmd '<launch>' or PARLAY_AGENT_ID (so it knows which identity to run)." >&2
     exit 2
@@ -77,6 +98,15 @@ if [ -n "${AID:-}" ]; then RECEIPT_DIR="${PARLAY_AGENT_HOME:-$HOME/.parlay/agent
 RECEIPT="$RECEIPT_DIR/reincarnations.log"   # legacy name kept deliberately (see note above)
 mkdir -p "$RECEIPT_DIR" 2>/dev/null || true
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"   # for Change 3 self-verify
+
+# ── resolve the currently pinned handoff (if any), so the clean-end branch below can
+# echo its full content to the terminal. `identity --submit`/`--park` write this exact
+# marker line (packages/cli's mem.ts / tools/cli's mem.go, kept in parity) just before
+# calling this script, so it is already on disk by the time we get here.
+PINNED_HANDOFF=""
+if [ -n "${AID:-}" ] && [ -f "$RECEIPT_DIR/identity.md" ]; then
+  PINNED_HANDOFF=$(grep -m1 '^> 📎 Handoff:' "$RECEIPT_DIR/identity.md" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^ ]+).*/\1/')
+fi
 
 # ── the external watcher: verify claude closed, then optionally reboot ──
 # A panel-agent reboot first clears any lingering dead herdr tab so parlay-spawn's
@@ -146,6 +176,22 @@ if [ "$REBOOT" = "1" ]; then
 else
   echo "[\$(date '+%H:%M:%S')] no --reboot; staying dead. Clean end."
   _receipt clean_end ""
+  # Nothing relaunches to read this back, so surface it now or it's gone: echo the
+  # pinned handoff's full content straight to the pane's tty (not \$LOG, which nobody
+  # tails) as claude's last visible act in this session.
+  if [ -n "$PINNED_HANDOFF" ] && [ -n "$TTY_DEV" ] && [ -w "$TTY_DEV" ]; then
+    HANDOFF_TEXT=\$(handoff show "$PINNED_HANDOFF" 2>/dev/null)
+    if [ -n "\$HANDOFF_TEXT" ]; then
+      {
+        echo
+        echo "════════════════════════════════════════════════════════════"
+        echo "📎 $PINNED_HANDOFF — session ended, full handoff below:"
+        echo "════════════════════════════════════════════════════════════"
+        echo "\$HANDOFF_TEXT"
+        echo "════════════════════════════════════════════════════════════"
+      } > "$TTY_DEV" 2>/dev/null || true
+    fi
+  fi
 fi
 WSCRIPT
 
@@ -155,6 +201,13 @@ if [ "$DRY" = "1" ]; then
   echo "reboot     : $REBOOT"
   [ "$REBOOT" = "1" ] && echo "relaunch   : $CMD"
   echo "watcher log: $LOG"
+  if [ "$REBOOT" != "1" ]; then
+    if [ -n "$PINNED_HANDOFF" ] && [ -n "$TTY_DEV" ]; then
+      echo "handoff echo: $PINNED_HANDOFF would be echoed to $TTY_DEV on clean end"
+    else
+      echo "handoff echo: none (no pinned handoff and/or no writable tty found)"
+    fi
+  fi
   echo "(dry: no external process spawned, no sudoku, nothing killed)"
   exit 0
 fi
