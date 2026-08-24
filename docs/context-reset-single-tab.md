@@ -69,6 +69,14 @@ concurrent duplicate impossible; layer 3 is the belt to those suspenders.
 
 ## No regression
 
-`--reboot`, `--dry`, no-reboot (deliberate end), `--cmd <custom>`, and `--help`
-all behave as before; the hardening lives entirely in the reboot branch of the
-external watcher. Verified by dry-run across all paths.
+Scoped to the hardening above: it lives entirely in the reboot branch of the
+external watcher, so `--reboot`, `--dry`, no-reboot (deliberate end), `--cmd
+<custom>` and `--help` all behaved as before. Verified by dry-run across all
+paths.
+
+That is a statement about *this* change, not a standing claim that the script is
+frozen — the clean-end branch has since grown behavior of its own (the pinned
+handoff is echoed to the pane's tty, with `--handoff <id>` /
+`PARLAY_PINNED_HANDOFF` selecting which one). `bin/context-reset`'s own header
+comment owns the current flag and behavior inventory; read it there rather than
+inferring it from this brief.

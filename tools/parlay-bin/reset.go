@@ -23,8 +23,10 @@ handoff AND runs this), with nothing interposed.
 `
 
 // findAncestorClaudePID walks the process tree upward from pid, same as
-// context-reset's `sudoku` walk (lines 43–50): looks for an ancestor whose
-// `comm` is exactly "claude".
+// context-reset's `sudoku` walk: it looks for an ancestor whose `comm` is
+// exactly "claude". That walk is the script's "locate this session's claude
+// process" block — cited by section header rather than line number, which
+// drifts every time the script grows.
 func findAncestorClaudePID(pid int) (int, error) {
 	claudePID := 0
 	for pid > 1 {
