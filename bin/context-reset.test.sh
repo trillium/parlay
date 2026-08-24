@@ -91,6 +91,20 @@ PANE
   python3 "$ROOT/ptyrun.py" "bash $ROOT/pane.sh" </dev/null >"$capture" 2>&1
 }
 
+# Runs a command with a hard wall-clock bound and no dependency on `timeout` being
+# installed. A command that has to be killed reports 137, which is how a hang is
+# distinguished from a refusal.
+run_bounded() {
+  local secs="$1"; shift
+  "$@" >"$ROOT/bounded.out" 2>&1 &
+  local _p=$! _k rc
+  ( sleep "$secs"; kill -9 "$_p" 2>/dev/null ) >/dev/null 2>&1 &
+  _k=$!
+  wait "$_p"; rc=$?
+  kill "$_k" 2>/dev/null; wait "$_k" 2>/dev/null
+  return "$rc"
+}
+
 pin_handoff() {
   { echo "---"; echo "id: $AID"; echo "---"; echo; echo "> 📎 Handoff: $1 — pinned"; } > "$AGENT_DIR/identity.md"
 }
@@ -124,6 +138,11 @@ if printf '%s' "$DRY2" | grep -q 'handoff echo: none (pinned handoff predates th
   pass "a handoff pinned before this session started is dropped, not echoed"
 else
   fail "expected a stale-pin refusal, got: $(printf '%s' "$DRY2" | grep 'handoff echo' || echo "<no handoff echo line>")"
+fi
+if printf '%s' "$DRY2" | grep -q "handoff 'handoff-stale' will not be echoed"; then
+  pass "a stale pin is named when it is dropped, not dropped in silence"
+else
+  fail "dropping a stale pin left no diagnostic: $DRY2"
 fi
 
 # ── 3. no pin at all ────────────────────────────────────────────────────────
@@ -161,6 +180,11 @@ if printf '%s' "$DRY5" | grep -q 'handoff echo: none (handoff pointer is not a b
   pass "a pointer carrying shell syntax is rejected as unpinned"
 else
   fail "expected a not-a-bead-id report, got: $(printf '%s' "$DRY5" | grep 'handoff echo' || echo "<no handoff echo line>")"
+fi
+if printf '%s' "$DRY5" | grep -q "will not be echoed — the pointer in"; then
+  pass "an unusable pointer is named when it is dropped, not dropped in silence"
+else
+  fail "dropping an unusable pointer left no diagnostic: $DRY5"
 fi
 if [ -e "$SENTINEL" ]; then
   fail "a command substitution in the handoff pointer was evaluated"
@@ -204,12 +228,80 @@ else
   fail "a failed handoff lookup left no diagnostic; watcher log: $(watcher_logs | tr '\n' '|')"
 fi
 
-# ── 8. --help keeps the whole HARD RULE paragraph ───────────────────────────
+# ── 8. a drop decided before the watcher spawns still reaches the log ───────
+# A live --complete-shaped run (no --handoff, unusable pointer on disk): nothing is
+# echoed, and the watcher — the only thing still alive — has to say which id it was.
+pin_handoff 'nodashhere'
+run_in_fake_pane "$SCRIPT > $ROOT/live3.out 2>&1" "$ROOT/pty8.log" 'handoff echo SKIPPED'
+if watcher_logs | grep -q "handoff echo SKIPPED: 'nodashhere' not surfaced"; then
+  pass "a pointer dropped before the spawn is still named in the watcher log"
+else
+  fail "a parent-side drop left no watcher trace; watcher log: $(watcher_logs | tr '\n' '|')"
+fi
+
+# ── 9. a flag given no value refuses instead of spinning ────────────────────
+# `shift 2` with one argument left does not shift, so an unguarded loop never ends.
+for flag in --handoff --cmd; do
+  if run_bounded 10 "$SCRIPT" "$flag"; then
+    fail "$flag with no value exited 0 instead of refusing"
+  else
+    rc=$?
+    if [ "$rc" = "2" ] && grep -q "context-reset: $flag needs" "$ROOT/bounded.out"; then
+      pass "$flag with no value refuses with a usage error"
+    else
+      fail "$flag with no value did not refuse cleanly (exit $rc): $(cat "$ROOT/bounded.out")"
+    fi
+  fi
+done
+
+# ── 10. the staleness guard survives a GNU-coreutils stat ───────────────────
+# GNU's -f is --file-system: it prints to stdout AND exits non-zero, so a
+# `stat -f %m || stat -c %Y` chain captures both answers and every later numeric
+# comparison errors out, silently disabling the guard. The stub reproduces that
+# shape exactly; the guard must still fire.
+cat > "$ROOT/bin/stat" <<'GNUSTAT'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -c) [ "${2:-}" = "%Y" ] || { echo "stat: bad format" >&2; exit 1; }
+      shift 2; rc=0
+      for f in "$@"; do
+        if [ -e "$f" ]; then date -r "$f" +%s; else echo "stat: cannot stat '$f'" >&2; rc=1; fi
+      done
+      exit "$rc" ;;
+  -f) shift; rc=0
+      for f in "$@"; do
+        if [ -e "$f" ]; then printf '  File: "%s"
+    ID: 0 Namelen: 255
+' "$f"
+        else echo "stat: cannot read file system information for '$f'" >&2; rc=1; fi
+      done
+      exit "$rc" ;;
+esac
+exit 1
+GNUSTAT
+chmod +x "$ROOT/bin/stat"
+pin_handoff "handoff-gnustale"
+touch -t 200001010000 "$AGENT_DIR/identity.md"
+run_in_fake_pane "$SCRIPT --dry > $ROOT/dry10.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty10.log"
+DRY10="$(cat "$ROOT/dry10.out" 2>/dev/null || true)"
+rm -f "$ROOT/bin/stat"
+if printf '%s' "$DRY10" | grep -q 'handoff echo: none (pinned handoff predates this session'; then
+  pass "the staleness guard still fires where stat speaks GNU, not BSD"
+else
+  fail "the staleness guard did not fire under a GNU stat, got: $(printf '%s' "$DRY10" | grep 'handoff echo' || echo "<no handoff echo line>")"
+fi
+
+# ── 11. --help keeps the whole HARD RULE paragraph ──────────────────────────
 HELP="$("$SCRIPT" --help 2>&1)"
 if printf '%s' "$HELP" | grep -q 'which pins + resets your context in one act'; then
   pass "--help prints the HARD RULE paragraph through to its last sentence"
 else
   fail "--help truncated the HARD RULE paragraph; last line was: $(printf '%s' "$HELP" | tail -1)"
+fi
+if printf '%s' "$HELP" | grep -q 'COVERAGE BOUNDARY: this echo needs a controlling terminal'; then
+  pass "--help states the no-tty coverage boundary"
+else
+  fail "--help does not mention the no-tty coverage boundary"
 fi
 
 [ "$FAILED" = "0" ] && echo "ALL PASS" || echo "SOME TESTS FAILED" >&2

@@ -31,6 +31,11 @@
 # to an earlier session, so it is announced as the agent's LAST KNOWN handoff and is
 # dropped entirely when it predates this claude process.
 #
+# COVERAGE BOUNDARY: this echo needs a controlling terminal. An agent whose claude has
+# none — the gascity launcher runs `exec claude` inside a detached `sh -c` child, so
+# `ps -o tty=` answers `??` — has no pane to write to, and its handoff is recorded in
+# the watcher log only. Terminal/herdr-launched agents are the covered case.
+#
 # HARD RULE: never call this before a handoff bead exists and is pinned, or the
 # rebooted you wakes with amnesia. Prefer the atomic path: `handoff` skill to mint the
 # bead, then IMMEDIATELY `identity --submit` (no id — it resolves+pins the current
@@ -43,10 +48,12 @@ REBOOT=0; DRY=0; CMD=""; PIN_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --reboot)  REBOOT=1; shift ;;
-    --cmd)     CMD="${2:-}"; shift 2 ;;
-    --handoff) PIN_ARG="${2:-}"; shift 2 ;;
+    --cmd)     [ $# -ge 2 ] || { echo "context-reset: --cmd needs a launch command" >&2; exit 2; }
+               CMD="$2"; shift 2 ;;
+    --handoff) [ $# -ge 2 ] || { echo "context-reset: --handoff needs an id" >&2; exit 2; }
+               PIN_ARG="$2"; shift 2 ;;
     --dry)     DRY=1; shift ;;
-    -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "context-reset: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -127,7 +134,19 @@ PINNED_HANDOFF=""
 HANDOFF_STALE=0
 HANDOFF_MALFORMED=0
 HANDOFF_SRC=""
+HANDOFF_DROPPED=""
+HANDOFF_DROP_WHY=""
 IDENTITY_MD="$RECEIPT_DIR/identity.md"
+
+# A dropped pointer is announced on the way out AND carried to the watcher, so the
+# same contract the watcher keeps — every shortfall names the handoff it could not
+# surface — holds for the drops decided here, where nothing is left to report them.
+_drop_handoff() {
+  local _v="$1"
+  [ "${#_v}" -le 120 ] || _v="$(printf '%.120s' "$_v")..."
+  HANDOFF_DROPPED="$_v"; HANDOFF_DROP_WHY="$2"
+  echo "context-reset: handoff '$_v' will not be echoed — $2." >&2
+}
 
 _is_bead_id() {
   case "${1:-}" in
@@ -142,7 +161,7 @@ if [ -n "$PIN_ARG" ]; then
     PINNED_HANDOFF="$PIN_ARG"; HANDOFF_SRC="flag"
   else
     HANDOFF_MALFORMED=1
-    echo "context-reset: --handoff '$PIN_ARG' is not a bead id — ignoring it." >&2
+    _drop_handoff "$PIN_ARG" "--handoff was not given a bead id"
   fi
 elif [ -n "${AID:-}" ] && [ -f "$IDENTITY_MD" ]; then
   _pin=$(grep -m1 '^> 📎 Handoff: ' "$IDENTITY_MD" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^[:space:]]+)([[:space:]].*)?$/\1/')
@@ -150,6 +169,7 @@ elif [ -n "${AID:-}" ] && [ -f "$IDENTITY_MD" ]; then
     PINNED_HANDOFF="$_pin"; HANDOFF_SRC="scrape"
   elif [ -n "${_pin:-}" ]; then
     HANDOFF_MALFORMED=1
+    _drop_handoff "$_pin" "the pointer in $IDENTITY_MD is not a bead id"
   fi
 fi
 
@@ -171,15 +191,36 @@ _claude_start_epoch() {
   echo $(( $(date +%s) - (10#$dd * 86400 + 10#$hh * 3600 + 10#$mm * 60 + 10#$ss) ))
 }
 
+# `stat -f %m` (BSD) and `stat -c %Y` (GNU) are not an exit-status fallback pair: GNU's
+# -f is --file-system, which prints to stdout AND exits non-zero, so chaining them
+# concatenates two answers into one unusable value. Probe the form once instead, and
+# compare only a bare integer — an unreadable mtime is unknown, never an error.
+_file_mtime() {
+  case "${_STAT_FORM:-}" in
+    "") if stat -f %m . >/dev/null 2>&1; then _STAT_FORM=bsd
+        elif stat -c %Y . >/dev/null 2>&1; then _STAT_FORM=gnu
+        else _STAT_FORM=none; fi ;;
+  esac
+  local _m=""
+  case "$_STAT_FORM" in
+    bsd) _m=$(stat -f %m "$1" 2>/dev/null) ;;
+    gnu) _m=$(stat -c %Y "$1" 2>/dev/null) ;;
+  esac
+  case "${_m:-}" in ""|*[!0-9]*) return 0 ;; esac
+  echo "$_m"
+}
+
 # Staleness guard, scrape-only: a pointer older than this claude process belongs to a
 # previous session on this agent id and must not be echoed at all. It is best-effort
 # (identity.md's mtime moves on ANY write, not just a pin) which is exactly why it is
 # the fallback and --handoff is the authoritative signal. Unmeasurable timestamps fail
 # OPEN — a missing ps/stat field must not silently disable the echo this exists for.
 if [ -n "$PINNED_HANDOFF" ] && [ "$HANDOFF_SRC" = "scrape" ]; then
-  _md_mtime=$(stat -f %m "$IDENTITY_MD" 2>/dev/null || stat -c %Y "$IDENTITY_MD" 2>/dev/null || true)
+  _md_mtime=$(_file_mtime "$IDENTITY_MD")
   _cl_start=$(_claude_start_epoch)
+  case "${_cl_start:-}" in *[!0-9]*) _cl_start="" ;; esac
   if [ -n "${_md_mtime:-}" ] && [ -n "${_cl_start:-}" ] && [ "$_md_mtime" -lt "$_cl_start" ]; then
+    _drop_handoff "$PINNED_HANDOFF" "it predates this claude process, so it belongs to an earlier session"
     PINNED_HANDOFF=""; HANDOFF_STALE=1
   fi
 fi
@@ -325,6 +366,8 @@ else
     fi
   elif [ -n "\${CR_HANDOFF:-}" ]; then
     echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: no writable pane tty was resolvable (\$CR_HANDOFF not shown)"
+  elif [ -n "\${CR_HANDOFF_DROP:-}" ]; then
+    echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: '\$CR_HANDOFF_DROP' not surfaced — \${CR_HANDOFF_DROP_WHY:-unusable}"
   fi
 fi
 WSCRIPT
@@ -358,6 +401,7 @@ fi
 
 # ── spawn the external watcher DETACHED (survives claude's death), then sudoku ──
 CR_HANDOFF="$PINNED_HANDOFF" CR_TTY="$TTY_DEV" CR_PANE_PID="${PANE_PID:-}" CR_HANDOFF_SRC="$HANDOFF_SRC" \
+  CR_HANDOFF_DROP="$HANDOFF_DROPPED" CR_HANDOFF_DROP_WHY="$HANDOFF_DROP_WHY" \
   nohup bash -c "$WATCHER" >"$LOG" 2>&1 </dev/null &
 disown 2>/dev/null || true
 echo "context-reset: external watcher launched (log: $LOG). Terminating claude $CLAUDE_PID (sudoku)..."
