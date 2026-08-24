@@ -163,6 +163,7 @@ _is_bead_id() {
 }
 
 PIN_ENV="${PARLAY_PINNED_HANDOFF:-}"
+unset PARLAY_PINNED_HANDOFF
 if [ -n "$PIN_ARG" ] || [ -n "$PIN_ENV" ]; then
   if [ -n "$PIN_ARG" ]; then
     _pin_in="$PIN_ARG"; _pin_why="--handoff was not given a bead id"

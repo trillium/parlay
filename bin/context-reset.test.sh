@@ -55,7 +55,8 @@ PY
 # the degraded path (a bead the store cannot produce) is exercisable too.
 cat > "$ROOT/bin/handoff" <<'STUB'
 #!/usr/bin/env bash
-if [ "${1:-}" = "show" ] && [ "${2:-}" = "handoff-live1" ]; then
+if [ "${1:-}" = "show" ]; then
+  case "${2:-}" in handoff-live1|handoff-live2) ;; *) exit 1 ;; esac
   echo "HANDOFF-BODY-MARKER for $2"
   exit 0
 fi
@@ -403,6 +404,47 @@ if "$SCRIPT" --unknown-flag-this-script-never-had >/dev/null 2>&1; then
   fail "an unknown FLAG was accepted — the version-skew hazard the env transport avoids"
 else
   pass "an unknown flag is still refused, which is why the pin travels in the environment"
+fi
+
+# ── 15. the pin is consumed here, never handed down to what this script starts ──
+# The env transport reaches every descendant, unlike the argv flag it replaced: the
+# detached watcher, the reboot command it evals, and the agent that command relaunches
+# would all inherit this session's pin — and the next session's --complete would then
+# print its predecessor's handoff under the "pinned by this session" banner. So the
+# value has to stop at this process. PARLAY_AGENT_ID is dropped for this case only so
+# the watcher's post-reboot channel poll (90s, needs a live server) is skipped.
+cat > "$ROOT/bin/record-relaunch" <<RECORDER
+#!/usr/bin/env bash
+env > $ROOT/relaunch.env
+echo "RELAUNCH-RAN"
+RECORDER
+chmod +x "$ROOT/bin/record-relaunch"
+rm -f "$ROOT/relaunch.env"
+{ echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
+run_in_fake_pane "$(guarded "env -u PARLAY_AGENT_ID PARLAY_PINNED_HANDOFF=handoff-live1 PARLAY_PIN_TEST_CONTROL=present $SCRIPT --reboot --cmd record-relaunch > $ROOT/live4.out 2>&1")" \
+  "$ROOT/pty17.log" 'RELAUNCH-RAN'
+guard_held "case 15" || true
+if [ ! -s "$ROOT/relaunch.env" ]; then
+  fail "the reboot command never ran, so nothing was proven about what it inherits; watcher log: $(watcher_logs | tr '\n' '|')"
+elif ! grep -q '^PARLAY_PIN_TEST_CONTROL=present$' "$ROOT/relaunch.env"; then
+  fail "the recorded environment is not the one the invocation was given — the absence check below would be vacuous"
+elif grep -q '^PARLAY_PINNED_HANDOFF=' "$ROOT/relaunch.env"; then
+  fail "the relaunched session inherited this session's pin: $(grep '^PARLAY_PINNED_HANDOFF=' "$ROOT/relaunch.env")"
+else
+  pass "neither the watcher nor the command it reboots inherits PARLAY_PINNED_HANDOFF"
+fi
+
+# Consuming it must not mean dropping it: the same env pin still has to reach the pane
+# on the clean-end path, announced as this session's.
+{ echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
+run_in_fake_pane "$(guarded "PARLAY_PINNED_HANDOFF=handoff-live2 $SCRIPT > $ROOT/live5.out 2>&1")" \
+  "$ROOT/pty18.log" 'handoff echo: handoff-live2 written'
+guard_held "case 15b" || true
+PANE18="$(cat "$ROOT/pty18.log" 2>/dev/null || true)"
+if printf '%s' "$PANE18" | grep -q 'HANDOFF-BODY-MARKER' && printf '%s' "$PANE18" | grep -q 'session ended, full handoff below'; then
+  pass "an env-supplied pin still reaches the pane as this session's handoff"
+else
+  fail "the env pin did not reach the pane; watcher log: $(watcher_logs | tr '\n' '|')"
 fi
 
 [ "$FAILED" = "0" ] && echo "ALL PASS" || echo "SOME TESTS FAILED" >&2
