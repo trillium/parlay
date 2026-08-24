@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
     --reboot) REBOOT=1; shift ;;
     --cmd)    CMD="${2:-}"; shift 2 ;;
     --dry)    DRY=1; shift ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "context-reset: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -57,11 +57,18 @@ while [ "$pid" -gt 1 ]; do
 done
 [ -n "$CLAUDE_PID" ] || { echo "context-reset: could not find claude ancestor process." >&2; exit 1; }
 
-# ── capture this session's tty NOW — the writable target for the post-exit handoff
-# echo below. Must be resolved here (parent, still attached) since the watcher runs
-# detached with its own stdio redirected to $LOG. ──
-TTY_DEV=$(tty 2>/dev/null || true)
-[ -c "${TTY_DEV:-}" ] && [ -w "${TTY_DEV:-}" ] || TTY_DEV=""
+# ── capture the PANE's tty NOW — the writable target for the post-exit handoff
+# echo below. Resolved from the CLAUDE process, never from this script's own fd 0:
+# on the real path (claude's Bash tool -> `parlay identity --park/--submit` -> here)
+# stdin is a pipe, so `tty` answers "not a tty" and the echo would never fire. Must
+# be resolved here (parent, still attached) since the watcher runs detached with its
+# own stdio redirected to $LOG. PANE_PID (claude's parent, i.e. the pane's shell) is
+# recorded alongside so the watcher can tell a still-open pane from a closed one
+# whose /dev/ttysNNN has since been handed to somebody else. ──
+_dev_path() { case "${1:-}" in ""|"?"|"??") printf '' ;; /dev/*) printf '%s' "$1" ;; *) printf '/dev/%s' "$1" ;; esac; }
+PANE_PID=$(ps -o ppid= -p "$CLAUDE_PID" 2>/dev/null | tr -d ' ')
+TTY_DEV=$(_dev_path "$(ps -o tty= -p "$CLAUDE_PID" 2>/dev/null | tr -d ' ')")
+[ -n "$TTY_DEV" ] && [ -c "$TTY_DEV" ] && [ -w "$TTY_DEV" ] || TTY_DEV=""
 
 # ── who is this? (needed on EVERY path, not just --reboot) ──
 # Previously only resolved inside the --reboot branch below, so a --park/--complete
@@ -104,8 +111,42 @@ PARLAY="${PARLAY_SERVER:-http://localhost:31337}"   # for Change 3 self-verify
 # marker line (packages/cli's mem.ts / tools/cli's mem.go, kept in parity) just before
 # calling this script, so it is already on disk by the time we get here.
 PINNED_HANDOFF=""
-if [ -n "${AID:-}" ] && [ -f "$RECEIPT_DIR/identity.md" ]; then
-  PINNED_HANDOFF=$(grep -m1 '^> 📎 Handoff:' "$RECEIPT_DIR/identity.md" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^ ]+).*/\1/')
+HANDOFF_STALE=0
+IDENTITY_MD="$RECEIPT_DIR/identity.md"
+if [ -n "${AID:-}" ] && [ -f "$IDENTITY_MD" ]; then
+  PINNED_HANDOFF=$(grep -m1 '^> 📎 Handoff:' "$IDENTITY_MD" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^ ]+).*/\1/')
+fi
+
+# Elapsed-time -> epoch for claude's own start. `ps -o etime=` ([[DD-]HH:]MM:SS) is
+# portable where `lstart`'s locale-dependent date string is not. Prints nothing when
+# it cannot be determined.
+_claude_start_epoch() {
+  local et rest dd=0 hh=0 mm=0 ss=0
+  et=$(ps -o etime= -p "$CLAUDE_PID" 2>/dev/null | tr -d ' ')
+  [ -n "$et" ] || return 0
+  case "$et" in *-*) dd="${et%%-*}"; et="${et#*-}" ;; esac
+  rest="$et"
+  case "$rest" in
+    *:*:*) hh="${rest%%:*}"; rest="${rest#*:}"; mm="${rest%%:*}"; ss="${rest##*:}" ;;
+    *:*)   mm="${rest%%:*}"; ss="${rest##*:}" ;;
+    *)     ss="$rest" ;;
+  esac
+  case "$dd$hh$mm$ss" in ""|*[!0-9]*) return 0 ;; esac
+  echo $(( $(date +%s) - (10#$dd * 86400 + 10#$hh * 3600 + 10#$mm * 60 + 10#$ss) ))
+}
+
+# Staleness guard: `identity --complete` closes the store item WITHOUT pinning (only
+# --handoff/--submit/--park pin), so a pointer left by an EARLIER session would
+# otherwise be echoed under this session's "session ended" banner. A pin written by
+# this run necessarily post-dates the claude process; anything older predates it and
+# is dropped. Unmeasurable timestamps fail OPEN — a missing ps/stat field must not
+# silently disable the echo this script exists for.
+if [ -n "$PINNED_HANDOFF" ]; then
+  _md_mtime=$(stat -f %m "$IDENTITY_MD" 2>/dev/null || stat -c %Y "$IDENTITY_MD" 2>/dev/null || true)
+  _cl_start=$(_claude_start_epoch)
+  if [ -n "${_md_mtime:-}" ] && [ -n "${_cl_start:-}" ] && [ "$_md_mtime" -lt "$_cl_start" ]; then
+    PINNED_HANDOFF=""; HANDOFF_STALE=1
+  fi
 fi
 
 # ── the external watcher: verify claude closed, then optionally reboot ──
@@ -178,18 +219,29 @@ else
   _receipt clean_end ""
   # Nothing relaunches to read this back, so surface it now or it's gone: echo the
   # pinned handoff's full content straight to the pane's tty (not \$LOG, which nobody
-  # tails) as claude's last visible act in this session.
-  if [ -n "$PINNED_HANDOFF" ] && [ -n "$TTY_DEV" ] && [ -w "$TTY_DEV" ]; then
-    HANDOFF_TEXT=\$(handoff show "$PINNED_HANDOFF" 2>/dev/null)
-    if [ -n "\$HANDOFF_TEXT" ]; then
-      {
-        echo
-        echo "════════════════════════════════════════════════════════════"
-        echo "📎 $PINNED_HANDOFF — session ended, full handoff below:"
-        echo "════════════════════════════════════════════════════════════"
-        echo "\$HANDOFF_TEXT"
-        echo "════════════════════════════════════════════════════════════"
-      } > "$TTY_DEV" 2>/dev/null || true
+  # tails) as claude's last visible act in this session. CR_* arrive through the
+  # ENVIRONMENT rather than spliced into this script, so a handoff id or device path
+  # containing \$( ) or a backtick cannot be evaluated by this shell.
+  if [ -n "\${CR_HANDOFF:-}" ] && [ -n "\${CR_TTY:-}" ]; then
+    # The pane may have exited with claude, and a released /dev/ttysNNN is handed to
+    # the next session — writable is NOT proof it is still ours. Require the pane's
+    # own shell to still be alive AND still hold that exact device.
+    _pane_tty=\$(ps -o tty= -p "\${CR_PANE_PID:-0}" 2>/dev/null | tr -d ' ')
+    case "\$_pane_tty" in ""|"?"|"??") _pane_tty="" ;; /dev/*) ;; *) _pane_tty="/dev/\$_pane_tty" ;; esac
+    if [ -n "\$_pane_tty" ] && [ "\$_pane_tty" = "\$CR_TTY" ] && [ -c "\$CR_TTY" ] && [ -w "\$CR_TTY" ]; then
+      HANDOFF_TEXT=\$(handoff show "\$CR_HANDOFF" 2>/dev/null)
+      if [ -n "\$HANDOFF_TEXT" ]; then
+        {
+          echo
+          echo "════════════════════════════════════════════════════════════"
+          echo "📎 \$CR_HANDOFF — session ended, full handoff below:"
+          echo "════════════════════════════════════════════════════════════"
+          echo "\$HANDOFF_TEXT"
+          echo "════════════════════════════════════════════════════════════"
+        } > "\$CR_TTY" 2>/dev/null || true
+      fi
+    else
+      echo "[\$(date '+%H:%M:%S')] handoff echo SKIPPED: pane \${CR_PANE_PID:-?} no longer holds \$CR_TTY (\$CR_HANDOFF not shown)"
     fi
   fi
 fi
@@ -204,8 +256,12 @@ if [ "$DRY" = "1" ]; then
   if [ "$REBOOT" != "1" ]; then
     if [ -n "$PINNED_HANDOFF" ] && [ -n "$TTY_DEV" ]; then
       echo "handoff echo: $PINNED_HANDOFF would be echoed to $TTY_DEV on clean end"
+    elif [ "$HANDOFF_STALE" = "1" ]; then
+      echo "handoff echo: none (pinned handoff predates this session — nothing pinned by this run)"
+    elif [ -z "$TTY_DEV" ]; then
+      echo "handoff echo: none (no writable tty for claude $CLAUDE_PID)"
     else
-      echo "handoff echo: none (no pinned handoff and/or no writable tty found)"
+      echo "handoff echo: none (no pinned handoff in $IDENTITY_MD)"
     fi
   fi
   echo "(dry: no external process spawned, no sudoku, nothing killed)"
@@ -213,7 +269,8 @@ if [ "$DRY" = "1" ]; then
 fi
 
 # ── spawn the external watcher DETACHED (survives claude's death), then sudoku ──
-nohup bash -c "$WATCHER" >"$LOG" 2>&1 </dev/null &
+CR_HANDOFF="$PINNED_HANDOFF" CR_TTY="$TTY_DEV" CR_PANE_PID="${PANE_PID:-}" \
+  nohup bash -c "$WATCHER" >"$LOG" 2>&1 </dev/null &
 disown 2>/dev/null || true
 echo "context-reset: external watcher launched (log: $LOG). Terminating claude $CLAUDE_PID (sudoku)..."
 sleep 1
