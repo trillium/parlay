@@ -207,11 +207,27 @@ HANDOFF_DROPPED=""
 HANDOFF_DROP_WHY=""
 IDENTITY_MD="$RECEIPT_DIR/identity.md"
 
+# Everything below that names a REJECTED value has to survive being written to a live
+# terminal, so it goes through the same filter the watcher applies to a handoff body:
+# every C0 control but newline and tab, DEL, and the UTF-8 encoding of the C1 block are
+# deleted, which removes the introducer of every escape sequence while leaving printable
+# UTF-8 intact. A value that filters away to nothing is named as unprintable rather than
+# printed as an empty string, so the diagnostic never loses its subject.
+_printable() {
+  local _in="$1" _out _c1
+  [ -n "$_in" ] || return 0
+  _c1="$(printf '\302')[$(printf '\200')-$(printf '\237')]"
+  _out=$(printf '%s' "$_in" | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' 2>/dev/null \
+         | LC_ALL=C sed "s/$_c1//g" 2>/dev/null)
+  if [ -n "$_out" ]; then printf '%s' "$_out"; else printf '%s' "<unprintable>"; fi
+}
+
 # A dropped pointer is announced on the way out AND carried to the watcher, so the
 # same contract the watcher keeps — every shortfall names the handoff it could not
 # surface — holds for the drops decided here, where nothing is left to report them.
 _drop_handoff() {
-  local _v="$1"
+  local _v
+  _v="$(_printable "$1")"
   [ "${#_v}" -le 120 ] || _v="$(printf '%.120s' "$_v")..."
   HANDOFF_DROPPED="$_v"; HANDOFF_DROP_WHY="$2"
   echo "context-reset: handoff '$_v' will not be echoed — $2." >&2
@@ -419,11 +435,14 @@ else
   # window or reach the clipboard, and a terminal QUERY would make the terminal write
   # its answer onto this tty's INPUT, where the waiting shell reads it as typed
   # characters. A body that cannot be filtered is treated as no body at all — the
-  # pointer fallback is the safe degradation, never the raw bytes.
+  # pointer fallback is the safe degradation, never the raw bytes. The FILTER RESULT is
+  # what gates the terminal write below, not the file's size: a filter that fails part
+  # way through must not be able to leave readable bytes behind and have them mistaken
+  # for a filtered body.
   _sanitize_body() {
     local _f="\$1" _raw="\$1.raw" _c1
     _c1="\$(printf '\302')[\$(printf '\200')-\$(printf '\237')]"
-    mv -f "\$_f" "\$_raw" 2>/dev/null || return 1
+    mv -f "\$_f" "\$_raw" 2>/dev/null || { : > "\$_f" 2>/dev/null; return 1; }
     : > "\$_f" 2>/dev/null || { rm -f "\$_raw" 2>/dev/null; return 1; }
     if LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' < "\$_raw" 2>/dev/null \
        | LC_ALL=C sed "s/\$_c1//g" > "\$_f" 2>/dev/null; then
@@ -448,19 +467,26 @@ else
         _banner="📎 \$CR_HANDOFF — session ended; this agent's LAST KNOWN handoff (not pinned by this session):"
       fi
       _body="$LOG.handoff"
+      _san_rc=0
       : > "\$_body" 2>/dev/null || true
       if ! command -v handoff >/dev/null 2>&1; then
         echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: 'handoff' is not on the watcher's PATH — showing the pointer for \$CR_HANDOFF instead of its body"
       else
         _handoff_show "\$CR_HANDOFF" "\$_body"; _rc=\$?
-        if [ -s "\$_body" ] && ! _sanitize_body "\$_body"; then
-          echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: the body of \$CR_HANDOFF could not be filtered for a terminal — showing the pointer instead"
+        _had_body=0; [ -s "\$_body" ] && _had_body=1
+        if [ "\$_had_body" = "1" ]; then
+          _sanitize_body "\$_body"; _san_rc=\$?
         fi
-        if [ ! -s "\$_body" ]; then
+        if [ "\$_san_rc" != "0" ]; then
+          : > "\$_body" 2>/dev/null || rm -f "\$_body" 2>/dev/null
+          echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: the body of \$CR_HANDOFF could not be filtered for a terminal — showing the pointer instead"
+        elif [ "\$_had_body" = "1" ] && [ ! -s "\$_body" ]; then
+          echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: the body of \$CR_HANDOFF was entirely non-printable and filtered away — showing the pointer instead"
+        elif [ "\$_had_body" = "0" ]; then
           echo "[\$(date '+%H:%M:%S')] handoff echo DEGRADED: 'handoff show \$CR_HANDOFF' produced no output (exit \$_rc; timeout is \${_HO_TIMEOUT}s) — showing the pointer instead"
         fi
       fi
-      if [ -s "\$_body" ]; then
+      if [ "\$_san_rc" = "0" ] && [ -s "\$_body" ]; then
         if { echo; echo "\$_bar"; echo "\$_banner"; echo "\$_bar"; cat "\$_body"; echo "\$_bar"; } > "\$CR_TTY" 2>/dev/null; then
           echo "[\$(date '+%H:%M:%S')] handoff echo: \$CR_HANDOFF written to \$CR_TTY"
         else

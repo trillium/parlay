@@ -100,7 +100,12 @@ chmod +x "$ROOT/bin/handoff"
 # the real Bash-tool shape. The chain is detached twice so the ancestor walk
 # terminates at the fake claude:
 #   pty -> [detached] pane shell -> claude -> $1
-# The pane shell deliberately outlives claude, exactly as a real pane's shell does.
+# The pane shell deliberately outlives claude, exactly as a real pane's shell does —
+# but it hands its pty descriptors back first. A pty master only reports EOF once no
+# process anywhere holds an fd on the slave, so a detached grandchild that keeps the
+# inherited ones open holds the reader for its whole lifetime; redirecting them away
+# before the sleep lets the run finish as soon as the pane loop does, while the
+# process itself stays alive to be killed.
 # $3 is an optional regex; the pane stays up until the detached watcher logs it (so
 # a full non-dry run finishes as soon as the echo has happened, not on a fixed
 # timer). Captured pty output — everything the pane would have shown — lands in $2.
@@ -112,7 +117,7 @@ run_in_fake_pane() {
   cat > "$ROOT/pane.sh" <<PANE
 export PATH=$ROOT/bin:\$PATH HOME=$ROOT TMPDIR=$ROOT CLAUDECODE=1
 export PARLAY_AGENT_ID=$AID PARLAY_AGENT_HOME=$ROOT/agents
-( bash -c 'claude $ROOT/inner.sh </dev/null; sleep 25' & ) &
+( bash -c 'claude $ROOT/inner.sh </dev/null; exec >>$ROOT/pane-child.log 2>&1 </dev/null; sleep 25' & ) &
 _re=\$(cat $ROOT/until.re)
 for _ in \$(seq 1 200); do
   [ -f $ROOT/inner.done ] && break
@@ -564,6 +569,65 @@ if printf '%s' "$DRY22" | grep -q 'handoff echo: none — handoff-live1 is delib
   pass "--reboot names the pin it is deliberately not echoing"
 else
   fail "the reboot path reported nothing about the pin it holds: $(printf '%s' "$DRY22" | grep 'handoff echo' || echo '<no handoff echo line>')"
+fi
+
+# ── 17. a filter that fails part way through shows the pointer, not the bytes ──
+# `_sanitize_body` moves the body aside before rewriting it, and that move can fail —
+# on a full or read-only filesystem, or where the destination is already occupied.
+# Deciding what to print from the file's SIZE rather than from the filter's verdict
+# would then put the unfiltered, agent-authored body on a live terminal while the log
+# said the pointer had been shown. The destination is pre-occupied by a non-empty
+# directory of the file's own name, which `mv` can neither rename over nor move into.
+{ echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
+run_in_fake_pane "$(guarded "mkdir -p \$TMPDIR/reincarnate-\$\$.log.handoff.raw/reincarnate-\$\$.log.handoff/occupied
+$SCRIPT --handoff handoff-esc1 > $ROOT/live7.out 2>&1")" \
+  "$ROOT/pty23.log" 'handoff echo: pointer for handoff-esc1'
+guard_held "case 17" || true
+if ! LC_ALL=C grep -q 'run .handoff show handoff-esc1.' "$ROOT/pty23.log" 2>/dev/null; then
+  fail "the run never reached the pane, so the leak assertions would be vacuous; watcher log: $(watcher_logs | tr '\n' '|')"
+else
+  pass "a body that could not be filtered still puts the pointer on the pane"
+  LEAKED=""
+  LC_ALL=C grep -q "$(printf '\033')" "$ROOT/pty23.log" && LEAKED="$LEAKED ESC"
+  LC_ALL=C grep -q "$(printf '\007')" "$ROOT/pty23.log" && LEAKED="$LEAKED BEL"
+  LC_ALL=C grep -q "$(printf '\302\233')" "$ROOT/pty23.log" && LEAKED="$LEAKED C1-CSI"
+  LC_ALL=C grep -q 'HANDOFF-BODY-MARKER' "$ROOT/pty23.log" && LEAKED="$LEAKED BODY"
+  if [ -n "$LEAKED" ]; then
+    fail "an unfiltered body reached the pane device after the filter failed:$LEAKED"
+  else
+    pass "no byte of an unfilterable body reaches the terminal"
+  fi
+  if watcher_logs | grep -q 'handoff echo DEGRADED: the body of handoff-esc1 could not be filtered'; then
+    pass "the failed filter is logged, naming the handoff it fell back on"
+  else
+    fail "a failed filter left no diagnostic; watcher log: $(watcher_logs | tr '\n' '|')"
+  fi
+fi
+
+# ── 18. the REJECTION message is terminal output too ────────────────────────
+# identity.md's pointer is hand-editable free text, and refusing it prints it — on the
+# live pane, while the shell is at a prompt. So the value has to be filtered on the way
+# into the diagnostic, exactly as a body is: the surrounding text must survive and no
+# introducer may reach the device.
+pin_handoff "$(printf 'handoff-\033]0;PWN-POINTER\007x')"
+run_in_fake_pane "$SCRIPT --dry > $ROOT/dry23.out; touch $ROOT/inner.done" "$ROOT/pty24.log"
+if ! LC_ALL=C grep -q 'PWN-POINTER' "$ROOT/pty24.log" 2>/dev/null; then
+  fail "the rejected pointer never reached the pane, so the leak assertions would be vacuous: $(cat "$ROOT/pty24.log" 2>/dev/null | cat -v)"
+else
+  pass "a rejected pointer is still named on the pane"
+  LEAKED=""
+  LC_ALL=C grep -q "$(printf '\033')" "$ROOT/pty24.log" && LEAKED="$LEAKED ESC"
+  LC_ALL=C grep -q "$(printf '\007')" "$ROOT/pty24.log" && LEAKED="$LEAKED BEL"
+  if [ -n "$LEAKED" ]; then
+    fail "an escape sequence from a rejected pointer reached the pane device:$LEAKED"
+  else
+    pass "no ESC or BEL from a rejected pointer reaches the terminal"
+  fi
+fi
+if grep -q 'handoff echo: none (handoff pointer is not a bead id' "$ROOT/dry23.out" 2>/dev/null; then
+  pass "a pointer carrying an escape sequence is rejected as unusable"
+else
+  fail "expected a not-a-bead-id refusal, got: $(grep 'handoff echo' "$ROOT/dry23.out" 2>/dev/null | cat -v || echo '<no handoff echo line>')"
 fi
 
 [ "$FAILED" = "0" ] && echo "ALL PASS" || echo "SOME TESTS FAILED" >&2
