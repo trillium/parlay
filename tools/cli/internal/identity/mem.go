@@ -103,6 +103,20 @@ func runInheritIgnoreExit(name string, argv ...string) error {
 	return runInherit(name, argv...)
 }
 
+// pinnedHandoffEnv carries the id this run just pinned to context-reset.
+//
+// Deliberately an environment variable rather than an argv flag: the script is
+// resolved on PATH while this binary is built per checkout, so the two versions
+// drift. An older context-reset ignores an unknown env var and falls back to
+// scraping identity.md, where it would REFUSE an unknown flag with exit 2 —
+// which runInheritIgnoreExit does not inspect, so the agent would announce a
+// park/submit whose shutdown never happened.
+const pinnedHandoffEnv = "PARLAY_PINNED_HANDOFF"
+
+func pinnedHandoffEnviron(pinID string) []string {
+	return []string{pinnedHandoffEnv + "=" + pinID}
+}
+
 func exitStatusMessage(err error) string {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -271,11 +285,11 @@ func cmdMem(kind MemKind, argv []string) {
 				verb = "previewing"
 			}
 			fmt.Printf("identity parked for %s — handoff %s pinned, bead left OPEN; %s shutdown WITHOUT restart…\n", agent, pinID, verb)
-			parkArgs := []string{"--handoff", pinID}
+			var parkArgs []string
 			if dry {
 				parkArgs = append(parkArgs, "--dry")
 			}
-			if err := runInheritIgnoreExit(cmdName, parkArgs...); err != nil {
+			if err := runInheritEnv(cmdName, pinnedHandoffEnviron(pinID), parkArgs...); err != nil {
 				httpc.Die(fmt.Sprintf("identity --park: could not run %s — %v", cmdName, err), config.ExitRuntime)
 			}
 			return
@@ -290,7 +304,7 @@ func cmdMem(kind MemKind, argv []string) {
 		if dry {
 			verb = "previewing"
 		}
-		submitArgs := []string{"--reboot", "--handoff", pinID}
+		submitArgs := []string{"--reboot"}
 		item, closed := BoundWorkItemClosed(file)
 		// beads-required mode: for a SPAWN-bound bead (`bead:`, written by
 		// parlay-spawn --bead), --submit is the "this work is finished" exit,
@@ -331,7 +345,7 @@ func cmdMem(kind MemKind, argv []string) {
 			}
 		}
 		if closed {
-			submitArgs = []string{"--handoff", pinID} // drop --reboot → clean end, no relaunch
+			submitArgs = nil // drop --reboot → clean end, no relaunch
 			fmt.Printf("identity submitted for %s — handoff %s pinned; bound work item %s is CLOSED, so %s shutdown WITHOUT relaunch (use --complete next time)…\n", agent, pinID, item, verb)
 		} else {
 			fmt.Printf("identity submitted for %s — handoff %s pinned; %s context reset…\n", agent, pinID, verb)
@@ -339,7 +353,7 @@ func cmdMem(kind MemKind, argv []string) {
 		if dry {
 			submitArgs = append(submitArgs, "--dry")
 		}
-		if err := runInheritIgnoreExit(cmdName, submitArgs...); err != nil {
+		if err := runInheritEnv(cmdName, pinnedHandoffEnviron(pinID), submitArgs...); err != nil {
 			httpc.Die(fmt.Sprintf("identity --submit: could not run %s — %v", cmdName, err), config.ExitRuntime)
 		}
 		return

@@ -138,8 +138,12 @@ pin_handoff() {
 watcher_logs() { cat "$ROOT"/reincarnate-*.log 2>/dev/null; }
 
 # ── 1. the regression: a non-tty stdin must not hide the pane's tty ──────────
+# The pin is (re)stamped INSIDE the pane, after a pause: `ps -o etime=` reports whole
+# seconds, so claude's derived start can land up to a second after its real one, and a
+# pointer written just before the fixture launched would read as predating it. The
+# pause puts the freshness beyond that resolution instead of leaving it to a race.
 pin_handoff "handoff-abc1"
-run_in_fake_pane "echo \$\$ > $ROOT/fixture.pid; $SCRIPT --dry > $ROOT/dry1.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty1.log"
+run_in_fake_pane "echo \$\$ > $ROOT/fixture.pid; sleep 2; touch $AGENT_DIR/identity.md; $SCRIPT --dry > $ROOT/dry1.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty1.log"
 DRY1="$(cat "$ROOT/dry1.out" 2>/dev/null || true)"
 if printf '%s' "$DRY1" | grep -q 'could not find claude ancestor'; then
   fail "fixture did not present a claude ancestor: $DRY1"
@@ -349,6 +353,56 @@ if "$ROOT/grown-help" --help 2>&1 | grep -q 'SENTINEL-HEADER-LINE'; then
   pass "--help tracks the header block when it grows"
 else
   fail "a line appended to the header never reached --help"
+fi
+
+# ── 13. PARLAY_PINNED_HANDOFF is the caller's transport, --handoff overrides it ──
+# The pinning callers pass the id in the environment, because an older copy of this
+# script on PATH ignores an unknown env var but refuses an unknown flag with exit 2 —
+# and its caller does not inspect that exit code. So the env var must be honoured with
+# the flag's own authority (no staleness guard, announced as this session's), and the
+# flag must still win when both are supplied.
+pin_handoff "handoff-stale"
+touch -t 200001010000 "$AGENT_DIR/identity.md"
+run_in_fake_pane "PARLAY_PINNED_HANDOFF=handoff-env1 $SCRIPT --dry > $ROOT/dry13.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty13.log"
+DRY13="$(cat "$ROOT/dry13.out" 2>/dev/null || true)"
+if printf '%s' "$DRY13" | grep -q 'handoff echo: handoff-env1 would be echoed to /dev/.* (id passed by the caller)'; then
+  pass "PARLAY_PINNED_HANDOFF outranks identity.md and skips the staleness guard"
+else
+  fail "expected the env-supplied id, got: $(printf '%s' "$DRY13" | grep 'handoff echo' || echo "<no handoff echo line>")"
+fi
+
+run_in_fake_pane "PARLAY_PINNED_HANDOFF=handoff-env1 $SCRIPT --handoff handoff-flag1 --dry > $ROOT/dry14.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty14.log"
+DRY14="$(cat "$ROOT/dry14.out" 2>/dev/null || true)"
+if printf '%s' "$DRY14" | grep -q 'handoff echo: handoff-flag1 would be echoed'; then
+  pass "--handoff overrides PARLAY_PINNED_HANDOFF when both are given"
+else
+  fail "expected the flag to win over the env var, got: $(printf '%s' "$DRY14" | grep 'handoff echo' || echo "<no handoff echo line>")"
+fi
+
+# The whole point of the env transport: an id it cannot use is still refused loudly,
+# exactly as the flag is, rather than passed to `handoff show` as garbage.
+run_in_fake_pane "PARLAY_PINNED_HANDOFF=nodashhere $SCRIPT --dry > $ROOT/dry15.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty15.log"
+DRY15="$(cat "$ROOT/dry15.out" 2>/dev/null || true)"
+if printf '%s' "$DRY15" | grep -q "handoff 'nodashhere' will not be echoed — PARLAY_PINNED_HANDOFF is not a bead id"; then
+  pass "an unusable PARLAY_PINNED_HANDOFF is named and dropped, not handed on"
+else
+  fail "an unusable env pin left no diagnostic: $DRY15"
+fi
+
+# ── 14. an unknown env var is inert, where an unknown flag is fatal ─────────
+# This is the property that makes the env var the safe transport across a version
+# skew: run the script with a variable it has never heard of and it must behave
+# exactly as it does without one, still exiting 0.
+run_in_fake_pane "PARLAY_UNKNOWN_TO_THIS_SCRIPT=x $SCRIPT --dry > $ROOT/dry16.out 2>&1; echo \$? > $ROOT/rc16; touch $ROOT/inner.done" "$ROOT/pty16.log"
+if [ "$(cat "$ROOT/rc16" 2>/dev/null)" = "0" ] && grep -q 'handoff echo' "$ROOT/dry16.out" 2>/dev/null; then
+  pass "an env var this script does not know is inert, not a refusal"
+else
+  fail "an unknown env var changed the outcome (exit $(cat "$ROOT/rc16" 2>/dev/null)): $(cat "$ROOT/dry16.out" 2>/dev/null)"
+fi
+if "$SCRIPT" --unknown-flag-this-script-never-had >/dev/null 2>&1; then
+  fail "an unknown FLAG was accepted — the version-skew hazard the env transport avoids"
+else
+  pass "an unknown flag is still refused, which is why the pin travels in the environment"
 fi
 
 [ "$FAILED" = "0" ] && echo "ALL PASS" || echo "SOME TESTS FAILED" >&2

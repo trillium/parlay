@@ -14,7 +14,8 @@
 #   context-reset --reboot                    reboot a parlay panel agent (relaunch auto-derived from PARLAY_* env)
 #   context-reset --reboot --cmd '<launch>'   reboot with an explicit relaunch command (firstmate / custom hosts)
 #   context-reset                             no reboot — verify shutdown only (deliberate end, == sudoku + a receipt)
-#   context-reset --handoff <id>              echo THIS handoff on a clean end (passed by the caller that just pinned it)
+#   context-reset --handoff <id>              echo THIS handoff on a clean end (explicit override, hand-invocation)
+#   PARLAY_PINNED_HANDOFF=<id> context-reset  same, as an env var — how the CLI passes the id it just pinned
 #   context-reset --dry                       print the plan; spawn nothing, kill nothing
 #
 # On a clean end (no --reboot — i.e. `identity --park`/`identity --complete`), nothing
@@ -24,12 +25,17 @@
 # also echoes the pinned handoff's full content directly to this session's tty (not the
 # log), so it lands in the pane's own scrollback as claude's last visible act.
 #
-# WHICH handoff is settled by the caller, not inferred: `--handoff <id>` is
-# authoritative and is passed by the only paths that pin (`identity --submit`,
-# `identity --park`). Without it — `identity --complete`, which closes the work item
-# and never pins — the agent's identity.md is scraped instead; that pointer can belong
-# to an earlier session, so it is announced as the agent's LAST KNOWN handoff and is
-# dropped entirely when it predates this claude process.
+# WHICH handoff is settled by the caller, not inferred. The only paths that pin
+# (`identity --submit`, `identity --park`) hand the id over in the environment, as
+# PARLAY_PINNED_HANDOFF; `--handoff <id>` is the explicit override and wins when both
+# are present. The env var is the CLI's transport because the two sides are versioned
+# apart — the Go binary is built per checkout, this script is resolved on PATH — and an
+# older copy ignores an unknown env var while it REFUSES an unknown flag with exit 2,
+# which the caller does not inspect: the agent would report a park it never performed.
+# With neither — `identity --complete`, which closes the work item and never pins — the
+# agent's identity.md is scraped instead; that pointer can belong to an earlier session,
+# so it is announced as the agent's LAST KNOWN handoff and is dropped entirely when it
+# predates this claude process.
 #
 # COVERAGE BOUNDARY: this echo needs a controlling terminal. An agent whose claude has
 # none — the gascity launcher runs `exec claude` inside a detached `sh -c` child, so
@@ -156,12 +162,18 @@ _is_bead_id() {
   esac
 }
 
-if [ -n "$PIN_ARG" ]; then
-  if _is_bead_id "$PIN_ARG"; then
-    PINNED_HANDOFF="$PIN_ARG"; HANDOFF_SRC="flag"
+PIN_ENV="${PARLAY_PINNED_HANDOFF:-}"
+if [ -n "$PIN_ARG" ] || [ -n "$PIN_ENV" ]; then
+  if [ -n "$PIN_ARG" ]; then
+    _pin_in="$PIN_ARG"; _pin_why="--handoff was not given a bead id"
+  else
+    _pin_in="$PIN_ENV"; _pin_why="PARLAY_PINNED_HANDOFF is not a bead id"
+  fi
+  if _is_bead_id "$_pin_in"; then
+    PINNED_HANDOFF="$_pin_in"; HANDOFF_SRC="flag"
   else
     HANDOFF_MALFORMED=1
-    _drop_handoff "$PIN_ARG" "--handoff was not given a bead id"
+    _drop_handoff "$_pin_in" "$_pin_why"
   fi
 elif [ -n "${AID:-}" ] && [ -f "$IDENTITY_MD" ]; then
   _pin=$(grep -m1 '^> 📎 Handoff: ' "$IDENTITY_MD" 2>/dev/null | sed -E 's/^> 📎 Handoff: ([^[:space:]]+)([[:space:]].*)?$/\1/')

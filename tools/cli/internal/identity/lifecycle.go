@@ -37,8 +37,17 @@ import (
 // process is treated as an error (matching every TS call site's `res.error`
 // check, which never inspects the exit status here).
 func runInherit(name string, argv ...string) error {
+	return runInheritEnv(name, nil, argv...)
+}
+
+// runInheritEnv is runInherit with extraEnv ("K=V") appended to the child's
+// environment.
+func runInheritEnv(name string, extraEnv []string, argv ...string) error {
 	cmd := exec.Command(name, argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}

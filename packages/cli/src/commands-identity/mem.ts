@@ -113,16 +113,22 @@ async function cmdMem(kind: MemKind, args: string[]) {
     const dry = opts["--dry"] === true
     const { spawnSync } = require("child_process") as typeof import("child_process")
     const cmd = contextResetCmd()
+    // The id this run just pinned reaches context-reset in the ENVIRONMENT, not as an
+    // argv flag: the script is resolved on PATH while the CLI is versioned separately,
+    // and an older copy ignores an unknown env var where it would refuse an unknown
+    // flag with exit 2 — which the `.error`-only check below never sees, leaving a
+    // success-shaped park whose shutdown never ran.
+    const resetEnv = { ...process.env, PARLAY_PINNED_HANDOFF: pinId }
     // --park: shut down WITHOUT --reboot, leaving the bead OPEN to resume later.
     if (wantPark) {
       console.log(`identity parked for ${agent} — handoff ${pinId} pinned, bead left OPEN; ${dry ? "previewing" : "triggering"} shutdown WITHOUT restart…`)
-      const res = spawnSync(cmd, dry ? ["--handoff", pinId, "--dry"] : ["--handoff", pinId], { stdio: "inherit" })
+      const res = spawnSync(cmd, dry ? ["--dry"] : [], { stdio: "inherit", env: resetEnv })
       if (res.error) return die(`identity --park: could not run ${cmd} — ${res.error.message}`)
       return
     }
     // --submit: reset WITH --reboot — relaunch fresh, recovering itself.
     console.log(`identity submitted for ${agent} — handoff ${pinId} pinned; ${dry ? "previewing" : "triggering"} context reset…`)
-    const res = spawnSync(cmd, dry ? ["--reboot", "--handoff", pinId, "--dry"] : ["--reboot", "--handoff", pinId], { stdio: "inherit" })
+    const res = spawnSync(cmd, dry ? ["--reboot", "--dry"] : ["--reboot"], { stdio: "inherit", env: resetEnv })
     if (res.error) return die(`identity --submit: could not run ${cmd} — ${res.error.message}`)
     return
   }
