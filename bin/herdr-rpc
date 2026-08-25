@@ -71,7 +71,7 @@ herdr_rpc() {
   req=$(jq -nc --arg id "$id" --arg m "$method" --argjson p "$params" \
     '{"id":$id,"method":$m,"params":$p}') || return 1
 
-  { printf '%s\n' "$req"; sleep "$_herdr_rpc_timeout"; } | nc -U "$_herdr_sock" 2>/dev/null
+  { printf '%s\n' "$req"; /bin/sleep "$_herdr_rpc_timeout"; } | nc -U "$_herdr_sock" 2>/dev/null
 }
 
 # herdr_rpc_check <method> <params-json> — like herdr_rpc but returns 1 on
