@@ -1267,7 +1267,7 @@ case "$KIND" in
 esac
 [ -n "$MODEL" ] && AGENT_START_ARGS+=(--model "$MODEL")
 
-_start_attempts="${PARLAY_SPAWN_START_RETRIES:-12}"
+_start_attempts="${PARLAY_SPAWN_START_RETRIES:-60}"
 _start_ok=0
 _start_out=""
 _try=1
@@ -1286,7 +1286,7 @@ while [ "$_try" -le "$_start_attempts" ]; do
       *) break ;;                             # non-transient failure — stop
     esac
   fi
-  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; /bin/sleep 0.3; }
+  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; /bin/sleep 0.5; }
   _try=$((_try + 1))
 done
 if [ "$_start_ok" -ne 1 ]; then
