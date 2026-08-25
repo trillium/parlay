@@ -1262,7 +1262,7 @@ _herdr_pane_wait_output "$ROOT_PANE" 'READY_[0-9]+' 5000
 # (e.g. opencode) take only an explicit --model and rely on their own config for
 # permissions/fallback (opencode's permission surface is its opencode.json).
 case "$KIND" in
-  claude) AGENT_START_ARGS=(--dangerously-skip-permissions --strict-mcp-config --fallback-model sonnet) ;;
+  claude) AGENT_START_ARGS=(--dangerously-skip-permissions --strict-mcp-config --fallback-model sonnet --settings '{"enabledPlugins":{"posthog@claude-plugins-official":false}}') ;;
   *)      AGENT_START_ARGS=() ;;
 esac
 [ -n "$MODEL" ] && AGENT_START_ARGS+=(--model "$MODEL")
