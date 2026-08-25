@@ -29,9 +29,28 @@ parlay-spawn <id> <name> <color> <task> [options]
 | `--cwd <path>` | Working directory for the agent (default: caller's cwd) |
 | `--account <name>` | ccjuggler account to inject as `CLAUDE_CODE_OAUTH_TOKEN` (e.g. `acc2`) |
 | `--pane <id>` | In-place mode: reuse caller's existing herdr pane instead of creating a new tab |
-| `--worktree` | Spawn in an isolated git worktree (created under `<repo>/.worktrees/parlay-<id>`) |
-| `--claim <bead-id>` | Associate with an existing task bead |
+| `--worktree` | Isolated git worktree at `<repo>/.worktrees/parlay-<id>`; auto-enabled by `--mode branch\|pr` |
+| `--mode report\|branch\|pr` | DoD shape: reply when done (default) / commit on `parlay/<id>` branch / push+open PR |
+| `--kind KIND` | Harness via herdr (`claude` default, `opencode`, ...) |
+| `--model MODEL` | Pin model (e.g. `sonnet`, `opencode-go/deepseek-v4-pro`) |
+| `--bead <id>` | **Required when beads-required mode is ON** (config `[spawn] beads_required`). Binds an OPEN bead; its lifecycle governs the agent — identity submit closes it, closed refuses respawn. With `--bead`, still pass a positional prompt (only `--claim` sources the task from the ticket). |
+| `--claim <task-id>` | First turn = `parlay claim <task-id>`; task pulled from ticket, positional optional. REJECTED while beads-required mode is on — use `--bead`. |
 | `--workspace <id\|label>` | Place tab in a herdr workspace by ID (`w6T`) or label (`"firstmate"`). Creates the workspace if the label doesn't exist. |
+
+### Beads-required mode (current config)
+
+`~/.parlay/config.toml` has `[spawn] beads_required = true`. The working pattern:
+
+```bash
+# bead carries the full spec; prompt carries the brief
+bin/parlay-spawn <id> "<Display Name>" "#hex" \
+  "<brief: read the bead via '<store> show <id>', conventions, gate command, close-with-evidence>" \
+  --bead <store>-xxxx --cwd ~/code/<repo> --mode branch
+```
+
+Empirical notes (2026-08-25): `--claim` errors out in this mode; a bare tab can reject
+`agent start` as busy for a few seconds (wrapper retries); keep briefs pointing at the
+bead so the ticket stays the single source of truth.
 
 ## Default account
 
