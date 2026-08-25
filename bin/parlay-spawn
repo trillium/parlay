@@ -1286,7 +1286,7 @@ while [ "$_try" -le "$_start_attempts" ]; do
       *) break ;;                             # non-transient failure — stop
     esac
   fi
-  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; sleep 0.3; }
+  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; /bin/sleep 0.3; }
   _try=$((_try + 1))
 done
 if [ "$_start_ok" -ne 1 ]; then
@@ -1434,7 +1434,7 @@ if [ "$LAUNCHER" = "gascity" ]; then
           echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: observed in /api/chat/subscribers — session live." >&2
           exit 0
         fi
-        sleep 1
+        /bin/sleep 1
         _gascity_elapsed=$((_gascity_elapsed + 1))
       done
       echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: did not appear in /api/chat/subscribers within ${GASCITY_LIVENESS_TIMEOUT_S}s — inspect $AGENT_DIR/gascity or run '$GASCITY_GO_BIN gascity-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'." >&2
