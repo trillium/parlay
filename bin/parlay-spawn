@@ -389,8 +389,10 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   with sonnet fallback
   --kind KIND     agent harness to launch via herdr (default: claude). e.g.
                   --kind opencode spawns the opencode TUI and forwards --model
-                  verbatim (opencode-go models: opencode-go/ox-alpha-free (free, limited-time),
-                  opencode-go/deepseek-v4-pro, opencode-go/deepseek-v4-flash)
+                  verbatim. Two providers: opencode/<model> is the free tier,
+                  opencode-go/<model> is paid (e.g. opencode-go/deepseek-v4-pro,
+                  opencode-go/deepseek-v4-flash). Run 'opencode models' for the
+                  live list — names retire, so do not trust one written here.
   --mode MODE     delivery mode: report|branch|pr (default: report). Shapes the
                   Definition of Done in the brief and is recorded in meta.
                     report  — do the task, reply when done (default)
@@ -414,9 +416,12 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   Blocks free/third-party model APIs (opencode, openrouter) and
                   forces claude (Anthropic). Also labels the bead with
                   'contains-pii' so future relaunches are automatically blocked.
-  --no-pii        declare this task contains no PII. Weights free models higher
-                  (opencode-go/ox-alpha-free by default) to save on inference
-                  and subscription costs. Ignored if the bead is already labeled
+  --no-pii        declare this task contains no PII. Routes to a free opencode
+                  model to save on inference and subscription costs, picking the
+                  first of PII_FREE_MODEL_PREFERENCE that 'opencode models'
+                  actually offers. If opencode is absent or lists no free model,
+                  the spawn stays on claude defaults rather than pinning a name
+                  that may not exist. Ignored if the bead is already labeled
                   'contains-pii'.
   --bead ID       bind a beads work item to this agent (e.g. task-oyaj). The bead
                   must be OPEN at spawn time; from then on its lifecycle governs
