@@ -12,7 +12,7 @@ Each of these has already caused a real incident on the captain's box.
 - **Never target or use port `:31337`.** That is the captain's live Pulse instance.
 - **Never run `bun run build` / `bun build.ts` in `packages/client`.** Its `build.ts` POSTs a reload beacon to `:31337` and force-reloads the captain's connected clients from any worktree. Use `bun test` or a scoped `bun build src/<file>.ts --outdir=<tmp>`.
 - **Never edit `~/.claude` from this repo.** Reading it to diagnose is fine.
-- **Never merge on a green check alone.** Run `parlay merge-gate <pr>`. CodeRabbit reports conclusion `pass` when it never ran. → [notes](docs/agent-notes/never-merge-on-a-green-check-robots-jap6.md)
+- **Never merge on a green check alone.** Run `parlay merge-gate <pr>`. CodeRabbit reports conclusion `pass` when it never ran — and it **never auto-runs here**, because the repo has under 10 stars. Comment `@coderabbitai review` to get a real one *before* falling back to merge-and-disclose, or run `coderabbit review --agent --committed --base origin/main` locally before you even open the PR. → [notes](docs/agent-notes/never-merge-on-a-green-check-robots-jap6.md)
 - **Never `git worktree remove --force` directly.** Route it through `checkWorktreeGitSafety`. → [notes](docs/agent-notes/every-path-that-removes-a-worktree-robots-cncx.md)
 - **Deploy scripts trash, never `rm`.** A `uninstall.sh --purge` once permanently deleted the live `~/.parlay`. → [notes](docs/agent-notes/go-server-ticket-c6-parlay-server.md)
 - **Never let `gh` pick the repo implicitly.** It prefers an `upstream` remote over `origin`, so a bare `gh pr view N` reads someone else's PR. Always pass `--repo`.

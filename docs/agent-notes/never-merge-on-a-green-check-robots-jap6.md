@@ -204,6 +204,74 @@ Decision logic lives in the pure `ComputeMergeGate(MergeGateSnapshot)` so
 `fetchMergeGateSnapshot` is the only part that shells out. **Go-only, no TS
 port** — `bin/parlay` execs the Go binary for everything except
 `lavish-import`, so the verb is reachable everywhere, and `packages/cli` is
-the retired path. Do not add a `check` case for it to
-`tools/cli/parity/run.sh`; there is no TS side to diff against. Do add it to
-that script's `GO_ONLY_VERBS` list — see the B10 parity-harness section above.
+the retired path. The parity harness that used to diff Go verbs against their
+TS counterparts (`tools/cli/parity/run.sh`, and its `GO_ONLY_VERBS` list) was
+itself retired in T-08 along with `packages/cli`, so there is nothing to
+register the verb with — and nothing that would catch a dropped flag on it
+automatically either.
+
+## Why `no-review-evidence` fires on literally every PR in this repo
+
+Found 2026-08-26, after seven consecutive PRs (#108–#115) all landed via
+merge-and-disclose. The gate was right every time, and the cause was never
+transient:
+
+> This repository does not receive automatic reviews because it has fewer than
+> 10 stars.
+>
+> — CodeRabbit, verbatim, on PR #114
+
+CodeRabbit is installed and authenticated (Plan: Pro Plus, profile CHILL). It
+simply never reviews `trillium/parlay` on its own. What it posts instead is a
+comment carrying an unchecked **"🔍 Trigger review"** box — which is exactly the
+shape the gate classifies as `vacuous-pass`: a `pass` conclusion attached to a
+run that did no reviewing.
+
+So the gate's two outcomes both have the same root cause:
+
+| What CodeRabbit did | Gate result | Why |
+|---|---|---|
+| posted the "fewer than 10 stars" comment | exit 4, `vacuous-pass` | the comment *is* the positive evidence of why nothing reviewed |
+| posted nothing at all | exit 3, `no-review-evidence` | no evidence of why, so the gate keeps the harsher code |
+
+That difference is the gate working as designed and should not be "fixed".
+
+### The remedy, which is one comment
+
+Post `@coderabbitai review` on the PR. That triggers a real review — confirmed
+working on #115 on 2026-08-26, which had received nothing at all until it was
+asked. **Do this before reaching for merge-and-disclose.** Merge-and-disclose
+is for a reviewer that is genuinely unavailable; a reviewer waiting to be asked
+is not unavailable.
+
+### Better: review before the PR exists
+
+`coderabbit` is also a local CLI (`~/.local/bin/coderabbit`, `cr`). It has no
+stars restriction, so it reviews on demand:
+
+```sh
+coderabbit review --agent --committed --base origin/main   # structured JSON for agents
+coderabbit review                                          # plain text, tracked changes
+coderabbit doctor                                          # auth + connectivity preflight
+coderabbit update                                          # it ships fast; 0.6.1 was five versions stale
+```
+
+`--agent` emits newline-delimited JSON ending in a `{"type":"complete",
+"findings":N,"reviewedFiles":[...]}` record — `findings` and `reviewedFiles`
+together are the check worth asserting on, because a review that read zero
+files also reports zero findings.
+
+Two traps:
+
+- **`--plain` is a top-level flag, not a `review` flag.** `coderabbit review
+  --plain` is an error; plain text is the default anyway. Top-level flags
+  (`--agent`, `--plain`) and `review` subflags (`--committed`, `--base`,
+  `--dir`) are different namespaces, and `review --agent` happens to work only
+  because `review` defines its own `--agent`.
+- **Piping hides the exit code.** `coderabbit review … | tail -80` reports the
+  pipeline's status, so an unknown-option error exits 0 and reads as a clean
+  review. Redirect to a file and check `$?`, or set `pipefail`.
+
+This does not satisfy `parlay merge-gate`, which reads GitHub and cannot see a
+local run. Use both: the local review to catch defects before pushing, and the
+`@coderabbitai` comment to put reviewable evidence where the gate can find it.
