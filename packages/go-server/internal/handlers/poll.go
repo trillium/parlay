@@ -124,11 +124,20 @@ func (b *broker) publish(msg store.ChatMessage) int {
 // pollMessage is the shape GET /poll returns on a new message — a subset of
 // ChatMessage's fields, matching docs/api-contract.md's documented response
 // (`{id, role, text, from}`; no ts/channel/type).
+//
+// CursorReset and Skipped are set only when the caller's `after` cursor
+// could not be resolved against the retained store (see
+// store.MessageStore.HistorySinceCursor) — omitted (omitempty) on every
+// ordinary resolvable-cursor or fresh-tail poll, so an existing caller
+// reading just {id,role,text,from} is unaffected.
 type pollMessage struct {
 	ID   string `json:"id"`
 	Role string `json:"role"`
 	Text string `json:"text"`
 	From string `json:"from,omitempty"`
+
+	CursorReset bool `json:"cursorReset,omitempty"`
+	Skipped     int  `json:"skipped,omitempty"`
 }
 
 func toPollMessage(m store.ChatMessage) pollMessage {
@@ -157,17 +166,24 @@ func handlePoll(st *store.Store, b *broker, hub *Hub, timeout time.Duration) htt
 
 		// Only check the retained backlog when the caller actually supplied
 		// `after` — a bare poll with no `after` means "wait for the next
-		// message", not "replay everything I might have missed". This is a
-		// narrower scope than MessageStore.HistorySince's own "empty afterID
-		// means full replay" convention (built for the SSE reconnect flow in
-		// a later ticket), so it deliberately isn't called with after="".
+		// message", not "replay everything I might have missed" (bound 1: a
+		// first-ever connect starts at the tail). This is deliberately a
+		// different store method from MessageStore.HistorySince, whose "empty
+		// or unresolved afterID means full unbounded replay" convention
+		// backs the SSE reconnect flow and must not change here — see
+		// HistorySinceCursor's own doc comment for bounds 2 and 3 (an
+		// unresolvable cursor resumes from a capped, announced window rather
+		// than either nothing or the whole retained ring).
 		if after != "" {
-			for _, m := range st.Messages.HistorySince(after) {
-				if m.Channel == channel {
-					writeJSON(w, toPollMessage(m))
-					hub.broadcast(eventMessageReceived, messageReceivedPayload{ID: m.ID})
-					return
-				}
+			backlog, reset, skipped := st.Messages.HistorySinceCursor(channel, after, store.DefaultReplayMax)
+			if len(backlog) > 0 {
+				m := backlog[0]
+				resp := toPollMessage(m)
+				resp.CursorReset = reset
+				resp.Skipped = skipped
+				writeJSON(w, resp)
+				hub.broadcast(eventMessageReceived, messageReceivedPayload{ID: m.ID})
+				return
 			}
 		}
 
