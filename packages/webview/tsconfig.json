@@ -21,5 +21,8 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
+  // Tests run under `bun test` (which provides bun:test); tsc's build pass
+  // excludes them — same convention as packages/input's tsconfig.
+  "exclude": ["src/**/*.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

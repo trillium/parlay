@@ -114,6 +114,8 @@ done
 BIN_DIR="$(cd -P "$(dirname "$_pspawn_src")" && pwd)"
 REPO_DIR="$(cd -P "$BIN_DIR/.." && pwd)"
 unset _pspawn_src _pspawn_dir
+# shellcheck source=parlay-pii-lib.sh
+. "$BIN_DIR/parlay-pii-lib.sh"
 
 # Resolve the beads-required error template: user override > repo copy.
 _beads_err_user="${PARLAY_STATE_HOME:-$HOME/.parlay}/templates/beads-required-error.txt"
@@ -387,8 +389,8 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   with sonnet fallback
   --kind KIND     agent harness to launch via herdr (default: claude). e.g.
                   --kind opencode spawns the opencode TUI and forwards --model
-                  verbatim (opencode-go deepseek models: opencode-go/deepseek-v4-pro,
-                  opencode-go/deepseek-v4-flash)
+                  verbatim (opencode-go models: opencode-go/ox-alpha-free (free, limited-time),
+                  opencode-go/deepseek-v4-pro, opencode-go/deepseek-v4-flash)
   --mode MODE     delivery mode: report|branch|pr (default: report). Shapes the
                   Definition of Done in the brief and is recorded in meta.
                     report  — do the task, reply when done (default)
@@ -408,6 +410,14 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   workspace ID (e.g. w6T) or a label (e.g. "firstmate").
                   Label lookup: uses an existing workspace with that name, or
                   creates one. Falls back to \$HERDR_WORKSPACE_ID when not given.
+  --pii           declare this task contains personally identifiable information.
+                  Blocks free/third-party model APIs (opencode, openrouter) and
+                  forces claude (Anthropic). Also labels the bead with
+                  'contains-pii' so future relaunches are automatically blocked.
+  --no-pii        declare this task contains no PII. Weights free models higher
+                  (opencode-go/ox-alpha-free by default) to save on inference
+                  and subscription costs. Ignored if the bead is already labeled
+                  'contains-pii'.
   --bead ID       bind a beads work item to this agent (e.g. task-oyaj). The bead
                   must be OPEN at spawn time; from then on its lifecycle governs
                   the agent's — 'parlay identity --submit' closes it, and once it
@@ -544,7 +554,11 @@ if [ "${1:-}" = "--ephemeral" ]; then
   MODE="report"
   EFFORT=""
   KIND="claude"
+  PII=""
   WANT_WORKTREE=0
+  WORKSPACE="${HERDR_WORKSPACE_ID:-}"
+  CLAIM=""
+  IN_PLACE_PANE=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --cwd)       CWD="$2"; shift 2 ;;
@@ -553,6 +567,8 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --mode)      MODE="$2"; shift 2 ;;
       --effort)    EFFORT="$2"; shift 2 ;;
       --kind)      KIND="$2"; shift 2 ;;
+      --pii)       PII=1; shift ;;
+      --no-pii)    PII=0; shift ;;
       --worktree)  WANT_WORKTREE=1; shift ;;
       --account)   ACCOUNT="$2"; shift 2 ;;
       --gascity)   LAUNCHER="gascity"; shift ;;
@@ -622,6 +638,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_MODE="report"
           BATCH_EFFORT=""
           BATCH_KIND=""
+          BATCH_PII=""
           BATCH_WORKTREE=0
           BATCH_ACCOUNT="$ACCOUNT"
           BATCH_GASCITY=0
@@ -640,6 +657,8 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
               --mode)      BATCH_MODE="$2"; shift 2 ;;
               --effort)    BATCH_EFFORT="$2"; shift 2 ;;
               --kind)      BATCH_KIND="$2"; shift 2 ;;
+              --pii)       BATCH_PII="--pii"; shift ;;
+              --no-pii)    BATCH_PII="--no-pii"; shift ;;
               --worktree)  BATCH_WORKTREE=1; shift ;;
               --account)   BATCH_ACCOUNT="$2"; shift 2 ;;
               --gascity)   BATCH_GASCITY=1; shift ;;
@@ -686,6 +705,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             _shared+=(--mode "$BATCH_MODE")
             [ -n "$BATCH_EFFORT" ] && _shared+=(--effort "$BATCH_EFFORT")
             [ -n "$BATCH_KIND" ] && _shared+=(--kind "$BATCH_KIND")
+            [ -n "$BATCH_PII" ] && _shared+=("$BATCH_PII")
             [ "$BATCH_WORKTREE" -eq 1 ] && _shared+=(--worktree)
             [ -n "$BATCH_ACCOUNT" ] && _shared+=(--account "$BATCH_ACCOUNT")
             [ "$BATCH_GASCITY" -eq 1 ] && _shared+=(--gascity)
@@ -724,6 +744,7 @@ MODEL=""
 MODE="report"
 EFFORT=""
 KIND="claude"
+PII=""
 WANT_WORKTREE=0
 CLAIM=""
 IN_PLACE_PANE=""
@@ -736,6 +757,8 @@ while [ $# -gt 0 ]; do
     --mode)      MODE="$2"; shift 2 ;;
     --effort)    EFFORT="$2"; shift 2 ;;
     --kind)      KIND="$2"; shift 2 ;;
+    --pii)       PII=1; shift ;;
+    --no-pii)    PII=0; shift ;;
     --worktree)  WANT_WORKTREE=1; shift ;;
     --account)   ACCOUNT="$2"; shift 2 ;;
     --claim)     CLAIM="$2"; shift 2 ;;
@@ -766,6 +789,12 @@ fi
 # before the worktree lease, the register-agent POST, and any launcher — every
 # one of which leaves state behind that a later refusal would strand.
 bead_gate
+
+# PII routing: label bead if --pii, check existing label, enforce or prefer models.
+pii_apply_bead_label   # label the bead if PII=1 and BEAD_ID is set
+pii_check_bead_label   # set PII=1 if bead already has contains-pii (overrides --no-pii)
+pii_enforce            # PII=1: block non-claude harnesses
+pii_route_model        # PII=0: prefer free models when KIND/MODEL are at defaults
 
 # branch/pr delivery modes require worktree isolation — auto-enable.
 if [ "$MODE" = "branch" ] || [ "$MODE" = "pr" ]; then
@@ -1233,12 +1262,12 @@ _herdr_pane_wait_output "$ROOT_PANE" 'READY_[0-9]+' 5000
 # (e.g. opencode) take only an explicit --model and rely on their own config for
 # permissions/fallback (opencode's permission surface is its opencode.json).
 case "$KIND" in
-  claude) AGENT_START_ARGS=(--dangerously-skip-permissions --fallback-model sonnet) ;;
+  claude) AGENT_START_ARGS=(--dangerously-skip-permissions --strict-mcp-config --fallback-model sonnet --settings '{"enabledPlugins":{"posthog@claude-plugins-official":false}}') ;;
   *)      AGENT_START_ARGS=() ;;
 esac
 [ -n "$MODEL" ] && AGENT_START_ARGS+=(--model "$MODEL")
 
-_start_attempts="${PARLAY_SPAWN_START_RETRIES:-12}"
+_start_attempts="${PARLAY_SPAWN_START_RETRIES:-60}"
 _start_ok=0
 _start_out=""
 _try=1
@@ -1257,7 +1286,7 @@ while [ "$_try" -le "$_start_attempts" ]; do
       *) break ;;                             # non-transient failure — stop
     esac
   fi
-  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; sleep 0.3; }
+  [ "$_try" -lt "$_start_attempts" ] && { echo "parlay-spawn: agent_pane_busy on pane $ROOT_PANE — retry $_try/$_start_attempts …" >&2; /bin/sleep 0.5; }
   _try=$((_try + 1))
 done
 if [ "$_start_ok" -ne 1 ]; then
@@ -1405,7 +1434,7 @@ if [ "$LAUNCHER" = "gascity" ]; then
           echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: observed in /api/chat/subscribers — session live." >&2
           exit 0
         fi
-        sleep 1
+        /bin/sleep 1
         _gascity_elapsed=$((_gascity_elapsed + 1))
       done
       echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: did not appear in /api/chat/subscribers within ${GASCITY_LIVENESS_TIMEOUT_S}s — inspect $AGENT_DIR/gascity or run '$GASCITY_GO_BIN gascity-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'." >&2

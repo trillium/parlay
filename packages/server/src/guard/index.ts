@@ -28,10 +28,12 @@
 //      preflight on these paths is rejected. The no-preflight shapes cannot
 //      reach the handler at all.
 //
-// Read routes (history, agents, SSE events) are untouched and still
-// world-readable. /agents and /events are not inert reads — they are accepted
-// residue, named in ./paths.ts's guarded-route-set comment and tracked as
-// `identifier-disclosure-remains-on-sse`.
+// Read routes (history, version, pages, uploads) are untouched and still
+// world-readable. /agents and /events, once accepted residue tracked as
+// `identifier-disclosure-remains-on-sse`, are now inside the guard — they
+// disclose identifiers (agent ids; the device uuid on tts_event frames), so
+// they get the origin check and reflected ACAO like /subscribers. See
+// ./paths.ts's guarded-route-set comment.
 //
 // ── Second pass (task-6ai1, defect D9 of the end-to-end verification) ────────
 // The guard itself was correct; the ROUTE SET was not. An end-to-end verifier
