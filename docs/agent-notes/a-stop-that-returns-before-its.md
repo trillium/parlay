@@ -90,6 +90,51 @@ And its corollary, which is the more useful half: when a check exists and is
 not being run, a real defect can sit behind a green check indefinitely. `-race`
 is now on in CI for all six Go modules for exactly that reason.
 
+## The sequel, found in review of the same PR
+
+The rewritten helper still leaked, on the one path a passing suite never runs.
+
+`t.Fatal` **does not return**. It calls `runtime.Goexit`, which runs deferred
+functions and nothing else, so every statement after `fn()` is skipped. Closing
+the pipe's write end lived there:
+
+```go
+defer func() { os.Stdout = orig }()   // only this ran on a t.Fatal
+
+fn()
+
+os.Stdout = orig
+_ = w.Close()                          // skipped
+out := <-done
+```
+
+With `w` never closed, `io.Copy` never sees EOF and the copying goroutine parks
+forever — one leaked goroutine and two leaked file descriptors per bail-out, for
+the lifetime of the test binary. It is invisible while tests pass, and it
+compounds precisely when they do not: a suite failing inside many captured
+functions leaks in proportion to how badly it is failing.
+
+Both closes moved into the deferred cleanup. Double-closing on the normal path
+is deliberate — the second `Close` returns `os.ErrClosed`, which is discarded,
+and paying that is cheaper than tracking which path already closed what. The
+drain stays un-deferred, because it must still precede the read of `done`.
+
+Two things generalize:
+
+- **In a test helper, anything that must happen even when the test fails has to
+  be deferred**, because `t.Fatal` unwinds via `Goexit` rather than returning.
+  A cleanup written after the callback runs only on the happy path.
+- **To test that path, call `runtime.Goexit` directly.** A panic is a different
+  unwind and would leave the real path untested. The regression test runs 32
+  bail-outs and compares settled goroutine counts; reverting the defer fails it
+  at exactly 32.
+
+Worth recording separately: this was caught by CodeRabbit, on the first PR in
+this repo that a reviewer actually looked at. Automatic review is off for
+trillium/parlay because it has fewer than 10 stars — see `task-zu9nt` and
+`task-6ch1h`. An explicit `@coderabbitai review` comment works and is the
+supported path.
+
 ## Related
 
 - [`ci-is-github-workflows-ci-yml.md`](ci-is-github-workflows-ci-yml.md) — the
