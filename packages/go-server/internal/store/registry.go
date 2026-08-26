@@ -1,11 +1,13 @@
 package store
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
 	"sync"
+
+	"encoding/json"
+	"parlay/go-server/internal/atomicfile"
 )
 
 // AgentInfo matches AgentInfo in docs/api-contract.md (§Agent registry /
@@ -140,7 +142,7 @@ func (rs *RegistryStore) saveLocked() error {
 	if err != nil {
 		return fmt.Errorf("marshal agents: %w", err)
 	}
-	if err := writeFileAtomic(rs.path, data, 0o644); err != nil {
+	if err := atomicfile.Write(rs.path, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", rs.path, err)
 	}
 	return nil

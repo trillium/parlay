@@ -2,12 +2,14 @@ package store
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	"encoding/json"
+	"parlay/go-server/internal/atomicfile"
 )
 
 // DefaultMaxMessages bounds the in-memory ring buffer and, indirectly, how
@@ -179,7 +181,7 @@ func (ms *MessageStore) compactLocked() error {
 		b = append(b, line...)
 		b = append(b, '\n')
 	}
-	if err := writeFileAtomic(ms.path, b, 0o644); err != nil {
+	if err := atomicfile.Write(ms.path, b, 0o644); err != nil {
 		return fmt.Errorf("rewrite %s: %w", ms.path, err)
 	}
 	// The atomic rewrite replaced the file at ms.path out from under the

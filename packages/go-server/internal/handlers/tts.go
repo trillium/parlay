@@ -1,18 +1,20 @@
 package handlers
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
-	"os/user"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"os/user"
+	"parlay/go-server/internal/atomicfile"
+	"path/filepath"
 )
 
 const (
@@ -137,33 +139,6 @@ func (h *TTSHandler) applySubstitutions(text string) (string, int64) {
 	}
 
 	return out, version
-}
-
-// writeFileAtomic writes data to path via a same-directory temp file and a
-// rename, so a reader never observes a partially-written file. Used for the
-// persisted substitutions map, which is read back on every synth.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename below succeeds
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }
 
 // appendJSONL appends one line to a JSONL file, creating the file and every
@@ -414,7 +389,7 @@ func (h *TTSHandler) handleTTSCorrection(w http.ResponseWriter, r *http.Request)
 	// one silently disables every substitution until someone notices.
 	// Rename within a directory is atomic, so a reader sees either the old
 	// file or the new one and never a partial.
-	if err := writeFileAtomic(h.subsPath, append(data, '\n'), 0644); err != nil {
+	if err := atomicfile.Write(h.subsPath, append(data, '\n'), 0644); err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": "write failed"})
 		return
 	}

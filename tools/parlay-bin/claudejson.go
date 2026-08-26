@@ -59,7 +59,26 @@ func pretrustWorkdir(cwd string) {
 		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (write failed)\n", cwd)
 		return
 	}
-	tmp.Close()
+	// Sync before the rename, and check Close. This is a read-modify-write of
+	// the WHOLE of ~/.claude.json, so a rename that becomes visible while the
+	// data is still only in the page cache does not lose one setting — it
+	// replaces the captain's entire Claude Code state with a truncated file.
+	// Close's error was also being discarded, which meant a write failure that
+	// only surfaces at close was dropped and then published by the rename.
+	// See packages/go-server/internal/atomicfile/atomicfile.go for the
+	// reference implementation and the reasoning; this file is in a different
+	// Go module and cannot import it.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (sync failed)\n", cwd)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (close failed)\n", cwd)
+		return
+	}
 	if err := os.Rename(tmpPath, claudeJSONPath); err != nil {
 		os.Remove(tmpPath)
 		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (rename failed)\n", cwd)

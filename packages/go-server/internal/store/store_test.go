@@ -2,8 +2,10 @@ package store
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
+
+	"parlay/go-server/internal/atomicfile"
+	"path/filepath"
 )
 
 func TestOpenCreatesStateDirAndAllSubstores(t *testing.T) {
@@ -62,7 +64,7 @@ func TestOpenIsIdempotentAcrossRestarts(t *testing.T) {
 func TestWriteFileAtomicLeavesNoTempFilesBehind(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.json")
-	if err := writeFileAtomic(path, []byte(`{"ok":true}`), 0o644); err != nil {
+	if err := atomicfile.Write(path, []byte(`{"ok":true}`), 0o644); err != nil {
 		t.Fatalf("writeFileAtomic: %v", err)
 	}
 	entries, err := os.ReadDir(dir)

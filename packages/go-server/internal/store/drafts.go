@@ -1,11 +1,13 @@
 package store
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
 	"time"
+
+	"encoding/json"
+	"parlay/go-server/internal/atomicfile"
 )
 
 // Draft matches the shape read/written by GET/PUT /api/chat/draft in
@@ -62,7 +64,7 @@ func (ds *DraftStore) Set(text, clientID string) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("marshal draft: %w", err)
 	}
-	if err := writeFileAtomic(ds.path, data, 0o644); err != nil {
+	if err := atomicfile.Write(ds.path, data, 0o644); err != nil {
 		return Draft{}, fmt.Errorf("write %s: %w", ds.path, err)
 	}
 	return ds.draft, nil

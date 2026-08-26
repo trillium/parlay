@@ -112,32 +112,3 @@ func Open(cfg Config) (*Store, error) {
 		Channels: channels,
 	}, nil
 }
-
-// writeFileAtomic writes data to path via a temp file + rename in the same
-// directory, so a crash or concurrent reader never observes a partially
-// written file, and the rename stays on one filesystem.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op once renamed away
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}

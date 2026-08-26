@@ -1,10 +1,12 @@
 package store
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
+
+	"encoding/json"
+	"parlay/go-server/internal/atomicfile"
 )
 
 // ChannelStore holds the session_id → channel map that POST
@@ -75,7 +77,7 @@ func (cs *ChannelStore) Declare(sessionID, channel string) (string, error) {
 		delete(cs.byOwner, sessionID)
 		return "", fmt.Errorf("marshal channels: %w", err)
 	}
-	if err := writeFileAtomic(cs.path, append(data, '\n'), 0o644); err != nil {
+	if err := atomicfile.Write(cs.path, append(data, '\n'), 0o644); err != nil {
 		delete(cs.byOwner, sessionID)
 		return "", fmt.Errorf("write %s: %w", cs.path, err)
 	}
