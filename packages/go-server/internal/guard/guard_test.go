@@ -369,3 +369,54 @@ func TestGuardingTheEventsPathGrantsNoCORSOnItsStream(t *testing.T) {
 		t.Errorf("POST ingress ACAO = %q, want the reflected origin", got)
 	}
 }
+
+// The routes below have no Go handler yet — they are the parity ports still in
+// flight from packages/server. Their guard entries were landed FIRST, on
+// purpose: the one predictable way this boundary fails is a route added by
+// someone editing internal/handlers who never opens guard.go, and an entry that
+// precedes its handler removes that window entirely.
+//
+// So this test is not a restatement of the map. It is the thing that makes
+// landing-early worth doing: it fails if a port arrives and someone deletes the
+// entry to make a caller work, which is precisely the moment the route becomes
+// reachable and the refusal starts to matter.
+func TestInFlightPortsAreGuardedBeforeTheirHandlersExist(t *testing.T) {
+	for _, path := range []string{
+		"/api/chat/clear",
+		"/api/chat/system",
+		"/api/chat/navigate",
+		"/api/chat/reload",
+		"/api/chat/device-cmd",
+		"/api/chat/declare-channel",
+		"/api/chat/eval",
+		"/api/chat/eval-push",
+		"/api/chat/plugin/cursorless/rpc",
+		"/api/chat/tts",
+		"/api/chat/tts-report",
+		"/api/chat/tts-correction",
+		"/api/chat/tts/validate-splits",
+		"/api/chat/tts-event",
+	} {
+		if !IsGuarded(path) {
+			t.Errorf("%s is outside the guard — a cross-origin page could reach it the moment its handler lands", path)
+		}
+	}
+}
+
+// Both exempt ports keep the origin check; only the content-type layer drops.
+// A test that asserted the exemption alone would pass just as happily if the
+// route had been dropped from GuardedPaths altogether, which is the mistake
+// worth catching.
+func TestTheTwoExemptPortsAreStillInsideTheGuard(t *testing.T) {
+	for _, path := range []string{
+		"/api/chat/plugin/cursorless/rpc",
+		"/api/chat/tts/validate-splits",
+	} {
+		if !IsGuarded(path) {
+			t.Errorf("%s: the JSON exemption drops one layer, not the boundary", path)
+		}
+		if !jsonExemptPaths[path] {
+			t.Errorf("%s: expected the content-type gate to be exempted for this caller", path)
+		}
+	}
+}
