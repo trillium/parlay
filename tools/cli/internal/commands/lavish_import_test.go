@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -114,6 +115,29 @@ func TestFetchLavishChatHistoryTimesOutOnASilentStream(t *testing.T) {
 	}
 }
 
+// A Lavish that answers but answers badly is the dangerous case: its error page
+// carries no "data: " frame, so a reader that only looks for frames falls off
+// the end of the stream and reports "no messages" — a broken server and an
+// empty session are indistinguishable, and the import silently does nothing.
+func TestFetchLavishChatHistoryReportsAnHTTPErrorRatherThanNoMessages(t *testing.T) {
+	for _, code := range []int{http.StatusNotFound, http.StatusInternalServerError, http.StatusBadGateway} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "upstream is unhappy", code)
+		}))
+
+		msgs, err := fetchLavishChatHistory(srv.URL, "sess1234")
+		srv.Close()
+
+		if err == nil {
+			t.Errorf("HTTP %d returned (%d msgs, nil error), want an error", code, len(msgs))
+			continue
+		}
+		if !strings.Contains(err.Error(), fmt.Sprint(code)) {
+			t.Errorf("HTTP %d produced %q, which does not name the status", code, err)
+		}
+	}
+}
+
 func TestFetchLavishChatHistoryReportsAnUnreachableLavish(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
@@ -152,11 +176,16 @@ func TestReplayToParlayRoutesRolesToTheRightEndpoint(t *testing.T) {
 		path string
 		body map[string]any
 	}
+	// httptest runs each handler call on its own goroutine, so every touch of
+	// `hits` — including the assertions below — needs the lock.
+	var mu sync.Mutex
 	var hits []hit
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
 		hits = append(hits, hit{r.URL.Path, body})
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -166,6 +195,8 @@ func TestReplayToParlayRoutesRolesToTheRightEndpoint(t *testing.T) {
 		{Role: "user", Text: "from the captain", At: "2026-08-26T12:00:01Z"},
 	})
 
+	mu.Lock()
+	defer mu.Unlock()
 	if len(hits) != 2 {
 		t.Fatalf("got %d posts, want 2", len(hits))
 	}
@@ -186,10 +217,14 @@ func TestReplayToParlayRoutesRolesToTheRightEndpoint(t *testing.T) {
 // A non-2xx must be reported per-message rather than aborting the import, and a
 // 1xx must not be mistaken for success.
 func TestReplayToParlayContinuesPastAFailedMessage(t *testing.T) {
+	var mu sync.Mutex
 	var seen int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		seen++
-		if seen == 1 {
+		first := seen == 1
+		mu.Unlock()
+		if first {
 			http.Error(w, "nope", http.StatusInternalServerError)
 			return
 		}

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -142,6 +143,12 @@ func fetchLavishChatHistory(lavishURL, key string) ([]lavishMsg, error) {
 		return nil, fmt.Errorf("cannot reach Lavish at %s — %v", lavishURL, err)
 	}
 	defer resp.Body.Close()
+	// Without this, a 404 or 500 is indistinguishable from a quiet stream: the
+	// error page carries no "data: " line, the loop below falls through, and
+	// the caller reports "no messages" for what is actually a broken Lavish.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("Lavish returned HTTP %d for /events/%s", resp.StatusCode, key)
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELine)
@@ -200,7 +207,12 @@ func replayToParlay(parlayURL, shortKey, file string, msgs []lavishMsg) {
 		}
 
 		payload, _ := json.Marshal(body)
-		r, err := client.Post(parlayURL+endpoint, "application/json", strings.NewReader(string(payload)))
+		var r *http.Response
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, parlayURL+endpoint, bytes.NewReader(payload))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			r, err = client.Do(req)
+		}
 		// Order matters: on a transport error `r` is nil, so the status branch
 		// must be reached only after err has been ruled out. Reading
 		// r.StatusCode first panicked on exactly the case this line exists to
