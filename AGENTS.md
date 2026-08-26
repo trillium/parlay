@@ -77,9 +77,9 @@ Historical per-ticket notes. Open these only when working on that specific area 
 - [B5 `status`/`crew-state`/`supervise`/`context-check`](docs/agent-notes/go-cli-ticket-b5-status-crew.md) · [B6 `robots-watch`/`robots-tail`](docs/agent-notes/go-cli-ticket-b6-robots-watch.md) · [B7 `doctor`/`health`](docs/agent-notes/go-cli-ticket-b7-doctor-health.md) · [B8 `resolve-handoff`/`say-guard`](docs/agent-notes/go-cli-ticket-b8-resolve-handoff.md) · [B9 `launch`/`drawdown`/`idle`](docs/agent-notes/go-cli-ticket-b9-launch-drawdown.md) · [B10 coverage/parity close-out](docs/agent-notes/go-cli-ticket-b10-coverage-parity.md)
 - [C3 drafts/uploads/settings](docs/agent-notes/go-server-ticket-c3-drafts-uploads.md) · [C6 launchd deploy tooling](docs/agent-notes/go-server-ticket-c6-parlay-server.md)
 
-Two rules from that workstream that still apply to new work: a "port X" ticket may already be done by an earlier ticket's broader scope — grep `internal/` first; and **a dropped flag is not a degraded flag, it is a hard exit** callers may be discarding, so diff a ported command's flag table against its TS source.
+One rule from that workstream still applies to new work: a "port X" ticket may already be done by an earlier ticket's broader scope — grep `internal/` first.
 
-Go-only verbs (`merge-gate`, `branch-audit`, `landed`, `sweep`, `stale`, `mechanic`, `commands`, `claim`) get no `check` case in `tools/cli/parity/run.sh` but **must** be added to that script's `GO_ONLY_VERBS`, or their usage lines redden every help diff.
+**The TS↔Go parity harness is gone, and with it the safety net.** `packages/cli` was retired in T-08, so `tools/cli/parity/run.sh` had nothing left to diff against and was deleted with it. Two consequences: Go-only verbs no longer need a `GO_ONLY_VERBS` entry (there is no help diff to redden), and the harness that used to catch a ported command's dropped flag no longer runs — **a dropped flag is not a degraded flag, it is a hard exit** callers may be discarding, and nothing checks for one automatically now. Any remaining `parity/run.sh` mention in `docs/agent-notes/` is archaeology describing how it worked, not a live instruction.
 
 ## Maintaining this file
 

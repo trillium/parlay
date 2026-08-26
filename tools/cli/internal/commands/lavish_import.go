@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/format"
@@ -109,24 +111,41 @@ func LavishImport(argv []string) {
 	format.NextStep("parlay history 5")
 }
 
+// firstFrameTimeout bounds the wait for the first SSE data frame, matching the
+// TS original's 4s race. An SSE stream is open-ended by design and Lavish never
+// closes it, so without a deadline this blocks until the process is killed.
+const firstFrameTimeout = 4 * time.Second
+
+// maxSSELine bounds one SSE line. The whole session transcript arrives as a
+// single `data:` frame, so bufio.Scanner's 64 KiB default is far too small —
+// it would abort with "token too long" on any session past a few dozen
+// messages, and the caller would print "no messages" for a session that has
+// plenty. 8 MiB is more transcript than Lavish holds and still bounded.
+const maxSSELine = 8 << 20
+
 // fetchLavishChatHistory opens an SSE stream to Lavish and returns the first
-// chat payload. Matches the TS original's 4-second timeout on the first data
-// frame.
+// chat payload, or nil if the stream ends without one.
 func fetchLavishChatHistory(lavishURL, key string) ([]lavishMsg, error) {
-	resp, err := (&http.Client{Timeout: 6 * time.Second}).Get(lavishURL + "/events/" + key)
+	// The timeout has to live on the context, not on a select/default inside
+	// the read loop: a quiet stream blocks in Scan() and never comes back
+	// round to check a timer. Cancelling the context aborts the in-flight
+	// body read, which is the only thing that can interrupt it.
+	ctx, cancel := context.WithTimeout(context.Background(), firstFrameTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lavishURL+"/events/"+key, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach Lavish at %s — %v", lavishURL, err)
 	}
 	defer resp.Body.Close()
 
-	deadline := time.After(4 * time.Second)
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELine)
 	for scanner.Scan() {
-		select {
-		case <-deadline:
-			return nil, fmt.Errorf("timeout waiting for SSE data from Lavish")
-		default:
-		}
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			payload := strings.TrimPrefix(line, "data: ")
@@ -140,11 +159,14 @@ func fetchLavishChatHistory(lavishURL, key string) ([]lavishMsg, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// If we hit EOF before finding a data line, that's fine — just no messages.
-		if err != io.EOF {
-			return nil, fmt.Errorf("reading SSE stream: %v", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("timed out after %s waiting for a data frame from Lavish", firstFrameTimeout)
 		}
+		return nil, fmt.Errorf("reading SSE stream: %v", err)
 	}
+	// A clean EOF with no data frame is not an error — Scanner reports it as a
+	// nil Err, and the caller prints "no messages", matching the TS original's
+	// empty-array return.
 	return nil, nil
 }
 
@@ -179,20 +201,29 @@ func replayToParlay(parlayURL, shortKey, file string, msgs []lavishMsg) {
 
 		payload, _ := json.Marshal(body)
 		r, err := client.Post(parlayURL+endpoint, "application/json", strings.NewReader(string(payload)))
+		// Order matters: on a transport error `r` is nil, so the status branch
+		// must be reached only after err has been ruled out. Reading
+		// r.StatusCode first panicked on exactly the case this line exists to
+		// report — Parlay not answering.
 		status := "ok"
-		if err != nil || r.StatusCode >= 300 {
+		switch {
+		case err != nil:
+			status = fmt.Sprintf("FAIL %v", err)
+		case r.StatusCode < 200 || r.StatusCode >= 300:
 			status = fmt.Sprintf("FAIL %d", r.StatusCode)
-			if err != nil {
-				status = fmt.Sprintf("FAIL %v", err)
-			}
 		}
 		if r != nil {
+			// Drain before closing so the connection returns to the idle pool;
+			// an import replays every message in a session over this one client.
+			io.Copy(io.Discard, r.Body)
 			r.Body.Close()
 		}
 
+		// Rune-indexed, not byte-indexed: a byte slice at 60 can land inside a
+		// multi-byte rune and print a replacement character.
 		textPreview := m.Text
-		if len(textPreview) > 60 {
-			textPreview = textPreview[:60]
+		if utf8.RuneCountInString(textPreview) > 60 {
+			textPreview = string([]rune(textPreview)[:60])
 		}
 		fmt.Printf("  [%s] %s → %s — %s…\n", ts, label, status, textPreview)
 	}
