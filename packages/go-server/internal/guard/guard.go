@@ -161,6 +161,35 @@ var GuardedPaths = map[string]bool{
 	// caller is affected: every poller in this repo is a no-Origin HTTP
 	// client, and nothing in packages/client polls.
 	"/api/chat/poll": true,
+
+	// Pre-landed for the routes still being ported from packages/server. Each
+	// one is classified here on what its TS handler DOES — which is the same
+	// thing its Go port will do, since these are parity ports — so that the
+	// port lands inside the boundary instead of outside it. The rule this
+	// file exists to enforce ("a new mutating route is UNGUARDED until it is
+	// added here") fails in exactly one predictable way: a route added by
+	// someone editing internal/handlers and never opening this file. Landing
+	// the entries first removes that window, and an entry for a path no
+	// handler serves yet costs nothing — IsGuarded is consulted per request,
+	// so an unrouted path 404s before the guard's decision matters.
+	//
+	// Re-classify, do not trust this comment, if a Go handler ends up doing
+	// something its TS counterpart does not — that asymmetry is real and
+	// handlePoll above is the worked example.
+	"/api/chat/clear":                 true, // wipes persisted chat history
+	"/api/chat/system":                true, // injects a system message into the thread
+	"/api/chat/navigate":              true, // drives the panel to a URL
+	"/api/chat/reload":                true, // force-reloads every connected panel
+	"/api/chat/device-cmd":            true, // drives the connected device
+	"/api/chat/declare-channel":       true, // mutates the agent/channel registry
+	"/api/chat/eval":                  true, // relays code to the eval engine
+	"/api/chat/eval-push":             true, // pushes an eval result back
+	"/api/chat/plugin/cursorless/rpc": true, // plugin RPC — origin check only, see jsonExemptPaths
+	"/api/chat/tts":                   true, // synthesizes and speaks on the captain's device
+	"/api/chat/tts-report":            true, // appends to the pronunciation report file
+	"/api/chat/tts-correction":        true, // rewrites persisted pronunciation substitutions
+	"/api/chat/tts/validate-splits":   true, // origin check only, see jsonExemptPaths
+	"/api/chat/tts-event":             true, // broadcasts a tts_event frame carrying a device uuid
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
@@ -169,16 +198,26 @@ var GuardedPaths = map[string]bool{
 // The origin check alone is sufficient there: a browser always sends Origin
 // on a cross-origin request, including a multipart form POST.
 //
-// TS's JSON_EXEMPT_PATHS has two further members, POST
-// /api/chat/plugin/cursorless/rpc (whose out-of-repo Talon caller sends a JSON
-// body under whatever content type Python gave it) and POST
-// /api/chat/tts/validate-splits (same shape, and its only callers are hand-run
-// curl). Neither absence is a divergence: this server implements no
-// /api/chat/plugin/ and no /api/chat/tts* route at all (see the package
-// comment's route-set note). If either is ever added here, classify it on its
-// own handler, exactly as with GuardedPaths — never by copying the TS list.
+// The other two members are pre-landed for the in-flight parity ports of
+// /api/chat/plugin/cursorless/rpc and /api/chat/tts/validate-splits; the
+// reasoning is at the entries themselves. Classify anything further on its own
+// handler and its own callers, exactly as with GuardedPaths — never by copying
+// the TS list.
 var jsonExemptPaths = map[string]bool{
 	"/api/chat/upload": true,
+
+	// Pre-landed alongside their GuardedPaths entries above, on the same
+	// caller evidence TS decided them on and NOT by copying the TS list: the
+	// cursorless RPC's only caller is an out-of-repo Talon script whose JSON
+	// body arrives under whatever content type Python gave it, and
+	// validate-splits has no in-repo caller at all, so its only callers are
+	// hand-typed `curl -d`, which defaults to x-www-form-urlencoded. Both stay
+	// INSIDE the guard — the exemption drops the content-type layer, not the
+	// origin check. Adding a third member is a decision to make against the
+	// same three-part test, never a per-bug-report habit; the TS comment next
+	// to JSON_EXEMPT_PATHS states it in full.
+	"/api/chat/plugin/cursorless/rpc": true,
+	"/api/chat/tts/validate-splits":   true,
 }
 
 // IsGuarded reports whether path is inside the guard.
