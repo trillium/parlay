@@ -2028,3 +2028,22 @@ func TestACodeBlockerStillOutranksTheReRequestAdvice(t *testing.T) {
 			v.ExitCode, ExitMergeBlocked, blockerCodes(v))
 	}
 }
+
+// Found by using this verb on its own PRs: #123 was both rate-limited AND one
+// commit behind main. Spending the re-request in that state buys a review
+// pinned to a sha that is about to be replaced — the branch update turns it
+// straight into `stale-review`, and the next review costs another full window.
+// Order matters more than usual when the resource is one review per hour.
+func TestReviewerUnavailableSaysToReachFinalHeadBeforeSpendingTheRequest(t *testing.T) {
+	v := ComputeMergeGate(rateLimitedSnapshot())
+	notes := notesText(v)
+	if !strings.Contains(notes, "FINAL head") {
+		t.Errorf("notes never warn to reach the final head before re-requesting, so a caller\n"+
+			"  spends an hour-long quota on a sha they are about to replace:\n%s", notes)
+	}
+	// The warning is worthless after the fact — it has to precede the "now
+	// escalate" step, same ordering rule as the re-request itself.
+	if strings.Index(notes, "FINAL head") > strings.Index(notes, "needs-decision") {
+		t.Errorf("the final-head warning comes after the escalation, too late to act on:\n%s", notes)
+	}
+}
