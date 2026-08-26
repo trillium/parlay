@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
+	"time"
 
 	"parlay/go-server/internal/store"
 )
@@ -19,4 +22,43 @@ func RegisterData(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc(uploadURLPrefix, handleServeUpload(st))
 
 	mux.HandleFunc("/api/chat/parlay/settings", handleSettings(st))
+}
+
+// RegisterTTS wires the TTS route family onto mux: synthesis, events,
+// corrections, reports, and validation. Requires PAI_DIR and a Hub for
+// event broadcasting.
+func RegisterTTS(mux *http.ServeMux, paiDir string, hub *Hub) {
+	// Initialize TTS engine and handler
+	socketPath := getTTSSocketPath()
+	engine := NewSpeakDaemonEngine(socketPath, 30*time.Second)
+	handler := NewTTSHandler(engine, paiDir)
+
+	// Register TTS synthesis and correction endpoints
+	ttsWrapper := func(w http.ResponseWriter, r *http.Request) {
+		handler.HandleTTSRequest(w, r)
+	}
+	mux.HandleFunc("/api/chat/tts", ttsWrapper)
+	mux.HandleFunc("/api/chat/tts-correction", ttsWrapper)
+	mux.HandleFunc("/api/chat/tts-report", ttsWrapper)
+
+	// Register TTS event endpoint
+	mux.HandleFunc("/api/chat/tts-event", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/chat/tts-event" {
+			http.NotFound(w, r)
+			return
+		}
+		HandleTTSEventRequest(w, r, hub)
+	})
+
+	// Register TTS validation endpoint
+	mux.HandleFunc("/api/chat/tts/validate-splits", HandleTTSValidateRequest)
+}
+
+// getTTSSocketPath returns the speak daemon socket path, accounting for the current user.
+func getTTSSocketPath() string {
+	account := currentAccount()
+	if account == "" {
+		account = "unknown"
+	}
+	return filepath.Join(os.TempDir(), "speak-"+account+".sock")
 }
