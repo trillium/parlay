@@ -25,6 +25,7 @@ package monitor
 import (
 	"fmt"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -81,7 +82,41 @@ var fetchRegistry = func() ([]wire.AgentInfo, bool) {
 
 // startRegistryWatchdog polls the registry in the background and calls
 // `retire` once the server has cleanly reported this agent missing
-// missingStrikesToRetire times running. Returns a function that stops it.
+// missingStrikesToRetire times running.
+//
+// The returned stop function is SYNCHRONOUS: when it returns, the goroutine
+// has exited and `retire` will never be called again. Both halves of that
+// matter, and neither was true before.
+//
+// The caller (monitor.go) is a respawn loop:
+//
+//	childPID := cmd.Process.Pid
+//	stopWatchdog := startRegistryWatchdog(agent, func() { terminateProcessTree(childPID) }, …)
+//	runErr := cmd.Wait()
+//	stopWatchdog()
+//	… loop, spawn a new child with a new pid …
+//
+// so `retire` here is "SIGTERM/SIGKILL the process tree rooted at childPID".
+// A stop that merely REQUESTS a halt and returns leaves a goroutine that may
+// already be inside fetchRegistry — a real HTTP call — and that goroutine
+// would go on to terminate a pid the supervisor had already reaped with
+// cmd.Wait. The pid is free at that point, so the kernel is entitled to hand
+// it to something else: the very next respawned child, or an unrelated
+// process on the captain's box. "Kill a pid whose owner may have changed" is
+// the same class as the pgrep -f pattern-matching that AGENTS.md forbids for
+// exactly this reason, just arrived at from the other direction.
+//
+// So two things are needed, and only together:
+//
+//   - the goroutine re-checks `done` after fetchRegistry returns, so a fetch
+//     that was already in flight when stop was called cannot retire anything.
+//     This is what makes "stopped means no more retires" true.
+//   - stop waits on `finished`, so no goroutine is still touching shared state
+//     once it returns. This is what makes the test-time swap of fetchRegistry
+//     safe, and it is why this was surfacing as a -race failure.
+//
+// Blocking alone would not be enough: it would only mean stop patiently waits
+// for the stray kill to happen.
 //
 // Set PARLAY_NO_REGISTRY_WATCHDOG=1 to disable — for a monitor deliberately
 // armed before its channel is registered, and as the escape hatch if this
@@ -91,16 +126,18 @@ func startRegistryWatchdog(agent string, retire func(), interval time.Duration) 
 		return func() {}
 	}
 	done := make(chan struct{})
-	var once bool
+	finished := make(chan struct{})
+	// sync.Once rather than a plain bool: the bool was itself a data race if
+	// stop were ever called from two goroutines, and the failure mode is a
+	// double close(done), which panics rather than misbehaving quietly.
+	var once sync.Once
 	stop = func() {
-		if once {
-			return
-		}
-		once = true
-		close(done)
+		once.Do(func() { close(done) })
+		<-finished
 	}
 
 	go func() {
+		defer close(finished)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		strikes := 0
@@ -111,6 +148,15 @@ func startRegistryWatchdog(agent string, retire func(), interval time.Duration) 
 			case <-ticker.C:
 			}
 			agents, ok := fetchRegistry()
+			// Stop may have been called while that fetch was in flight. The
+			// pid this watchdog would signal has been reaped by now, so
+			// acting on a pre-stop observation is a kill aimed at whatever
+			// inherited the number.
+			select {
+			case <-done:
+				return
+			default:
+			}
 			strikes = registryStrike(agent, agents, ok, strikes)
 			if strikes < missingStrikesToRetire {
 				continue
