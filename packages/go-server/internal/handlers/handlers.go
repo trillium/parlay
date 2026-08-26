@@ -70,7 +70,7 @@ import (
 // Register wires every C1 (messaging/registry/legacy-poll) and C2 (SSE)
 // route onto mux. Call once at startup alongside registerHealth in
 // cmd/parlay-server/main.go.
-func Register(mux *http.ServeMux, st *store.Store) {
+func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	b := newBroker()
 	hub := newHub(b)
 
@@ -93,6 +93,8 @@ func Register(mux *http.ServeMux, st *store.Store) {
 
 	registerCommands(mux, st, hub)
 	registerPanel(mux, st, b, hub)
+
+	return hub
 }
 
 // writeJSON encodes v as a 200 JSON response — the shared success path for
