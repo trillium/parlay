@@ -14,14 +14,19 @@
 #      runs now, restarts on crash (KeepAlive), and starts at login (RunAtLoad).
 #   5. Verifies the server answers GET /health.
 #
-# Usage:  install.sh [--rebuild] [--addr <host:port>] [--state-dir <path>]
+# Usage:  install.sh [--rebuild] [--build] [--addr <host:port>] [--state-dir <path>]
 # Env:    PARLAY_SERVER_ADDR  listen addr (default 127.0.0.1:4242)
 #         PARLAY_STATE_HOME   state dir   (default ~/.parlay)
 #
-# The client bundle (packages/client/dist/) is copied to a stable location
-# (~/Library/Application Support/parlay/dist/) so dev builds never disturb
-# the live server. To deploy a new client build: re-run install.sh (or just
-# copy manually: cp -r packages/client/dist/. "~/Library/Application Support/parlay/dist/").
+# Frontend bundles are copied to a stable location so dev builds in the repo
+# never disturb the live server:
+#   packages/client/dist/   → ~/Library/Application Support/parlay/dist/        (panel, served at /)
+#   packages/webview/dist/  → ~/Library/Application Support/parlay/dist/fleet/  (fleet dashboard, /fleet/)
+# Default is copy-only: whatever dist/ each package already has is what ships,
+# and a missing dist/ is a warning, not a failure. --build (opt-in) runs both
+# packages' `bun run build` first, with the client's live-reload ping disabled
+# (PARLAY_RELOAD_TARGET=off) so building for THIS install never reloads panels
+# connected to some other server mid-copy.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -29,11 +34,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "${HERE}/lib.sh"
 
 REBUILD=0
+BUILD_FRONTEND=0
 ADDR="${PARLAY_SERVER_ADDR:-${PARLAY_GOSERVER_ADDR_DEFAULT}}"
 STATE_DIR="${PARLAY_STATE_HOME:-${PARLAY_GOSERVER_STATE_DEFAULT}}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --rebuild)   REBUILD=1; shift ;;
+    --build)     BUILD_FRONTEND=1; shift ;;
     --addr)      ADDR="${2:?--addr needs a host:port}"; shift 2 ;;
     --state-dir) STATE_DIR="${2:?--state-dir needs a path}"; shift 2 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -53,6 +60,23 @@ fi
 
 MODULE_DIR="$(cd "${HERE}/.." && pwd)"     # packages/go-server
 REPO_BIN="${MODULE_DIR}/parlay-server"
+REPO_ROOT="$(cd "${MODULE_DIR}/../.." && pwd)"
+
+# ── 0. Optionally build the frontend bundles first (--build, opt-in) ───────────
+# Copy-only is the default: the live server's assets come from whatever dist/
+# each package already holds, and building stays a deliberate step. The
+# client's build.ts normally POSTs /api/chat/reload after a successful build
+# (live-upgrade for connected panels) — here that ping is disabled, because
+# this build's output only goes live at step 2's copy, and reloading panels
+# against a half-copied bundle is the exact race the stable assets dir exists
+# to avoid. Re-run install.sh to deploy; the server picks the new files up
+# per-request (no restart needed for assets).
+if [ "${BUILD_FRONTEND}" = 1 ]; then
+  echo "==> building packages/client (reload ping disabled)" >&2
+  ( cd "${REPO_ROOT}/packages/client" && PARLAY_RELOAD_TARGET=off bun run build )
+  echo "==> building packages/webview" >&2
+  ( cd "${REPO_ROOT}/packages/webview" && bun run build )
+fi
 
 # ── 1. Build if needed ─────────────────────────────────────────────────────────
 if [ "${REBUILD}" = 1 ] || [ ! -x "${REPO_BIN}" ]; then
@@ -68,14 +92,25 @@ mkdir -p "${PARLAY_GOSERVER_BIN_DIR}" "${PARLAY_GOSERVER_LOG_DIR}" "${PARLAY_GOS
 # file atomically rather than truncating a binary that may be exec'd on restart.
 install -m 0755 "${REPO_BIN}" "${PARLAY_GOSERVER_BIN}.new" && mv -f "${PARLAY_GOSERVER_BIN}.new" "${PARLAY_GOSERVER_BIN}"
 install -m 0644 "${HERE}/lib.sh" "${PARLAY_GOSERVER_LIB}"
-# Copy the client bundle to the stable assets dir so dev builds in the repo
-# (which write to packages/client/dist) never disturb the live server.
-CLIENT_DIST="$(cd "${MODULE_DIR}/../.." && pwd)/packages/client/dist"
+# Copy the frontend bundles to the stable assets dir so dev builds in the repo
+# (which write to each package's dist/) never disturb the live server. The
+# layout mirrors what cmd/parlay-server/main.go serves: the assets root is the
+# panel (mux "/"), and <assets-dir>/fleet is the webview fleet dashboard
+# (mux "/fleet/" — main.go joins "fleet" onto -assets-dir itself).
+CLIENT_DIST="${REPO_ROOT}/packages/client/dist"
 if [ -d "${CLIENT_DIST}" ]; then
   echo "==> copying client dist to ${PARLAY_GOSERVER_ASSETS_DIR}" >&2
   cp -r "${CLIENT_DIST}/." "${PARLAY_GOSERVER_ASSETS_DIR}/"
 else
-  echo "install.sh: warning: packages/client/dist not found at ${CLIENT_DIST} — run 'bun run build' in packages/client first" >&2
+  echo "install.sh: warning: packages/client/dist not found at ${CLIENT_DIST} — run install.sh --build (or 'bun run build' in packages/client) first" >&2
+fi
+WEBVIEW_DIST="${REPO_ROOT}/packages/webview/dist"
+if [ -d "${WEBVIEW_DIST}" ]; then
+  echo "==> copying webview dist to ${PARLAY_GOSERVER_ASSETS_DIR}/fleet" >&2
+  mkdir -p "${PARLAY_GOSERVER_ASSETS_DIR}/fleet"
+  cp -r "${WEBVIEW_DIST}/." "${PARLAY_GOSERVER_ASSETS_DIR}/fleet/"
+else
+  echo "install.sh: warning: packages/webview/dist not found at ${WEBVIEW_DIST} — /fleet/ will 404; run install.sh --build (or 'bun run build' in packages/webview) first" >&2
 fi
 
 # ── 3. Render the plist from the template ──────────────────────────────────────

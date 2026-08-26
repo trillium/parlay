@@ -1,23 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useFleetStore } from './useFleetStore'
 import type { Agent, Command, EvalHit, Message, ToolEvent } from './types'
+import { relTime, fmtDuration } from './format'
 import './App.css'
-
-// ── utils ────────────────────────────────────────────────────────────────────
-
-function relTime(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime()
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
-  return `${Math.floor(diff / 3_600_000)}h ago`
-}
-
-function fmtDuration(ms: number): string {
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
-}
 
 const TOOL_ICONS: Record<string, string> = {
   Bash: '⬢', Read: '📄', Edit: '✏️', Write: '💾', Agent: '🤖',

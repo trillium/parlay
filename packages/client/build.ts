@@ -62,13 +62,20 @@ console.log("dist/parlay-agent.js + index.html + pulse-agent.js + index.js + plu
 // reconnect also runs the version handshake, so even missed broadcasts heal.
 // Target: PARLAY_RELOAD_TARGET env var (default http://127.0.0.1:4242, the
 // Go server). Set to http://127.0.0.1:31337 to target the legacy bun server.
+// Set to "off" (or "0"/"none"/empty) to skip the ping entirely — for builds
+// whose output is copied elsewhere before serving (deploy/install.sh --build),
+// where reloading live panels mid-copy would hand them a half-deployed bundle.
 const reloadTarget = process.env.PARLAY_RELOAD_TARGET ?? "http://127.0.0.1:4242"
-try {
-  await fetch(`${reloadTarget}/api/chat/reload`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-    signal: AbortSignal.timeout(2_000),
-  })
-  console.log(`live clients told to reload (${reloadTarget})`)
-} catch { console.log(`(server not reachable at ${reloadTarget} — clients will self-upgrade on next reconnect)`) }
+if (reloadTarget === "" || reloadTarget === "0" || reloadTarget === "off" || reloadTarget === "none") {
+  console.log("(reload ping disabled via PARLAY_RELOAD_TARGET — clients will self-upgrade on next reconnect)")
+} else {
+  try {
+    await fetch(`${reloadTarget}/api/chat/reload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(2_000),
+    })
+    console.log(`live clients told to reload (${reloadTarget})`)
+  } catch { console.log(`(server not reachable at ${reloadTarget} — clients will self-upgrade on next reconnect)`) }
+}
