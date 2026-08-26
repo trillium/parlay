@@ -420,3 +420,93 @@ func TestTheTwoExemptPortsAreStillInsideTheGuard(t *testing.T) {
 		}
 	}
 }
+
+// The plugin subtree is guarded as a WHOLE, not route by route.
+//
+// This is the test that distinguishes a prefix from a longer list. The exact
+// map already held /api/chat/plugin/cursorless/rpc, so a test that only
+// checked the routes which exist today would pass against exact matching too
+// and prove nothing about the property being claimed. The route that mattered
+// was the sibling nobody added: /response, a POST that mutates rpcWaiters and
+// resolves a pending RPC with the caller's own `result`. It reached its
+// handler from any origin, under any content type, with no preflight.
+//
+// So the deliberately-nonexistent path below is the assertion, not filler: the
+// claim is that a plugin route added LATER is guarded before anyone thinks
+// about it, and only a path that no handler serves can test that claim.
+func TestEveryPluginRouteIsGuardedIncludingOnesNotWrittenYet(t *testing.T) {
+	for _, path := range []string{
+		"/api/chat/plugin/cursorless/rpc",      // exists, was already in the map
+		"/api/chat/plugin/cursorless/response", // exists, was NOT — the live gap
+		"/api/chat/plugin/not-invented-yet/do", // the property, stated as a test
+	} {
+		if !IsGuarded(path) {
+			t.Errorf("%s: the whole /api/chat/plugin/ subtree is inside the guard", path)
+		}
+	}
+}
+
+// A cross-origin POST to the formerly-open plugin route is refused end to end.
+//
+// IsGuarded is the classification; this is the consequence. Asserting only the
+// former would leave the boundary's actual behaviour unpinned — the same shape
+// as a check that passes because it never looked.
+func TestWrapRefusesCrossOriginOnAPluginRouteNotInTheExactMap(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost,
+		"/api/chat/plugin/cursorless/response", "https://evil.example.com", "application/json"))
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("cross-origin POST to the plugin response route: status = %d, want 403", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "reached the handler") {
+		t.Errorf("the request reached the handler: %s", body)
+	}
+}
+
+// The panel's own POST to that route still works.
+//
+// A guard is only as good as its not breaking the caller it exists to protect;
+// packages/client/src-plugins/cursorless.ts posts /response same-origin with
+// an explicit Content-Type: application/json, so both layers cost it nothing.
+// Pinned because "tighten the boundary" and "break voice editing on the
+// captain's box" are one careless commit apart.
+func TestThePanelsOwnPluginResponsePostStillPasses(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost,
+		"/api/chat/plugin/cursorless/response", "http://localhost:4242", "application/json"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("same-origin panel POST: status = %d, want 200", rec.Code)
+	}
+}
+
+// The trailing slash on /api/chat/agents/ is load-bearing.
+//
+// GET /api/chat/agents is a read route and stays open — Go sends no ACAO on
+// unguarded routes at all, so a foreign page cannot read the response. (TS
+// guards its own /api/chat/agents because unguarded routes THERE still carry
+// the legacy wildcard CORS. Same boundary, opposite defaults, both correct.)
+// A prefix written without the slash would swallow the exact path and quietly
+// reverse a decision each server made on its own evidence, so this pins the
+// two apart rather than trusting the string literal to keep its last
+// character.
+func TestTheAgentsPrefixDoesNotSwallowTheAgentsReadRoute(t *testing.T) {
+	if IsGuarded("/api/chat/agents") {
+		t.Error("/api/chat/agents is a read route on this server and must stay unguarded")
+	}
+	if !IsGuarded("/api/chat/agents/some-agent-id") {
+		t.Error("DELETE /api/chat/agents/:id mutates the registry and must be guarded")
+	}
+}
+
+// /api/debug/ is guarded before its handler exists, same discipline as the
+// in-flight exact entries above: its GET response is keyed BY DEVICE ID, which
+// is the identifier the whole guard exists to keep out of a foreign origin's
+// reach, and its POST writes into the timing buffer. Landing the prefix first
+// means the port cannot arrive open.
+func TestTheDebugSubtreeIsGuardedBeforeItsHandlerExists(t *testing.T) {
+	if !IsGuarded("/api/debug/input-timing") {
+		t.Error("/api/debug/ is keyed by device id and must be guarded before the port lands")
+	}
+}
