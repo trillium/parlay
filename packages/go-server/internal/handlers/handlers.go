@@ -91,6 +91,10 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	// external-producer ingress. See events_ingress.go.
 	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub))
 
+	// Eval relay routes (ticket C4)
+	mux.HandleFunc("/api/chat/eval", handleEval(hub))
+	mux.HandleFunc("/api/chat/eval-push", handleEvalPush(hub))
+
 	registerCommands(mux, st, hub)
 	registerPanel(mux, st, b, hub)
 

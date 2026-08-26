@@ -236,12 +236,10 @@ func writeSSE(w http.ResponseWriter, name string, data any) {
 }
 
 // handleEvents implements GET /api/chat/events?device=<uuid>&after=<lastMsgId>&url=<currentPageUrl>.
-// `device` and `url` are accepted (so a malformed/absent value never breaks
-// the connection) but unused: nothing in this server yet needs per-device
-// identity or per-URL history scoping (docs/api-contract.md's own wording,
-// "lets the server scope `history` more deeply", is speculative about a
-// capability, not a documented required behavior) — a clean-slate choice
-// to not invent scoping logic nothing currently consumes.
+// `device` is used for device-scoped SSE broadcasts (eval relay routes, etc);
+// `url` is accepted but unused (nothing in this server yet needs per-URL
+// history scoping). A clean-slate choice to not invent scoping logic nothing
+// currently consumes.
 func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
