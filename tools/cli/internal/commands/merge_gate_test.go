@@ -296,6 +296,12 @@ func TestVacuousPassDescriptionVariants(t *testing.T) {
 		"Review skipped",
 		"Skipping review for this PR",
 		"Files not reviewed",
+		// Observed live on PR #125, and the most explicit wording yet: the
+		// check itself states the star-count policy that this whole family of
+		// blockers exists because of. Worth pinning as a fixture rather than
+		// leaving it covered only incidentally by the "review skipped" branch
+		// of the pattern — this is the string a reader will actually meet.
+		"Review skipped: manual review required for this OSS repository",
 	} {
 		s := reviewedPR()
 		s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: desc}}
