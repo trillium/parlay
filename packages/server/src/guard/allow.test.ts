@@ -108,9 +108,33 @@ describe("legitimate callers still get through", () => {
     expect(guardChatRequest(noOrigin("POST", "/api/chat/send"), "/api/chat/send")).toBeNull()
   })
 
-  test("read routes are not touched by the guard", () => {
-    expect(guardChatRequest(req("GET", "/api/chat/agents", { origin: EVIL, contentType: null }), "/api/chat/agents")).toBeNull()
-    expect(guardChatRequest(req("GET", "/api/chat/events", { origin: EVIL, contentType: null }), "/api/chat/events")).toBeNull()
+  test("inert read routes are not touched by the guard", () => {
+    expect(guardChatRequest(req("GET", "/api/chat/history", { origin: EVIL, contentType: null }), "/api/chat/history")).toBeNull()
+    expect(guardChatRequest(req("GET", "/api/chat/version", { origin: EVIL, contentType: null }), "/api/chat/version")).toBeNull()
+  })
+
+  // The former `identifier-disclosure-remains-on-sse` residue, closed: a
+  // foreign page can no longer read agent ids or open the SSE stream (whose
+  // tts_event frames carry the device uuid). GETs never hit the content-type
+  // gate, so the origin check is the whole change here.
+  test("a foreign origin can no longer read /agents or the SSE stream", () => {
+    for (const p of ["/api/chat/agents", "/api/chat/events"]) {
+      expect(guardChatRequest(req("GET", p, { origin: EVIL, contentType: null }), p)?.status).toBe(403)
+    }
+  })
+
+  // …while every legitimate reader keeps working: the CLI/hooks send no
+  // Origin, the panel is same-origin, and parlay-input (packages/input, the
+  // published EventSource client) runs on loopback/LAN pages, which
+  // originAllowed accepts and answers with a reflected ACAO.
+  test("no-Origin, same-origin and LAN readers still reach /agents and /events", () => {
+    for (const p of ["/api/chat/agents", "/api/chat/events"]) {
+      expect(guardChatRequest(noOrigin("GET", p, null), p)).toBeNull()
+      expect(guardChatRequest(req("GET", p, { origin: SAME_ORIGIN, contentType: null }), p)).toBeNull()
+      const lan = req("GET", p, { origin: "http://192.168.1.42:8080", host: "192.168.1.42:4242", contentType: null })
+      expect(guardChatRequest(lan, p)).toBeNull()
+      expect(guardedCorsHeaders(lan)["Access-Control-Allow-Origin"]).toBe("http://192.168.1.42:8080")
+    }
   })
 })
 

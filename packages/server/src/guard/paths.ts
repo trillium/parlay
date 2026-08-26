@@ -5,14 +5,18 @@
 // time; task-6ai1's D9 was entirely about routes that were never added here.
 
 // ── Legacy wildcard CORS ────────────────────────────────────────────────────
-// Still applied to the UNGUARDED routes — the read/SSE surface (history,
-// agents, events, version, pages, plugins manifest) and GET
-// /api/chat/uploads/<name>, which serves content-addressed image bytes an
-// <img> tag must be able to load. That surface is NOT purely read-only: see
-// the accepted residue named in the guarded-route-set rule below. It lives
+// Still applied to the UNGUARDED routes — the read surface (history, version,
+// pages, plugins manifest) and GET /api/chat/uploads/<name>, which serves
+// content-addressed image bytes an <img> tag must be able to load. It lives
 // here rather than in sse.ts because the CORS policy belongs with the code
 // that decides who gets it. sse.ts re-exports this name so existing importers
 // keep their `from "./sse"` path.
+//
+// Note /api/chat/history stays on this wildcard by prior decision: it hands
+// out full chat bodies to any origin, which is a bigger disclosure than the
+// identifiers this guard exists for — but it has always been the documented
+// world-readable surface and closing it is a product decision, not a guard
+// classification. Revisit deliberately, not as a rider on some other fix.
 export const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -29,24 +33,21 @@ export const CORS = {
 // that hands out the ids the rest of the surface is aimed with. Classify by
 // reading the handler, never by the verb or by the route's name.
 //
-// That is a description of the boundary that exists, and it is narrower than
-// the words "anything that writes or discloses" would suggest. Two routes are
-// KNOWN, ACCEPTED, DELIBERATELY-UNGUARDED RESIDUE — accepted meaning somebody
-// looked and decided, not that nothing is exposed:
-//   - GET /api/chat/events writes `sseClients` from an attacker-supplied
-//     `?device=` (router-events.ts: sseClients.set(clientId, { …, device, ua,
-//     … })), and the tts_event frames its stream carries reach every connected
-//     client with that device uuid in them (router-tts-events.ts builds
-//     { …, device, ...body } and calls broadcastToClients("tts_event", msg)
-//     with no filtering), so a cross-origin EventSource can read it.
-//   - GET /api/chat/agents (the GET in router-messages.ts) returns every
-//     registered agent id under the wildcard CORS above — the same class of
-//     disclosure /subscribers was guarded for.
-// Both are tracked separately as `identifier-disclosure-remains-on-sse`;
-// guarding or redacting them was ruled out of this change's scope, not
-// overlooked. What keeps the residue from chaining into the D9 attack is that
-// every route that AIMS anything — eval, draft, device-cmd, navigate, reload,
-// poll, upload, subscribers — is in the set below.
+// The set below now covers the whole identifier surface. The two routes that
+// were long tracked as accepted residue under
+// `identifier-disclosure-remains-on-sse` — GET /api/chat/events (writes
+// `sseClients` from an attacker-supplied `?device=`, and the tts_event frames
+// its stream carries reach every connected client with that device uuid in
+// them; router-tts-events.ts broadcasts { …, device, ...body } unfiltered)
+// and GET /api/chat/agents (every registered agent id, previously under the
+// wildcard CORS above — the same class of disclosure /subscribers was guarded
+// for) — are guarded as of this change, closing that tracking item. Guarding,
+// not Go's no-ACAO-ever: `parlay-input` (packages/input, published npm) is a
+// legitimate cross-origin EventSource consumer with a configurable base URL,
+// so these routes must keep a reflected ACAO for allowed origins (loopback /
+// .local / private-LAN / PARLAY_ALLOWED_ORIGINS) while foreign pages get 403.
+// Both are GETs, so the content-type gate never applies — this is purely the
+// origin check plus the loss of the wildcard ACAO.
 export const GUARDED_CHAT_PATHS = new Set([
   // Agent-turn injection and registry mutation (original set).
   "/api/chat/send",
@@ -77,6 +78,11 @@ export const GUARDED_CHAT_PATHS = new Set([
   // content-type gate never applies to it; this is purely the origin check
   // plus the loss of the wildcard ACAO.
   "/api/chat/subscribers",
+  // The former `identifier-disclosure-remains-on-sse` residue, now closed —
+  // see the guarded-route-set comment above for what each discloses and why
+  // reflected ACAO (not no-ACAO) is the right shape here.
+  "/api/chat/events",
+  "/api/chat/agents",
   // Multipart by contract — see JSON_EXEMPT_PATHS.
   "/api/chat/upload",
 
@@ -104,8 +110,8 @@ export const GUARDED_CHAT_PATHS = new Set([
 
 // Prefix matches.
 //   /api/chat/agents/  — DELETE /api/chat/agents/:id, the REST alias for
-//     unregister. Note the trailing slash: GET /api/chat/agents (the read
-//     route) is NOT matched.
+//     unregister. The trailing slash keeps this a distinct match from
+//     GET /api/chat/agents, which is guarded by its own exact-set entry above.
 //   /api/chat/plugin/  — plugin RPC. Guarded as a PREFIX, deliberately, so a
 //     plugin added later is guarded by default instead of shipping open until
 //     someone remembers this file. Today that is the Cursorless bridge, whose
