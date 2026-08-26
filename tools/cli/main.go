@@ -1,14 +1,14 @@
 // Command parlay talks to a Parlay chat server.
 //
-// Go port of packages/cli (ticket B0, see docs/scope-go-cli.md and
-// docs/plan-go-migration-tickets.md). Server URL from PARLAY_SERVER
+// Go CLI (ticket B0, workstream B). The TS CLI (packages/cli) has been
+// deleted; this is now the sole parlay CLI. Server URL from PARLAY_SERVER
 // (default http://localhost:4242) — see internal/config.
 //
 // Exit codes: 0 = ok, 1 = runtime/server error, 2 = usage error (bad
 // flag/command/args).
 //
 // This file is only the command dispatcher; each concern lives in its own
-// package, mirroring index.ts's module split:
+// package:
 //
 //	internal/config   server URL + exit codes    internal/args    flag parser
 //	internal/httpc     JSON transport + die()      internal/format  message rendering
@@ -159,6 +159,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Commands(args)
 	case "landed":
 		commands.Landed(args)
+	case "lavish-import":
+		commands.LavishImport(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		finish(config.ExitUsage)

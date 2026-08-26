@@ -13,16 +13,6 @@ while [ -L "$SOURCE" ]; do
 done
 REPO="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
 
-# `lavish-import` (packages/cli/src/lavish-import.ts) has no Go port yet —
-# discovered during B10's parity pass: tools/cli/main.go's dispatch switch
-# never grew a case for it even though tools/cli/internal/help/help.go's
-# usage text already documents it. Keep routing this one command to the old
-# TS CLI so `parlay lavish-import` keeps working; tracked as Go-CLI follow-up
-# work, not silently dropped.
-if [ "$1" = "lavish-import" ]; then
-  exec bun "$REPO/packages/cli/src/index.ts" "$@"
-fi
-
 # Go rewrite of packages/cli (ticket B10, workstream B). Build the binary if
 # missing or stale (any tools/cli source newer than it), then exec it in
 # place of the old `bun packages/cli/src/index.ts`.

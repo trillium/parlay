@@ -10,7 +10,16 @@ AGENT_ID="${LAVISH_AGENT_ID:-${PARLAY_AGENT_ID:-lavish}}"
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
 LAVISH_BIN="/opt/homebrew/bin/lavish-axi"
 CLAIM_FILE="${HOME}/.lavish-axi/pending-claim.json"
-POLL_BRIDGE="${HOME}/code/parlay/packages/cli/src/lavish-poll.ts"
+
+# Resolve this script through any symlinks to find the repo root.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE" ;; esac
+done
+REPO="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
+POLL_BRIDGE="$REPO/tools/lavish-poll.ts"
 
 case "${1:-}" in
   poll)

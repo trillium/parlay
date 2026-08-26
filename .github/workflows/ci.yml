@@ -159,8 +159,8 @@ jobs:
           echo "working tree clean after a full build"
 
   # ── Bun workspace: packages/input, packages/client, packages/server,
-  #    packages/cli, plus tools/gate-tag ─────────────────────────────────────
-  # packages/server and packages/cli have real test files but no "test" script
+  #    plus tools/gate-tag ───────────────────────────────────────────
+  # packages/server has real test files but no "test" script
   # in package.json, so `bun test` is invoked directly. Every package is run
   # from inside its own directory: there is no root bunfig.toml, so the
   # happy-dom preload that packages/client and packages/input need is only
@@ -201,7 +201,7 @@ jobs:
         working-directory: tools/split-test
 
       # HOME is redirected for the same reason as the Go job, and here it is
-      # load-bearing rather than defensive: packages/cli's own tests resolve
+      # load-bearing rather than defensive: packages/client's own tests resolve
       # join(homedir(), ".parlay", "agents", <test agent>) directly
       # (commands-crew-state.test.ts, commands-supervise.test.ts,
       # commands-status.test.ts) and genuinely create that directory. Verified
@@ -219,7 +219,7 @@ jobs:
           HOME: ${{ runner.temp }}/bun-home
         run: |
           mkdir -p "$HOME"
-          for p in packages/input packages/client packages/server packages/cli \
+          for p in packages/input packages/client packages/server \
                    packages/webview tools/gate-tag; do
             echo "::group::bun test ($p)"
             ( cd "$p" && bun test )
