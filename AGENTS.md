@@ -24,6 +24,7 @@ Each of these has already caused a real incident on the captain's box.
 - **Need a real instance? Use `examples/bootstrap-sandbox.sh`** rather than hand-rolling one; it encodes the isolation recipe. → [notes](docs/agent-notes/need-a-real-parlay-instance-to.md)
 - **A best-effort probe written as `VAR=$(cmd)` is not best-effort.** Under `set -euo pipefail` a plain assignment takes the substitution's exit status. Write `VAR="$(cmd)" || VAR=""`. → [notes](docs/agent-notes/a-best-effort-probe-written-as-robots-dcag.md)
 - **CI is `.github/workflows/ci.yml`** — four jobs (go, bun, shell, hygiene), including a 2 MiB tracked-blob ceiling. Several harnesses are deliberately excluded. → [notes](docs/agent-notes/ci-is-github-workflows-ci-yml.md)
+- **Never assert on elapsed time across a subprocess.** `bun` startup jitter is bigger than most quantities worth testing, so a bound loose enough not to flake cannot fail — assert on emitted output, and test-the-test. → [notes](docs/agent-notes/a-timing-assertion-loose-enough-not.md)
 
 ## The security boundary
 

@@ -19,7 +19,7 @@ while [ -L "$SOURCE" ]; do
   case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE" ;; esac
 done
 REPO="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
-POLL_BRIDGE="$REPO/tools/lavish-poll.ts"
+POLL_BRIDGE="$REPO/tools/lavish-poll/index.ts"
 
 case "${1:-}" in
   poll)
