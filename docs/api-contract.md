@@ -333,10 +333,28 @@ Response:
 ```jsonc
 { "timeout": true }
 // or
-{ "id": "msg-id", "role": "user"|"agent", "text": "string", "from": "string?" }
+{ "id": "msg-id", "role": "user"|"agent", "text": "string", "from": "string?",
+  "cursorReset": "boolean?", "skipped": "number?" }
 ```
 On timeout the caller loops immediately (no message emitted); on error the
 caller sleeps and retries (2–3s backoff).
+
+`cursorReset`/`skipped` are **Go-server only** (`packages/go-server`); the TS
+server never emits them, so a caller must treat both as optional and absent.
+They appear only when `after` names a message the server cannot resolve among
+the channel's retained messages — a truncated or rotated store, a cursor from a
+previous server run, or a cursor belonging to a different channel. Rather than
+silently delivering nothing (the old behavior, which loses every message in the
+gap) the server resumes from the newest `min(50, retained)` messages on that
+channel and says so: `cursorReset: true`, with `skipped` counting the older
+retained messages left outside that window. The bound mirrors the relay's
+`PARLAY_REPLAY_MAX` default for the same reason — replaying a multi-thousand
+backlog into an agent's context destroys the session it was restoring, but a
+*silent* truncation is the original bug with better manners.
+
+The reset frame carries the oldest message of that window, so the caller's next
+`after` resolves normally and the walk forward continues one message per call.
+A resolvable cursor never sets either field.
 
 ---
 
