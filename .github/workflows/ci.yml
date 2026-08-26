@@ -226,10 +226,34 @@ jobs:
       - name: Test
         env:
           HOME: ${{ runner.temp }}/bun-home
+        shell: bash
         run: |
           mkdir -p "$HOME"
-          for p in packages/input packages/client packages/server \
-                   packages/webview tools; do
+          roots="packages/input packages/client packages/server \
+                 packages/webview packages/ccjuggler tools"
+
+          # A test file under no root is not partially run — it is not run at
+          # all, and this job still reports green, which is indistinguishable
+          # from it having passed. packages/ccjuggler was in exactly that state:
+          # six tests covering OAuth token resolution that CI had never once
+          # executed. Checked before the loop so the failure names the gap
+          # rather than surfacing as a confusing absence of output.
+          uncovered=""
+          while IFS= read -r f; do
+            covered=""
+            for r in $roots; do
+              case "$f" in "$r"/*) covered=1; break ;; esac
+            done
+            [ -z "$covered" ] && uncovered="$uncovered $f"
+          done < <(git ls-files '*.test.ts' '*.test.tsx')
+          if [ -n "$uncovered" ]; then
+            echo "::error::Test files exist under no root in this job's list, so they are NEVER RUN:"
+            printf '  %s\n' $uncovered
+            echo "Add the owning package to \$roots above."
+            exit 1
+          fi
+
+          for p in $roots; do
             echo "::group::bun test ($p)"
             ( cd "$p" && bun test )
             echo "::endgroup::"
