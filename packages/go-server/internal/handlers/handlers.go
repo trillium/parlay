@@ -92,6 +92,7 @@ func Register(mux *http.ServeMux, st *store.Store) {
 	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub))
 
 	registerCommands(mux, st, hub)
+	registerPanel(mux, st, b, hub)
 }
 
 // writeJSON encodes v as a 200 JSON response — the shared success path for

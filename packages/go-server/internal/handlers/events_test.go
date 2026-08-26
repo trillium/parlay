@@ -161,7 +161,7 @@ func TestHandlePollBroadcastsMessageReceivedOnBacklogDelivery(t *testing.T) {
 		t.Fatalf("appendAndPublish 2: %v", err)
 	}
 
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
 	h := handlePoll(st, b, hub, time.Second)
@@ -180,7 +180,7 @@ func TestHandlePollBroadcastsMessageReceivedOnWakeup(t *testing.T) {
 	st := newTestStore(t)
 	b := newBroker()
 	hub := newHub(b)
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
 	h := handlePoll(st, b, hub, 2*time.Second)
@@ -192,7 +192,7 @@ func TestHandlePollBroadcastsMessageReceivedOnWakeup(t *testing.T) {
 		done <- rec
 	}()
 
-	time.Sleep(20 * time.Millisecond) // let the handler goroutine reach subscribe() before we publish
+	time.Sleep(20 * time.Millisecond) // let the handler goroutine reach subscribe("") before we publish
 	msg, _, err := appendAndPublish(st, b, store.ChatMessage{Role: "agent", Text: "hi", Channel: "c0"})
 	if err != nil {
 		t.Fatalf("appendAndPublish: %v", err)
@@ -214,7 +214,7 @@ func TestHandlePollBroadcastsMessageReceivedOnWakeup(t *testing.T) {
 func TestHandleRegisterAgentBroadcastsAgentRegister(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
 	postJSON(t, handleRegisterAgent(st, hub), map[string]any{"id": "c1", "name": "Firstmate"})

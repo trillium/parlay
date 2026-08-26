@@ -248,6 +248,49 @@ func (ms *MessageStore) Count() int {
 	return len(ms.ring)
 }
 
+// Len returns the number of messages currently retained in memory.
+// Alias for Count() for compatibility.
+func (ms *MessageStore) Len() int {
+	return ms.Count()
+}
+
+// Clear removes all messages from the history and truncates the log file.
+func (ms *MessageStore) Clear() error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	ms.ring = ms.ring[:0] // clear the ring buffer
+	ms.nextSeq = 1         // reset the sequence counter
+
+	// Truncate the file
+	if err := ms.file.Truncate(0); err != nil {
+		return fmt.Errorf("truncate %s: %w", ms.path, err)
+	}
+	if _, err := ms.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("seek %s: %w", ms.path, err)
+	}
+	return nil
+}
+
+// RemoveByChannel removes all messages from the specified channel and
+// rewrites the log file to contain only the remaining messages.
+func (ms *MessageStore) RemoveByChannel(channel string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	// Filter out messages from this channel
+	kept := ms.ring[:0]
+	for _, m := range ms.ring {
+		if m.Channel != channel {
+			kept = append(kept, m)
+		}
+	}
+
+	ms.ring = kept
+	// Compact to rewrite the file with only the kept messages
+	return ms.compactLocked()
+}
+
 // Close flushes and closes the underlying log file.
 func (ms *MessageStore) Close() error {
 	ms.mu.Lock()
