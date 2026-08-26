@@ -1,10 +1,12 @@
 package store
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
+
+	"encoding/json"
+	"parlay/go-server/internal/atomicfile"
 )
 
 // ParlaySettings matches ParlaySettings in docs/api-contract.md (§Settings).
@@ -114,7 +116,7 @@ func (ss *SettingsStore) Replace(s ParlaySettings) (ParlaySettings, error) {
 	if err != nil {
 		return ParlaySettings{}, fmt.Errorf("marshal settings: %w", err)
 	}
-	if err := writeFileAtomic(ss.path, data, 0o644); err != nil {
+	if err := atomicfile.Write(ss.path, data, 0o644); err != nil {
 		return ParlaySettings{}, fmt.Errorf("write %s: %w", ss.path, err)
 	}
 	ss.settings = s
