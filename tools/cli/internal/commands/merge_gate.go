@@ -42,13 +42,37 @@
 // 4 exists because 3 alone gave the fleet no bounded answer (robots-8kkq).
 // "CodeRabbit is rate limited" and "a test is failing" are both non-zero, but
 // they call for opposite behavior: the second is fixed by working on the PR,
-// while the first cannot be fixed from the PR at all and has already, in
-// practice, outlasted the stated window by hours — `@coderabbitai review`
-// recovered one PR once and then stayed limited across three further attempts
-// over ~40 minutes. A mechanic told only "blocked" polls forever. Splitting
-// the exit code lets the caller stop and hand the captain the two honest
-// options — merge-and-disclose, or park — instead of burning the night on a
-// wait with no terminating condition.
+// while the first cannot be fixed from the PR at all. A mechanic told only
+// "blocked" polls forever. Splitting the exit code lets the caller stop with a
+// terminating condition instead of burning the night on a wait.
+//
+// What 4 must NOT do is escalate before spending the one cheap action that can
+// change the answer (task-6ch1h). For a long time this verb told the caller
+// that re-requesting "has stayed limited across repeated attempts" and to hand
+// the choice to the captain without trying it. That advice rested on a
+// diagnosis nobody had checked, and it was wrong twice over:
+//
+//   - Automatic review is not merely unreliable here, it is OFF. CodeRabbit
+//     says so in plain text on any PR that asks: "This repository does not
+//     receive automatic reviews because it has fewer than 10 stars." So
+//     "park until the reviewer returns" was never a terminating strategy —
+//     nobody was coming.
+//   - An explicit `@coderabbitai review` DOES work. #122 came back "Action
+//     performed: Review finished" within a minute and found a real goroutine
+//     and fd leak in that PR's own new code.
+//
+// Six PRs (#116–#121) were merged unreviewed under the old advice, each with a
+// no-review disclosure, when one comment apiece would have gotten a real
+// review. That is the cost of a gate that hands back a decision it could have
+// resolved. The notes on the 4 path now spend the re-request first and escalate
+// only after its stated window has lapsed.
+//
+// The rate limit is real, though — it is just a quota, not a refusal. The free
+// tier includes roughly one review per hour and the reply states the wait
+// ("Next included review available in NN minutes"), so re-requests have to be
+// SEQUENCED across PRs. Firing three at once spends the window on whichever
+// lands first; #123 and #124 both got "Action not completed — Review rate
+// limited" that way.
 //
 // A refusal counts wherever it is written down (robots-eowy). CodeRabbit
 // edits its ONE comment in place, so a PR whose first push got a real review
@@ -273,6 +297,83 @@ var coderabbitRateLimited = regexp.MustCompile(`(?i)rate limited by coderabbit\.
 // own PR (#47) — see reviewEvidence for the ordering that makes it moot
 // anyway.
 var coderabbitReviewed = regexp.MustCompile(`(?i)<!-- walkthrough_start -->|actionable comments posted`)
+
+// rateLimitMinutes pulls the wait out of CodeRabbit's rate-limit template.
+//
+// This is the difference between a wait and a decision. A quota with a stated
+// expiry has a terminating condition — come back then; a quota with an unknown
+// one does not, and only the second is worth a captain's attention. The gate
+// already had this number sitting in the comment body and was throwing it away,
+// which is why the advice on the exit-4 path could only ever say "after the
+// window" without saying when that was.
+//
+// The pattern is loose in three specific places, because CodeRabbit has used at
+// least two spellings and this file has a fixture of each:
+//
+//	**Next review available in:** **51 minutes**      (PR #47, older)
+//	Next included review available in 57 minutes.     (PR #123, today)
+//
+// So "included" is optional, the colon is optional, and stray `*` emphasis is
+// tolerated around the number. Singular "minute" is matched too: the template
+// does not switch wording at 1, and a gate that silently reports no window on
+// the last minute of the wait is worse than one that never reported it.
+//
+// Tightening this to one exact sentence is the failure mode to avoid — the
+// wording has already changed once, and a miss here reads as "no window
+// stated", which escalates a wait into a captain's decision.
+var rateLimitMinutes = regexp.MustCompile(`(?i)next\s+(?:included\s+)?review\s+available\s+in[\s:*]*(\d+)[\s*]*minutes?`)
+
+// rateLimitWindow returns the stated wait as a human string, or "" when no body
+// carries one.
+//
+// It returns the LARGEST window across the bodies rather than the first. There
+// is normally exactly one, but CodeRabbit edits its comment in place while
+// separate `@coderabbitai review` replies accumulate as their own comments, so
+// a PR that has been re-requested more than once can carry several. The largest
+// is the conservative pick: coming back too late costs one gate re-run, coming
+// back too early spends a re-request that is refused.
+func rateLimitWindow(bodies []string) string {
+	best := 0
+	for _, b := range bodies {
+		m := rateLimitMinutes.FindStringSubmatch(b)
+		if m == nil {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			// Unreachable via the pattern (\d+ only), but a parse that fails
+			// must not be read as "no window" — that is the direction that
+			// turns a wait back into an escalation.
+			continue
+		}
+		if n > best {
+			best = n
+		}
+	}
+	if best == 0 {
+		return ""
+	}
+	unit := "minutes"
+	if best == 1 {
+		unit = "minute"
+	}
+	return fmt.Sprintf("%d %s", best, unit)
+}
+
+// requestReviewCmd builds the exact re-request command, repo flag included.
+//
+// The `--repo` is not optional politeness. AGENTS.md forbids letting gh pick
+// the repo implicitly, because it prefers a remote named `upstream` over
+// `origin` — so a bare `gh pr comment 122` on a fork posts to someone else's
+// repository. A gate that prints a command a caller will paste has to print the
+// safe spelling of it.
+func requestReviewCmd(repo string, number int) string {
+	cmd := fmt.Sprintf("gh pr comment %d", number)
+	if repo != "" {
+		cmd += " --repo " + repo
+	}
+	return cmd + " --body '@coderabbitai review'"
+}
 
 // sha40 pulls full commit sha's out of a CodeRabbit review body, which states
 // the exact range it reviewed ("...changed from the base of the PR and
@@ -677,9 +778,10 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 	// WOULD have processed, which reads exactly like a completed review to any
 	// content match. Scanning for review markers first lets a refusal
 	// masquerade as the review it explicitly declined to do.
+	bodies := botBodies(s.PR)
 	reviewedBodies := []string{}
 	rateLimited := false
-	for _, body := range botBodies(s.PR) {
+	for _, body := range bodies {
 		if coderabbitRateLimited.MatchString(body) {
 			rateLimited = true
 			continue
@@ -728,8 +830,17 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 				shortSHA(s.PR.HeadRefOid))
 		}
 	case rateLimited:
+		// The template states the wait, so quote it back rather than making the
+		// caller open the PR to find out how long "after the window" is. A quota
+		// with a stated expiry is a wait; a quota with an unknown one is a
+		// decision, and telling them apart is the whole point of exit 4.
+		msg := "CodeRabbit posted its rate-limit template and never reviewed this PR."
+		if w := rateLimitWindow(bodies); w != "" {
+			msg += " It says the next included review is available in " + w + "."
+		}
 		blockAs(&v, "review-rate-limited", ClassReviewerUnavailable,
-			"CodeRabbit posted its rate-limit template and never reviewed this PR. Re-request after the window, or enable usage-based reviews.")
+			"%s Re-request after that window with `%s`, or enable usage-based reviews.",
+			msg, requestReviewCmd(s.Repo, s.PR.Number))
 	case humanReviewer != "":
 		v.Notes = append(v.Notes,
 			fmt.Sprintf("No automated review found, but %s reviewed this PR — treating that as the review of record.", humanReviewer))
@@ -832,13 +943,15 @@ func ComputeMergeGate(s MergeGateSnapshot) MergeGateVerdict {
 			"Bound it (robots-8kkq): if a re-run dies on the same infra signature, that is a GitHub incident, not your branch. Signal `parlay status needs-decision` with that reason instead of re-running forever.")
 	default:
 		// Nothing here is about the diff, and nothing on the branch will
-		// change it. Say so, and say what the two honest answers are, so the
-		// caller has a terminating condition instead of a poll loop.
+		// change it. Say so, and say what the honest answers are, so the caller
+		// has a terminating condition instead of a poll loop.
 		v.NeedsDecision, v.ExitCode = true, ExitMergeNeedsDecision
 		v.Notes = append(v.Notes,
 			"Every blocker above is the reviewer being unavailable, not a finding about this code. Do NOT edit the branch: there is no finding to fix, and a new push restarts the review and re-consumes the limit that is blocking you.",
-			"Do NOT wait on this unbounded, and do not expect waiting to work at all: CodeRabbit does not re-review on its own when the window lapses — it only reviews on a new push or an explicit `@coderabbitai review` comment, so a gate re-run alone will return this same answer forever.",
-			"Signal `parlay status needs-decision` and let the captain pick one of three: re-request (post `@coderabbitai review` on the PR once — the only action that can change this answer, and it has stayed limited across repeated attempts before), merge-and-disclose (land it, and state plainly in the merge/close note that no review ran), or park (leave it open until the reviewer returns). Do not pick for them.")
+			"Waiting alone never clears this. CodeRabbit does not review this repository automatically at all — it told us why, on PR #122: \"This repository does not receive automatic reviews because it has fewer than 10 stars.\" So there is no reviewer who is going to come back on their own, and `park` is not a terminating strategy here; a gate re-run with no re-request returns this same answer forever.",
+			fmt.Sprintf("Do this first, before treating it as a decision: post the re-request. `%s`. It works — verified on #122, which came back \"Action performed: Review finished\" in about a minute and immediately found a real goroutine/fd leak. Post it ONCE per head sha; a second one while the first is unanswered spends nothing.", requestReviewCmd(s.Repo, s.PR.Number)),
+			"If the reply is \"Review rate limited\", that is a quota, not a refusal: the free tier includes roughly one review per hour, and the reply states the wait (\"Next included review available in NN minutes\"). Re-request after that window rather than escalating. Sequence re-requests across PRs — firing them at three PRs at once spends the window on whichever lands first and the other two get nothing.",
+			"Only once a re-request has been made AND its stated window has lapsed is this a real decision: signal `parlay status needs-decision` and let the captain choose merge-and-disclose (land it, stating plainly in the merge note that no review ran) or park. Do not escalate before spending the re-request — that is handing back a decision the gate could have resolved for the price of one comment.")
 	}
 	return v
 }

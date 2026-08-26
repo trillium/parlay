@@ -161,10 +161,24 @@ func TestReviewerUnavailableIsNeedsDecisionNotAHardBlock(t *testing.T) {
 		}
 	}
 	notes := strings.Join(v.Notes, " ")
-	for _, want := range []string{"merge-and-disclose", "park", "needs-decision", "unbounded"} {
+	for _, want := range []string{"merge-and-disclose", "park", "needs-decision"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("notes should name %q so the caller has a bounded answer, got %v", want, v.Notes)
 		}
+	}
+	// This used to assert the literal word "unbounded", from a version of the
+	// notes that said "do NOT wait on this unbounded". That word was a proxy for
+	// the real property — the caller must be told that polling alone never
+	// clears this — and the notes now say it in different words, so asserting the
+	// word would only pin prose. Assert the property instead, and additionally
+	// require the re-request that the rewritten advice leads with (task-6ch1h):
+	// a note that says "waiting will not help" without naming the action that
+	// does help is the shape that sent six PRs to merge-and-disclose.
+	if !strings.Contains(notes, "Waiting alone never clears this") {
+		t.Errorf("notes must tell the caller that waiting alone never clears this, got %v", v.Notes)
+	}
+	if !strings.Contains(notes, "@coderabbitai review") {
+		t.Errorf("notes must name the re-request, which is the action that does clear it, got %v", v.Notes)
 	}
 }
 
@@ -545,7 +559,13 @@ func TestNeedsDecisionNamesTheRecoveryAction(t *testing.T) {
 	s.Checks = []ghCheck{{Name: "CodeRabbit", Bucket: "pass", Description: "Review rate limited"}}
 
 	notes := strings.Join(ComputeMergeGate(s).Notes, " ")
-	for _, want := range []string{"@coderabbitai review", "does not re-review on its own", "Do NOT edit the branch"} {
+	// "does not re-review on its own" was the original phrasing of the middle
+	// claim. It is still exactly what the notes assert — only now they give the
+	// stronger reason, which is that automatic review never fires for this repo
+	// at all (fewer than 10 stars), so nobody is coming back rather than merely
+	// not coming back promptly. Matching on the reason keeps this test pinned to
+	// the claim rather than to a sentence.
+	for _, want := range []string{"@coderabbitai review", "come back on their own", "Do NOT edit the branch"} {
 		if !strings.Contains(notes, want) {
 			t.Errorf("notes should contain %q so waiting does not read as the answer, got:\n%s", want, notes)
 		}
@@ -1833,5 +1853,178 @@ func TestDetectHeadFreshnessExplainsEveryUnknown(t *testing.T) {
 				t.Errorf("reason %q should mention %q", h.Reason, tc.want)
 			}
 		})
+	}
+}
+
+// --- the re-request advice (task-6ch1h) -------------------------------------
+//
+// For a long time the exit-4 notes told the caller that re-requesting a review
+// "has stayed limited across repeated attempts before" and to hand the choice
+// to the captain without trying it. Six PRs (#116-#121) were merged unreviewed
+// on that advice. It rested on a diagnosis nobody had checked: automatic review
+// is OFF for this repo because it has fewer than 10 stars, and an explicit
+// `@coderabbitai review` works — #122 came back "Review finished" in about a
+// minute and found a real goroutine leak.
+//
+// These tests pin the advice, not the prose. Each asserts a property that, if
+// it regressed, would put the fleet back to escalating before spending a
+// comment that costs nothing.
+
+// liveRateLimitedBody is the template as CodeRabbit posts it TODAY, captured
+// verbatim from PR #123. It differs from rateLimitedBody above in wording
+// ("included", no colon, no emphasis), which is exactly why the window pattern
+// has to tolerate both spellings.
+const liveRateLimitedBody = "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n" +
+	"<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n\n" +
+	"> [!WARNING]\n> ## Review limit reached\n>\n" +
+	"> **Next included review available in 57 minutes.**\n>\n" +
+	"> **Limit details:** You've used the included review currently available.\n"
+
+func notesText(v MergeGateVerdict) string { return strings.Join(v.Notes, "\n") }
+
+func blockerText(v MergeGateVerdict) string {
+	parts := make([]string, 0, len(v.Blockers))
+	for _, b := range v.Blockers {
+		parts = append(parts, b.Detail)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func rateLimitedSnapshot() MergeGateSnapshot {
+	s := reviewedPR()
+	s.Repo = "trillium/parlay"
+	s.Checks = []ghCheck{{Name: "CodeRabbit", State: "SUCCESS", Bucket: "pass", Description: "Review rate limited"}}
+	s.PR.Comments = []ghComment{{Author: ghAuthor{Login: "coderabbitai"}, Body: liveRateLimitedBody}}
+	return s
+}
+
+// The core of task-6ch1h. Exit 4 means "a human should decide", and the gate
+// must not reach for that until it has told the caller to spend the one
+// reversible action that can change the answer.
+func TestReviewerUnavailableTellsTheCallerToReRequestBeforeEscalating(t *testing.T) {
+	v := ComputeMergeGate(rateLimitedSnapshot())
+	if v.ExitCode != ExitMergeNeedsDecision {
+		t.Fatalf("ExitCode = %d, want %d (blockers %v)", v.ExitCode, ExitMergeNeedsDecision, blockerCodes(v))
+	}
+	notes := notesText(v)
+	if !strings.Contains(notes, "@coderabbitai review") {
+		t.Errorf("the reviewer-unavailable notes never name the re-request that can clear this.\n"+
+			"  Escalating without spending it is what merged six PRs unreviewed.\n  notes:\n%s", notes)
+	}
+	// Naming the command is not enough if the surrounding advice still says it
+	// will not work. That sentence is the thing that actually did the damage.
+	if strings.Contains(notes, "stayed limited across repeated attempts") {
+		t.Errorf("the notes still carry the disproven claim that re-requesting does not work:\n%s", notes)
+	}
+}
+
+// The escalation must be ordered AFTER the re-request, not offered alongside it
+// as one of three equal options. A caller reading three peers picks whichever
+// is cheapest for them, which is the escalation.
+func TestReRequestIsAdvisedBeforeTheEscalationNotAlongsideIt(t *testing.T) {
+	v := ComputeMergeGate(rateLimitedSnapshot())
+	notes := notesText(v)
+	req := strings.Index(notes, "@coderabbitai review")
+	esc := strings.Index(notes, "needs-decision")
+	if req < 0 || esc < 0 {
+		t.Fatalf("expected both the re-request and the escalation in the notes:\n%s", notes)
+	}
+	if req > esc {
+		t.Errorf("the escalation is advised before the re-request, so a caller reaches for the captain first.\n"+
+			"  re-request at %d, escalation at %d:\n%s", req, esc, notes)
+	}
+}
+
+// "Park until the reviewer returns" was never a terminating strategy for this
+// repo: nobody is coming. The notes must say why rather than implying a wait.
+func TestReviewerUnavailableNotesExplainWhyAutomaticReviewNeverFires(t *testing.T) {
+	v := ComputeMergeGate(rateLimitedSnapshot())
+	notes := notesText(v)
+	if !strings.Contains(notes, "10 stars") {
+		t.Errorf("the notes do not explain that automatic review is off for this repo, so\n"+
+			"  'park and wait' still reads as a real option:\n%s", notes)
+	}
+}
+
+// A quota that states its expiry is a wait. Throwing that number away is what
+// forced the advice to say "after the window" without saying when.
+func TestRateLimitedBlockerQuotesTheStatedWindow(t *testing.T) {
+	v := ComputeMergeGate(rateLimitedSnapshot())
+	if got := blockerText(v); !strings.Contains(got, "57 minutes") {
+		t.Errorf("the rate-limit blocker drops the wait CodeRabbit stated in its own comment:\n%s", got)
+	}
+}
+
+// The wording has already changed once. A pattern pinned to today's sentence
+// would silently report "no window" against the older body, turning a wait back
+// into an escalation.
+func TestRateLimitWindowMatchesBothTemplatesCodeRabbitHasUsed(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"today's wording, plain", liveRateLimitedBody, "57 minutes"},
+		{"older wording, colon and emphasis", rateLimitedWithReviewDetailsBody(baseSHA, headSHA), "51 minutes"},
+		{"singular", "Next included review available in 1 minute.", "1 minute"},
+		{"no window stated", rateLimitedBody, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rateLimitWindow([]string{tc.body}); got != tc.want {
+				t.Errorf("rateLimitWindow = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Several bodies can carry a window once a PR has been re-requested more than
+// once. Coming back too early spends a re-request that is refused; too late
+// costs one gate re-run. Take the larger.
+func TestRateLimitWindowTakesTheLongestStatedWait(t *testing.T) {
+	got := rateLimitWindow([]string{
+		"Next included review available in 12 minutes.",
+		"Next included review available in 57 minutes.",
+		"nothing here",
+	})
+	if got != "57 minutes" {
+		t.Errorf("rateLimitWindow = %q, want the longest wait %q", got, "57 minutes")
+	}
+}
+
+// AGENTS.md: gh prefers a remote named `upstream` over `origin`, so a bare
+// `gh pr comment 122` on a fork posts to somebody else's repository. A gate
+// that prints a command for a caller to paste has to print the safe spelling.
+func TestRequestReviewCmdAlwaysPinsTheRepo(t *testing.T) {
+	got := requestReviewCmd("trillium/parlay", 122)
+	if !strings.Contains(got, "--repo trillium/parlay") {
+		t.Errorf("requestReviewCmd = %q, must pass --repo so gh cannot resolve to an upstream fork", got)
+	}
+	if !strings.Contains(got, "@coderabbitai review") || !strings.Contains(got, "122") {
+		t.Errorf("requestReviewCmd = %q, want the trigger body and the PR number", got)
+	}
+	// With no repo known, the flag must be omitted rather than emitted empty:
+	// `--repo ''` is a hard gh error, which would be worse than the ambiguity.
+	if bare := requestReviewCmd("", 122); strings.Contains(bare, "--repo") {
+		t.Errorf("requestReviewCmd with no repo = %q, want no --repo flag at all", bare)
+	}
+}
+
+// The advice change must not soften the verdict. Reviewer-unavailable is still
+// non-zero, and a real code finding still outranks all of this.
+func TestReRequestAdviceDoesNotMakeAnUnreviewedPRReady(t *testing.T) {
+	v := ComputeMergeGate(rateLimitedSnapshot())
+	if v.Ready || v.ExitCode == config.ExitOK {
+		t.Fatalf("an unreviewed PR became ready once the notes changed: ready=%v exit=%d", v.Ready, v.ExitCode)
+	}
+}
+
+func TestACodeBlockerStillOutranksTheReRequestAdvice(t *testing.T) {
+	s := rateLimitedSnapshot()
+	s.Checks = append(s.Checks, ghCheck{Name: "Go (build, vet, test, gofmt)", Bucket: "fail"})
+	v := ComputeMergeGate(s)
+	if v.ExitCode != ExitMergeBlocked {
+		t.Errorf("ExitCode = %d, want %d — a failing check must outrank reviewer-unavailable (blockers %v)",
+			v.ExitCode, ExitMergeBlocked, blockerCodes(v))
 	}
 }
