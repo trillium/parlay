@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -171,18 +172,102 @@ func captureStdout(t *testing.T, fn func()) string {
 		done <- buf.String()
 	}()
 
-	// Restoring os.Stdout stays deferred so a t.Fatal inside fn cannot leave
-	// the global pointing at a closed pipe for the rest of the package's
-	// tests. The drain deliberately does NOT: it has to precede the read.
-	defer func() { os.Stdout = orig }()
+	// All three cleanups are deferred, because a t.Fatal inside fn does not
+	// return — it calls runtime.Goexit, and only deferred work runs.
+	//
+	// Restoring os.Stdout matters because the global would otherwise point at a
+	// closed pipe for the rest of the package's tests. Closing w matters
+	// because it is what ends io.Copy: without it the goroutine above blocks on
+	// a read that will never see EOF, so every t.Fatal inside a captured
+	// function leaks a goroutine and both file descriptors for the lifetime of
+	// the test binary.
+	//
+	// The channel is buffered, so on that path the goroutine can still deliver
+	// its string with nobody receiving, and exits rather than parking forever.
+	//
+	// Double-closing on the normal path is deliberate and harmless: the second
+	// Close returns os.ErrClosed, which is discarded. Paying that is cheaper
+	// than tracking which path already closed what.
+	defer func() {
+		os.Stdout = orig
+		_ = w.Close()
+		_ = r.Close()
+	}()
 
 	fn()
 
+	// The drain is deliberately NOT deferred: it has to precede the read of
+	// `done`, and a deferred close would run after this function's return
+	// expression had already been evaluated — which is the exact bug this
+	// helper was rewritten to fix.
 	os.Stdout = orig
 	_ = w.Close()
 	out := <-done
 	_ = r.Close()
 	return out
+}
+
+// TestCaptureStdoutDoesNotLeakWhenTheCapturedFuncBailsOut covers the path a
+// passing test suite never exercises: fn calling t.Fatal.
+//
+// t.Fatal does not return. It calls runtime.Goexit, which runs deferred
+// functions and nothing else, so every statement after fn() is skipped. When
+// closing the write end lived there, the copying goroutine stayed blocked on a
+// read that would never see EOF — leaking that goroutine and both file
+// descriptors for the lifetime of the test binary, once per bail-out.
+//
+// That is invisible while tests pass, and it compounds exactly when they do
+// not: a suite failing in many captured functions leaks in proportion to how
+// badly it is failing.
+//
+// runtime.Goexit is used directly rather than a panic or a t.Fatal on a fake
+// *testing.T, because it is literally what t.Fatal does — approximating it
+// would leave the real unwind path untested.
+func TestCaptureStdoutDoesNotLeakWhenTheCapturedFuncBailsOut(t *testing.T) {
+	settle := func() int {
+		// Goroutine teardown is not instantaneous; poll rather than sleeping a
+		// fixed amount, so this is neither flaky nor slower than it needs to be.
+		n := runtime.NumGoroutine()
+		for i := 0; i < 200; i++ {
+			runtime.Gosched()
+			m := runtime.NumGoroutine()
+			if m <= n {
+				n = m
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return n
+	}
+
+	before := settle()
+
+	// One bail-out could hide inside normal scheduler noise. A batch cannot:
+	// with the leak present this is 32 parked goroutines and 64 open fds.
+	const bailouts = 32
+	for i := 0; i < bailouts; i++ {
+		ran := make(chan struct{})
+		go func() {
+			defer close(ran)
+			_ = captureStdout(t, func() {
+				// Write enough that io.Copy is genuinely mid-stream, so the
+				// goroutine is parked on a read rather than having already
+				// finished by luck.
+				for j := 0; j < 64; j++ {
+					os.Stdout.WriteString("output produced before the test bailed out\n")
+				}
+				runtime.Goexit()
+			})
+		}()
+		<-ran
+	}
+
+	after := settle()
+	if leaked := after - before; leaked >= bailouts/2 {
+		t.Fatalf("captureStdout leaked ~%d goroutines across %d bail-outs (%d -> %d).\n"+
+			"  A t.Fatal inside the captured function skips every statement after fn(), so closing\n"+
+			"  the write end must be deferred — otherwise io.Copy never sees EOF and parks forever.",
+			leaked, bailouts, before, after)
+	}
 }
 
 // recordingRelay stands in for Pulse and collects the bodies posted to
