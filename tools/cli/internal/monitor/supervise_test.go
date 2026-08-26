@@ -143,21 +143,46 @@ func captureStdout(t *testing.T, fn func()) string {
 	orig := os.Stdout
 	os.Stdout = w
 
-	var out strings.Builder
-	done := make(chan struct{})
+	// The drained text comes back over a channel rather than out of a shared
+	// buffer, matching the six other capture helpers in this module
+	// (internal/commands, internal/httpc, internal/identity,
+	// internal/robotswatch, tools/parlay-bin). This one was the outlier: it
+	// had the copying goroutine append to a strings.Builder that the test
+	// goroutine then read.
+	//
+	// That is a data race, and -race says so — but the reason it is worth
+	// fixing rather than silencing is that it is also WRONG. Go evaluates a
+	// return expression BEFORE running deferred functions, so `return
+	// out.String()` read the builder while the drain was still deferred and
+	// therefore had not happened yet. The value returned was whatever had
+	// landed by that instant. Every assertion in this file about respawn
+	// notices and MONITOR| lines was reading a possibly-truncated capture, and
+	// a truncated capture fails open: `strings.Count(out, "…respawned|") != 2`
+	// is a flake, but `strings.Contains(out, "…")` on absent text just quietly
+	// reports the line was missing.
+	//
+	// Receiving from `done` is the synchronization point AND the sequencing
+	// point: it cannot complete until io.Copy has returned, which cannot
+	// happen until w is closed and the pipe is drained to EOF.
+	done := make(chan string, 1)
 	go func() {
-		defer close(done)
-		_, _ = io.Copy(&out, r)
+		var buf strings.Builder
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
 	}()
 
-	defer func() {
-		os.Stdout = orig
-		_ = w.Close()
-		<-done
-		_ = r.Close()
-	}()
+	// Restoring os.Stdout stays deferred so a t.Fatal inside fn cannot leave
+	// the global pointing at a closed pipe for the rest of the package's
+	// tests. The drain deliberately does NOT: it has to precede the read.
+	defer func() { os.Stdout = orig }()
+
 	fn()
-	return out.String()
+
+	os.Stdout = orig
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
 }
 
 // recordingRelay stands in for Pulse and collects the bodies posted to

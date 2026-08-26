@@ -276,3 +276,106 @@ func TestTerminateProcessTreeRefusesInitAndBelow(t *testing.T) {
 
 // errPsUnavailable stands in for a failed `ps` in the tests above.
 var errPsUnavailable = errors.New("ps unavailable")
+
+// Stopping the watchdog cancels a retirement that was already in flight.
+//
+// This is the property the caller in monitor.go actually depends on, and
+// nothing pinned it. That loop is:
+//
+//	childPID := cmd.Process.Pid
+//	stopWatchdog := startRegistryWatchdog(agent, func() { terminateProcessTree(childPID) }, …)
+//	runErr := cmd.Wait()
+//	stopWatchdog()
+//	… respawn with a NEW pid …
+//
+// so `retire` means "kill the process tree at childPID". cmd.Wait has already
+// reaped that pid by the time stop is called, which frees the number for the
+// kernel to reissue — plausibly to the very next respawned child. A watchdog
+// that was mid-fetch when stop was called, and acts on what it learned, aims a
+// SIGTERM at whatever now owns the number.
+//
+// The sequencing below is explicit rather than timed: the fake registry
+// announces that a probe has begun and then blocks, so the test can call stop
+// with a fetch provably in flight instead of hoping a sleep lands in the right
+// window.
+func TestStopCancelsARetirementThatWasAlreadyInFlight(t *testing.T) {
+	probing := make(chan struct{}, 4) // "a probe has started"
+	release := make(chan struct{})    // "let the in-flight probe return"
+
+	absent := agentList("someone-else") // non-empty, and missing our agent: a clean absence
+
+	var calls int
+	var mu sync.Mutex
+	orig := fetchRegistry
+	fetchRegistry = func() ([]wire.AgentInfo, bool) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		probing <- struct{}{}
+		if n >= missingStrikesToRetire {
+			// The probe that would carry the count over the line is the one
+			// held open, so stop lands squarely inside it.
+			<-release
+		}
+		return absent, true
+	}
+	t.Cleanup(func() { fetchRegistry = orig })
+
+	retired := make(chan struct{})
+	stop := startRegistryWatchdog("mc-watchdog-stop", func() { close(retired) }, time.Millisecond)
+
+	for i := 0; i < missingStrikesToRetire; i++ {
+		select {
+		case <-probing:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("probe %d never started", i+1)
+		}
+	}
+
+	stopped := make(chan struct{})
+	go func() { stop(); close(stopped) }()
+
+	// stop must not return while the goroutine is still inside fetchRegistry:
+	// a stop that returns early is the caller's licence to reuse the pid.
+	select {
+	case <-stopped:
+		t.Fatal("stop returned while a probe was still in flight — the caller would be free to reuse the pid")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop never returned after the in-flight probe completed")
+	}
+
+	select {
+	case <-retired:
+		t.Fatal("retire fired after stop — that is a kill aimed at a pid the supervisor had already reaped")
+	default:
+	}
+}
+
+// stop is idempotent and safe from several goroutines at once.
+//
+// The previous implementation guarded re-entry with a plain bool, which is
+// both a data race and a panic: two goroutines can each read false and both
+// reach close(done). Nothing calls stop concurrently today — this pins that
+// the next caller does not have to know that.
+func TestStopIsIdempotentAndConcurrencySafe(t *testing.T) {
+	withFakeRegistry(t, []func() ([]wire.AgentInfo, bool){
+		func() ([]wire.AgentInfo, bool) { return agentList("other", "mc-idem"), true },
+	})
+	stop := startRegistryWatchdog("mc-idem", func() { t.Error("a registered agent must never be retired") }, time.Millisecond)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); stop() }()
+	}
+	wg.Wait()
+	stop() // and again, after they have all returned
+}
