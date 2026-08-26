@@ -48,6 +48,7 @@ func main() {
 		addrFlag   = flag.String("addr", envOr("PARLAY_SERVER_ADDR", defaultAddr), "address to listen on")
 		dirFlag    = flag.String("state-dir", envOr("PARLAY_STATE_HOME", defaultStateHome()), "directory for persisted state (messages/agents/drafts/settings/uploads)")
 		assetsFlag = flag.String("assets-dir", envOr("PARLAY_ASSETS_DIR", defaultAssetsDir()), "directory containing the built packages/client/dist bundle (serves the panel HTML)")
+		paiDirFlag = flag.String("pai-dir", envOr("PAI_DIR", defaultPAIDir()), "PAI directory for TTS cache and substitutions")
 	)
 	flag.Parse()
 
@@ -63,8 +64,11 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerHealth(mux, st)
-	handlers.Register(mux, st)
+	hub := handlers.Register(mux, st)
 	handlers.RegisterData(mux, st)
+	handlers.RegisterTTS(mux, *paiDirFlag, hub)
+	handlers.RegisterPages(mux, hub)
+	handlers.RegisterPlugins(mux, hub)
 	// Static file serving — registered last so /api/* routes are never shadowed.
 	// Serves index.html at / and falls back to it for any unknown path (SPA).
 	// /fleet/ serves the packages/webview fleet dashboard from <assets-dir>/fleet/.
@@ -177,4 +181,12 @@ func defaultAssetsDir() string {
 		return candidate
 	}
 	return "dist"
+}
+
+// defaultPAIDir returns the default PAI directory for TTS cache and substitutions.
+func defaultPAIDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".claude", "PAI")
+	}
+	return ".claude/PAI"
 }

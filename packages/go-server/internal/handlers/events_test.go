@@ -192,7 +192,7 @@ func TestHandlePollBroadcastsMessageReceivedOnWakeup(t *testing.T) {
 		done <- rec
 	}()
 
-	time.Sleep(20 * time.Millisecond) // let the handler goroutine reach subscribe() before we publish
+	time.Sleep(20 * time.Millisecond) // let the handler goroutine reach subscribe("") before we publish
 	msg, _, err := appendAndPublish(st, b, store.ChatMessage{Role: "agent", Text: "hi", Channel: "c0"})
 	if err != nil {
 		t.Fatalf("appendAndPublish: %v", err)

@@ -241,11 +241,117 @@ func (ms *MessageStore) HistorySince(afterID string) []ChatMessage {
 	return out
 }
 
+// DefaultReplayMax bounds how many retained per-channel messages
+// HistorySinceCursor may hand back in one response when the caller's cursor
+// cannot be resolved. Mirrors the relay's own PARLAY_REPLAY_MAX default of
+// 50 (CLAUDE.md's robots-jkwc bounds) — the newest-N window, not the whole
+// retained ring, so a client resuming after a long gap or against a
+// truncated/rotated store gets bounded catch-up instead of a multi-thousand
+// message dump.
+const DefaultReplayMax = 50
+
+// HistorySinceCursor resolves a poll cursor (GET /poll's `after`) against
+// the retained messages on a single channel, oldest first. It exists
+// alongside HistorySince rather than replacing it: HistorySince's "empty or
+// unresolved afterID means full unbounded replay" contract is relied on by
+// the SSE reconnect backfill (GET /events), which this method must not
+// change the behavior of.
+//
+//   - afterID found among channel's retained messages → every retained
+//     message on channel strictly after it, unbounded. reset is false and
+//     skipped is 0: a resolvable cursor is honored exactly, and GET /poll
+//     already hands back at most one message per call, so an unbounded
+//     "everything after" here can never itself dump a backlog on the wire.
+//   - afterID not found (a truncated/rotated store, or a cursor this
+//     instance never issued) → the newest min(replayMax, len) retained
+//     messages on channel, oldest of that window first. reset is true and
+//     skipped counts how many older retained messages on channel were left
+//     out of the window, so the caller can both resume (rather than
+//     silently deliver nothing) and announce the drop rather than let it
+//     pass silently.
+//
+// Callers must not invoke this with afterID=="" to mean "start from
+// scratch" — an empty cursor means "no prior delivery", and whether that
+// starts at the tail with no replay at all is the caller's decision (see
+// handlePoll's own bound-1 handling), not something this method decides.
+func (ms *MessageStore) HistorySinceCursor(channel, afterID string, replayMax int) (out []ChatMessage, reset bool, skipped int) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	var chanMsgs []ChatMessage
+	for _, m := range ms.ring {
+		if m.Channel == channel {
+			chanMsgs = append(chanMsgs, m)
+		}
+	}
+
+	for i, m := range chanMsgs {
+		if m.ID == afterID {
+			return append([]ChatMessage(nil), chanMsgs[i+1:]...), false, 0
+		}
+	}
+
+	if replayMax <= 0 || replayMax >= len(chanMsgs) {
+		return append([]ChatMessage(nil), chanMsgs...), true, 0
+	}
+	start := len(chanMsgs) - replayMax
+	return append([]ChatMessage(nil), chanMsgs[start:]...), true, start
+}
+
 // Count returns the number of messages currently retained in memory.
 func (ms *MessageStore) Count() int {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 	return len(ms.ring)
+}
+
+// Len returns the number of messages currently retained in memory.
+// Alias for Count() for compatibility.
+func (ms *MessageStore) Len() int {
+	return ms.Count()
+}
+
+// Clear removes all messages from the history and truncates the log file.
+func (ms *MessageStore) Clear() error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	ms.ring = ms.ring[:0] // clear the ring buffer
+
+	// nextSeq is deliberately NOT reset. Message ids are handed to clients as
+	// long-poll cursors (see HistorySinceCursor), so restarting the counter
+	// makes a post-clear message reuse an id a client is still holding — the
+	// cursor then resolves against a different message and silently replays
+	// the wrong window instead of reporting a reset. Ids only ever need to be
+	// unique, never dense.
+
+	// Truncate the file
+	if err := ms.file.Truncate(0); err != nil {
+		return fmt.Errorf("truncate %s: %w", ms.path, err)
+	}
+	if _, err := ms.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("seek %s: %w", ms.path, err)
+	}
+	return nil
+}
+
+// RemoveByChannel removes all messages from the specified channel and
+// rewrites the log file to contain only the remaining messages.
+func (ms *MessageStore) RemoveByChannel(channel string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	// Filter out messages from this channel
+	kept := ms.ring[:0]
+	for _, m := range ms.ring {
+		if m.Channel != channel {
+			kept = append(kept, m)
+		}
+	}
+
+	ms.ring = kept
+	// Compact to rewrite the file with only the kept messages
+	return ms.compactLocked()
 }
 
 // Close flushes and closes the underlying log file.

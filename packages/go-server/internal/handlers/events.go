@@ -106,15 +106,20 @@ type sseEvent struct {
 	data any
 }
 
+// sseClient holds metadata for one connected SSE client.
+type sseClient struct {
+	ch     chan sseEvent
+	device string
+}
+
 // Hub is the SSE fan-out: every currently connected GET /events client, plus
 // a single bridge subscription onto broker's wildcard feed (see newHub).
 // Unlike broker (keyed by channel, one waiter wakes at most once per poll),
 // Hub has no channel scoping — every connected client gets every broadcast,
 // matching /events having no channel query parameter.
 type Hub struct {
-	mu              sync.Mutex
-	clients         map[chan sseEvent]struct{}
-	clientDevices   map[chan sseEvent]string // device ID for each SSE client
+	mu      sync.Mutex
+	clients map[chan sseEvent]*sseClient
 }
 
 // newHub creates a Hub and starts its one background bridge goroutine,
@@ -125,10 +130,7 @@ type Hub struct {
 // a ChatMessage fans out, whether to a blocked /poll or to every /events
 // client.
 func newHub(b *broker) *Hub {
-	h := &Hub{
-		clients:       make(map[chan sseEvent]struct{}),
-		clientDevices: make(map[chan sseEvent]string),
-	}
+	h := &Hub{clients: make(map[chan sseEvent]*sseClient)}
 	msgs, _ := b.subscribeAll() // never cancelled: lives exactly as long as the process, like b itself
 	go func() {
 		for m := range msgs {
@@ -141,17 +143,15 @@ func newHub(b *broker) *Hub {
 // subscribe registers a new /events client and returns its event channel
 // plus a cancel func the caller must defer immediately, mirroring
 // broker.subscribe's contract.
-func (h *Hub) subscribe(deviceID string) (<-chan sseEvent, func()) {
+func (h *Hub) subscribe(device string) (<-chan sseEvent, func()) {
 	ch := make(chan sseEvent, sseClientBuffer)
 	h.mu.Lock()
-	h.clients[ch] = struct{}{}
-	h.clientDevices[ch] = deviceID
+	h.clients[ch] = &sseClient{ch: ch, device: device}
 	h.mu.Unlock()
 
 	cancel := func() {
 		h.mu.Lock()
 		delete(h.clients, ch)
-		delete(h.clientDevices, ch)
 		h.mu.Unlock()
 	}
 	return ch, cancel
@@ -179,19 +179,19 @@ func (h *Hub) broadcast(name string, data any) {
 	}
 }
 
-// broadcastToDevice delivers (name, data) to only SSE clients registered with
-// the given device ID. Returns the number of clients that received the event.
-// Like broadcast, this is best-effort: a client whose buffer is full has the
-// event dropped. A nil Hub is a no-op and returns 0.
-func (h *Hub) broadcastToDevice(deviceID string, name string, data any) int {
+// broadcastToDevice delivers (name, data) to every connected client whose
+// device matches the given deviceId. Returns the count of clients that
+// received the event. If deviceId is empty, broadcasts to all clients
+// (back-compat).
+func (h *Hub) broadcastToDevice(deviceId string, name string, data any) int {
 	if h == nil {
 		return 0
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	matched := 0
-	for ch := range h.clients {
-		if h.clientDevices[ch] != deviceID {
+	for ch, client := range h.clients {
+		if deviceId != "" && client.device != deviceId {
 			continue
 		}
 		matched++
@@ -252,8 +252,8 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 			return
 		}
 
-		deviceID := r.URL.Query().Get("device")
-		ch, cancel := hub.subscribe(deviceID)
+		device := r.URL.Query().Get("device")
+		ch, cancel := hub.subscribe(device)
 		defer cancel()
 
 		st.Presence.AddPanelClient()
