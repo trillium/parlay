@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"sync"
+	"unicode/utf8"
 
 	"parlay/go-server/internal/store"
 )
@@ -18,7 +21,7 @@ func registerPanel(mux *http.ServeMux, st *store.Store, b *broker, hub *Hub) {
 	mux.HandleFunc("/api/chat/device-cmd", handleDeviceCmd(hub))
 	mux.HandleFunc("/api/chat/system", handleSystem(st, b, hub))
 	mux.HandleFunc("/api/chat/version", handleVersion())
-	mux.HandleFunc("/api/chat/declare-channel", handleDeclareChannel())
+	mux.HandleFunc("/api/chat/declare-channel", handleDeclareChannel(st))
 }
 
 // clearRequest is the POST /api/chat/clear body.
@@ -46,11 +49,21 @@ func handleClear(st *store.Store, hub *Hub) http.HandlerFunc {
 			return
 		}
 
+		// Both of these truncate or rewrite messages.jsonl and both return an
+		// error saying whether that worked. Discarding it would report ok:true
+		// with a plausible `removed` count while the history on disk is
+		// untouched — so the next restart resurrects everything the caller was
+		// told had been deleted.
 		before := st.Messages.Len()
+		var err error
 		if req.Channel != "" {
-			st.Messages.RemoveByChannel(req.Channel)
+			err = st.Messages.RemoveByChannel(req.Channel)
 		} else {
-			st.Messages.Clear()
+			err = st.Messages.Clear()
+		}
+		if err != nil {
+			writeAppError(w, "failed to clear history")
+			return
 		}
 		after := st.Messages.Len()
 
@@ -65,18 +78,18 @@ func handleClear(st *store.Store, hub *Hub) http.HandlerFunc {
 
 // navigateRequest is the POST /api/chat/navigate body.
 type navigateRequest struct {
-	URL       string `json:"url"`
-	OpenDrawer bool  `json:"open_drawer"`
-	Device    string `json:"device"`
+	URL        string `json:"url"`
+	OpenDrawer bool   `json:"open_drawer"`
+	Device     string `json:"device"`
 }
 
 // navigateResponse is the response from POST /api/chat/navigate.
 type navigateResponse struct {
-	OK        bool   `json:"ok"`
-	URL       string `json:"url"`
-	OpenDrawer bool  `json:"open_drawer"`
-	Clients   int    `json:"clients"`
-	Device    string `json:"device,omitempty"`
+	OK         bool   `json:"ok"`
+	URL        string `json:"url"`
+	OpenDrawer bool   `json:"open_drawer"`
+	Clients    int    `json:"clients"`
+	Device     string `json:"device,omitempty"`
 }
 
 // handleNavigate implements POST /api/chat/navigate.
@@ -104,10 +117,10 @@ func handleNavigate(hub *Hub) http.HandlerFunc {
 		clients := hub.broadcastToDevice(req.Device, "navigate", payload)
 
 		resp := navigateResponse{
-			OK:        true,
-			URL:       req.URL,
+			OK:         true,
+			URL:        req.URL,
 			OpenDrawer: req.OpenDrawer,
-			Clients:   clients,
+			Clients:    clients,
 		}
 		if req.Device != "" {
 			resp.Device = req.Device
@@ -234,10 +247,14 @@ func handleSystem(st *store.Store, b *broker, hub *Hub) http.HandlerFunc {
 			return
 		}
 
-		// Truncate text to 500 chars to match TS behavior
+		// Truncate to 500 characters to match TS behavior. Cutting the byte
+		// slice would split a multi-byte rune — an emoji or an accented
+		// character straddling the boundary becomes a replacement character in
+		// the stored history, and `len()` counts bytes, so a message of 500
+		// non-ASCII characters would be cut well short of its real length.
 		text := req.Text
-		if len(text) > 500 {
-			text = text[:500]
+		if utf8.RuneCountInString(text) > 500 {
+			text = string([]rune(text)[:500])
 		}
 
 		meta := map[string]interface{}{
@@ -273,21 +290,29 @@ type versionResponse struct {
 	Version string `json:"version"`
 }
 
-// bundleVersionCache holds the mtime and version to avoid repeated file reads
+// bundleVersionCache holds the mtime and version to avoid repeated file reads.
+// The mutex is not optional: /api/chat/version is served concurrently, and
+// without it two simultaneous requests race on these two fields and can pair
+// one request's mtime with another's version — caching a stale version against
+// a fresh mtime, which then never expires.
 var bundleVersionCache struct {
+	mu      sync.Mutex
 	mtime   int64
 	version string
 }
 
-// getBundleVersion reads the PA_VERSION from the compiled client bundle,
-// caching by mtime to avoid repeated file reads.
-func getBundleVersion() string {
-	defer func() {
-		if recover() != nil {
-			// If anything panics, just return unknown
-		}
-	}()
+// bundleVersionRe extracts PA_VERSION from the compiled client bundle.
+// Compiled once at init rather than per request — MustCompile on a constant
+// pattern either always works or panics at startup, which is where a bad
+// pattern should surface.
+var bundleVersionRe = regexp.MustCompile(`PA_VERSION\s*=\s*["']([^"']+)["']`)
 
+// getBundleVersion reads the PA_VERSION from the compiled client bundle,
+// caching by mtime to avoid repeated file reads. Every failure path returns
+// "unknown" rather than an error: the panel treats an unknown version as
+// "don't offer an update", which is the right behavior when the bundle is
+// missing or unreadable.
+func getBundleVersion() string {
 	// Try to read from the same path the TS version reads
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -301,6 +326,9 @@ func getBundleVersion() string {
 	}
 
 	mtime := info.ModTime().UnixMilli()
+
+	bundleVersionCache.mu.Lock()
+	defer bundleVersionCache.mu.Unlock()
 	if bundleVersionCache.mtime == mtime && bundleVersionCache.version != "" {
 		return bundleVersionCache.version
 	}
@@ -311,8 +339,7 @@ func getBundleVersion() string {
 	}
 
 	// Extract PA_VERSION from the bundle using regex
-	re := regexp.MustCompile(`PA_VERSION\s*=\s*["']([^"']+)["']`)
-	matches := re.FindStringSubmatch(string(data))
+	matches := bundleVersionRe.FindStringSubmatch(string(data))
 	version := "unknown"
 	if len(matches) > 1 {
 		version = matches[1]
@@ -352,7 +379,7 @@ type declareChannelResponse struct {
 }
 
 // handleDeclareChannel implements POST /api/chat/declare-channel.
-func handleDeclareChannel() http.HandlerFunc {
+func handleDeclareChannel(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -364,20 +391,28 @@ func handleDeclareChannel() http.HandlerFunc {
 			return
 		}
 
-		if req.SessionID == "" || req.Channel == "" {
+		sessionID := strings.TrimSpace(req.SessionID)
+		channel := strings.TrimSpace(req.Channel)
+		if sessionID == "" || channel == "" {
 			writeAppError(w, "session_id and channel required")
 			return
 		}
 
-		// declareChannel is a function from session-channel.ts in the TS server
-		// We need to implement this in the Go server's store layer
-		// For now, just return success
-		// TODO: implement the actual channel declaration storage
+		// Declarations are sticky: the channel that comes back is the first
+		// one ever declared for this session, which may differ from what was
+		// just sent. Echo what is actually in effect, not the request — a
+		// caller that re-declares under a different channel needs to see that
+		// its declaration did not take.
+		effective, err := st.Channels.Declare(sessionID, channel)
+		if err != nil {
+			writeAppError(w, "failed to declare channel")
+			return
+		}
 
 		writeJSON(w, declareChannelResponse{
 			OK:        true,
-			SessionID: req.SessionID,
-			Channel:   req.Channel,
+			SessionID: sessionID,
+			Channel:   effective,
 		})
 	}
 }

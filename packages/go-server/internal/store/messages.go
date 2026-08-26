@@ -317,7 +317,13 @@ func (ms *MessageStore) Clear() error {
 	defer ms.mu.Unlock()
 
 	ms.ring = ms.ring[:0] // clear the ring buffer
-	ms.nextSeq = 1         // reset the sequence counter
+
+	// nextSeq is deliberately NOT reset. Message ids are handed to clients as
+	// long-poll cursors (see HistorySinceCursor), so restarting the counter
+	// makes a post-clear message reuse an id a client is still holding — the
+	// cursor then resolves against a different message and silently replays
+	// the wrong window instead of reporting a reset. Ids only ever need to be
+	// unique, never dense.
 
 	// Truncate the file
 	if err := ms.file.Truncate(0); err != nil {
