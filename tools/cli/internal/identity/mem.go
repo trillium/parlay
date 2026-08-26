@@ -11,6 +11,7 @@
 package identity
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -115,6 +116,34 @@ const pinnedHandoffEnv = "PARLAY_PINNED_HANDOFF"
 
 func pinnedHandoffEnviron(pinID string) []string {
 	return []string{pinnedHandoffEnv + "=" + pinID}
+}
+
+// printHandoffTimeout bounds the echo below. A var so the test can shrink it.
+var printHandoffTimeout = 15 * time.Second
+
+// printHandoffContent runs "handoff show <pinID>" and writes its output to
+// stdout so it appears in the terminal scrollback before the pane closes.
+// Called right before context-reset fires (while claude is still alive).
+// Failures are announced but never fatal — the reset must still proceed.
+//
+// The timeout is load-bearing, not defensive dressing: this runs SYNCHRONOUSLY
+// in front of the context-reset exec, so a `handoff` that hangs (an unreachable
+// store, a wedged dolt) would strand the agent in a session it has already
+// announced it is leaving — the shutdown never happens and nothing says why.
+// A missed echo costs scrollback; a missed reset costs the session.
+func printHandoffContent(pinID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), printHandoffTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "handoff", "show", pinID)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			fmt.Printf("(warn: handoff show %s timed out after %s — continuing to reset)\n", pinID, printHandoffTimeout)
+			return
+		}
+		fmt.Printf("(warn: could not show handoff %s — %v)\n", pinID, err)
+	}
 }
 
 func exitStatusMessage(err error) string {
@@ -352,6 +381,17 @@ func cmdMem(kind MemKind, argv []string) {
 		}
 		if dry {
 			submitArgs = append(submitArgs, "--dry")
+		}
+		// Echo the handoff to stdout now, while claude is still alive and the
+		// terminal scrollback is writable. The reboot path does not echo via
+		// the watcher (that only fires on clean-end), so this is the only
+		// window where the content reaches the pane before the tab closes.
+		//
+		// Only on the reboot path. `closed` above dropped --reboot, which makes
+		// this a clean end — and the clean-end watcher echoes the handoff
+		// itself, so echoing here too prints it twice.
+		if !dry && !closed {
+			printHandoffContent(pinID)
 		}
 		if err := runInheritEnv(cmdName, pinnedHandoffEnviron(pinID), submitArgs...); err != nil {
 			httpc.Die(fmt.Sprintf("identity --submit: could not run %s — %v", cmdName, err), config.ExitRuntime)
