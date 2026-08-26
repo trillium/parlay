@@ -13,20 +13,20 @@ import (
 )
 
 type profile struct {
-	Name               string            `toml:"name"`
-	DisplayName        string            `toml:"display_name"`
-	Kind               string            `toml:"kind"`
-	Command            string            `toml:"command"`
-	Model              string            `toml:"model"`
-	Args               []string          `toml:"args"`
-	PromptMode         string            `toml:"prompt_mode"`
-	PromptFlag         string            `toml:"prompt_flag"`
-	ResumeFlag         string            `toml:"resume_flag"`
-	ResumeStyle        string            `toml:"resume_style"`
-	SessionIDFlag      string            `toml:"session_id_flag"`
-	ReadyDelayMs       int               `toml:"ready_delay_ms"`
-	ReadyPromptPrefix  string            `toml:"ready_prompt_prefix"`
-	Env                map[string]string `toml:"env"`
+	Name              string            `toml:"name"`
+	DisplayName       string            `toml:"display_name"`
+	Kind              string            `toml:"kind"`
+	Command           string            `toml:"command"`
+	Model             string            `toml:"model"`
+	Args              []string          `toml:"args"`
+	PromptMode        string            `toml:"prompt_mode"`
+	PromptFlag        string            `toml:"prompt_flag"`
+	ResumeFlag        string            `toml:"resume_flag"`
+	ResumeStyle       string            `toml:"resume_style"`
+	SessionIDFlag     string            `toml:"session_id_flag"`
+	ReadyDelayMs      int               `toml:"ready_delay_ms"`
+	ReadyPromptPrefix string            `toml:"ready_prompt_prefix"`
+	Env               map[string]string `toml:"env"`
 }
 
 type profilesFile struct {

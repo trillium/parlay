@@ -51,11 +51,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The module list, consumed unquoted by gofmt/build/vet/test below so the
-    # shell splits it on whitespace. A sixth module is added here and in
-    # cache-dependency-path, and every step picks it up; a per-step list would
-    # let one step drift and leave a module silently unchecked.
+    # shell splits it on whitespace. It is shared across every step on purpose;
+    # a per-step list would let one step drift and leave a module silently
+    # unchecked.
+    #
+    # This list must equal `find . -name go.mod -not -path './node_modules/*'`,
+    # and the "Every Go module is listed" step below enforces that rather than
+    # trusting this comment. It is enforced because it already failed: the list
+    # sat at five modules while the repo had six, so packages/spawn-profiles was
+    # never built, vetted, tested or gofmt'd, and its main.go drifted out of
+    # gofmt compliance without anything noticing. A green Go job proved nothing
+    # about that module. Naming a count here is what went stale, so the check
+    # derives the truth from the filesystem instead.
     env:
-      GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/eval-engine packages/go-server
+      GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/eval-engine packages/go-server packages/spawn-profiles
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -72,6 +81,7 @@ jobs:
             tools/parlay-bin/go.mod
             packages/eval-engine/go.mod
             packages/go-server/go.mod
+            packages/spawn-profiles/go.mod
 
       # Pin the Go cache/GOPATH locations as explicit environment variables
       # BEFORE any step redirects HOME. Go derives GOCACHE and GOMODCACHE from
@@ -84,6 +94,33 @@ jobs:
             echo "GOMODCACHE=$(go env GOMODCACHE)"
             echo "GOPATH=$(go env GOPATH)"
           } >> "$GITHUB_ENV"
+
+      # Every step below iterates GO_MODULES, so a module missing from that list
+      # is not partially checked — it is not checked at all, and the job still
+      # reports green. That is indistinguishable from a module that passed, which
+      # is why this compares the list against the filesystem before anything runs.
+      #
+      # Deliberately fails on a module present on disk but absent from the list.
+      # The reverse (listed but deleted) already fails loudly at the build step.
+      - name: Every Go module is listed in GO_MODULES
+        # Named explicitly: the comparison uses process substitution, which is a
+        # bash feature. Relying on the runner's default shell staying bash would
+        # make this step's correctness depend on something outside the file.
+        shell: bash
+        run: |
+          set -euo pipefail
+          on_disk="$(find . -name go.mod -not -path './node_modules/*' -not -path './.git/*' \
+            -exec dirname {} \; | sed 's|^\./||' | sort)"
+          listed="$(printf '%s\n' $GO_MODULES | sort)"
+          missing="$(comm -23 <(printf '%s\n' "$on_disk") <(printf '%s\n' "$listed"))"
+          if [ -n "$missing" ]; then
+            echo "::error::Go modules exist on disk but are absent from GO_MODULES in this workflow."
+            echo "::error::Every build/vet/test/gofmt step iterates that list, so these are UNCHECKED:"
+            printf '  %s\n' $missing
+            echo "Add them to GO_MODULES and to cache-dependency-path above."
+            exit 1
+          fi
+          echo "All $(printf '%s\n' "$on_disk" | wc -l | tr -d ' ') Go modules on disk are listed."
 
       # gofmt across every module.
       #
