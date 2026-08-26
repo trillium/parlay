@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-26 — session 8ca540c1
+
+Files: tools/cli/internal/identity/mem.go
+
 ## 2026-08-20 — session 8ba730e4
 
 Files: tools/cli/internal/identity/store.go, tools/cli/internal/identity/worklink.go, tools/cli/internal/identity/mem.go, tools/cli/internal/commands/launch.go, tools/parlay-bin/gascity_spawn.go, bin/parlay-spawn, tools/cli/internal/identity/bead_test.go
