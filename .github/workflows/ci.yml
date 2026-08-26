@@ -210,18 +210,26 @@ jobs:
       # the suite writes into a real developer's ~/.parlay on a self-hosted
       # runner.
       #
-      # tools/gate-tag is in this loop but deliberately absent from the install
-      # steps above: it has no package.json and no dependencies, so
+      # `tools` is in this loop but deliberately absent from the install steps
+      # above: neither it nor tools/gate-tag has a package.json, so
       # `bun install --frozen-lockfile` there would fail. `bun test` in that
       # directory is the whole requirement — semver.test.ts imports only
-      # `bun:test` and `./semver`.
+      # `bun:test` and `./semver`, and lavish-poll.test.ts spawns the bridge as
+      # a subprocess against Bun.serve stubs on ephemeral ports.
+      #
+      # This entry is `tools`, not `tools/gate-tag`, because a test file that CI
+      # never runs is indistinguishable from one that has never run. Scoping it
+      # to the one subdirectory that happened to have tests meant
+      # tools/lavish-poll.test.ts was invisible to CI the moment it was added.
+      # bun test skips node_modules, so tools/split-test's installed deps do not
+      # get swept in.
       - name: Test
         env:
           HOME: ${{ runner.temp }}/bun-home
         run: |
           mkdir -p "$HOME"
           for p in packages/input packages/client packages/server \
-                   packages/webview tools/gate-tag; do
+                   packages/webview tools; do
             echo "::group::bun test ($p)"
             ( cd "$p" && bun test )
             echo "::endgroup::"
