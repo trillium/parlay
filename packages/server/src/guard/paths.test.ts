@@ -13,14 +13,13 @@ describe("guarded route set", () => {
     ]) expect(isGuardedChatPath(p)).toBe(true)
   })
 
-  // ACCEPTED RESIDUE, TRACKED SEPARATELY. The DELETE alias is guarded; the GET
-  // is not, and it does disclose every registered agent id under the wildcard
-  // CORS — the same class of disclosure /subscribers was guarded for. Left
-  // outside deliberately, filed as `identifier-disclosure-remains-on-sse`; the
-  // assertion pins the boundary as it actually stands, not as safe.
-  test("DELETE /api/chat/agents/:id is guarded but GET /api/chat/agents is not", () => {
+  // Formerly accepted residue (`identifier-disclosure-remains-on-sse`), now
+  // closed: GET /api/chat/agents discloses every registered agent id — the
+  // same class of disclosure /subscribers was guarded for — so it is guarded
+  // exactly like /subscribers. The DELETE alias stays guarded via the prefix.
+  test("both GET /api/chat/agents and DELETE /api/chat/agents/:id are guarded", () => {
     expect(isGuardedChatPath("/api/chat/agents/some-agent")).toBe(true)
-    expect(isGuardedChatPath("/api/chat/agents")).toBe(false)
+    expect(isGuardedChatPath("/api/chat/agents")).toBe(true)
   })
 
   // task-6ai1 / D9: these five are the routes the end-to-end verifier chained
@@ -92,13 +91,19 @@ describe("guarded route set", () => {
     expect(isGuardedChatPath("/api/chat/poll")).toBe(true)
   })
 
-  // /events and /agents are ACCEPTED RESIDUE here too, not proven-inert reads
-  // — see the guarded-route-set comment in ./paths.ts.
-  test("read and SSE routes stay unguarded", () => {
+  // The inert read surface. /events and /agents are no longer in this list —
+  // they disclose identifiers and are guarded as of the residue closure; see
+  // the guarded-route-set comment in ./paths.ts. /history stays here by prior
+  // decision (the documented world-readable surface).
+  test("read routes stay unguarded", () => {
     for (const p of [
-      "/api/chat/history", "/api/chat/events", "/api/chat/agents",
-      "/api/chat/version", "/api/chat/pages", "/api/chat/plugins",
+      "/api/chat/history", "/api/chat/version", "/api/chat/pages", "/api/chat/plugins",
     ]) expect(isGuardedChatPath(p)).toBe(false)
+  })
+
+  test("the SSE stream and the agents read route are guarded — they disclose identifiers", () => {
+    expect(isGuardedChatPath("/api/chat/events")).toBe(true)
+    expect(isGuardedChatPath("/api/chat/agents")).toBe(true)
   })
 
   test("GET /api/chat/uploads/<name> stays unguarded — an <img> must load it", () => {
