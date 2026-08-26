@@ -30,13 +30,43 @@ func stubHandoffShow(t *testing.T, body string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// captureStdout lives in testharness_test.go — printHandoffContent hands
-// os.Stdout to the child process, which that helper's os.Pipe swap covers.
+// captureStdoutFile is testharness_test.go's captureStdout with a file behind it
+// instead of a pipe, and this file must not use the pipe version.
+//
+// captureStdout's copy goroutine returns at EOF, and a pipe reports EOF only once
+// EVERY holder of the write end has closed it. printHandoffContent hands os.Stdout
+// straight to the child, so when the timeout SIGKILLs a `handoff` that has its own
+// child, the orphaned grandchild keeps a dup of that write end alive — the read
+// blocks for as long as the grandchild lives, even though printHandoffContent
+// returned on time. That is a property of the harness, not of the code under test,
+// and it read as a hang in exactly the case these tests exist to check.
+//
+// A regular file has no such dependency: the read returns what was written whoever
+// else still holds the descriptor.
+func captureStdoutFile(t *testing.T, fn func()) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = f
+	fn()
+	os.Stdout = orig
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
 
 func TestPrintHandoffContentEchoesShowOutput(t *testing.T) {
 	stubHandoffShow(t, `printf 'HANDOFF BODY for %s\n' "$2"; exit 0`)
 
-	out := captureStdout(t, func() { printHandoffContent("handoff-abc") })
+	out := captureStdoutFile(t, func() { printHandoffContent("handoff-abc") })
 
 	if !strings.Contains(out, "HANDOFF BODY for handoff-abc") {
 		t.Fatalf("expected the handoff body on stdout, got %q", out)
@@ -47,7 +77,13 @@ func TestPrintHandoffContentEchoesShowOutput(t *testing.T) {
 // the submit path open. The call has to return so runInheritEnv reaches
 // context-reset/reincarnate.
 func TestPrintHandoffContentReturnsWhenHandoffBlocks(t *testing.T) {
-	stubHandoffShow(t, `sleep 60`)
+	// `sleep 5` is a child of the stub shell, not an exec of it, so the timeout's
+	// SIGKILL reaches the shell and orphans the sleep — the shape CI hit. That is
+	// deliberate: it is the harder case, and printHandoffContent genuinely does
+	// return while a descendant is still alive, because it hands the child a real
+	// *os.File and never waits on the descriptor. 5s outlives the 150ms timeout by
+	// 30x while leaving no long-lived orphan behind after the run.
+	stubHandoffShow(t, `sleep 5`)
 
 	orig := printHandoffTimeout
 	printHandoffTimeout = 150 * time.Millisecond
@@ -55,7 +91,7 @@ func TestPrintHandoffContentReturnsWhenHandoffBlocks(t *testing.T) {
 
 	returned := make(chan string, 1)
 	go func() {
-		returned <- captureStdout(t, func() { printHandoffContent("handoff-stuck") })
+		returned <- captureStdoutFile(t, func() { printHandoffContent("handoff-stuck") })
 	}()
 
 	select {
@@ -76,7 +112,7 @@ func TestPrintHandoffContentReturnsWhenHandoffBlocks(t *testing.T) {
 func TestPrintHandoffContentWarnsButReturnsOnFailure(t *testing.T) {
 	stubHandoffShow(t, `exit 4`)
 
-	out := captureStdout(t, func() { printHandoffContent("handoff-broken") })
+	out := captureStdoutFile(t, func() { printHandoffContent("handoff-broken") })
 
 	if !strings.Contains(out, "could not show handoff handoff-broken") {
 		t.Fatalf("expected a non-fatal warning naming the handoff, got %q", out)
