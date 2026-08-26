@@ -177,6 +177,17 @@ pin_handoff() {
 # this claude process started, which is what the real `identity --park/--submit`
 # does microseconds before invoking; a pin written by the harness beforehand looks
 # inherited instead.
+# Emits a snippet that stamps identity.md's pointer from INSIDE the pane, so the
+# write post-dates the fake claude exactly as a genuine pin does.
+#
+# Every call site that relies on the pin being judged FRESH must prefix this with
+# `sleep 2`. `ps -o etime=` reports whole seconds, so claude's derived start can
+# land up to a second after its real one, and a pointer written in that same second
+# reads as predating the process — the staleness guard then drops it and the case
+# fails intermittently. Two call sites lacked the pause and flaked in CI (the
+# --reboot case at ~line 570 failed while its identical twin at ~540 passed in the
+# same run, which is the signature). The only exempt call site is the one asserting
+# PARLAY_PINNED_HANDOFF's own authority, which skips the staleness guard entirely.
 pin_handoff_inline() {
   printf 'printf "%%s\\n" "---" "id: %s" "---" "" "> 📎 Handoff: %s — pinned" > %s/identity.md' \
     "$AID" "$1" "$AGENT_DIR"
@@ -473,7 +484,8 @@ fi
 # Consuming it must not mean dropping it: the same env pin still has to reach the pane
 # on the clean-end path, announced as this session's.
 { echo "---"; echo "id: $AID"; echo "---"; } > "$AGENT_DIR/identity.md"
-run_in_fake_pane "$(guarded "$(pin_handoff_inline handoff-live2)
+run_in_fake_pane "$(guarded "sleep 2
+$(pin_handoff_inline handoff-live2)
 PARLAY_PINNED_HANDOFF=handoff-live2 $SCRIPT > $ROOT/live5.out 2>&1")" \
   "$ROOT/pty18.log" 'handoff echo: handoff-live2 written'
 guard_held "case 14b" || true
@@ -533,7 +545,8 @@ fi
 # an ambient value would print a predecessor's handoff under this session's banner, so
 # an env pin is believed only when identity.md agrees with it AND was written after
 # this claude process started.
-run_in_fake_pane "$(pin_handoff_inline handoff-live1)
+run_in_fake_pane "sleep 2
+$(pin_handoff_inline handoff-live1)
 PARLAY_PINNED_HANDOFF=handoff-env9 $SCRIPT --dry > $ROOT/dry20.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty20.log"
 DRY20="$(cat "$ROOT/dry20.out" 2>/dev/null || true)"
 if printf '%s' "$DRY20" | grep -q 'handoff echo: handoff-live1 would be echoed to /dev/.* (last known'; then
@@ -562,7 +575,8 @@ fi
 
 # A --reboot self-reports its handoff decision like every other branch: the pin is
 # deliberately not echoed there, and silence would read as the id having been lost.
-run_in_fake_pane "$(pin_handoff_inline handoff-live1)
+run_in_fake_pane "sleep 2
+$(pin_handoff_inline handoff-live1)
 $SCRIPT --reboot --dry > $ROOT/dry22.out 2>&1; touch $ROOT/inner.done" "$ROOT/pty22.log"
 DRY22="$(cat "$ROOT/dry22.out" 2>/dev/null || true)"
 if printf '%s' "$DRY22" | grep -q 'handoff echo: none — handoff-live1 is deliberately not echoed on a --reboot'; then
