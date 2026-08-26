@@ -220,7 +220,7 @@ jobs:
         run: |
           mkdir -p "$HOME"
           for p in packages/input packages/client packages/server packages/cli \
-                   tools/gate-tag; do
+                   packages/webview tools/gate-tag; do
             echo "::group::bun test ($p)"
             ( cd "$p" && bun test )
             echo "::endgroup::"
@@ -237,6 +237,12 @@ jobs:
       - name: Typecheck (tools/split-test)
         run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
         working-directory: tools/split-test
+
+      # webview's own build script is `tsc && vite build`, so a tsc error here
+      # is a broken build, not a style nit.
+      - name: Typecheck (packages/webview)
+        run: ./node_modules/.bin/tsc --noEmit
+        working-directory: packages/webview
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
   # Only the nine harnesses that were verified to be genuinely side-effect-free
