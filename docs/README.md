@@ -22,6 +22,7 @@ you are expected to reproduce the setup.
 | [`COMMAND_DESIGN_CONTRACT.md`](COMMAND_DESIGN_CONTRACT.md) | How a voice/text command must be shaped so the Go eval engine can load it without being recompiled. |
 | [`CHANNEL_PICKER_CONTRACT.md`](CHANNEL_PICKER_CONTRACT.md) | The frozen event/action wire contract between the Go eval engine and the TS panel for the voice-driven channel picker. |
 | [`context-reset-single-tab.md`](context-reset-single-tab.md) | Why `bin/context-reset` is shaped the way it is — the single-tab guarantee when an agent restarts itself. |
+| [`live-commands.md`](live-commands.md) | The live-command registry: how a running `parlay` verb reports itself, why the registry stores no free-form text (verb, agent id, pid, flag *names* only), and the 90s staleness reaper that keeps a crashed command from becoming a permanent zombie entry. |
 | [`VERSIONING.md`](VERSIONING.md) | The two version axes (repo semver tag vs. panel `PA_VERSION`) and the automatic tagging scheme. |
 
 ## Internal — integration with the author's agent fleet
