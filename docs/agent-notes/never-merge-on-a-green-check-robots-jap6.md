@@ -212,7 +212,8 @@ automatically either.
 
 ## Why `no-review-evidence` fires on literally every PR in this repo
 
-Found 2026-08-26, after seven consecutive PRs (#108–#115) all landed via
+Found 2026-08-26, after every PR in the range #108–#115 that landed at all —
+seven of the eight, since #111 was closed unmerged — went in via
 merge-and-disclose. The gate was right every time, and the cause was never
 transient:
 
