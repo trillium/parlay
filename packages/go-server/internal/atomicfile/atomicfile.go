@@ -16,6 +16,20 @@
 // mode, then rename. Neither divergence can come back, because there is now
 // only one implementation to diverge from.
 //
+// # The copies this package cannot absorb
+//
+// Two more atomic-write bodies exist in the repo, and both were missing the
+// Sync — so both could publish an empty file through a rename:
+//
+//   - tools/cli/internal/config/config.go (writePersistedConfig)
+//   - tools/parlay-bin/claudejson.go (the ~/.claude.json pre-trust write)
+//
+// They are fixed in place rather than replaced by a call to this package,
+// because each lives in its own Go module. Sharing this code would mean a new
+// module plus a replace directive in all six, which is more coupling than a
+// thirty-line function is worth. Both now point back here for the reasoning.
+// If a third copy appears, that calculus changes.
+//
 // # What this deliberately does NOT do
 //
 // It does not fsync the parent directory after the rename. That would make the

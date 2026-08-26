@@ -79,10 +79,23 @@ func writePersistedConfig(cfg persistedConfig) error {
 	enc := json.NewEncoder(tmp)
 	enc.SetIndent("", "  ")
 	encErr := enc.Encode(cfg)
+	// Sync before Close, and before the rename: a rename that lands ahead of
+	// the data publishes a correctly-named config file holding nothing, which
+	// is the exact failure an "atomic swap" is supposed to rule out. Only
+	// attempted when the encode succeeded — there is nothing worth flushing
+	// otherwise, and the encode error is the one the caller needs.
+	var syncErr error
+	if encErr == nil {
+		syncErr = tmp.Sync()
+	}
 	closeErr := tmp.Close()
 	if encErr != nil {
 		os.Remove(tmpPath)
 		return encErr
+	}
+	if syncErr != nil {
+		os.Remove(tmpPath)
+		return syncErr
 	}
 	if closeErr != nil {
 		os.Remove(tmpPath)
