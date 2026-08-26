@@ -117,6 +117,19 @@ func pinnedHandoffEnviron(pinID string) []string {
 	return []string{pinnedHandoffEnv + "=" + pinID}
 }
 
+// printHandoffContent runs "handoff show <pinID>" and writes its output to
+// stdout so it appears in the terminal scrollback before the pane closes.
+// Called right before context-reset fires (while claude is still alive).
+// Failures are announced but never fatal — the reset must still proceed.
+func printHandoffContent(pinID string) {
+	cmd := exec.Command("handoff", "show", pinID)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("(warn: could not show handoff %s — %v)\n", pinID, err)
+	}
+}
+
 func exitStatusMessage(err error) string {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -352,6 +365,13 @@ func cmdMem(kind MemKind, argv []string) {
 		}
 		if dry {
 			submitArgs = append(submitArgs, "--dry")
+		}
+		// Echo the handoff to stdout now, while claude is still alive and the
+		// terminal scrollback is writable. The reboot path does not echo via
+		// the watcher (that only fires on clean-end), so this is the only
+		// window where the content reaches the pane before the tab closes.
+		if !dry {
+			printHandoffContent(pinID)
 		}
 		if err := runInheritEnv(cmdName, pinnedHandoffEnviron(pinID), submitArgs...); err != nil {
 			httpc.Die(fmt.Sprintf("identity --submit: could not run %s — %v", cmdName, err), config.ExitRuntime)
