@@ -33,10 +33,28 @@ const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : "")
 const has = (p: string) => existsSync(p)
 
 // ---- live probes of the parlay CLI surface -------------------------------
-const spawnSrc = read(`${PL}/bin/parlay-spawn`)
-const cliIndex = read(`${PL}/packages/cli/src/index.ts`)
-const cliStatusSrc = read(`${PL}/packages/cli/src/commands-status.ts`)
-const cliSuperviseSrc = read(`${PL}/packages/cli/src/commands-supervise.ts`)
+//
+// These read the GO CLI (tools/cli). They used to read packages/cli, which was
+// retired in ticket T-08 — and because `read()` returns "" for a missing file
+// rather than failing, every probe silently went false and six landed
+// capabilities were re-reported as merely `designed`. An audit whose job is to
+// catch contractions must not quietly invent them, so `mustRead` refuses to
+// probe a file that is not there.
+const mustRead = (p: string) => {
+  const src = read(p)
+  if (!src) {
+    console.error(`✗ parity probe source missing or empty: ${p}`)
+    console.error(`  This audit reads the live CLI to decide landed-vs-designed. A missing`)
+    console.error(`  probe source silently downgrades real capabilities, so refusing to run.`)
+    process.exit(2)
+  }
+  return src
+}
+
+const spawnSrc = mustRead(`${PL}/bin/parlay-spawn`)
+const cliIndex = mustRead(`${PL}/tools/cli/main.go`)
+const cliStatusSrc = mustRead(`${PL}/tools/cli/internal/commands/status_verb.go`)
+const cliSuperviseSrc = mustRead(`${PL}/tools/cli/internal/commands/supervise.go`)
 // The fold design doc is captain-private and no longer lives in this repo. Point
 // PARLAY_FOLD_DOC at a copy to re-enable the two doc-derived probes below
 // (`crewDispatchRetentionStated`, `afkHomeInFold`); without it BOTH their rows are
@@ -50,14 +68,15 @@ if (foldDocPath && !foldDocAvailable) console.error(`⚠ PARLAY_FOLD_DOC="${fold
 const probe = {
   spawnFlag: (f: string) => new RegExp(`--${f}\\b`).test(spawnSrc),
   verb: (v: string) => new RegExp(`case "${v}"`).test(cliIndex),
-  // Keyed status sink: check commands-status.ts (not commands.ts — the old panel-status
-  // reader). Landed = $PARLAY_STATUS_FILE sink there AND the verb wired in index.ts.
+  // Keyed status sink: check the status verb's own file (not the panel-status
+  // reader). Landed = $PARLAY_STATUS_FILE sink there AND the verb wired in the
+  // dispatch switch.
   keyedStatusBuilt:
     /PARLAY_STATUS_FILE/.test(cliStatusSrc) && /case "status"/.test(cliIndex),
   // Teardown: landed as a CLI verb, not a standalone bin (fold §3.7 chose CLI).
   teardownBuilt:
     /case "teardown"/.test(cliIndex) &&
-    has(`${PL}/packages/cli/src/commands-teardown.ts`),
+    has(`${PL}/tools/cli/internal/commands/teardown.go`),
   worktreeSpawn: /--worktree\b/.test(spawnSrc),
   effortSpawn: /--effort\b/.test(spawnSrc),
   modeSpawn: /--mode\b/.test(spawnSrc),
@@ -69,8 +88,8 @@ const probe = {
   // `parlay guard` verb dispatches AND the variant lifecycle calls guardRepo().
   tangleGuardBuilt:
     /case "guard"/.test(cliIndex) &&
-    /export function guardRepo/.test(read(`${PL}/packages/cli/src/commands-guard.ts`)) &&
-    /guardRepo\(/.test(read(`${PL}/packages/cli/src/commands-variant.ts`)),
+    /func guardRepo\(/.test(mustRead(`${PL}/tools/cli/internal/commands/guard.go`)) &&
+    /guardRepo\(/.test(mustRead(`${PL}/tools/cli/internal/commands/variant.go`)),
   // C5: crew-dispatch is only legitimately STAYS-FIRSTMATE if the fold doc
   // actually states the retention + re-activation sequencing (task-8io0).
   crewDispatchRetentionStated: /crew-dispatch/i.test(foldDoc) && /STAYS[- ]FIRSTMATE/i.test(foldDoc) && /re-activ/i.test(foldDoc),

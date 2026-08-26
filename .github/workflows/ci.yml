@@ -159,8 +159,8 @@ jobs:
           echo "working tree clean after a full build"
 
   # ── Bun workspace: packages/input, packages/client, packages/server,
-  #    packages/cli, plus tools/gate-tag ─────────────────────────────────────
-  # packages/server and packages/cli have real test files but no "test" script
+  #    plus tools/gate-tag ───────────────────────────────────────────
+  # packages/server has real test files but no "test" script
   # in package.json, so `bun test` is invoked directly. Every package is run
   # from inside its own directory: there is no root bunfig.toml, so the
   # happy-dom preload that packages/client and packages/input need is only
@@ -200,14 +200,15 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: tools/split-test
 
-      # HOME is redirected for the same reason as the Go job, and here it is
-      # load-bearing rather than defensive: packages/cli's own tests resolve
-      # join(homedir(), ".parlay", "agents", <test agent>) directly
-      # (commands-crew-state.test.ts, commands-supervise.test.ts,
-      # commands-status.test.ts) and genuinely create that directory. Verified
-      # locally: a sandboxed run leaves .parlay/agents/unit-test-agent behind.
-      # Without this redirect the suite writes into a real developer's
-      # ~/.parlay on any self-hosted runner.
+      # HOME is redirected for the same reason as the Go job, and it is still
+      # load-bearing rather than defensive. It used to be packages/cli's tests
+      # that resolved join(homedir(), ".parlay", …) directly; those went with
+      # the package in T-08, but packages/server keeps the requirement — its
+      # paths.ts and the modules over it (session-channel, agent-context, tts,
+      # tool-tailer, hook-tailer, debug-log) all resolve under homedir(), and
+      # PARLAY_DATA_DIR does not cover every one of them. Without this redirect
+      # the suite writes into a real developer's ~/.parlay on a self-hosted
+      # runner.
       #
       # tools/gate-tag is in this loop but deliberately absent from the install
       # steps above: it has no package.json and no dependencies, so
@@ -219,7 +220,7 @@ jobs:
           HOME: ${{ runner.temp }}/bun-home
         run: |
           mkdir -p "$HOME"
-          for p in packages/input packages/client packages/server packages/cli \
+          for p in packages/input packages/client packages/server \
                    packages/webview tools/gate-tag; do
             echo "::group::bun test ($p)"
             ( cd "$p" && bun test )

@@ -15,13 +15,6 @@
         "ccjuggler-resolve": "./src/cli.ts",
       },
     },
-    "packages/cli": {
-      "name": "parlay-cli",
-      "version": "0.1.1",
-      "bin": {
-        "parlay": "./src/index.ts",
-      },
-    },
     "packages/client": {
       "name": "parlay-client",
       "version": "0.1.1",
@@ -502,8 +495,6 @@
     "parent-module": ["parent-module@1.0.1", "", { "dependencies": { "callsites": "^3.0.0" } }, "sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g=="],
 
     "parlay-ccjuggler": ["parlay-ccjuggler@workspace:packages/ccjuggler"],
-
-    "parlay-cli": ["parlay-cli@workspace:packages/cli"],
 
     "parlay-client": ["parlay-client@workspace:packages/client"],
 

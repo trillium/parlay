@@ -48,9 +48,9 @@
 // `parlay sweep --apply` (which asks the same question with the same holds),
 // not to a detector something might call in a loop.
 //
-// Go-only, no TS port — same call as merge_gate.go and sweep.go (bin/parlay
-// execs the Go binary for everything except lavish-import). Do not add it to
-// tools/cli/parity/run.sh; there is no TS side to diff against.
+// Go-only, no TS port — same call as merge_gate.go and sweep.go. bin/parlay
+// now execs the Go binary for every verb; the TS CLI and the parity harness
+// that diffed against it were both retired in T-08.
 package commands
 
 import (
