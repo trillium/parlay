@@ -112,8 +112,9 @@ type sseEvent struct {
 // Hub has no channel scoping — every connected client gets every broadcast,
 // matching /events having no channel query parameter.
 type Hub struct {
-	mu      sync.Mutex
-	clients map[chan sseEvent]struct{}
+	mu              sync.Mutex
+	clients         map[chan sseEvent]struct{}
+	clientDevices   map[chan sseEvent]string // device ID for each SSE client
 }
 
 // newHub creates a Hub and starts its one background bridge goroutine,
@@ -124,7 +125,10 @@ type Hub struct {
 // a ChatMessage fans out, whether to a blocked /poll or to every /events
 // client.
 func newHub(b *broker) *Hub {
-	h := &Hub{clients: make(map[chan sseEvent]struct{})}
+	h := &Hub{
+		clients:       make(map[chan sseEvent]struct{}),
+		clientDevices: make(map[chan sseEvent]string),
+	}
 	msgs, _ := b.subscribeAll() // never cancelled: lives exactly as long as the process, like b itself
 	go func() {
 		for m := range msgs {
@@ -137,15 +141,17 @@ func newHub(b *broker) *Hub {
 // subscribe registers a new /events client and returns its event channel
 // plus a cancel func the caller must defer immediately, mirroring
 // broker.subscribe's contract.
-func (h *Hub) subscribe() (<-chan sseEvent, func()) {
+func (h *Hub) subscribe(deviceID string) (<-chan sseEvent, func()) {
 	ch := make(chan sseEvent, sseClientBuffer)
 	h.mu.Lock()
 	h.clients[ch] = struct{}{}
+	h.clientDevices[ch] = deviceID
 	h.mu.Unlock()
 
 	cancel := func() {
 		h.mu.Lock()
 		delete(h.clients, ch)
+		delete(h.clientDevices, ch)
 		h.mu.Unlock()
 	}
 	return ch, cancel
@@ -171,6 +177,30 @@ func (h *Hub) broadcast(name string, data any) {
 		default:
 		}
 	}
+}
+
+// broadcastToDevice delivers (name, data) to only SSE clients registered with
+// the given device ID. Returns the number of clients that received the event.
+// Like broadcast, this is best-effort: a client whose buffer is full has the
+// event dropped. A nil Hub is a no-op and returns 0.
+func (h *Hub) broadcastToDevice(deviceID string, name string, data any) int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	matched := 0
+	for ch := range h.clients {
+		if h.clientDevices[ch] != deviceID {
+			continue
+		}
+		matched++
+		select {
+		case ch <- sseEvent{name: name, data: data}:
+		default:
+		}
+	}
+	return matched
 }
 
 // messageReceivedPayload is the `message_received` event's documented
@@ -206,12 +236,10 @@ func writeSSE(w http.ResponseWriter, name string, data any) {
 }
 
 // handleEvents implements GET /api/chat/events?device=<uuid>&after=<lastMsgId>&url=<currentPageUrl>.
-// `device` and `url` are accepted (so a malformed/absent value never breaks
-// the connection) but unused: nothing in this server yet needs per-device
-// identity or per-URL history scoping (docs/api-contract.md's own wording,
-// "lets the server scope `history` more deeply", is speculative about a
-// capability, not a documented required behavior) — a clean-slate choice
-// to not invent scoping logic nothing currently consumes.
+// `device` is used for device-scoped SSE broadcasts (eval relay routes, etc);
+// `url` is accepted but unused (nothing in this server yet needs per-URL
+// history scoping). A clean-slate choice to not invent scoping logic nothing
+// currently consumes.
 func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -224,7 +252,8 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 			return
 		}
 
-		ch, cancel := hub.subscribe()
+		deviceID := r.URL.Query().Get("device")
+		ch, cancel := hub.subscribe(deviceID)
 		defer cancel()
 
 		st.Presence.AddPanelClient()

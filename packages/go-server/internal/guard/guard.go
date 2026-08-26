@@ -161,6 +161,12 @@ var GuardedPaths = map[string]bool{
 	// caller is affected: every poller in this repo is a no-Origin HTTP
 	// client, and nothing in packages/client polls.
 	"/api/chat/poll": true,
+
+	// Eval relay routes (ticket C4): relay to the compiled Go eval engine and
+	// broadcast results over device-scoped SSE. Both mutate state (register
+	// streamId → deviceId mappings) and need guarding.
+	"/api/chat/eval":      true,
+	"/api/chat/eval-push": true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to

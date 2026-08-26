@@ -24,3 +24,6 @@ tools/cli/bin/
 # entry here keeps every module's binary path visible in this one file.)
 tools/cli/cli
 tools/parlay-bin/parlay-bin
+
+# Go server build artifact (9.9MB) — CI hygiene gate caps tracked blobs at 2 MiB
+packages/go-server/parlay-server
