@@ -272,6 +272,42 @@ Two traps:
   pipeline's status, so an unknown-option error exits 0 and reads as a clean
   review. Redirect to a file and check `$?`, or set `pipefail`.
 
+### The local CLI is not a way around the bot's rate limit
+
+Do not reach for the CLI *because* the GitHub bot is limited. **They draw on
+the same pool of 3 included reviews.** Spending one locally is one the bot
+cannot spend on a PR, and vice versa. This was learned the hard way: three
+local reviews in a row emptied the pool, and the fourth returned
+
+```json
+{"type":"error","errorType":"rate_limit","message":"Rate limit exceeded",
+ "recoverable":true,"metadata":{"isProUser":false,"waitTime":"20 minutes", …}}
+```
+
+Note `isProUser: false` — **even though the org is on Pro Plus.** The same
+payload explains why:
+
+> Usage-based reviews are enabled, but this Git provider account isn't linked
+> to an assigned seat for the selected organization. Link or assign the seat,
+> or use an Agentic API key, then retry.
+
+So the paid capacity exists and is simply not reaching this machine. Until a
+seat is linked or `CODERABBIT_API_KEY` is set, the CLI is a *free-tier* client
+wearing a paid subscription's name, and the 3-review pool is the real budget
+for the whole repo — bot and CLI together.
+
+Two consequences for planning:
+
+- **Order matters, and it is the opposite of what is convenient.** Review
+  locally *before* opening the PR, while a failure costs nothing. Once a PR is
+  open and gate-blocked, `@coderabbitai review` is the only action that
+  produces gate-visible evidence, so save the remaining budget for it.
+- **A rate-limit error is not a review.** The `--agent` stream ends in
+  `{"type":"error", …}` with **no** `{"type":"complete"}` record. Assert on the
+  presence of `complete` plus its `reviewedFiles` length; a script that only
+  greps for `"findings":0` reads an exhausted quota as a clean bill of health —
+  the same silent-degradation shape as the rest of this note.
+
 This does not satisfy `parlay merge-gate`, which reads GitHub and cannot see a
 local run. Use both: the local review to catch defects before pushing, and the
 `@coderabbitai` comment to put reviewable evidence where the gate can find it.
