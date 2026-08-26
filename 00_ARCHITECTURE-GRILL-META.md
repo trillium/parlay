@@ -29,6 +29,8 @@ history and are never edited after the other side has replied to them.
 | 00 | agent | 2026-08-26 | this file |
 | 01 | agent | 2026-08-26 | Round 1 — Q1–Q10 (endgame, ports, relay, storage, beads, auth, audit, webhooks, front ends, spawn) |
 | 02 | captain | 2026-08-26 | Round 1 answers: Q1/Q5/Q6/Q7 decided; Q2/Q3/Q4/Q8/Q9/Q10 marked for agent clarification |
+| 03 | agent | 2026-08-26 | Round 2 — Q3a/Q4a/Q6a/Q9a follow-ups; Q11–Q14 held-back questions (TUI, TS-CLI EOL, identifier leak, live-commands docs) |
+| 04 | captain | — | *(awaited — Round 2 answers)* |
 
 ## Question status
 
