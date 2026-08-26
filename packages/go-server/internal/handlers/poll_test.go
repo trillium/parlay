@@ -212,7 +212,7 @@ func TestHandlePollWakesOnNewMessage(t *testing.T) {
 		done <- rec
 	}()
 
-	// Small sleep to let the handler goroutine reach subscribe() before we
+	// Small sleep to let the handler goroutine reach subscribe("") before we
 	// publish; deterministic synchronization would need a test-only hook
 	// into the broker, not worth it for a single wake-up test.
 	time.Sleep(20 * time.Millisecond)

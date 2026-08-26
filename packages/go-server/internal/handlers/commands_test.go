@@ -202,7 +202,7 @@ func TestCommandThatDiesWithoutReportingIsReaped(t *testing.T) {
 func TestCommandStartBroadcastsCommandUpdate(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
 	postCommandJSON(t, handleCommandStart(st, hub), map[string]any{"id": "c-1", "verb": "claim"})
@@ -219,7 +219,7 @@ func TestCommandEndBroadcastsCommandUpdate(t *testing.T) {
 	hub := newHub(newBroker())
 	postCommandJSON(t, handleCommandStart(st, hub), map[string]any{"id": "c-1", "verb": "claim"})
 
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 	postCommandJSON(t, handleCommandEnd(st, hub), map[string]any{"id": "c-1", "state": "failed", "outcome": "error"})
 
@@ -236,7 +236,7 @@ func TestSweepBroadcastsExpiryThenDrop(t *testing.T) {
 	hub := newHub(newBroker())
 	postCommandJSON(t, handleCommandStart(st, hub), map[string]any{"id": "c-1", "verb": "monitor"})
 
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
 	clk.advance(31 * time.Second)
@@ -273,7 +273,7 @@ func TestEvictionBroadcastsADropForEveryRecordItSheds(t *testing.T) {
 	st := newTestStore(t)
 	clk := withCommandCap(st, 2)
 	hub := newHub(newBroker())
-	sub, cancel := hub.subscribe()
+	sub, cancel := hub.subscribe("")
 	defer cancel()
 
 	ids := []string{"c-1", "c-2", "c-3", "c-4"}

@@ -50,6 +50,7 @@ type Store struct {
 	Presence *PresenceTracker
 	Uploads  *UploadStore
 	Commands *CommandRegistry
+	Channels *ChannelStore
 }
 
 // Config controls where and how much Open persists.
@@ -94,6 +95,11 @@ func Open(cfg Config) (*Store, error) {
 		messages.Close()
 		return nil, fmt.Errorf("store: uploads: %w", err)
 	}
+	channels, err := openChannelStore(filepath.Join(cfg.Dir, "channels.json"))
+	if err != nil {
+		messages.Close()
+		return nil, fmt.Errorf("store: channels: %w", err)
+	}
 
 	return &Store{
 		Messages: messages,
@@ -103,6 +109,7 @@ func Open(cfg Config) (*Store, error) {
 		Presence: newPresenceTracker(),
 		Uploads:  uploads,
 		Commands: NewCommandRegistry(CommandRegistryConfig{}),
+		Channels: channels,
 	}, nil
 }
 

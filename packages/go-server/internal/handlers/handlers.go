@@ -92,6 +92,7 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub))
 
 	registerCommands(mux, st, hub)
+	registerPanel(mux, st, b, hub)
 
 	return hub
 }
