@@ -39,9 +39,9 @@ keep working) and `Content-Type: application/json` (415 otherwise — this is
 what stops a cross-origin CORS *simple request* from reaching a handler
 without a preflight, and preflight on those paths is refused). Their
 responses are re-headered by `withGuardedCors` so the wildcard `CORS` the
-handlers spread never reaches the wire. The rest — history, agents, events,
-version, pages, and `GET /api/chat/uploads/<name>`, which an `<img src>` must
-load — keeps the old wildcard and stays world-readable.
+handlers spread never reaches the wire. The rest — history, version, pages,
+and `GET /api/chat/uploads/<name>`, which an `<img src>` must load — keeps
+the old wildcard and stays world-readable.
 
 **The rule, on both servers: inside the mutating and identifier-aiming
 surface, a route is guarded by what its handler DOES, REGARDLESS OF HTTP
@@ -49,21 +49,23 @@ METHOD.** The verb is not evidence — `GET /subscribers` is guarded because it
 hands out identifiers, and `GET /poll` because it registers the channel it is
 polling for. Classify by reading the handler.
 
-That is the boundary that exists, and it is narrower than "everything that
-writes or discloses". Two TS routes are known, accepted, deliberately
-unguarded residue — accepted meaning somebody looked and decided, not that
-nothing is exposed. `GET /api/chat/events` writes `sseClients` from an
-attacker-supplied `?device=` (`router-events.ts`), and the `tts_event` frames
-it streams carry that device uuid to every connected client
-(`router-tts-events.ts` broadcasts `{ …, device, ...body }` unfiltered), so a
-cross-origin `EventSource` can read it; `GET /api/chat/agents`
-(`router-messages.ts`) hands any origin every registered agent id under the
-wildcard `CORS` — the same class of disclosure `/subscribers` was guarded for.
-Both are tracked as `identifier-disclosure-remains-on-sse`, ruled out of that
-change's scope rather than overlooked. What keeps the residue from chaining is
-that every route that AIMS anything (eval, draft, device-cmd, navigate,
-reload, poll, upload, subscribers) is guarded. The Go server's unguarded
-routes send no ACAO at all, so a foreign page cannot read their bodies.
+The set now covers the whole identifier surface. The two TS routes long
+tracked as accepted residue under `identifier-disclosure-remains-on-sse` —
+`GET /api/chat/events` (writes `sseClients` from an attacker-supplied
+`?device=` in `router-events.ts`, and the `tts_event` frames its stream
+carries reach every connected client with that device uuid in them:
+`router-tts-events.ts` broadcasts `{ …, device, ...body }` unfiltered) and
+`GET /api/chat/agents` (`router-messages.ts`, every registered agent id, the
+same class of disclosure `/subscribers` was guarded for) — are **guarded**
+now, closing that tracking item. Guarded, not Go's no-ACAO-ever, because
+`parlay-input` (`packages/input`, the published npm client) legitimately
+opens a cross-origin `EventSource` to `/api/chat/events` from loopback/LAN
+pages, which the guard answers with a reflected ACAO; only foreign pages get
+403. Both are GETs, so the content-type gate never applies. `GET
+/api/chat/history` deliberately stays on the wildcard: it has always been the
+documented world-readable surface, and closing it is a product decision, not
+a guard classification. The Go server's unguarded routes send no ACAO at all,
+so a foreign page cannot read their bodies.
 
 A new route that injects into an agent turn, mutates the registry, or drives a
 device is unguarded until you add it to that set — and if its callers do not
