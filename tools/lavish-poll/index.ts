@@ -35,11 +35,20 @@ function emit(result: object): never {
 
 if (agentReply) {
   try {
-    await fetch(`${parlay}/api/chat/reply`, {
+    const res = await fetch(`${parlay}/api/chat/reply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: agentReply, agent: agentId, name: agentId, color: "#f4c95d" }),
     })
+    // fetch only rejects on a transport failure; a 4xx/5xx RESOLVES. Without
+    // this check the bridge cannot tell "the captain received the reply" from
+    // "the server refused it", and reports both as success — the same shape as
+    // the other bugs this file fixes, one layer up. The reply channel is the
+    // only way an agent's answer reaches a human, so a silently dropped one is
+    // indistinguishable from an agent that never answered.
+    if (!res.ok) {
+      process.stderr.write(`lavish-poll: reply post rejected: HTTP ${res.status} ${res.statusText}\n`)
+    }
   } catch (e) {
     process.stderr.write(`lavish-poll: reply post failed: ${e}\n`)
   }
@@ -143,7 +152,12 @@ while (Date.now() < deadline) {
 
   if (msg.id && msg.role === "user" && msg.text != null) {
     // Grace window: nativeAC is still live, so this can actually deliver.
-    const n = await Promise.race([nativeP, Bun.sleep(NATIVE_GRACE_MS).then(() => null)])
+    // Capped by whatever is left of --timeout-ms, because an unconditional
+    // 200ms wait here overshoots the deadline the caller asked for — and this
+    // whole PR exists because a validated input still has to be an obeyed one.
+    // A caller passing --timeout-ms 100 must not get 300ms back.
+    const graceMs = Math.max(0, Math.min(NATIVE_GRACE_MS, deadline - Date.now()))
+    const n = await Promise.race([nativeP, Bun.sleep(graceMs).then(() => null)])
     nativeAC.abort()
     const warnings = n?.layout_warnings ?? []
     const chatPrompt = [{ tag: "chat", text: msg.text }]
