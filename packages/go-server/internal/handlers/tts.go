@@ -139,6 +139,51 @@ func (h *TTSHandler) applySubstitutions(text string) (string, int64) {
 	return out, version
 }
 
+// writeFileAtomic writes data to path via a same-directory temp file and a
+// rename, so a reader never observes a partially-written file. Used for the
+// persisted substitutions map, which is read back on every synth.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename below succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// appendJSONL appends one line to a JSONL file, creating the file and every
+// missing parent directory. The parent matters: reportPath lives under
+// <PAI_DIR>/MEMORY/OBSERVABILITY/, which does not exist in a fresh or
+// redirected PAI_DIR, and O_CREATE does not create parents — so without this
+// every pronunciation report was silently dropped on exactly the sandboxed
+// instances a test would use.
+func appendJSONL(path string, line []byte) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return // best effort, same as before
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, string(line))
+}
+
 // diskKey generates a cache key for disk storage.
 func diskKey(key string) string {
 	h := sha1.Sum([]byte(key))
@@ -362,7 +407,14 @@ func (h *TTSHandler) handleTTSCorrection(w http.ResponseWriter, r *http.Request)
 	h.subs.mu.RUnlock()
 
 	data, _ := json.MarshalIndent(mapCopy, "", "  ")
-	if err := os.WriteFile(h.subsPath, append(data, '\n'), 0644); err != nil {
+	// Write via a temp file in the same directory, then rename. A plain
+	// os.WriteFile truncates first, so a crash or a concurrent correction
+	// mid-write leaves the captain's real tts-substitutions.json truncated or
+	// half-written — and this file is read back on every synth, so a corrupt
+	// one silently disables every substitution until someone notices.
+	// Rename within a directory is atomic, so a reader sees either the old
+	// file or the new one and never a partial.
+	if err := writeFileAtomic(h.subsPath, append(data, '\n'), 0644); err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": "write failed"})
 		return
 	}
@@ -379,10 +431,7 @@ func (h *TTSHandler) handleTTSCorrection(w http.ResponseWriter, r *http.Request)
 		},
 	}
 	if data, err := json.Marshal(entry); err == nil {
-		if f, err := os.OpenFile(h.reportPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
-			fmt.Fprintln(f, string(data))
-			f.Close()
-		}
+		appendJSONL(h.reportPath, data)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "substitutions": len(mapCopy)})
@@ -425,10 +474,7 @@ func (h *TTSHandler) handleTTSReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if data, err := json.Marshal(entry); err == nil {
-		if f, err := os.OpenFile(h.reportPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
-			fmt.Fprintln(f, string(data))
-			f.Close()
-		}
+		appendJSONL(h.reportPath, data)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})

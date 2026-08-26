@@ -2,11 +2,18 @@ package handlers
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
 	"time"
 )
+
+// maxDaemonResponse bounds a single speak-daemon reply. The body is one
+// utterance's WAV, base64-encoded — a minute of 24 kHz 16-bit mono is ~3 MB
+// raw, ~4 MB encoded — so 32 MiB is generous for any real synth and still far
+// below anything that threatens the process.
+const maxDaemonResponse = 32 << 20
 
 // TTSEngine is the interface for text-to-speech synthesis backends.
 // Implementations can be swapped to support different TTS providers (speak daemon, API services, etc).
@@ -59,15 +66,15 @@ func (e *SpeakDaemonEngine) Synth(text string, voice string, speed float64) ([]b
 	}
 	defer conn.Close()
 
-	// Set read/write deadlines
-	conn.SetDeadline(time.Now().Add(e.timeout))
+	// Set read/write deadlines. This is the only thing bounding how long the
+	// read loop below can block, so a failure to set it must not be ignored.
+	if err := conn.SetDeadline(time.Now().Add(e.timeout)); err != nil {
+		return nil, 0, "", fmt.Errorf("failed to set daemon deadline: %w", err)
+	}
 
 	// Write length-prefixed message (4 bytes BE length + JSON)
 	lenBytes := make([]byte, 4)
-	lenBytes[0] = byte((len(body) >> 24) & 0xff)
-	lenBytes[1] = byte((len(body) >> 16) & 0xff)
-	lenBytes[2] = byte((len(body) >> 8) & 0xff)
-	lenBytes[3] = byte(len(body) & 0xff)
+	binary.BigEndian.PutUint32(lenBytes, uint32(len(body)))
 
 	if _, err := conn.Write(lenBytes); err != nil {
 		return nil, 0, "", fmt.Errorf("failed to write to daemon: %w", err)
@@ -76,13 +83,21 @@ func (e *SpeakDaemonEngine) Synth(text string, voice string, speed float64) ([]b
 		return nil, 0, "", fmt.Errorf("failed to write to daemon: %w", err)
 	}
 
-	// Read response
+	// Read response. The length prefix is attacker-controlled from this
+	// process's point of view — it is whatever is on the other end of the
+	// socket — so it is bounded before it is trusted, and the accumulator is
+	// bounded independently. Without both, a daemon (or anything that manages
+	// to bind that socket path) declaring a 2 GiB body makes this loop grow
+	// `chunks` until the deadline expires or the process is OOM-killed.
 	var chunks []byte
 	buf := make([]byte, 4096)
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
 			chunks = append(chunks, buf[:n]...)
+			if len(chunks) > maxDaemonResponse {
+				return nil, 0, "", fmt.Errorf("daemon response exceeds %d bytes", maxDaemonResponse)
+			}
 		}
 		if err != nil {
 			// Check if we have enough data
@@ -94,7 +109,10 @@ func (e *SpeakDaemonEngine) Synth(text string, voice string, speed float64) ([]b
 
 		// Check if we have a complete message
 		if len(chunks) >= 4 {
-			msgLen := int(chunks[0])<<24 | int(chunks[1])<<16 | int(chunks[2])<<8 | int(chunks[3])
+			msgLen := int(binary.BigEndian.Uint32(chunks[:4]))
+			if msgLen > maxDaemonResponse {
+				return nil, 0, "", fmt.Errorf("daemon declared a %d byte response, over the %d byte limit", msgLen, maxDaemonResponse)
+			}
 			if len(chunks) >= 4+msgLen {
 				// We have the complete message
 				break
@@ -106,7 +124,10 @@ func (e *SpeakDaemonEngine) Synth(text string, voice string, speed float64) ([]b
 		return nil, 0, "", fmt.Errorf("daemon returned incomplete response")
 	}
 
-	msgLen := int(chunks[0])<<24 | int(chunks[1])<<16 | int(chunks[2])<<8 | int(chunks[3])
+	msgLen := int(binary.BigEndian.Uint32(chunks[:4]))
+	if msgLen > maxDaemonResponse {
+		return nil, 0, "", fmt.Errorf("daemon declared a %d byte response, over the %d byte limit", msgLen, maxDaemonResponse)
+	}
 	if len(chunks) < 4+msgLen {
 		return nil, 0, "", fmt.Errorf("daemon returned incomplete response")
 	}
