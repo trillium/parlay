@@ -220,8 +220,56 @@ var jsonExemptPaths = map[string]bool{
 	"/api/chat/tts/validate-splits":   true,
 }
 
-// IsGuarded reports whether path is inside the guard.
-func IsGuarded(path string) bool { return GuardedPaths[path] }
+// guardedPrefixes are subtrees where EVERY path is guarded, including ones
+// that do not exist yet. The map above is a list of routes someone remembered;
+// this is a boundary that does not need remembering, and the difference
+// matters most exactly where the route table grows.
+//
+//   - /api/chat/plugin/ — the plugin RPC subtree. internal/handlers/plugins.go
+//     registers this whole prefix on the mux (makePluginRouteHandler), so every
+//     plugin route a later change adds is reachable the moment it is written.
+//     With exact matching only, /api/chat/plugin/cursorless/response was open:
+//     a POST that deletes from rpcWaiters, stops the waiter's timer, and
+//     resolves a pending RPC with an attacker-supplied `result` that is then
+//     returned to the Talon caller. Guessing a 32-hex rpcId makes that a narrow
+//     hole rather than a wide one, but the reachability is the defect, and the
+//     next plugin route may not have an unguessable id in front of it. TS
+//     guards this as a prefix and says why: "so a plugin added later is guarded
+//     by default instead of shipping open until someone remembers this file."
+//     Go's exact map had the opposite default.
+//   - /api/chat/agents/ — DELETE /api/chat/agents/:id, the REST alias for
+//     unregister. Trailing slash on purpose: it must NOT catch the exact path
+//     /api/chat/agents, which is a read route and stays open here (Go sends no
+//     ACAO on unguarded routes at all, so a foreign page cannot read it; TS
+//     guards its own /api/chat/agents because unguarded routes THERE still
+//     carry the legacy wildcard CORS. Same boundary, different defaults — that
+//     divergence is correct and pinned by tests on both sides).
+//   - /api/debug/ — input-timing telemetry, keyed by device id. No Go handler
+//     yet.
+//
+// Two of these three have no Go handler today, which is the same
+// land-the-entry-first discipline the map above documents: the predictable way
+// this boundary fails is a route added by someone editing internal/handlers who
+// never opens this file.
+var guardedPrefixes = []string{
+	"/api/chat/agents/",
+	"/api/chat/plugin/",
+	"/api/debug/",
+}
+
+// IsGuarded reports whether path is inside the guard: an exact member of
+// GuardedPaths, or anything under a guarded prefix.
+func IsGuarded(path string) bool {
+	if GuardedPaths[path] {
+		return true
+	}
+	for _, p := range guardedPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // privateV4 mirrors guard/origin.ts's PRIVATE_V4 exactly: loopback and private-LAN
 // literals. The phone reaches the panel over the LAN and a reverse proxy may

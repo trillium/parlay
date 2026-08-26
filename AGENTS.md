@@ -29,7 +29,7 @@ Each of these has already caused a real incident on the captain's box.
 
 The chat API has **no authentication**. A route is guarded by what its handler DOES, regardless of HTTP method — `GET /subscribers` is guarded because it hands out identifiers, `GET /poll` because it registers a channel.
 
-- **Adding a mutating or identifier-aiming `/api/chat` route? Add it to `GUARDED_CHAT_PATHS`** (`packages/server/src/guard/paths.ts`) and to `internal/guard.GuardedPaths` on the Go side. A new route is unguarded until you do. `JSON_EXEMPT_PATHS` is a closed three-member list — do not grow it one bug report at a time. → [notes](docs/agent-notes/packages-server-is-a-standalone-bun.md)
+- **Adding a mutating or identifier-aiming `/api/chat` route? Add it to `GUARDED_CHAT_PATHS`** (`packages/server/src/guard/paths.ts`) and to `internal/guard.GuardedPaths` on the Go side. A new route is unguarded until you do. Both sides also guard whole subtrees (`GUARDED_PREFIXES` / `guardedPrefixes`) — `/api/chat/plugin/`, `/api/chat/agents/`, `/api/debug/` — so anything added under those is guarded before you get there. `JSON_EXEMPT_PATHS` is a closed three-member list — do not grow it one bug report at a time. → [notes](docs/agent-notes/packages-server-is-a-standalone-bun.md)
 - **`POST /api/chat/events` is the out-of-process ingress seam**, with a one-name-per-real-producer allowlist (`tool_event` today). Do not widen it to the panel-aiming events. → [notes](docs/agent-notes/out-of-process-producers-reach-the.md)
 - **The live-command registry stores no free-form text** — verb, agent id, pid, flag *names*, outcome token. Never argv, values, paths, or error strings. → [notes](docs/agent-notes/the-live-command-registry-sees-only.md)
 
