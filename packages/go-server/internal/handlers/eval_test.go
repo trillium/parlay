@@ -58,9 +58,7 @@ func TestHandleEvalWithDevice(t *testing.T) {
 	handler(w, req)
 
 	// Check that the device was registered
-	streamDeviceMapMu.RLock()
-	device, ok := streamDeviceMap["test-stream"]
-	streamDeviceMapMu.RUnlock()
+	device, ok := deviceForStream("test-stream")
 
 	if !ok || device != "test-device" {
 		t.Errorf("expected device to be registered for stream, got %v", device)
@@ -68,11 +66,7 @@ func TestHandleEvalWithDevice(t *testing.T) {
 }
 
 func TestHandleEvalPushMissingStream(t *testing.T) {
-	// Create a proper hub for testing
-	hub := &Hub{
-		clients:       make(map[chan sseEvent]struct{}),
-		clientDevices: make(map[chan sseEvent]string),
-	}
+	hub := &Hub{clients: make(map[chan sseEvent]*sseClient)}
 	handler := handleEvalPush(hub)
 
 	body := evalPushRequest{
@@ -93,10 +87,7 @@ func TestHandleEvalPushMissingStream(t *testing.T) {
 }
 
 func TestHandleEvalPushUnknownStream(t *testing.T) {
-	hub := &Hub{
-		clients:       make(map[chan sseEvent]struct{}),
-		clientDevices: make(map[chan sseEvent]string),
-	}
+	hub := &Hub{clients: make(map[chan sseEvent]*sseClient)}
 	handler := handleEvalPush(hub)
 
 	body := evalPushRequest{
@@ -128,10 +119,7 @@ func TestHandleEvalPushWithKnownStream(t *testing.T) {
 		streamDeviceMapMu.Unlock()
 	}()
 
-	hub := &Hub{
-		clients:       make(map[chan sseEvent]struct{}),
-		clientDevices: make(map[chan sseEvent]string),
-	}
+	hub := &Hub{clients: make(map[chan sseEvent]*sseClient)}
 	handler := handleEvalPush(hub)
 
 	body := evalPushRequest{
