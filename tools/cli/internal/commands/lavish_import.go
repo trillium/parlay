@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"io"
 	"net/http"
 	"os"
@@ -42,6 +43,15 @@ type lavishMsg struct {
 // 31337 via /api/chat/reply (agent) and /api/chat/send (user).
 func LavishImport(argv []string) {
 	if helpWanted("lavish-import", argv) {
+		return
+	}
+	// The verb takes no flags and no positionals. Accepting leftover argv
+	// silently would make `parlay lavish-import --dry-run` perform a REAL
+	// import into the live Parlay — a guessed safety flag doing the opposite
+	// of safety. AGENTS.md: a dropped flag is not a degraded flag, it is a
+	// hard exit, because callers may be discarding it.
+	if len(argv) > 0 {
+		httpc.Die(fmt.Sprintf("parlay lavish-import: unexpected argument %q — this verb takes no flags or arguments", argv[0]), config.ExitUsage)
 		return
 	}
 

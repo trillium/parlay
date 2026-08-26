@@ -3,6 +3,9 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/trillium/parlay/tools/cli/internal/config"
+	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -240,5 +243,33 @@ func TestReplayToParlayContinuesPastAFailedMessage(t *testing.T) {
 
 	if seen != 3 {
 		t.Errorf("stopped after %d messages; a failed send must not abandon the rest", seen)
+	}
+}
+
+// `parlay lavish-import` takes no flags and no positionals. Before this check
+// existed, argv was read once by helpWanted and then dropped on the floor, so
+// `parlay lavish-import --dry-run` ran a REAL import into the live Parlay at
+// :31337 and reported success — a guessed safety flag doing precisely the
+// opposite of safety. AGENTS.md states the rule this pins: a dropped flag is
+// not a degraded flag, it is a hard exit, because callers may be discarding it.
+func TestLavishImportRejectsArgumentsRatherThanIgnoringThem(t *testing.T) {
+	orig := httpc.Exit
+	httpc.Exit = testsupport.RecordingExit()
+	t.Cleanup(func() { httpc.Exit = orig })
+
+	for _, argv := range [][]string{
+		{"--dry-run"},
+		{"--no-such-flag"},
+		{"session-1234"},
+		{"--dry-run", "--verbose"},
+	} {
+		code, exited := testsupport.Capture(func() { LavishImport(argv) })
+		if !exited {
+			t.Errorf("lavish-import %v returned normally — it ran a real import instead of refusing", argv)
+			continue
+		}
+		if code != config.ExitUsage {
+			t.Errorf("lavish-import %v exited %d, want ExitUsage (%d)", argv, code, config.ExitUsage)
+		}
 	}
 }
