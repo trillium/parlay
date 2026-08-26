@@ -38,16 +38,16 @@ deferred, with a named revisit condition).
 
 | ID | Topic | Asked in | Status |
 |---|---|---|---|
-| Q1 | Endgame for the Bun server (`packages/server`): replace / sidecar / peer | 01 | ANSWERED |
-| Q2 | Which unported routes are product vs Pulse/PAI residue (incl. eval relay, TTS) | 01 | ANSWERED |
-| Q3 | Future of `tools/relay`: keep daemon vs fold into go-server + CLI cursor resume | 01 | ANSWERED |
-| Q4 | Storage for search/audit: pure-stdlib constraint; JSONL scan vs SQLite vs beads | 01 | ANSWERED |
-| Q5 | Mechanics of beads-backed crew status: shell-out vs mirror vs source-of-truth | 01 | ANSWERED |
-| Q6 | Auth: opt-in static bearer token vs strictly network-delegated | 01 | ANSWERED |
-| Q7 | Audit log locus: client-side full-fidelity vs server ingest vs hybrid | 01 | ANSWERED |
-| Q8 | Webhook delivery contract: config surface, guarantees, event set | 01 | ANSWERED |
-| Q9 | Two front ends permanent? go-server as blessed panel host; deploy pipeline gap | 01 | ANSWERED |
-| Q10 | Public/private boundary of the spawn layer (parlay-spawn, launchers, beads-required) | 01 | ANSWERED |
+| Q1 | Endgame for the Bun server (`packages/server`): replace / sidecar / peer | 01 | RESOLVED |
+| Q2 | Which unported routes are product vs Pulse/PAI residue (incl. eval relay, TTS) | 01 | RESOLVED |
+| Q3 | Future of `tools/relay`: keep daemon vs fold into go-server + CLI cursor resume | 01 | RESOLVED |
+| Q4 | Storage for search/audit: pure-stdlib constraint; JSONL scan vs SQLite vs beads | 01 | RESOLVED |
+| Q5 | Mechanics of beads-backed crew status: shell-out vs mirror vs source-of-truth | 01 | RESOLVED |
+| Q6 | Auth: opt-in static bearer token vs strictly network-delegated | 01 | RESOLVED |
+| Q7 | Audit log locus: client-side full-fidelity vs server ingest vs hybrid | 01 | RESOLVED |
+| Q8 | Webhook delivery contract: config surface, guarantees, event set | 01 | RESOLVED |
+| Q9 | Two front ends permanent? go-server as blessed panel host; deploy pipeline gap | 01 | RESOLVED |
+| Q10 | Public/private boundary of the spawn layer (parlay-spawn, launchers, beads-required) | 01 | RESOLVED |
 
 Held back for later rounds (dependent on the above): Q3 cursor-ownership detail,
 Q4 archive retention policy, TUI stack choice, TS-CLI (`packages/cli`) +
@@ -57,4 +57,13 @@ dies with the Bun server or gets fixed in place.
 
 ## Consensus register
 
-*(empty — one line per RESOLVED question: `Qn — verdict — rationale pointer`)*
+Q1 — REPLACE — go-server is canonical, Bun deleted when port completes (02)
+Q2 — PORT + OPTIONAL — eval/device-cmd/navigate/reload/alert/debug-log to go-server; TTS pluggable; plugins/pages die (02)
+Q3 — FOLD — relay daemon ceases; per-agent cursors on server; parlay listen becomes direct long-poll client (02)
+Q4 — JSONL ARCHIVE — split live ring from archive at byte-cap; brute-scan both on /search; upgrade to SQLite if slow (02)
+Q5 — BEADS AS HEALTH LAYER — spawns→claimed, struggles→robots, finished→closed; system reads beads for state/aliveness (02)
+Q6 — TAILSCALE + OPTIONAL TOKEN — network security via Tailscale; opt-in bearer token on `PARLAY_TOKEN` env (02)
+Q7 — FIDELITY FIRST — client-side full audit log (02, audit.jsonl at $PARLAY_STATE_HOME); server redaction policy unchanged (02)
+Q8 — STATIC CONFIG + FIRE-AND-FORGET — URL+filter in settings.json; hub-ingress queue pattern; include status transitions (02)
+Q9 — TWO STACKS + DEPLOY SCRIPT — client (vanilla TS) + webview (React) stay separate; add build+copy to go-server/deploy (02)
+Q10 — SPLIT PUBLIC/PRIVATE — minimal public `parlay spawn` (register→launch→enroll); `bin/parlay-spawn` stays private power tool (02)
