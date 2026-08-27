@@ -35,6 +35,14 @@ var runMonitor = CmdMonitor
 // signals real pids, which no unit test may do.
 var ensureSingleListener = reapDuplicateListeners
 
+// setSpawnAccount is the --account persistence hook: writing the default
+// ccjuggler spawn account to config.toml BEFORE any network call so a spawn's
+// token resolution cannot watch one account while config.toml holds another.
+// Injectable for the same reason as runMonitor and ensureSingleListener — the
+// real one writes the operator's ~/.parlay/config.toml, which no unit test
+// may touch.
+var setSpawnAccount = config.SetSpawnAccount
+
 type registerAgentResponse struct {
 	OK    bool   `json:"ok,omitempty"`
 	Error string `json:"error,omitempty"`
@@ -51,7 +59,7 @@ func CmdListen(argv []string) {
 	if help.Wanted("listen", argv) {
 		return
 	}
-	res := args.Parse("listen", argv, []string{"--legacy-poll", "--notify-safe"}, []string{"--agent", "--name", "--color", "--caps"})
+	res := args.Parse("listen", argv, []string{"--legacy-poll", "--notify-safe"}, []string{"--agent", "--name", "--color", "--caps", "--account"})
 
 	agentRaw, _ := res.String("--agent")
 	agent := strings.TrimSpace(agentRaw)
@@ -86,13 +94,29 @@ func CmdListen(argv []string) {
 		body["caps"] = caps
 	}
 
-	// 0. Singleton guard (robots-fgyz). Arming is a takeover, not an addition:
+	// 0. --account (optional): persist the default ccjuggler spawn account so
+	// every subsequent spawn — not just this agent — comes up under it. Runs
+	// BEFORE any network call and before the singleton guard signals anything:
+	// an enrollment that then fails mid-way must not leave the channel's
+	// account resolution and config.toml disagreeing. Matches the --caps
+	// convention: an empty value is treated as the flag being absent, so
+	// `--account ""` never surprises an operator by overwriting their config.
+	if accRaw, hasAcc := res.String("--account"); hasAcc && strings.TrimSpace(accRaw) != "" {
+		acc := strings.TrimSpace(accRaw)
+		if err := setSpawnAccount(acc); err != nil {
+			httpc.Die(fmt.Sprintf("parlay listen: persist default spawn account: %v", err), config.ExitRuntime)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "parlay listen: persisted default spawn account: %s\n", acc)
+	}
+
+	// 1. Singleton guard (robots-fgyz). Arming is a takeover, not an addition:
 	// any other live poll loop on this agent's channel is ended first, so the
 	// channel keeps exactly one reader. Runs before register/announce so a
 	// duplicate is never left alive by a later failure on the HTTP path.
 	ensureSingleListener(agent)
 
-	// 1. add-self-to-agent-registry — identity + capabilities.
+	// 2. add-self-to-agent-registry — identity + capabilities.
 	fmt.Fprintf(os.Stderr, "parlay listen: registering '%s' …\n", agent)
 	reg := httpc.PostJSON[registerAgentResponse]("/api/chat/register-agent", body)
 	if reg.Error != "" {
@@ -100,7 +124,7 @@ func CmdListen(argv []string) {
 		return
 	}
 
-	// 2. Announce presence on the agent's own channel.
+	// 3. Announce presence on the agent's own channel.
 	reply := httpc.PostJSON[listenReplyResponse]("/api/chat/reply", map[string]string{
 		"text": "listening — monitor armed, ready for messages.", "agent": agent,
 	})
@@ -110,7 +134,7 @@ func CmdListen(argv []string) {
 	}
 	fmt.Fprintf(os.Stderr, "parlay listen: announced — arming monitor …\n")
 
-	// 3. Hand off into the poll loop. Reuses runMonitor verbatim — same
+	// 4. Hand off into the poll loop. Reuses runMonitor verbatim — same
 	// mechanism as `parlay monitor --agent <id>`, so a harness Monitor{}
 	// wakes on CHAT_MSG lines. Never returns on the real path (runRelayMonitor
 	// calls os.Exit / runLegacyPoll loops forever).

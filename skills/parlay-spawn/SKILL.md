@@ -55,15 +55,19 @@ bead so the ticket stays the single source of truth.
 ## Default account
 
 The default ccjuggler account is read from `~/.parlay/config.toml` (top-level `spawnAccount`
-field). Set it by hand-editing that file:
+field, same resolution `parlay launch` uses). Set or clear it with `parlay defaults` — no more
+hand-editing:
 
-```toml
-spawnAccount = "acc2"
+```bash
+parlay defaults set account acc2
+parlay defaults clear account     # fall back to env / no account
+parlay defaults                   # show the current server URL + resolved spawn account
 ```
 
-There is no `parlay spawn-account` verb — it existed in the retired TypeScript CLI and was
-never ported to Go, so the writer is still missing (robots-ni5p). The Go CLI only *reads* the
-key (`config.SpawnAccount`).
+`parlay defaults` writes the same `spawnAccount = "..."` top-level key to `~/.parlay/config.toml`
+(`$PARLAY_STATE_HOME` honors the usual override). `parlay listen --agent <id> --account <n>`
+persists it too, before enrolling — one call that both arms an agent and records which account it
+runs under.
 
 Env var `PARLAY_SPAWN_DEFAULT_ACCOUNT` overrides the config, but **only when non-empty** —
 set-but-empty falls through to `config.toml` rather than disabling the lookup. `--account`
