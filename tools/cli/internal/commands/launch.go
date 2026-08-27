@@ -172,20 +172,7 @@ func Launch(argv []string) {
 		if target.model != "" {
 			spawnArgs = append(spawnArgs, "--model", target.model)
 		}
-		// Which ccjuggler account the agent respawns under: the identity's
-		// own `account:` first, else the configured default. Passing the
-		// default explicitly is not redundant — resolveSpawner PREFERS
-		// parlay-bin, and parlay-bin reads neither config.toml nor
-		// PARLAY_SPAWN_DEFAULT_ACCOUNT (only its own --account flag). Only
-		// the bash bin/parlay-spawn derives the default itself, so on any
-		// host with the Go spawner installed a relaunched agent silently came
-		// up on the ambient session token instead of its own account.
-		// Resolving here puts both spawners on the same answer.
-		if account := target.account; account != "" {
-			spawnArgs = append(spawnArgs, "--account", account)
-		} else if fallback := config.SpawnAccount(); fallback != "" {
-			spawnArgs = append(spawnArgs, "--account", fallback)
-		}
+		spawnArgs = append(spawnArgs, identity.SpawnAccountArgs(target.account)...)
 		bin, argv, err := resolveSpawner(spawnArgs)
 		if err != nil {
 			httpc.Die(fmt.Sprintf("parlay launch: cannot spawn %s — %v", target.id, err), config.ExitRuntime)

@@ -124,6 +124,22 @@ func TestSpawnAccountEnvBeatsConfigFile(t *testing.T) {
 func TestSpawnAccountEmptyEnvFallsThroughToConfigFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+	writeTOML(t, home, "spawnAccount = \"file-acc\"\n")
+
+	if got := SpawnAccount(); got != "file-acc" {
+		t.Errorf("SpawnAccount() = %q, want the config fallback", got)
+	}
+}
+
+// A whitespace-only env var is where Go and bash genuinely differ: `[ -z " " ]`
+// is false, so bash would take " " as the account. Go treats it as unset. No
+// parity claim here — an account name is a keychain-service suffix, so a
+// whitespace-only one resolves no token under either spawner, and falling
+// through is the recoverable side of that disagreement.
+func TestSpawnAccountWhitespaceEnvFallsThroughToConfigFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
 	t.Setenv(SpawnAccountEnv, "   ")
 	writeTOML(t, home, "spawnAccount = \"file-acc\"\n")
 
@@ -169,6 +185,11 @@ func TestSpawnAccountValueForms(t *testing.T) {
 		{`spawnAccount = acc2 # unquoted`, "acc2"},
 		{`spawnAccount = "acc#2"`, "acc#2"},
 		{`spawnAccount = ""`, ""},
+		// Unterminated quotes must not yield a half-parsed guess: an account
+		// the spawner cannot resolve exits non-zero, which is worse than no
+		// account at all.
+		{`spawnAccount = "acc`, ""},
+		{`spawnAccount = 'acc`, ""},
 	}
 	for _, c := range cases {
 		home := t.TempDir()

@@ -75,6 +75,7 @@ type seedOpts struct {
 	Name          string
 	Color         string
 	Reincarnation bool
+	Account       string
 }
 
 // seedAgent writes a minimal agent store (identity.md frontmatter +
@@ -96,6 +97,9 @@ func seedAgent(t *testing.T, home, id string, opts seedOpts) string {
 	fmLines := []string{"id: " + id, "name: " + name, `color: "` + color + `"`, "cwd: /tmp/" + id}
 	if opts.Ephemeral {
 		fmLines = append(fmLines, "ephemeral: true")
+	}
+	if opts.Account != "" {
+		fmLines = append(fmLines, "account: "+opts.Account)
 	}
 	content := "---\n" + joinLines(fmLines) + "\n---\n# Identity — " + id + "\n\n- a durable fact\n"
 	if err := os.WriteFile(filepath.Join(dir, "identity.md"), []byte(content), 0o644); err != nil {

@@ -113,6 +113,7 @@ func HandleLaunch(kind MemKind, opts args.Result) bool {
 	if model != "" {
 		spawnArgs = append(spawnArgs, "--model", model)
 	}
+	spawnArgs = append(spawnArgs, SpawnAccountArgs(fm.Get("account"))...)
 	if opts.Bool("--dry") {
 		fmt.Printf("identity --launch %s [dry] → parlay-spawn %s\n", id, quoteArgs(spawnArgs))
 		return true

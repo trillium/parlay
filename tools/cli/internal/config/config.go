@@ -248,8 +248,15 @@ func trimSpawnAccountValue(raw string) string {
 		return v
 	}
 	quote := v[:1]
-	if closing := strings.Index(v[1:], quote); closing >= 0 {
-		return v[1 : 1+closing]
+	closing := strings.Index(v[1:], quote)
+	if closing < 0 {
+		// Unterminated quote — a config caught mid-write, or a hand-edit that
+		// dropped the closing quote. Resolve to "" rather than guessing at the
+		// half-value: an account name that fails token resolution makes the
+		// spawner exit non-zero, so a guess turns "config is malformed" into
+		// "launch hard-fails". python3's tomllib raises here too, and the bash
+		// reader's `|| true` turns that into empty.
+		return ""
 	}
-	return strings.Trim(v, quote)
+	return v[1 : 1+closing]
 }
