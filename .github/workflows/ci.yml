@@ -392,7 +392,8 @@ jobs:
           # without an identity, and the redirected HOME has no gitconfig.
           git config --global user.email ci@example.invalid
           git config --global user.name  "parlay ci"
-          for t in bin/parlay-spawn.templates.test.sh \
+          for t in bin/parlay-pii-lib.test.sh \
+                   bin/parlay-spawn.templates.test.sh \
                    bin/parlay-spawn.integration.test.sh \
                    bin/parlay-spawn.quoting.test.sh \
                    bin/parlay-spawn.batch.test.sh \
