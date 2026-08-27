@@ -23,6 +23,11 @@ import (
 
 type knownAgent struct {
 	id, name, color, cwd, model string
+	// account is the ccjuggler account name from the identity's `account:`
+	// frontmatter key — which ccjuggler OAuth token the respawned agent runs
+	// under. Empty means the identity does not pin one, and the config-level
+	// default (config.SpawnAccount) applies instead.
+	account string
 	// identityFile is the path knownAgents() parsed this agent out of. The
 	// closed-bead respawn gate needs it: identity.BoundWorkItemClosed resolves
 	// the binding (spawn-time `bead:`, else claim-time `task:`) from the file
@@ -60,7 +65,7 @@ func knownAgents() []knownAgent {
 		if cwd == "" {
 			cwd = parlayHomeDir()
 		}
-		known = append(known, knownAgent{id: id, name: name, color: color, cwd: cwd, model: fm.Get("model"), identityFile: identityFile})
+		known = append(known, knownAgent{id: id, name: name, color: color, cwd: cwd, model: fm.Get("model"), account: fm.Get("account"), identityFile: identityFile})
 	}
 	return known
 }
@@ -166,6 +171,20 @@ func Launch(argv []string) {
 		spawnArgs := []string{target.id, target.name, target.color, revival, "--cwd", target.cwd}
 		if target.model != "" {
 			spawnArgs = append(spawnArgs, "--model", target.model)
+		}
+		// Which ccjuggler account the agent respawns under: the identity's
+		// own `account:` first, else the configured default. Passing the
+		// default explicitly is not redundant — resolveSpawner PREFERS
+		// parlay-bin, and parlay-bin reads neither config.toml nor
+		// PARLAY_SPAWN_DEFAULT_ACCOUNT (only its own --account flag). Only
+		// the bash bin/parlay-spawn derives the default itself, so on any
+		// host with the Go spawner installed a relaunched agent silently came
+		// up on the ambient session token instead of its own account.
+		// Resolving here puts both spawners on the same answer.
+		if account := target.account; account != "" {
+			spawnArgs = append(spawnArgs, "--account", account)
+		} else if fallback := config.SpawnAccount(); fallback != "" {
+			spawnArgs = append(spawnArgs, "--account", fallback)
 		}
 		bin, argv, err := resolveSpawner(spawnArgs)
 		if err != nil {

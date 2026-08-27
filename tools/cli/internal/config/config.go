@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -164,4 +165,91 @@ func ServerSource() ServerSourceInfo {
 		return ServerSourceInfo{SourceConfig, persisted}
 	}
 	return ServerSourceInfo{SourceDefault, DefaultServer}
+}
+
+// SpawnAccountEnv is the env override for the default ccjuggler account,
+// read by bin/parlay-spawn under the same name.
+const SpawnAccountEnv = "PARLAY_SPAWN_DEFAULT_ACCOUNT"
+
+// spawnAccountRe matches a `spawnAccount = <value>` assignment; the value is
+// unquoted by trimSpawnAccountValue below.
+var spawnAccountRe = regexp.MustCompile(`^\s*spawnAccount\s*=\s*(.*)$`)
+
+// tomlTableRe matches a `[table]` / `[[array]]` header — where the top-level
+// scope this reader cares about ends.
+var tomlTableRe = regexp.MustCompile(`^\s*\[`)
+
+// spawnAccountConfigPath is the TOML config bin/parlay-spawn reads. Note this
+// is NOT configPath(): the persisted CLI config is config.json, while
+// spawnAccount has always lived in the hand-edited config.toml alongside it
+// (`parlay spawn-account set <name>` writes there). Both hang off StateHome().
+func spawnAccountConfigPath() string {
+	return filepath.Join(StateHome(), "config.toml")
+}
+
+// SpawnAccount resolves the default ccjuggler account name to spawn agents
+// under, or "" when none is configured.
+//
+// Precedence is bin/parlay-spawn's, exactly: a non-empty
+// PARLAY_SPAWN_DEFAULT_ACCOUNT > `spawnAccount` in config.toml > empty. An
+// env var set but empty falls through to the config file, matching the bash
+// `[ -z ... ]` test rather than the header comment above it, which claims an
+// empty value disables the lookup and does not.
+//
+// A missing, unreadable, or malformed config file resolves to "" — the same
+// fall-through the bash reader gets from its `|| true`-guarded python3 call.
+// This matters: an account that fails to resolve is a *louder* failure than
+// no account at all (the spawner exits non-zero on an unresolvable token), so
+// guessing from a half-parsed file would be worse than not guessing.
+func SpawnAccount() string {
+	if env := strings.TrimSpace(os.Getenv(SpawnAccountEnv)); env != "" {
+		return env
+	}
+	return spawnAccountFromTOML(spawnAccountConfigPath())
+}
+
+// spawnAccountFromTOML reads the top-level `spawnAccount` string out of a
+// TOML file. This is deliberately a single-key scanner, not a TOML parser:
+// tools/cli has zero third-party dependencies (see go.mod) and the one value
+// needed here is a top-level scalar. It stops at the first table header so a
+// `spawnAccount` nested under some `[section]` is never mistaken for the
+// top-level key python3's tomllib.get("spawnAccount") would return.
+func spawnAccountFromTOML(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if tomlTableRe.MatchString(line) {
+			return "" // left the top-level table; the key was not there
+		}
+		m := spawnAccountRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		return trimSpawnAccountValue(m[1])
+	}
+	return ""
+}
+
+// trimSpawnAccountValue strips a trailing comment and surrounding quotes from
+// a TOML scalar. Only the basic/literal single-line string forms are handled;
+// anything else (multi-line, escapes) yields whatever is between the quotes,
+// which for an account name — a keychain-service suffix — is the whole
+// legitimate value space.
+func trimSpawnAccountValue(raw string) string {
+	v := strings.TrimSpace(raw)
+	// A `#` inside quotes is part of the value, so only strip a comment that
+	// starts outside them.
+	if !strings.HasPrefix(v, `"`) && !strings.HasPrefix(v, "'") {
+		if i := strings.Index(v, "#"); i >= 0 {
+			v = strings.TrimSpace(v[:i])
+		}
+		return v
+	}
+	quote := v[:1]
+	if closing := strings.Index(v[1:], quote); closing >= 0 {
+		return v[1 : 1+closing]
+	}
+	return strings.Trim(v, quote)
 }

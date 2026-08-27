@@ -32,6 +32,11 @@ func agentsServer(t *testing.T, rawJSON string) *httptest.Server {
 
 func writeIdentityFixture(t *testing.T, home, id, name, color, cwd, model string) {
 	t.Helper()
+	writeIdentityFixtureWithAccount(t, home, id, name, color, cwd, model, "")
+}
+
+func writeIdentityFixtureWithAccount(t *testing.T, home, id, name, color, cwd, model, account string) {
+	t.Helper()
 	dir := filepath.Join(home, ".parlay", "agents", id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -42,6 +47,9 @@ func writeIdentityFixture(t *testing.T, home, id, name, color, cwd, model string
 	}
 	if model != "" {
 		body += "model: " + model + "\n"
+	}
+	if account != "" {
+		body += "account: " + account + "\n"
 	}
 	body += "---\n"
 	if err := os.WriteFile(filepath.Join(dir, "identity.md"), []byte(body), 0o644); err != nil {
@@ -374,5 +382,87 @@ func TestLaunchDiesWhenSpawnerExitsNonZero(t *testing.T) {
 	}
 	if !strings.Contains(out, "failed to spawn agent-a") {
 		t.Errorf("Launch([agent-a]) stderr = %q, want the spawn-failure error", out)
+	}
+}
+
+// spawnerArgv reads back the argv a fakeSpawner recorded, NUL-joined so a
+// flag and its value can be asserted as an adjacent pair (a "--account" and
+// an "acc2" that are both present but not adjacent is a different command).
+func spawnerArgv(t *testing.T, record string) string {
+	t.Helper()
+	got, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("spawner was never executed: %v", err)
+	}
+	return strings.Join(strings.Split(strings.TrimRight(string(got), "\n"), "\n"), "\x00")
+}
+
+// launchAccountFixture isolates HOME, the state home the config.toml is read
+// from, and the account env var, so no ambient PARLAY_SPAWN_DEFAULT_ACCOUNT
+// or real ~/.parlay/config.toml can decide the outcome.
+func launchAccountFixture(t *testing.T, identityAccount, configTOML string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PARLAY_STATE_HOME", filepath.Join(home, ".parlay"))
+	t.Setenv("PARLAY_SPAWN_DEFAULT_ACCOUNT", "")
+	writeIdentityFixtureWithAccount(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "", identityAccount)
+	if configTOML != "" {
+		if err := os.WriteFile(filepath.Join(home, ".parlay", "config.toml"), []byte(configTOML), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := t.TempDir()
+	record := fakeSpawner(t, bin, "parlay-spawn", 0)
+	t.Setenv("PATH", bin)
+	return record
+}
+
+// An identity that pins an `account:` must respawn under that ccjuggler
+// account — otherwise the agent comes back on whatever token the launching
+// shell happened to hold.
+func TestLaunchPassesIdentityAccountToSpawner(t *testing.T) {
+	record := launchAccountFixture(t, "acc2", "")
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	if argv := spawnerArgv(t, record); !strings.Contains(argv, "--account\x00acc2") {
+		t.Errorf("spawner argv = %q, want --account acc2 passed through", argv)
+	}
+}
+
+// The config default must reach the spawner too. This is the case that was
+// silently broken: resolveSpawner prefers parlay-bin, which reads only its
+// --account flag, so a config-only default never applied to a relaunch.
+func TestLaunchFallsBackToConfiguredSpawnAccount(t *testing.T) {
+	record := launchAccountFixture(t, "", "spawnAccount = \"acc2\"\n")
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	if argv := spawnerArgv(t, record); !strings.Contains(argv, "--account\x00acc2") {
+		t.Errorf("spawner argv = %q, want the configured spawnAccount passed through", argv)
+	}
+}
+
+func TestLaunchIdentityAccountBeatsConfiguredDefault(t *testing.T) {
+	record := launchAccountFixture(t, "identity-acc", "spawnAccount = \"config-acc\"\n")
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	argv := spawnerArgv(t, record)
+	if !strings.Contains(argv, "--account\x00identity-acc") {
+		t.Errorf("spawner argv = %q, want the identity's account to win", argv)
+	}
+	if strings.Contains(argv, "config-acc") {
+		t.Errorf("spawner argv = %q, want the config default not to appear at all", argv)
+	}
+}
+
+// With nothing configured, --account must be ABSENT rather than empty: the
+// spawner rejects `--account` with no value (exit 2), so passing an empty
+// string would turn "no account configured" into a hard launch failure.
+func TestLaunchOmitsAccountWhenNoneConfigured(t *testing.T) {
+	record := launchAccountFixture(t, "", "")
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	if argv := spawnerArgv(t, record); strings.Contains(argv, "--account") {
+		t.Errorf("spawner argv = %q, want no --account flag at all", argv)
 	}
 }

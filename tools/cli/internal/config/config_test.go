@@ -92,3 +92,98 @@ func TestCorruptConfigTreatedAsEmpty(t *testing.T) {
 		t.Errorf("ServerURL() with corrupt config = %q, want %q", got, DefaultServer)
 	}
 }
+
+func TestSpawnAccountReadsTopLevelKeyFromConfigTOML(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+	writeTOML(t, home, "spawnAccount = \"acc2\"\n\n[spawn]\nbeads_required = true\n")
+
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() = %q, want %q", got, "acc2")
+	}
+}
+
+// The env var is bin/parlay-spawn's highest-precedence source, so the Go
+// resolution must not out-rank it with the config file.
+func TestSpawnAccountEnvBeatsConfigFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "env-acc")
+	writeTOML(t, home, "spawnAccount = \"file-acc\"\n")
+
+	if got := SpawnAccount(); got != "env-acc" {
+		t.Errorf("SpawnAccount() = %q, want the env override", got)
+	}
+}
+
+// bin/parlay-spawn tests the env var with `[ -z ]`, so an env var that is set
+// but empty falls THROUGH to the config file rather than disabling it. Go
+// must agree, or the same box resolves two different accounts depending on
+// which spawner is installed.
+func TestSpawnAccountEmptyEnvFallsThroughToConfigFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "   ")
+	writeTOML(t, home, "spawnAccount = \"file-acc\"\n")
+
+	if got := SpawnAccount(); got != "file-acc" {
+		t.Errorf("SpawnAccount() = %q, want the config fallback", got)
+	}
+}
+
+func TestSpawnAccountEmptyWhenUnconfigured(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+
+	if got := SpawnAccount(); got != "" {
+		t.Errorf("SpawnAccount() with no config = %q, want empty", got)
+	}
+	writeTOML(t, home, "[spawn]\nbeads_required = true\n")
+	if got := SpawnAccount(); got != "" {
+		t.Errorf("SpawnAccount() with no spawnAccount key = %q, want empty", got)
+	}
+}
+
+// A `spawnAccount` nested inside a table is a DIFFERENT key than the
+// top-level one python3's tomllib.get("spawnAccount") returns. Reading it
+// would spawn agents under an account the bash spawner never picks.
+func TestSpawnAccountIgnoresKeyNestedInATable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+	writeTOML(t, home, "[spawn]\nspawnAccount = \"nested-acc\"\n")
+
+	if got := SpawnAccount(); got != "" {
+		t.Errorf("SpawnAccount() = %q, want empty — the key is not top-level", got)
+	}
+}
+
+func TestSpawnAccountValueForms(t *testing.T) {
+	cases := []struct{ line, want string }{
+		{`spawnAccount = "acc2"`, "acc2"},
+		{`spawnAccount='acc2'`, "acc2"},
+		{`spawnAccount   =   "acc2"   `, "acc2"},
+		{`spawnAccount = "acc2" # the work account`, "acc2"},
+		{`spawnAccount = acc2 # unquoted`, "acc2"},
+		{`spawnAccount = "acc#2"`, "acc#2"},
+		{`spawnAccount = ""`, ""},
+	}
+	for _, c := range cases {
+		home := t.TempDir()
+		t.Setenv("PARLAY_STATE_HOME", home)
+		t.Setenv(SpawnAccountEnv, "")
+		writeTOML(t, home, c.line+"\n")
+		if got := SpawnAccount(); got != c.want {
+			t.Errorf("SpawnAccount() for %q = %q, want %q", c.line, got, c.want)
+		}
+	}
+}
+
+func writeTOML(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
