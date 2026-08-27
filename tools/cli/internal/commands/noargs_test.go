@@ -128,7 +128,15 @@ func argvUsage(fn *ast.FuncDecl) (reads, rejects bool) {
 		}
 		switch ident.Name {
 		case "rejectExtraArgs":
-			rejects = true
+			// Only count it as a rejection when the verb hands its own argv to
+			// the guard. `rejectExtraArgs("stats", nil)` compiles and type-checks
+			// but discards the caller's real argv — the exact silent-drop this
+			// test exists to catch — so it must not satisfy the check.
+			if len(call.Args) == 2 {
+				if arg, ok := call.Args[1].(*ast.Ident); ok && arg.Name == "argv" {
+					rejects = true
+				}
+			}
 			return false
 		case "helpWanted":
 			// Skip the whole call, argv argument included.
