@@ -54,6 +54,9 @@ func Stats(argv []string) {
 	if helpWanted("stats", argv) {
 		return
 	}
+	if rejectExtraArgs("stats", argv) {
+		return
+	}
 
 	raw := httpc.GetJSON[[]json.RawMessage]("/api/chat/history?limit=2000")
 	agentsList := httpc.GetJSON[[]wire.AgentInfo]("/api/chat/agents")
