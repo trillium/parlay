@@ -363,7 +363,7 @@ func setSpawnAccountInTOML(body, account string) string {
 		if insertAt < 0 && !replaced && tomlTableRe.MatchString(line) {
 			insertAt = i
 		}
-		if !replaced && spawnAccountRe.MatchString(line) {
+		if !replaced && insertAt < 0 && spawnAccountRe.MatchString(line) {
 			if account != "" {
 				out = append(out, spawnAccountLine(account))
 			}

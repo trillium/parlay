@@ -346,6 +346,33 @@ func TestSetSpawnAccountCreatesMissingFile(t *testing.T) {
 	}
 }
 
+func TestSetSpawnAccountNestedKeyIsPassedThroughAndTopLevelInserted(t *testing.T) {
+	// When config.toml already has a spawnAccount nested under [spawn] (a
+	// hand-edited file, never produced by SetSpawnAccount), SetSpawnAccount must
+	// NOT replace that nested line and must insert a top-level key before [spawn]
+	// so SpawnAccount() resolves correctly. The nested line must be untouched.
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+	initial := "[spawn]\nspawnAccount = \"nested-acc\"\nbeads_required = true\n"
+	writeTOML(t, home, initial)
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() = %q, want acc2 — top-level key must be inserted, not nested replacement", got)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	want := "spawnAccount = \"acc2\"\n[spawn]\nspawnAccount = \"nested-acc\"\nbeads_required = true\n"
+	if string(body) != want {
+		t.Errorf("config.toml = %q, want %q — nested line must be untouched", body, want)
+	}
+}
+
 func TestSetSpawnAccountReplacesWhenEnvOverrides(t *testing.T) {
 	// The write must not be defeated by a live env override: set persists to
 	// the file regardless, and SpawnAccount still reports the env value — the
