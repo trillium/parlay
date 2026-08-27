@@ -397,15 +397,15 @@ func spawnerArgv(t *testing.T, record string) string {
 	return strings.Join(strings.Split(strings.TrimRight(string(got), "\n"), "\n"), "\x00")
 }
 
-// launchAccountFixture isolates HOME, the state home the config.toml is read
-// from, and the account env var, so no ambient PARLAY_SPAWN_DEFAULT_ACCOUNT
-// or real ~/.parlay/config.toml can decide the outcome.
+// launchAccountFixture isolates HOME and the state home the config.toml is
+// read from, so no real ~/.parlay/config.toml can decide the outcome. The
+// ambient PARLAY_SPAWN_DEFAULT_ACCOUNT is already cleared package-wide by
+// TestMain.
 func launchAccountFixture(t *testing.T, identityAccount, configTOML string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PARLAY_STATE_HOME", filepath.Join(home, ".parlay"))
-	t.Setenv("PARLAY_SPAWN_DEFAULT_ACCOUNT", "")
 	writeIdentityFixtureWithAccount(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "", identityAccount)
 	if configTOML != "" {
 		if err := os.WriteFile(filepath.Join(home, ".parlay", "config.toml"), []byte(configTOML), 0o644); err != nil {

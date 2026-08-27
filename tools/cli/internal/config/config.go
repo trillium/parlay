@@ -196,11 +196,23 @@ func spawnAccountConfigPath() string {
 // `[ -z ... ]` test rather than the header comment above it, which claims an
 // empty value disables the lookup and does not.
 //
-// A missing, unreadable, or malformed config file resolves to "" — the same
-// fall-through the bash reader gets from its `|| true`-guarded python3 call.
-// This matters: an account that fails to resolve is a *louder* failure than
-// no account at all (the spawner exits non-zero on an unresolvable token), so
-// guessing from a half-parsed file would be worse than not guessing.
+// A missing or unreadable config file resolves to "" — the same fall-through
+// the bash reader gets from its `|| true`-guarded python3 call. This matters:
+// an account that fails to resolve is a *louder* failure than no account at
+// all (the spawner exits non-zero on an unresolvable token), so guessing from
+// a half-parsed file would be worse than not guessing.
+//
+// KNOWN LIMITATION on malformed files. This is a line scanner that stops at
+// the first table header, not a validating parser, so it only agrees with
+// tomllib about malformation AT OR BEFORE the spawnAccount line — an
+// unterminated quote on that line resolves to "", like tomllib. Malformation
+// AFTER it is never seen: the scanner has already returned, so
+// `spawnAccount = "acc2"` followed by an unclosed `[spawn` yields "acc2"
+// where tomllib raises and bash resolves "". A top-level multi-line array
+// diverges the other way — an element line starting with `[` reads as a table
+// header, so the key beyond it is missed where tomllib would find it. Neither
+// shape occurs in the flat config.toml this repo writes, and closing them
+// means the TOML parser decision #4 of the brief rejected.
 func SpawnAccount() string {
 	if env := strings.TrimSpace(os.Getenv(SpawnAccountEnv)); env != "" {
 		return env

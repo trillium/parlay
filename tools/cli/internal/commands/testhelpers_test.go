@@ -6,9 +6,22 @@ import (
 	"os"
 	"testing"
 
+	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
+
+// TestMain neutralizes the one ambient input a per-test HOME redirect does
+// NOT cover. Redirecting HOME already isolates config.StateHome() (and so the
+// spawn account's config.toml), because os.UserHomeDir honors $HOME — but
+// PARLAY_SPAWN_DEFAULT_ACCOUNT out-ranks that file, so an exported one on the
+// developer's shell would inject an --account into a spawner argv no test
+// asked for. Clearing it here isolates every current and future test in this
+// package by construction rather than each one remembering.
+func TestMain(m *testing.M) {
+	_ = os.Setenv(config.SpawnAccountEnv, "")
+	os.Exit(m.Run())
+}
 
 // captureStdout runs fn with os.Stdout redirected to an in-memory pipe and
 // returns everything it printed. Command functions here write straight to

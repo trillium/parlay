@@ -7,22 +7,18 @@ import (
 	"testing"
 
 	"github.com/trillium/parlay/tools/cli/internal/args"
+	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
-// launchAccountFixture seeds an agent (optionally pinning `account:`), an
-// isolated config.toml, and a recording parlay-spawn on PATH. Every source
-// the resolution consults is redirected, so no ambient
-// PARLAY_SPAWN_DEFAULT_ACCOUNT or real ~/.parlay/config.toml can decide the
-// outcome. Returns the path the spawner records its argv to.
+// launchAccountFixture seeds an agent (optionally pinning `account:`), a
+// config.toml under the tmp state home freshHome established, and a recording
+// parlay-spawn on PATH. Returns the path the spawner records its argv to.
 func launchAccountFixture(t *testing.T, identityAccount, configTOML string) string {
 	t.Helper()
 	home := freshHome(t)
-	stateHome := t.TempDir()
-	t.Setenv("PARLAY_STATE_HOME", stateHome)
-	t.Setenv("PARLAY_SPAWN_DEFAULT_ACCOUNT", "")
 	seedAgent(t, home, "worker", seedOpts{Account: identityAccount})
 	if configTOML != "" {
-		if err := os.WriteFile(filepath.Join(stateHome, "config.toml"), []byte(configTOML), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(config.StateHome(), "config.toml"), []byte(configTOML), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
