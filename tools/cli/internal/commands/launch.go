@@ -38,7 +38,7 @@ type knownAgent struct {
 }
 
 // knownAgents discovers agents from ~/.parlay/agents/*/identity.md
-// frontmatter (id/name/color/cwd/model), mirroring launch.ts's directory
+// frontmatter (id/name/color/cwd/model/account), mirroring launch.ts's directory
 // scan. Reuses parlayAgentsDir/readLocalFrontmatter from guard.go: launch.ts
 // hardcodes join(homedir(), ".parlay", "agents") and defines its own local
 // parseFrontmatter with the identical `/^---\n([\s\S]*?)\n---/` +

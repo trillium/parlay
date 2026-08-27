@@ -181,8 +181,11 @@ var tomlTableRe = regexp.MustCompile(`^\s*\[`)
 
 // spawnAccountConfigPath is the TOML config bin/parlay-spawn reads. Note this
 // is NOT configPath(): the persisted CLI config is config.json, while
-// spawnAccount has always lived in the hand-edited config.toml alongside it
-// (`parlay spawn-account set <name>` writes there). Both hang off StateHome().
+// spawnAccount has always lived in config.toml alongside it. Both hang off
+// StateHome(). config.toml is hand-edited today — the `parlay spawn-account
+// set/show/clear` verbs skills/parlay-spawn/SKILL.md used to advertise were
+// never ported to Go, and writing the key back needs a TOML writer that
+// preserves the existing [spawn] table (robots-ni5p). This is the read half.
 func spawnAccountConfigPath() string {
 	return filepath.Join(StateHome(), "config.toml")
 }
