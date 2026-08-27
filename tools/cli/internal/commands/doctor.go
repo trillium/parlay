@@ -109,6 +109,9 @@ func Health(argv []string) {
 	if helpWanted("health", argv) {
 		return
 	}
+	if rejectExtraArgs("health", argv) {
+		return
+	}
 	sick := false
 	server := config.ServerURL()
 	engine := engineURL()
@@ -237,6 +240,9 @@ var (
 // Doctor ports cmdDoctor.
 func Doctor(argv []string) {
 	if helpWanted("doctor", argv) {
+		return
+	}
+	if rejectExtraArgs("doctor", argv) {
 		return
 	}
 	var verdicts []verdict
