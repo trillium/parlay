@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
@@ -62,11 +63,20 @@ func startHarness(t *testing.T) *harness {
 	return h
 }
 
-// freshHome points PARLAY_AGENT_HOME at a fresh t.TempDir() and returns it.
+// freshHome redirects every on-disk and environment input an identity verb
+// resolves state from at a fresh tmp dir, and returns the agent home. One
+// redirect is not enough: PARLAY_AGENT_HOME covers the agent store, but the
+// relaunch path also resolves a spawn account, which reads
+// $PARLAY_STATE_HOME/config.toml and PARLAY_SPAWN_DEFAULT_ACCOUNT — so a test
+// that set only the agent home would run against the developer's live
+// persisted account. Isolating here rather than per-test keeps every future
+// identity test hermetic by construction.
 func freshHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("PARLAY_AGENT_HOME", dir)
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv(config.SpawnAccountEnv, "")
 	return dir
 }
 
@@ -75,6 +85,7 @@ type seedOpts struct {
 	Name          string
 	Color         string
 	Reincarnation bool
+	Account       string
 }
 
 // seedAgent writes a minimal agent store (identity.md frontmatter +
@@ -96,6 +107,9 @@ func seedAgent(t *testing.T, home, id string, opts seedOpts) string {
 	fmLines := []string{"id: " + id, "name: " + name, `color: "` + color + `"`, "cwd: /tmp/" + id}
 	if opts.Ephemeral {
 		fmLines = append(fmLines, "ephemeral: true")
+	}
+	if opts.Account != "" {
+		fmLines = append(fmLines, "account: "+opts.Account)
 	}
 	content := "---\n" + joinLines(fmLines) + "\n---\n# Identity — " + id + "\n\n- a durable fact\n"
 	if err := os.WriteFile(filepath.Join(dir, "identity.md"), []byte(content), 0o644); err != nil {

@@ -23,6 +23,11 @@ import (
 
 type knownAgent struct {
 	id, name, color, cwd, model string
+	// account is the ccjuggler account name from the identity's `account:`
+	// frontmatter key — which ccjuggler OAuth token the respawned agent runs
+	// under. Empty means the identity does not pin one, and the config-level
+	// default (config.SpawnAccount) applies instead.
+	account string
 	// identityFile is the path knownAgents() parsed this agent out of. The
 	// closed-bead respawn gate needs it: identity.BoundWorkItemClosed resolves
 	// the binding (spawn-time `bead:`, else claim-time `task:`) from the file
@@ -33,7 +38,7 @@ type knownAgent struct {
 }
 
 // knownAgents discovers agents from ~/.parlay/agents/*/identity.md
-// frontmatter (id/name/color/cwd/model), mirroring launch.ts's directory
+// frontmatter (id/name/color/cwd/model/account), mirroring launch.ts's directory
 // scan. Reuses parlayAgentsDir/readLocalFrontmatter from guard.go: launch.ts
 // hardcodes join(homedir(), ".parlay", "agents") and defines its own local
 // parseFrontmatter with the identical `/^---\n([\s\S]*?)\n---/` +
@@ -60,7 +65,7 @@ func knownAgents() []knownAgent {
 		if cwd == "" {
 			cwd = parlayHomeDir()
 		}
-		known = append(known, knownAgent{id: id, name: name, color: color, cwd: cwd, model: fm.Get("model"), identityFile: identityFile})
+		known = append(known, knownAgent{id: id, name: name, color: color, cwd: cwd, model: fm.Get("model"), account: fm.Get("account"), identityFile: identityFile})
 	}
 	return known
 }
@@ -167,6 +172,7 @@ func Launch(argv []string) {
 		if target.model != "" {
 			spawnArgs = append(spawnArgs, "--model", target.model)
 		}
+		spawnArgs = append(spawnArgs, identity.SpawnAccountArgs(target.account)...)
 		bin, argv, err := resolveSpawner(spawnArgs)
 		if err != nil {
 			httpc.Die(fmt.Sprintf("parlay launch: cannot spawn %s — %v", target.id, err), config.ExitRuntime)
