@@ -32,7 +32,7 @@ history and are never edited after the other side has replied to them.
 | 03 | agent + captain | 2026-08-26 | Round 2, rewritten in full for self-contained context — Q3a/Q4a/Q5a/Q6a/Q7a/Q9a follow-ups; Q11–Q15. **Captain answered inline** (~10:22), superseding the delegated `04` answers |
 | 04 | — | — | DELETED — its delegated answers are superseded wherever the captain's inline answers in `01`/`03` differ (Q2, Q3a, Q5/Q5a, Q6, Q7/Q7a, Q10, Q13) |
 | 05 | agent | 2026-08-26 | Round 3 — implementation-ticket plan (T-01…T-14 in six phases per Q15 order). Plan now amended by the inline answers — see `07` for the deltas |
-| 07 | agent | 2026-08-26 | Round 4 — synthesis of the inline answers, plan deltas, and follow-ups the captain invited (plugins, pages sidecar, beads hard-dep, tailscale layer, server audit, gascity leverage) |
+| 07 | agent | 2026-08-26 | Round 4 — synthesis of the inline answers, plan deltas, and follow-ups the captain invited (plugins, pages sidecar, beads hard-dep, tailscale layer, server audit, gascity leverage). Its plan deltas (T-15…T-18) and its Q16 anti-recommendation are re-cut/superseded by `09` |
 | 09 | agent | 2026-08-28 | Round 5 — records the captain's gascity-consensus directive: Q16 reopened + RESOLVED (plane split), Q2b/Q2d RESOLVED, Q4 reopened; open gate (single-binary loss), kill-switch gate, plan re-cut (T-01…T-19). `08` skipped (captain answered by directive, not an even file) |
 
 ## Question status
