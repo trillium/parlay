@@ -41,6 +41,7 @@ into `~/code/gascity/.git` and would violate the read-only constraint.
 
 ```sh
 # Materialise a ref without writing to the source repo.
+SCRATCH="${SCRATCH:-$(mktemp -d)}"
 mkdir -p "$SCRATCH/gcbuild"
 git -C ~/code/gascity archive 7c817e064 | tar -x -C "$SCRATCH/gcbuild"
 
@@ -293,7 +294,7 @@ checkout (§1) must fail at the tool boundary, not at spawn time.
 
 **Decision:**
 
-- **CONTROL verbs → shell out to `gc <verb> --json`.**
+- **CONTROL verbs → shell out to `gc <verb> --json`, except `gc session attach` and `gc session wait`, which declare no `--json` flag at `7c817e064` (see §5's "Why" below) and are invoked without it.**
 - **LIVENESS and EVENT STREAMS → the typed `/v0` HTTP + SSE API.**
 
 ### Why, with citations
