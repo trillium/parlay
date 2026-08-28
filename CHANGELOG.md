@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-27 — session 78f23503
+
+Files: ARCHITECTURE-GRILL.md, 01_ARCHITECTURE-GRILL.md, 00_ARCHITECTURE-GRILL-META.md, 03_ARCHITECTURE-GRILL.md, 04_ARCHITECTURE-GRILL.md, 05_ARCHITECTURE-GRILL.md, .worktrees/t01-sse-leak/packages/server/src/guard/paths.ts, .worktrees/t01-sse-leak/packages/server/src/guard/index.ts, .worktrees/t01-sse-leak/packages/server/src/guard/paths.test.ts, .worktrees/t01-sse-leak/packages/server/src/guard/allow.test.ts
+## 2026-08-26 — session 2d40c8ff
+
+Files: 02_ARCHITECTURE-GRILL.md, 00_ARCHITECTURE-GRILL-META.md, 03_ARCHITECTURE-GRILL.md
+## 2026-08-25 — session f8813c13
+
+Files: bin/parlay-pii-lib.sh, bin/parlay-spawn
+## 2026-08-24 — session 943931aa
+
+Files: bin/context-reset
 ## 2026-08-20 — session 8ba730e4
 
 Files: tools/cli/internal/identity/store.go, tools/cli/internal/identity/worklink.go, tools/cli/internal/identity/mem.go, tools/cli/internal/commands/launch.go, tools/parlay-bin/gascity_spawn.go, bin/parlay-spawn, tools/cli/internal/identity/bead_test.go

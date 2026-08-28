@@ -161,6 +161,15 @@ var GuardedPaths = map[string]bool{
 	// caller is affected: every poller in this repo is a no-Origin HTTP
 	// client, and nothing in packages/client polls.
 	"/api/chat/poll": true,
+
+	// Plugin RPC routes — Talon-side Python POSTs editor ops here and the panel
+	// responds over SSE. POST /api/chat/plugin/cursorless/rpc drives edits into
+	// the captain's input box and is the entry point for voice editing — guarded
+	// as a mutating/device-driving route. POST
+	// /api/chat/plugin/cursorless/response is the panel's answer back. Both stay
+	// origin-guarded (see the TS server's guard/paths.ts for full rationale).
+	"/api/chat/plugin/cursorless/rpc":      true,
+	"/api/chat/plugin/cursorless/response": true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
@@ -178,7 +187,8 @@ var GuardedPaths = map[string]bool{
 // comment's route-set note). If either is ever added here, classify it on its
 // own handler, exactly as with GuardedPaths — never by copying the TS list.
 var jsonExemptPaths = map[string]bool{
-	"/api/chat/upload": true,
+	"/api/chat/upload":                true, // multipart/form-data by contract
+	"/api/chat/plugin/cursorless/rpc": true, // Talon-side caller does not set Content-Type: application/json
 }
 
 // IsGuarded reports whether path is inside the guard.
