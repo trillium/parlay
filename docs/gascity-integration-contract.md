@@ -1056,8 +1056,12 @@ fix). It contains 54 occurrences of the literal string "gascity", 66 case-insens
 that was never made; the corrected comment block names the project in prose at `:16`, `:24`,
 `:28`, `:30`, `:35`, and `:38` — counting prose references to Gas City the project, and
 excluding the `gascity-*` verb names (`:1`, `:39`), the import path (`:8`, treated separately
-just above), and the passage discussing the `gascity` identifier itself as residue (`:31`,
-`:32`). All six are explanation rather than code.
+just above), the passage discussing the `gascity` identifier itself as residue (`:31`, `:32`),
+and this contract's own filename in the correction stamp (`:15`). All six prose references are
+explanation rather than code. Together the anchors above name every line of the block that
+mentions the project under either spelling — recheck with `sed -n '1,45p'
+tools/parlay-bin/gascity_spawn.go | grep -in -e gascity -e 'gas city'` at the commit you are
+reading rather than trusting a total written here.
 
 The flag `--gascity`, the value `PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn]
 launcher` key, and the project CLAUDE.md line describing "the `gascity` launcher" all imply an
