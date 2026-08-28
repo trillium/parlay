@@ -275,3 +275,119 @@ func trimSpawnAccountValue(raw string) string {
 	}
 	return v[1 : 1+closing]
 }
+
+// SpawnAccountConfigPath returns the config.toml path that holds the spawn
+// account — the file bin/parlay-spawn reads. Exposed for `parlay defaults`
+// to print where a value lives; the server URL's file is a different one
+// (config.json, see ConfigFilePath).
+func SpawnAccountConfigPath() string {
+	return spawnAccountConfigPath()
+}
+
+// SetSpawnAccount persists account as the default ccjuggler spawn account in
+// $PARLAY_STATE_HOME/config.toml (the same file bin/parlay-spawn reads and
+// `parlay launch` resolves through SpawnAccount). An empty account clears the
+// key — control returns to PARLAY_SPAWN_DEFAULT_ACCOUNT, then to no account.
+//
+// Only the top-level `spawnAccount` line is touched; everything else in the
+// file — the [spawn] table, comments, later sections — is preserved
+// byte-for-byte. Rewriting the file from scratch is the exact failure
+// robots-ni5p flagged as missing on the read then: the existing [spawn]
+// table must survive a write, or a spawner reading beads_required/launcher
+// under it drifts from the operator's intent. Written atomically via a
+// same-dir .tmp + rename, the same publication discipline writePersistedConfig
+// uses, so an interrupted write never leaves the line-scanner a file naming a
+// different account.
+func SetSpawnAccount(account string) error {
+	dir := StateHome()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := spawnAccountConfigPath()
+	body, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	next := setSpawnAccountInTOML(string(body), account)
+	if next == string(body) {
+		return nil // a no-op (e.g. clearing an already-clear file) never rewrites
+	}
+	tmp, err := os.CreateTemp(dir, ".config.toml.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+
+	// Sync before Close, and before the rename — a rename that lands ahead of
+	// the data publishes a correctly-named config holding nothing, the exact
+	// failure an atomic swap is supposed to rule out.
+	var writeErr error
+	_, writeErr = tmp.WriteString(next)
+	var syncErr error
+	if writeErr == nil {
+		syncErr = tmp.Sync()
+	}
+	closeErr := tmp.Close()
+	if writeErr != nil {
+		_ = os.Remove(tmpPath)
+		return writeErr
+	}
+	if syncErr != nil {
+		_ = os.Remove(tmpPath)
+		return syncErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return closeErr
+	}
+
+	return os.Rename(tmpPath, path) // atomic swap
+}
+
+// setSpawnAccountInTOML rewrites body with the top-level `spawnAccount` key
+// set to account. An existing top-level line is replaced in place; a missing
+// one is inserted before the first table header — a key under a `[section]`
+// is a DIFFERENT key than the one spawnAccountFromTOML reads, so appending
+// after the [spawn] table would silently resolve to nothing. account == ""
+// drops the line. The result is returned; callers compare it to the input to
+// skip a no-op write.
+func setSpawnAccountInTOML(body, account string) string {
+	lines := []string{}
+	if body != "" {
+		lines = strings.Split(body, "\n")
+	}
+	out := make([]string, 0, len(lines)+1)
+	replaced := false
+	insertAt := -1
+	for i, line := range lines {
+		if insertAt < 0 && !replaced && tomlTableRe.MatchString(line) {
+			insertAt = i
+		}
+		if !replaced && insertAt < 0 && spawnAccountRe.MatchString(line) {
+			if account != "" {
+				out = append(out, spawnAccountLine(account))
+			}
+			replaced = true
+			continue
+		}
+		out = append(out, line)
+	}
+	if !replaced && account != "" {
+		if insertAt < 0 {
+			insertAt = len(out)
+		}
+		res := make([]string, 0, len(out)+1)
+		res = append(res, out[:insertAt]...)
+		res = append(res, spawnAccountLine(account))
+		res = append(res, out[insertAt:]...)
+		out = res
+	}
+	return strings.Join(out, "\n")
+}
+
+// spawnAccountLine renders `spawnAccount = "<account>"` in TOML basic-string
+// form, escaping the two characters that would otherwise end the string.
+func spawnAccountLine(account string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(account)
+	return `spawnAccount = "` + escaped + `"`
+}

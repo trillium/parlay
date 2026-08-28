@@ -78,6 +78,94 @@ func stubMonitor(t *testing.T) *[][]string {
 	return calls
 }
 
+// stubSetSpawnAccount swaps the --account persistence hook for a recording
+// fake and restores the real one on cleanup.
+func stubSetSpawnAccount(t *testing.T, calls *[]string) {
+	t.Helper()
+	orig := setSpawnAccount
+	setSpawnAccount = func(account string) error { *calls = append(*calls, account); return nil }
+	t.Cleanup(func() { setSpawnAccount = orig })
+}
+
+func TestCmdListenAccountDispatchesToSetSpawnAccount(t *testing.T) {
+	h := startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+	t.Setenv(config.SpawnAccountEnv, "")
+	var written []string
+	stubSetSpawnAccount(t, &written)
+
+	CmdListen([]string{"--agent", "brain-dev", "--account", "acc2"})
+
+	if len(written) != 1 || written[0] != "acc2" {
+		t.Errorf("setSpawnAccount calls = %v, want exactly [acc2]", written)
+	}
+	if len(h.calls) != 2 {
+		t.Errorf("HTTP calls = %d, want 2 (register + announce) after the account write", len(h.calls))
+	}
+}
+
+func TestCmdListenWithoutAccountNeverCallsSetSpawnAccount(t *testing.T) {
+	startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+	var written []string
+	stubSetSpawnAccount(t, &written)
+
+	CmdListen([]string{"--agent", "brain-dev"})
+
+	if len(written) != 0 {
+		t.Errorf("setSpawnAccount calls = %v, want none without --account", written)
+	}
+}
+
+func TestCmdListenPersistsAccountBeforeAnyNetworkCall(t *testing.T) {
+	h := startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+	var callsAtWrite int
+	orig := setSpawnAccount
+	setSpawnAccount = func(account string) error { callsAtWrite = len(h.calls); return nil }
+	t.Cleanup(func() { setSpawnAccount = orig })
+
+	CmdListen([]string{"--agent", "brain-dev", "--account", "acc2"})
+
+	if callsAtWrite != 0 {
+		t.Errorf("setSpawnAccount ran after %d HTTP call(s); it must persist before register/announce", callsAtWrite)
+	}
+}
+
+func TestCmdListenEmptyAccountValueIsTreatedAsOmitted(t *testing.T) {
+	// Mirrors the --caps convention: `--account ""` behaves like omitting the
+	// flag, so it can never clobber an operator's persisted config by accident.
+	startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+	var written []string
+	stubSetSpawnAccount(t, &written)
+
+	CmdListen([]string{"--agent", "brain-dev", "--account", ""})
+
+	if len(written) != 0 {
+		t.Errorf("setSpawnAccount calls = %v, want none for an empty --account", written)
+	}
+}
+
+func TestCmdListenAccountPersistsToConfigToml(t *testing.T) {
+	// The end-to-end write: with the real persistence hook (not the stub) the
+	// account lands in $PARLAY_STATE_HOME/config.toml and the read side sees it.
+	startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+	t.Setenv(config.SpawnAccountEnv, "")
+
+	CmdListen([]string{"--agent", "brain-dev", "--account", "acc2"})
+
+	if got := config.SpawnAccount(); got != "acc2" {
+		t.Errorf("config.SpawnAccount() after listen --account = %q, want acc2", got)
+	}
+}
+
 func TestCmdListenRequiresAgent(t *testing.T) {
 	startListenHarness(t)
 	monitorCalls := stubMonitor(t)

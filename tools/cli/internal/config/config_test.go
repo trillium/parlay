@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
@@ -206,5 +207,191 @@ func writeTOML(t *testing.T, dir, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSetSpawnAccountWritesLineAndRoundTrips(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() after set = %q, want %q", got, "acc2")
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	if string(body) != "spawnAccount = \"acc2\"" {
+		t.Errorf("config.toml = %q, want %q", body, "spawnAccount = \"acc2\"")
+	}
+}
+
+func TestSetSpawnAccountPreservesSurroundingFile(t *testing.T) {
+	// robots-ni5p: the TOML writer must not clobber the [spawn] table or other
+	// top-level keys — rewriting the file from scratch would. Only the
+	// spawnAccount line may change.
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	writeTOML(t, home, "# a comment\n\n[spawn]\nbeads_required = true\n")
+	t.Setenv(SpawnAccountEnv, "")
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	want := "# a comment\n\nspawnAccount = \"acc2\"\n[spawn]\nbeads_required = true\n"
+	if string(body) != want {
+		t.Errorf("config.toml = %q, want %q", body, want)
+	}
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() = %q, want acc2", got)
+	}
+}
+
+func TestSetSpawnAccountReplacesInPlace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	writeTOML(t, home, "# note\nspawnAccount = \"old\"\n[spawn]\nbeads_required = true\n")
+	t.Setenv(SpawnAccountEnv, "")
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	want := "# note\nspawnAccount = \"acc2\"\n[spawn]\nbeads_required = true\n"
+	if string(body) != want {
+		t.Errorf("config.toml = %q, want %q", body, want)
+	}
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() = %q, want acc2", got)
+	}
+}
+
+func TestSetSpawnAccountInsertsBeforeTableNotAfter(t *testing.T) {
+	// A spawnAccount nested under [spawn] is a different key the reader never
+	// sees, so an insert must land BEFORE the first table header.
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	writeTOML(t, home, "[spawn]\nbeads_required = true\n")
+	t.Setenv(SpawnAccountEnv, "")
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() = %q, want acc2 — the inserted key must stay in the top-level table", got)
+	}
+}
+
+func TestSetSpawnAccountClearRemovesLine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	writeTOML(t, home, "# note\nspawnAccount = \"acc2\"\n[spawn]\nbeads_required = true\n")
+	t.Setenv(SpawnAccountEnv, "")
+
+	if err := SetSpawnAccount(""); err != nil {
+		t.Fatalf("SetSpawnAccount(clear): %v", err)
+	}
+	if got := SpawnAccount(); got != "" {
+		t.Errorf("SpawnAccount() after clear = %q, want empty", got)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	want := "# note\n[spawn]\nbeads_required = true\n"
+	if string(body) != want {
+		t.Errorf("config.toml = %q, want %q", body, want)
+	}
+}
+
+func TestSetSpawnAccountClearOfClearFileIsNoop(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+	writeTOML(t, home, "# note\n[spawn]\nbeads_required = true\n")
+
+	if err := SetSpawnAccount(""); err != nil {
+		t.Fatalf("SetSpawnAccount(clear): %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	if string(body) != "# note\n[spawn]\nbeads_required = true\n" {
+		t.Errorf("config.toml rewritten by a no-op clear = %q", body)
+	}
+}
+
+func TestSetSpawnAccountCreatesMissingFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() = %q, want acc2", got)
+	}
+}
+
+func TestSetSpawnAccountNestedKeyIsPassedThroughAndTopLevelInserted(t *testing.T) {
+	// When config.toml already has a spawnAccount nested under [spawn] (a
+	// hand-edited file, never produced by SetSpawnAccount), SetSpawnAccount must
+	// NOT replace that nested line and must insert a top-level key before [spawn]
+	// so SpawnAccount() resolves correctly. The nested line must be untouched.
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "")
+	initial := "[spawn]\nspawnAccount = \"nested-acc\"\nbeads_required = true\n"
+	writeTOML(t, home, initial)
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	if got := SpawnAccount(); got != "acc2" {
+		t.Errorf("SpawnAccount() = %q, want acc2 — top-level key must be inserted, not nested replacement", got)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	want := "spawnAccount = \"acc2\"\n[spawn]\nspawnAccount = \"nested-acc\"\nbeads_required = true\n"
+	if string(body) != want {
+		t.Errorf("config.toml = %q, want %q — nested line must be untouched", body, want)
+	}
+}
+
+func TestSetSpawnAccountReplacesWhenEnvOverrides(t *testing.T) {
+	// The write must not be defeated by a live env override: set persists to
+	// the file regardless, and SpawnAccount still reports the env value — the
+	// env var is bin/parlay-spawn's highest-precedence source.
+	home := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", home)
+	t.Setenv(SpawnAccountEnv, "env-acc")
+
+	if err := SetSpawnAccount("acc2"); err != nil {
+		t.Fatalf("SetSpawnAccount: %v", err)
+	}
+	if got := SpawnAccount(); got != "env-acc" {
+		t.Errorf("SpawnAccount() = %q, want env-acc (env wins over the file)", got)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.toml): %v", err)
+	}
+	if !strings.Contains(string(body), `spawnAccount = "acc2"`) {
+		t.Errorf("config.toml = %q, want it to persist acc2 under a live env override", body)
 	}
 }

@@ -99,6 +99,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.AgentDown(args)
 	case "remote":
 		commands.Remote(args)
+	case "defaults":
+		commands.Defaults(args)
 	case "nickname":
 		commands.Nickname(args)
 	case "send":
