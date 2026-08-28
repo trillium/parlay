@@ -9,14 +9,28 @@
 // is impossible: Go's internal-package-visibility rule blocks any import of
 // an internal/ path from code not rooted at its parent directory, and no
 // replace directive changes that — it only changes where source is fetched
-// from, not import-path visibility. Shelling out to gascity's own `gc` CLI
-// was evaluated as an alternative and rejected too: `gc` is the full
-// city-orchestration tool (requires a city.toml, a dolt DB, k8s client
-// wiring) and does not even build in this environment (missing system lib
-// for a CGO dolt dependency). So this file is a from-scratch port of just
-// the lifecycle semantics of gascity's internal/runtime/subprocess.Provider
-// (detached sh -c child, process-group signaling, SIGTERM-then-SIGKILL
-// stop), not an import of it and not a wrapper around `gc`.
+// from, not import-path visibility. That half of the argument was re-verified
+// on 2026-08-28 and still holds: `ls pkg/` returns exactly `eventexport`.
+//
+// CORRECTED 2026-08-28 (P0, docs/gascity-integration-contract.md). This block
+// also used to reject shelling out to gascity's own `gc` CLI, on the grounds
+// that `gc` "requires a city.toml, a dolt DB, k8s client wiring" and "does not
+// even build in this environment (missing system lib for a CGO dolt
+// dependency)". Every clause of that rejection is now known to be wrong or
+// overstated: `gc version` and `gc --help` run outside a city with no database
+// and no k8s; upstream 7c817e064 builds clean; and the build failure that was
+// observed came from keg-only Homebrew icu4c (a local toolchain gap needing
+// CGO_CPPFLAGS, not CGO_CXXFLAGS) plus the captain's local merge branch — not
+// from gascity, and not from dolt directly. The integration contract records
+// the measured shell-out cost (~34ms floor) and selects a hybrid seam.
+//
+// None of that changes what this file IS: a from-scratch port of just the
+// lifecycle semantics of gascity's internal/runtime/subprocess.Provider
+// (detached sh -c child, process-group signaling, SIGTERM-then-SIGKILL stop),
+// not an import of it and not a wrapper around `gc`. It contains no Gas City
+// code. The `gascity` name here is residue and is misleading; renaming it —
+// along with the --gascity flag, the PARLAY_SPAWN_LAUNCHER value, and the
+// config key, which must all move together — belongs to P9, not here.
 //
 // One deliberate design departure from the gascity source: that provider
 // tracks liveness via a unix control socket, which requires the process
