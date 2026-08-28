@@ -329,15 +329,15 @@ func SetSpawnAccount(account string) error {
 	}
 	closeErr := tmp.Close()
 	if writeErr != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return writeErr
 	}
 	if syncErr != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return syncErr
 	}
 	if closeErr != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return closeErr
 	}
 
