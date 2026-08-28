@@ -29,4 +29,5 @@ you are expected to reproduce the setup.
 
 | Doc | What it is |
 |---|---|
+| [`gascity-integration-contract.md`](gascity-integration-contract.md) | The binding contract for the in-progress [Gas City](https://github.com/gastownhall/gascity) adoption epic: the pinned upstream ref, the vendored `third_party/gascity/openapi.json` and its sha256, the chosen integration mode, and the collision/irreversibility registers every later unit of the epic is bound by. Nothing here ships yet — no seam is implemented and no Gas City dependency exists. |
 | [`CLI_VERBS_AND_EVENTS.md`](CLI_VERBS_AND_EVENTS.md) | Two references in one: §1, how to author a `parlay <verb>` subcommand, has sound mechanics but describes the retired TypeScript CLI under `packages/cli/src/` — `tools/cli` is the live surface, so read it there before adding a verb. §2's event-fabric design is motivated by a private `robots` bead store, which you will not have, firing `mechanic-dispatch`. |
