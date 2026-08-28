@@ -117,14 +117,24 @@ different way.
 | `~/.local/bin/gc` → `~/go/bin/gc` (**first on PATH**) | `0.15.1.trillium` | **neither — `gc beads` has only `city` and `health`** |
 | `/opt/homebrew/bin/gc` | `dev` | not probed |
 | `~/code/gascity/gc` (in-tree prebuilt, Jul 20) | `1.1.1` | yes |
-| `7c817e064` built from source (**the pin**) | `v1.4.0-504-g7c817e064` | yes |
-| `1e5229b6d` (captain's local HEAD) | `v1.4.0-511-g1e5229b6d` | does not build |
+| `7c817e064` built from source (**the pin**) | `dev` (`git describe`: `v1.4.0-504-g7c817e064`) | yes |
+| `1e5229b6d` (captain's local HEAD) | none — does not build (`git describe`: `v1.4.0-511-g1e5229b6d`) | does not build |
 
 `~/.local/bin/gc` is a symlink to `~/go/bin/gc`; they are the same binary, so there are
 **four** distinct artifacts, not five.
 
-Verified by running `<path> version` on each, and `~/.local/bin/gc beads --help`, whose
-`Available Commands:` block lists exactly `city` and `health`.
+The version column was verified by running `<path> version` on `~/.local/bin/gc`,
+`/opt/homebrew/bin/gc`, and `~/code/gascity/gc`. The two source-ref rows are not installed
+binaries: their `git describe` strings come from `git describe --tags <ref>`, and `1e5229b6d`
+has no version at all because it does not build. The `city`/`health` entry comes from
+`~/.local/bin/gc beads --help`, whose `Available Commands:` block lists exactly `city` and
+`health`.
+
+**A from-source build of the pin reports `dev` — which is also exactly what
+`/opt/homebrew/bin/gc` reports.** `gc version` therefore cannot distinguish the pinned build
+from the homebrew binary, and must never be used as a check that the pin is what is running.
+That is the same non-guarantee shape this document already flags for `requires_gc`: an
+identifier that looks like a check but is not one.
 
 ### What must be upgraded, and when
 
