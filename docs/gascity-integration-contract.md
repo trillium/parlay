@@ -12,6 +12,11 @@ below was re-verified against `~/code/gascity` or the parlay tree before being w
 and §13 lists the seven places where verification came back different from the input.
 
 `~/code/gascity` and `~/code/beads` are **read-only**. Nothing in this unit wrote to either.
+Both clones already carried uncommitted local modifications when this unit began (gascity:
+`CHANGELOG.md`, `go.mod`, `go.sum`; beads: `scripts/ci/lib/test-env.sh`,
+`scripts/test-icu-path.sh`), all of them predating it by days. **This unit neither made nor
+touched them** — a `git status` in either clone showing a dirty tree is not evidence against
+the claim above.
 
 ---
 
@@ -228,10 +233,11 @@ must never be used as a compatibility signal. See §4.
 
 ### What this unit does and does not establish
 
-This unit **establishes the pinned artifact and its hash, and nothing else.** The CI drift
-check that compares the vendored copy against a freshly-pinned upstream copy is **P4**. Until
-P4 lands, nothing detects that this file has gone stale — treat the hash as a manual
-checkpoint, not an enforced invariant.
+This unit establishes **the pinned artifact, its hash, its upstream licence notice, and the
+`third_party/` convention above — and nothing beyond those.** In particular it establishes
+**no enforcement**: the CI drift check that compares the vendored copy against a freshly-pinned
+upstream copy is **P4**. Until P4 lands, nothing detects that this file has gone stale — treat
+the hash as a manual checkpoint, not an enforced invariant.
 
 ---
 
@@ -486,6 +492,18 @@ P0  contract (this document)
                                  └─ P13 flip default, delete legacy path
 ```
 
+**This chain is not a unit inventory, and it does not claim to be one.** It places the ten
+units that carry a hard ordering constraint. Within the declared P0–P13 scope, **P2, P5, and
+P8 are unallocated in this numbering** — no unit of this document bears those labels, and
+nothing here should be read as reserving or describing them. **P3 is referenced exactly once**
+(§9.1, "no unit past P3 may run outside a sandbox") and is deliberately **not placed in this
+chain**: that reference is a sandbox boundary, not an ordering edge.
+
+If a later unit needs one of those labels allocated, or needs P3 given a position in the
+chain, that is a **decision to raise**, not a gap to fill in by inference. Do not reconstruct
+an inventory from the bead tree and write it here — the P-to-bead decomposition is the
+captain's and is not derivable from this document.
+
 ### Why this order and not the obvious one
 
 Every brief written before the topology scope tacitly put process-launching first, because a
@@ -691,7 +709,7 @@ guarded because it hands out identifiers.
 
 > ## Do not run any of these casually.
 >
-> Everything in the 39-unit plan reverses by flipping a switch or reverting a PR — **except
+> Everything in the P0–P13 plan reverses by flipping a switch or reverting a PR — **except
 > what is listed here.** Read this section before running any `gc` command against anything
 > you did not create yourself.
 
@@ -957,7 +975,7 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 | `AddressDirectory.ResolveAddress` | agent-id lookup | Gas City **refuses** an ambiguous address rather than picking a winner. parlay's `parlay send` needed robots-ngg5 to stop minting phantom channels — same bug class, already solved on the Gas City side. |
 | `PreStart` | worktree setup (`bin/parlay-spawn:925`) | "Failures abort startup so agents never launch into an unprepared workDir." |
 | `SessionSetup` | the `CLAUDECODE` unset block (`:1218-1238`) | Semantically identical; different insertion point. |
-| `ReadyPromptPrefix` / `ReadyDelayMs` | the `READY_$$` handshake (`:1218-1238`) | parlay's bespoke echo trick becomes configuration. The `$`-literal vs `$`-expanded distinction is deliberate — preserve the *intent*, not the mechanism. |
+| `ReadyPromptPrefix` / `ReadyDelayMs` | the `READY_$$` handshake (`:1240-1243` — marker appended at `:1240`, wait at `:1243`; `:1219` is the explanatory comment only) | parlay's bespoke echo trick becomes configuration. The `$`-literal vs `$`-expanded distinction is deliberate — preserve the *intent*, not the mechanism. |
 | `requires_gc` | *(nothing — do not use)* | **Parsed and never compared.** §4. |
 | `[events.export]` | `POST /api/chat/events` | Superficially symmetric, opposite directions. Gas City's is opt-in egress, 22 of ~93 types, default-deny. parlay's is ingress with a one-name allowlist that **must not widen** (§8.5). |
 
@@ -1031,7 +1049,7 @@ The five scoping reports are excellent and were treated as input, not scripture.
 | 1 | `7c817e064` **is** `upstream/main` | It **was**. `git ls-remote` returns `eec4a2fb6…` for `refs/heads/main` as of 2026-08-28; the local remote-tracking ref is stale. | **Material.** "Pin upstream/main" is ambiguous now. §1 pins the commit explicitly and names the write-free drift check. |
 | 2 | keg-only `icu4c` needs `PKG_CONFIG_PATH` and **`CGO_CXXFLAGS`** | **`CGO_CPPFLAGS`** is the load-bearing flag. The cgo preamble in `go-icu-regex`'s `icu.go` is compiled as **C**; `CGO_CXXFLAGS` never reaches it, cgo silently picks up the macOS SDK's own `uregex.h`, and the link fails on unversioned symbols. | **Material.** Following the given recipe fails with a confusing linker error. §1 has the corrected four-variable recipe. |
 | 3 | `uninstall` refuses an active **systemd** unit; the launchd path is separate, so do not assume symmetric safety | They are separate functions, but at `7c817e064` they are **symmetric** — both check active, both refuse with the same message and exit 1. | Reduces a warned-about risk. §9.3. The instruction to verify was correct; re-verify when the pin moves. |
-| 4 | `gascityAlive` is read by the stop path, `parlay sweep`, **and** `parlay status` — "three seams, one function" | **Two production Go callers, both in the same file** (`:202` in the `gascity-ping` verb and `:251` in `gascitySpawn`; the stop path does not call it), plus five in that package's own test. The **symbol-visibility** claim holds exactly: `gascityAlive` is unexported in `package main` of the `tools/parlay-bin` module, so `tools/cli` (`parlay sweep`, `parlay status`) — a *different* module — cannot reference it, and no `gascity` reference exists in those files. **But that is symbol visibility only, and exec defeats it as an isolation argument:** any process on the box can run `parlay-bin gascity-spawn` or `parlay-bin gascity-ping` and reach the predicate without linking the symbol, and `bin/parlay-spawn:1365` already does exactly that. | Corrects the stated reason — the reported coupling was described wrongly. But module boundaries do **not** isolate the predicate in practice, so §8.1 keeps the P9/P10 separation on the stronger ground that the predicate **mutates state** and is **already reached across a module boundary by exec today**. |
+| 4 | `gascityAlive` is read by the stop path, `parlay sweep`, **and** `parlay status` — "three seams, one function" | **Two production Go callers, both in the same file** (`:202` in the `gascity-ping` verb and `:251` in `gascitySpawn`; the stop path does not call it), plus five in that package's own test. The **symbol-visibility** claim holds exactly: `gascityAlive` is unexported in `package main` of the `tools/parlay-bin` module, so `tools/cli` (`parlay sweep`, `parlay status`) — a *different* module — cannot reference it. `tools/cli` contains **no call, no exec, and no symbol reference that reaches `gascityAlive`**; its three literal `gascity`/`GasCity` occurrences are non-routing (`internal/commands/sweep_test.go:68`, a test-fixture agent id; `internal/commands/doctor.go:382`, a comment; `internal/help/help.go:56`, help text). **But that is symbol visibility only, and exec defeats it as an isolation argument:** any process on the box can run `parlay-bin gascity-spawn` or `parlay-bin gascity-ping` and reach the predicate without linking the symbol, and `bin/parlay-spawn:1365` already does exactly that. | Corrects the stated reason — the reported coupling was described wrongly. But module boundaries do **not** isolate the predicate in practice, so §8.1 keeps the P9/P10 separation on the stronger ground that the predicate **mutates state** and is **already reached across a module boundary by exec today**. |
 | 5 | ~172 `internal/` packages | **160** at the pinned ref `7c817e064`. 172 is the count at the captain's unbuildable local HEAD. | Cosmetic. Recorded so the figure is not re-derived from the wrong tree. §5. |
 | 6 | `gc version` ≈ **14 ms** | **34.5 ms median** (min 30.6, max 39.0), 15 runs, same in-tree `1.1.1` binary, `GC_HOME` redirected. `/bin/echo` floor measured 2.8 ms, matching the report's 3 ms. | **Strengthens** the §5 decision — shell-out is worse than believed, so the case for HTTP on the hot paths is stronger, not weaker. Hardware and load vary; treat as indicative. |
 | 7 | `HasUnreachableCommitsResult` is a **BLOCKING FINDING**: Gas City's weaker reclaimer "reaps committed-but-never-pushed work on a local branch" | **Overstated.** The divergence is real and deliberate, with a sound documented rationale (`internal/git/git.go:182-195`). **Neither reclaimer deletes a branch ref**, so removal drops a *checkout*, not commits — recoverable via `git worktree add`. The reaper is additionally fail-closed on probe error and gates separately on uncommitted work and stashes. | **Material, in the safe direction.** Lowers the severity but **does not change the ruling** — §9.5 still forbids touching parlay's gates, now on the stronger ground that `isContentLanded`'s tree comparison beats *both* Gas City gates at the problem Gas City is solving. |
