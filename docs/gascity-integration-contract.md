@@ -574,12 +574,18 @@ reaches `gascityAlive`, in production or in that package's own test, and (b) eve
 case and usage line for the three `gascity-*` verbs in `tools/parlay-bin/main.go`. **Nothing
 outside those reach-and-dispatch rows calls or execs the predicate.**
 
-It **excludes text-only mentions, which this document catalogues nowhere.** Further ones exist
-in `bin/parlay-spawn` (`:962`, `:963`, `:1318`, `:1370`), in
-`docs/agent-notes/gascity-launcher-a-herdr-free-escape.md` beyond the two rows below, and
-across the 21 files in this repo that mention `gascity`. The two text-only rows that *are*
-in the table — `bin/parlay-spawn:1445` and the agent-note prose — are there for orientation,
-not as an enumeration.
+It **excludes text-only mentions, which this table does not enumerate.** Two other sections do
+catalogue text-only mentions inside their own narrower scopes — §13 row 4 lists `tools/cli`'s
+three non-routing occurrences by anchor, and §11 lists the `gascity_spawn.go` comment block's
+prose anchors — but neither is repo-wide, and this document contains **no repo-wide
+catalogue**. Further text-only mentions exist in `bin/parlay-spawn` (`:962`, `:963`, `:1318`,
+`:1370`), in `docs/agent-notes/gascity-launcher-a-herdr-free-escape.md` beyond the two rows
+below, and across the other 19 of the **21 tracked files whose text matches the literal
+`gascity`**. Matched case-insensitively the figure is **23**: the two additional files are
+`tools/cli/internal/commands/doctor.go` and `tools/cli/internal/help/help.go`, which spell it
+`GasCity` and are two of the three occurrences §13 row 4 catalogues. The two text-only rows
+that *are* in the table — `bin/parlay-spawn:1445` and the agent-note prose — are there for
+orientation, not as an enumeration.
 
 | Site | Kind |
 |---|---|
@@ -756,7 +762,12 @@ wrong-server relay in it is a fleet outage (robots-93xu).
 
 The probe run for §5 of this document redirected `GC_HOME` to a scratch directory and the
 supervisor port to `18372`, and invoked only `version`, `--help`, `config show --json`, and
-`session list` — none of which start, stop, or reload anything. That is the template.
+`session list` — none of which start, stop, or reload anything. **That is the template for
+the `gc` half of the isolation, and for that half only.** It redirected none of
+`PARLAY_STATE_HOME`, `PAI_DIR`, `HOME`, or `PARLAY_DATA_DIR`, so it does not demonstrate the
+sandbox the rule above requires — that requirement is independent, and redirecting `GC_HOME`
+and the port does not satisfy any part of it. Use `examples/bootstrap-sandbox.sh` for that
+half rather than treating this probe as a model for it.
 
 ### 9.2 `gc supervisor install` mutates a live service
 
