@@ -155,9 +155,11 @@ $ zsh -c 'command -v gc'     # non-interactive, i.e. scripts
 are affected, and they are affected badly: an interactive `gc supervisor stop` runs
 `git commit supervisor stop`.
 
-> **Every instruction in this document aimed at a human types the absolute path to the
-> binary, never bare `gc`.** Any later unit that writes human-facing runbook text must do the
-> same, and must repeat this warning rather than assume the reader has seen it.
+> **Every command line in this document that a human is meant to type or paste spells out
+> the absolute path to the binary, never bare `gc`.** Where bare `gc` appears in prose or
+> in a measurement table it is naming a verb, not offering a line to run. Any later unit
+> that writes human-facing runbook text must do the same, and must repeat this warning
+> rather than assume the reader has seen it.
 
 ---
 
@@ -297,13 +299,14 @@ checkout (§1) must fail at the tool boundary, not at spawn time.
 ### Why, with citations
 
 **Shell-out is correct for control** because `--json` is available on all but two of the
-seventeen `gc session` subcommands — the exceptions are `attach`, which declares no flags
-at all, and `wait`, which declares `--on-beads`, `--any`, `--note`, and `--sleep` — there
-is a global `--json-schema string[="manifest"]` flag, and even *failures* are typed.
+seventeen `gc session` subcommands registered at `cmd/gc/cmd_session.go:55-73` — the
+exceptions are `attach`, which declares no flags at all, and `wait`, which declares
+`--on-beads`, `--any`, `--note`, and `--sleep` — there is a global
+`--json-schema string[="manifest"]` flag, and even *failures* are typed.
 Probed directly, with `GC_HOME` and the supervisor port redirected:
 
 ```
-$ gc config show --json          # outside a city
+$ ~/code/gascity/gc config show --json          # outside a city
 {"schema_version":"1","ok":false,"error":{"code":"command_failed","message":"…"}}
 ```
 
@@ -1066,8 +1069,11 @@ shell-out is what had gone stale:
 | "… k8s client wiring" | **false as a runtime requirement** | Compiled in, not required to invoke. |
 | "does not even build in this environment (missing system lib for a CGO dolt dependency)" | **false** | Upstream `7c817e064` builds clean (§1). The failure was keg-only `icu4c` (a local gap) plus the captain's local merge — and the dependency is `go-icu-regex`, reached transitively via Dolt, not "a CGO dolt dependency". |
 
-A working prebuilt `gc 1.1.1` exists in-tree and answers correctly, with `--json` on every
-session verb and a global `--json-schema` flag. **"Cannot build from source here" was never
+A working prebuilt `gc 1.1.1` exists in-tree and answers correctly, with a global
+`--json-schema` flag and `--json` on the same fifteen of the seventeen session verbs as
+the pinned source — `attach` and `wait` are the exceptions in both, checked by running
+`gc session <verb> --help` against the in-tree binary under a redirected
+`GC_HOME`. §5 carries the source anchor. **"Cannot build from source here" was never
 "cannot use"** — and it was not even true.
 
 The comment now records the current state and points here.
