@@ -294,7 +294,7 @@ checkout (§1) must fail at the tool boundary, not at spawn time.
 
 **Decision:**
 
-- **CONTROL verbs → shell out to `gc <verb> --json`, except `gc session attach` and `gc session wait`, which declare no `--json` flag at `7c817e064` (see §5's "Why" below) and are invoked without it.**
+- **CONTROL verbs → shell out, asking for structured output with the flag that verb actually declares at `7c817e064`. The flag is per-verb: there is no persistent `--json` on the `gc` root (`cmd/gc/json_schema.go:43` registers `--json-schema` only).** For `gc session` subcommands the flag is `--json`; every subcommand registered at `cmd/gc/cmd_session.go:55-73` declares it except `attach` (`cmd_session.go:1475`) and `wait` (`cmd_wait.go:102`), which declare no output flag at all. Outside `gc session` the spelling is not uniform, and it is not uniform even within one family: `gc beads list` and `gc beads show` declare `--format` (`text` or `json`) and no `--json` at all (`cmd/gc/cmd_beads.go:73`, `:109`), while their sibling `gc beads health` does declare `--json` (`cmd_beads.go:337`) — and §2 already blocks any step depending on `gc beads list` or `gc beads show` on `task-0k2po`. **The verbs named here are not a closed set.** No sweep of every `gc` command tree has been done, so any seam invoking a verb not named above must confirm that verb's own JSON flag against the pinned ref before relying on it; this document does not enumerate the CONTROL set.
 - **LIVENESS and EVENT STREAMS → the typed `/v0` HTTP + SSE API.**
 
 ### Why, with citations
@@ -608,8 +608,10 @@ bin/parlay-spawn`), most of them shell variable names such as `GASCITY_GO_BIN` a
 `--gascity` flag rather than prose; `:962`, `:963`, `:1318`, and `:1370` are cited here as
 examples, not as that file's enumeration. Text-only mentions also exist in
 `docs/agent-notes/gascity-launcher-a-herdr-free-escape.md` beyond the two rows below, and
-across the other 19 of the **21 tracked files whose text matches the literal `gascity`**.
-Matched case-insensitively the figure is **23**: the two additional files are
+across the remaining tracked files whose text matches the literal `gascity` — enumerate them
+with `git grep -l gascity` at the commit you are reading rather than trusting a count written
+here, because any commit that adds or removes a `gascity` mention changes it. Matching
+case-insensitively with `git grep -il gascity` adds these two files and no others:
 `tools/cli/internal/commands/doctor.go` and `tools/cli/internal/help/help.go`, which spell
 it `GasCity` and are two of the three occurrences §13 row 4 catalogues. The two text-only rows
 that *are* in the table — `bin/parlay-spawn:1445` and the agent-note prose — are there for
