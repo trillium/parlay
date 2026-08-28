@@ -194,10 +194,11 @@ permission notice accompany copies or substantial portions of the work. parlay i
 (`LICENSE` at the repo root, plus `packages/input/LICENSE`), so carrying an upstream MIT
 notice alongside a vendored blob is **consistent with the existing posture, not new policy**.
 
-**1.32 MiB is under CI's 2 MiB tracked-blob ceiling** (`.github/workflows/ci.yml:455`), with
-room to spare but not unlimited room. A future pin that grows this file past 2 MiB fails the
-hygiene job — that is a feature, not a bug: it forces a conscious decision rather than
-silently landing a large blob.
+**1.32 MiB is under CI's 2 MiB tracked-blob ceiling** (`.github/workflows/ci.yml:471-473`
+— the `No oversized tracked files` step, whose `limit=$((2 * 1024 * 1024))` is at `:473`;
+`:455` is the explanatory comment only), with room to spare but not unlimited room. A
+future pin that grows this file past 2 MiB fails the hygiene job — that is a feature, not
+a bug: it forces a conscious decision rather than silently landing a large blob.
 
 ### What the artifact says
 
@@ -374,8 +375,13 @@ The egress surface is deliberately narrow (`pkg/eventexport/project.go`):
 
 - `const SchemaVersion = 6` (`:82`) — stamped on every batch.
 - `var allowedTypes = map[string]bool{…}` (`:111`) — **exactly 22 entries**, default-deny.
-- The map is **unexported**; only `func IsAllowed(typ string) bool` (`:158`) is exported, so
-  no importer can widen the egress surface at runtime.
+- The map is **unexported**, and every access to it is a read: `IsAllowed` (`:158`),
+  `AllowedTypeList` (`:164-165`, which returns "a sorted, fresh copy" per its own doc
+  comment), `ProjectEvent` (`:270`), and `ValidateEnvelope` (`:394`). Nothing assigns into it
+  after the initializer at `:111`, so no importer can widen the egress surface at runtime.
+  `project.go`'s exported functions are `IsAllowed` (`:158`), `AllowedTypeList` (`:163`),
+  `ActorHash` (`:233`), `CityHash` (`:249`), `ProjectEvent` (`:269`), `ValidateEnvelope`
+  (`:393`), `Validate` (`:479`), `ValidateBatch` (`:512`), and `IsOpaqueRef` (`:576`).
 
 **Coverage: 22 of Gas City's ~93 event types.** That is the reason this is an alternative and
 not the choice — a push feed that structurally cannot carry two thirds of the event space
@@ -496,12 +502,12 @@ P0  contract (this document)
 ```
 
 **This chain is not a unit inventory, and it does not claim to be one.** It places exactly
-the units carrying a hard ordering constraint — P0, P1, P4, P6, P7, P11, P9, P10, P12, and
-P13, the ten labels appearing in the block above and nowhere else in this section. Within
-the declared P0–P13 scope, **P2, P5, and P8 are unallocated in this numbering** — no unit
-of this document bears those labels, and nothing here should be read as reserving or
-describing them. **P3 stands in the same position**: no unit of this document bears that
-label either, and it is deliberately **not placed in this chain**. §9.1's sandbox rule
+the units carrying a hard ordering constraint — P0, P1, P4, P6, P7, P9, P10, P11, P12, and
+P13, listed here in numeric order rather than counted. Within the declared P0–P13 scope,
+**P2, P5, and P8 are unallocated in this numbering** — no unit of this document bears
+those labels, and nothing here should be read as reserving or describing them. **P3 stands
+in the same position**: no unit of this document bears that label either, and it is
+deliberately **not placed in this chain**. §9.1's sandbox rule
 does not key on P3 — it is unconditional and binds every unit of this epic — so nothing in
 this document positions P3 relative to any other label.
 
@@ -933,7 +939,9 @@ Verified against the code:
 
 - **Neither reclaimer deletes a branch.** Grep finds no `branch -D`, `DeleteBranch`, or
   equivalent in `bead_worktree_reaper.go` or `session_worktree_prune.go`. The reaper actually
-  *records* the branch name in its decision (`bead_worktree_reaper.go:316`).
+  *records* the branch name in its decision — captured at `bead_worktree_reaper.go:315` and
+  carried into `reapDecision` at `:326`, `:341`, `:361`, and `:371`. Two further capture
+  sites do the same at `:224` and `:253`. (`:316` is a blank line at the pinned ref.)
 - The reaper is **fail-closed on probe error** — `unreachableErr != nil` protects the tree,
   with the in-code justification *"an errored probe proves nothing, and treating it as a clean
   answer would fail open."*
@@ -1015,6 +1023,12 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 ## 11. The stale comment block at `tools/parlay-bin/gascity_spawn.go`
 
 **Corrected in this PR. Not renamed, not restructured — that is P9's job.**
+
+**Scope of that correction:** it covers the Go comment block in
+`tools/parlay-bin/gascity_spawn.go`. A second copy of the same four-clause rejection survives
+uncorrected at `docs/agent-notes/gascity-launcher-a-herdr-free-escape.md:32-35`, is
+deliberately left for P9, and is tracked as `task-fx4gn`. Nothing is claimed here about
+whether further copies exist elsewhere.
 
 ### The file's name is residue
 
