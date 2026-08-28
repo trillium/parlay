@@ -500,7 +500,9 @@ Points where two units touch the same thing. Each is a real serializer, not a st
 
 ### 8.1 `gascityAlive` — one function, and the coupling is looser than reported
 
-`tools/parlay-bin/gascity_spawn.go:220`.
+`tools/parlay-bin/gascity_spawn.go:234`. All anchors in this section are measured at the
+commit that contains this document — this PR's own comment fix inserted 14 lines above them,
+so any earlier-recorded anchor for this file is off by exactly that much.
 
 ```go
 func gascityAlive(stateDir string) bool {
@@ -517,8 +519,12 @@ func gascityAlive(stateDir string) bool {
 `parlay sweep`, **and** by `parlay status` — "three seams, one function," and call it the
 highest-collision point in the migration. **That is not true of the tree as it stands.**
 
-Verified: `gascityAlive` has exactly **two callers, both in the same file** — `:188` (the
-`gascity-ping` verb) and `:237` (inside `gascityStop`). It is an unexported function in
+Verified: `gascityAlive` has exactly **two production callers, both in the same file** —
+`:202` (inside `runGascityPingCommand`, the `gascity-ping` verb, at `:179`) and `:251` (the
+first statement of `gascitySpawn`, at `:250`). Note that `gascityStop` (`:323`) does **not**
+call it at all. Beyond those two, the only other call sites are five in that package's own
+test, `tools/parlay-bin/gascity_spawn_test.go:31`, `:44`, `:64`, `:102` and `:136`. It is an
+unexported function in
 `package main` of `tools/parlay-bin`, which is a **separate Go module**
 (`github.com/trillium/parlay/tools/parlay-bin`) from `tools/cli`
 (`github.com/trillium/parlay/tools/cli`) where `sweep`, `status`, `stale`, and `crew-state`
@@ -917,8 +923,10 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 
 ### The file's name is residue
 
-`tools/parlay-bin/gascity_spawn.go` is **418 lines of parlay's own process supervision and
-contains zero Gas City code.** It mentions "gascity" 58 times; the only reference to the
+`tools/parlay-bin/gascity_spawn.go` is **432 lines of parlay's own process supervision and
+contains zero Gas City code** (line count measured at this commit, after this PR's comment
+fix). It contains 54 occurrences of the literal string "gascity", 66 case-insensitively; the
+only reference to the
 actual project is line 8, inside the comment block, describing an import that was never made.
 
 The flag `--gascity`, the value `PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn]
@@ -975,7 +983,7 @@ The five scoping reports are excellent and were treated as input, not scripture.
 | 1 | `7c817e064` **is** `upstream/main` | It **was**. `git ls-remote` returns `eec4a2fb6…` for `refs/heads/main` as of 2026-08-28; the local remote-tracking ref is stale. | **Material.** "Pin upstream/main" is ambiguous now. §1 pins the commit explicitly and names the write-free drift check. |
 | 2 | keg-only `icu4c` needs `PKG_CONFIG_PATH` and **`CGO_CXXFLAGS`** | **`CGO_CPPFLAGS`** is the load-bearing flag. The cgo preamble in `go-icu-regex`'s `icu.go` is compiled as **C**; `CGO_CXXFLAGS` never reaches it, cgo silently picks up the macOS SDK's own `uregex.h`, and the link fails on unversioned symbols. | **Material.** Following the given recipe fails with a confusing linker error. §1 has the corrected four-variable recipe. |
 | 3 | `uninstall` refuses an active **systemd** unit; the launchd path is separate, so do not assume symmetric safety | They are separate functions, but at `7c817e064` they are **symmetric** — both check active, both refuse with the same message and exit 1. | Reduces a warned-about risk. §9.3. The instruction to verify was correct; re-verify when the pin moves. |
-| 4 | `gascityAlive` is read by the stop path, `parlay sweep`, **and** `parlay status` — "three seams, one function" | **Two callers, both in the same file.** It is unexported in `package main` of a *different Go module* from `sweep`/`status`; no `gascity` reference exists in those files. | Corrects the stated reason. §8.1 keeps the P9/P10 separation on the stronger ground that the predicate **mutates state**. |
+| 4 | `gascityAlive` is read by the stop path, `parlay sweep`, **and** `parlay status` — "three seams, one function" | **Two production callers, both in the same file** (`:202` in the `gascity-ping` verb and `:251` in `gascitySpawn`; the stop path does not call it), plus five in that package's own test. It is unexported in `package main` of a *different Go module* from `sweep`/`status`; no `gascity` reference exists in those files. | Corrects the stated reason. §8.1 keeps the P9/P10 separation on the stronger ground that the predicate **mutates state**. |
 | 5 | ~172 `internal/` packages | **160** at the pinned ref `7c817e064`. 172 is the count at the captain's unbuildable local HEAD. | Cosmetic. Recorded so the figure is not re-derived from the wrong tree. §5. |
 | 6 | `gc version` ≈ **14 ms** | **34.5 ms median** (min 30.6, max 39.0), 15 runs, same in-tree `1.1.1` binary, `GC_HOME` redirected. `/bin/echo` floor measured 2.8 ms, matching the report's 3 ms. | **Strengthens** the §5 decision — shell-out is worse than believed, so the case for HTTP on the hot paths is stronger, not weaker. Hardware and load vary; treat as indicative. |
 | 7 | `HasUnreachableCommitsResult` is a **BLOCKING FINDING**: Gas City's weaker reclaimer "reaps committed-but-never-pushed work on a local branch" | **Overstated.** The divergence is real and deliberate, with a sound documented rationale (`internal/git/git.go:182-195`). **Neither reclaimer deletes a branch ref**, so removal drops a *checkout*, not commits — recoverable via `git worktree add`. The reaper is additionally fail-closed on probe error and gates separately on uncommitted work and stashes. | **Material, in the safe direction.** Lowers the severity but **does not change the ruling** — §9.5 still forbids touching parlay's gates, now on the stronger ground that `isContentLanded`'s tree comparison beats *both* Gas City gates at the problem Gas City is solving. |
