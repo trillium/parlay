@@ -495,9 +495,11 @@ P0  contract (this document)
 **This chain is not a unit inventory, and it does not claim to be one.** It places the ten
 units that carry a hard ordering constraint. Within the declared P0–P13 scope, **P2, P5, and
 P8 are unallocated in this numbering** — no unit of this document bears those labels, and
-nothing here should be read as reserving or describing them. **P3 is referenced exactly once**
-(§9.1, "no unit past P3 may run outside a sandbox") and is deliberately **not placed in this
-chain**: that reference is a sandbox boundary, not an ordering edge.
+nothing here should be read as reserving or describing them. **P3 stands in the same
+position**: no unit of this document bears that label either, and it is deliberately **not
+placed in this chain**. §9.1's sandbox rule does not key on P3 — it is unconditional and
+binds every unit of this epic — so nothing in this document positions P3 relative to any
+other label.
 
 If a later unit needs one of those labels allocated, or needs P3 given a position in the
 chain, that is a **decision to raise**, not a gap to fill in by inference. Do not reconstruct
@@ -567,13 +569,23 @@ unexported function in
 live. It is not importable from there, and grep finds **no `gascity` reference at all** in
 `sweep.go`, `status_verb.go`, `stale.go`, or `crew_state.go`.
 
-Outside `gascity_spawn.go`, the verb and the predicate are reached from exactly these places:
+Outside `gascity_spawn.go`, this table enumerates **exhaustively**: (a) every site that
+reaches `gascityAlive`, in production or in that package's own test, and (b) every dispatch
+case and usage line for the three `gascity-*` verbs in `tools/parlay-bin/main.go`. **Nothing
+outside those reach-and-dispatch rows calls or execs the predicate.**
+
+It **excludes text-only mentions, which this document catalogues nowhere.** Further ones exist
+in `bin/parlay-spawn` (`:962`, `:963`, `:1318`, `:1370`), in
+`docs/agent-notes/gascity-launcher-a-herdr-free-escape.md` beyond the two rows below, and
+across the 21 files in this repo that mention `gascity`. The two text-only rows that *are*
+in the table — `bin/parlay-spawn:1445` and the agent-note prose — are there for orientation,
+not as an enumeration.
 
 | Site | Kind |
 |---|---|
 | `tools/parlay-bin/main.go:38` — `case "gascity-ping": os.Exit(runGascityPingCommand(os.Args[2:]))` | **A real dispatch**, not prose. Every `gascity-ping` invocation reaches `gascityAlive` through it. |
 | `tools/parlay-bin/main.go:34`, `:36` | Sibling `gascity-spawn` / `gascity-stop` cases in the same dispatch block. |
-| `tools/parlay-bin/main.go:21` | Usage text naming the verb. |
+| `tools/parlay-bin/main.go:19`, `:20`, `:21` | Usage text naming all three verbs — `gascity-spawn`, `gascity-stop`, `gascity-ping`. |
 | `tools/parlay-bin/gascity_spawn_test.go:31`, `:44`, `:64`, `:102`, `:136` | Five direct `gascityAlive` calls, same package. |
 | `bin/parlay-spawn:1365` — `"$GASCITY_GO_BIN" gascity-spawn "$AGENT_ID" …` | **A real production exec of the verb**, from a *different module* and from a *non-Go* caller. It reaches `gascityAlive` as the **first statement of `gascitySpawn`** (`gascity_spawn.go:251`), via `main.go:34` → `runGascitySpawnCommand` (`:89`) → `gascitySpawn` (`:250`). |
 | `bin/parlay-spawn:1445` | Error-message text only. |
@@ -734,7 +746,7 @@ wrong-server relay in it is a fleet outage (robots-93xu).
 > Neither alone is sufficient.** `GC_HOME` alone still leaves the process contending for
 > `:8372`. The port alone still reads and writes the captain's city state.
 >
-> **No unit past P3 may run outside a sandbox that also redirects `PARLAY_STATE_HOME`,
+> **EVERY unit of this epic must run in a sandbox that redirects `PARLAY_STATE_HOME`,
 > `PAI_DIR`, `HOME`, and `PARLAY_DATA_DIR`** — per project CLAUDE.md, `PARLAY_DATA_DIR`
 > covers only what goes through `paths.ts`, and the tailers replay live agent turns into
 > whatever hub answers `PARLAY_HUB_URL`. Use `examples/bootstrap-sandbox.sh` rather than
