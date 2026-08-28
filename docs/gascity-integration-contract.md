@@ -257,7 +257,7 @@ every one is declaration, struct copy, or round-trip test:
 |---|---|
 | `internal/config/config.go:850-851` | field declaration, `toml:"requires_gc,omitempty"` |
 | `cmd/gc/cmd_init.go:42, 853` | mirrored struct declarations |
-| `cmd/gc/cmd_init.go:881, 1049` | struct-to-struct copy, `dst.Pack.RequiresGC = src.Pack.RequiresGC` |
+| `cmd/gc/cmd_init.go:881, 1049` | struct copy — `RequiresGC: cfg.Pack.RequiresGC,` inside a composite literal at `:881`, `dst.Pack.RequiresGC = src.Pack.RequiresGC` at `:1049` |
 | `internal/config/undecoded_test.go:536, 546, 547` | asserts the *string survives parsing* — `cfg.Pack.RequiresGC == ">=0.14.0"` |
 | `cmd/gc/cmd_agent_test.go:552, 604` | fixture text |
 
@@ -296,9 +296,11 @@ checkout (§1) must fail at the tool boundary, not at spawn time.
 
 ### Why, with citations
 
-**Shell-out is correct for control** because every session verb takes `--json`, there is a
-global `--json-schema string[="manifest"]` flag, and even *failures* are typed. Probed
-directly, with `GC_HOME` and the supervisor port redirected:
+**Shell-out is correct for control** because `--json` is available on all but two of the
+seventeen `gc session` subcommands — the exceptions are `attach`, which declares no flags
+at all, and `wait`, which declares `--on-beads`, `--any`, `--note`, and `--sleep` — there
+is a global `--json-schema string[="manifest"]` flag, and even *failures* are typed.
+Probed directly, with `GC_HOME` and the supervisor port redirected:
 
 ```
 $ gc config show --json          # outside a city
