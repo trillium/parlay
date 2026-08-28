@@ -9,7 +9,8 @@ dependency, implements no seam, and is inert at runtime apart from one comment f
 Later units cite this file rather than re-deriving its facts. Where a fact here disagrees
 with one of the five scoping reports in the firstmate home, **this file wins** — every claim
 below was re-verified against `~/code/gascity` or the parlay tree before being written down,
-and §13 lists the seven places where verification came back different from the input.
+and §13's table lists, in seven numbered rows, the places where verification came back
+different from the input.
 
 `~/code/gascity` and `~/code/beads` are **read-only**. Nothing in this unit wrote to either.
 Both clones already carried uncommitted local modifications when this unit began (gascity:
@@ -246,15 +247,17 @@ the hash as a manual checkpoint, not an enforced invariant.
 **Gas City has a `requires_gc` field in its config schema. It is parsed, preserved, and never
 compared against anything.**
 
-Verified by grepping every `requires_gc` / `RequiresGC` occurrence in the pinned tree. All
-eleven Go occurrences are declaration, struct copy, or round-trip test:
+Verified by `git grep -nE 'requires_gc|RequiresGC' 7c817e064 -- '*.go'` — **eleven matching
+lines across four files**, counting both the `requires_gc` and `RequiresGC` spellings, `*.go`
+only, at the pinned ref. The table below carries all eleven anchors (2 + 2 + 2 + 3 + 2), and
+every one is declaration, struct copy, or round-trip test:
 
 | location | what it does |
 |---|---|
 | `internal/config/config.go:850-851` | field declaration, `toml:"requires_gc,omitempty"` |
 | `cmd/gc/cmd_init.go:42, 853` | mirrored struct declarations |
 | `cmd/gc/cmd_init.go:881, 1049` | struct-to-struct copy, `dst.Pack.RequiresGC = src.Pack.RequiresGC` |
-| `internal/config/undecoded_test.go:536-547` | asserts the *string survives parsing* — `cfg.Pack.RequiresGC == ">=0.14.0"` |
+| `internal/config/undecoded_test.go:536, 546, 547` | asserts the *string survives parsing* — `cfg.Pack.RequiresGC == ">=0.14.0"` |
 | `cmd/gc/cmd_agent_test.go:552, 604` | fixture text |
 
 **There is no semver parse, no comparison, and no enforcement anywhere in `cmd/`,
@@ -492,14 +495,15 @@ P0  contract (this document)
                                  └─ P13 flip default, delete legacy path
 ```
 
-**This chain is not a unit inventory, and it does not claim to be one.** It places the ten
-units that carry a hard ordering constraint. Within the declared P0–P13 scope, **P2, P5, and
-P8 are unallocated in this numbering** — no unit of this document bears those labels, and
-nothing here should be read as reserving or describing them. **P3 stands in the same
-position**: no unit of this document bears that label either, and it is deliberately **not
-placed in this chain**. §9.1's sandbox rule does not key on P3 — it is unconditional and
-binds every unit of this epic — so nothing in this document positions P3 relative to any
-other label.
+**This chain is not a unit inventory, and it does not claim to be one.** It places exactly
+the units carrying a hard ordering constraint — P0, P1, P4, P6, P7, P11, P9, P10, P12, and
+P13, the ten labels appearing in the block above and nowhere else in this section. Within
+the declared P0–P13 scope, **P2, P5, and P8 are unallocated in this numbering** — no unit
+of this document bears those labels, and nothing here should be read as reserving or
+describing them. **P3 stands in the same position**: no unit of this document bears that
+label either, and it is deliberately **not placed in this chain**. §9.1's sandbox rule
+does not key on P3 — it is unconditional and binds every unit of this epic — so nothing in
+this document positions P3 relative to any other label.
 
 If a later unit needs one of those labels allocated, or needs P3 given a position in the
 chain, that is a **decision to raise**, not a gap to fill in by inference. Do not reconstruct
@@ -578,12 +582,16 @@ It **excludes text-only mentions, which this table does not enumerate.** Two oth
 catalogue text-only mentions inside their own narrower scopes — §13 row 4 lists `tools/cli`'s
 three non-routing occurrences by anchor, and §11 lists the `gascity_spawn.go` comment block's
 prose anchors — but neither is repo-wide, and this document contains **no repo-wide
-catalogue**. Further text-only mentions exist in `bin/parlay-spawn` (`:962`, `:963`, `:1318`,
-`:1370`), in `docs/agent-notes/gascity-launcher-a-herdr-free-escape.md` beyond the two rows
-below, and across the other 19 of the **21 tracked files whose text matches the literal
-`gascity`**. Matched case-insensitively the figure is **23**: the two additional files are
-`tools/cli/internal/commands/doctor.go` and `tools/cli/internal/help/help.go`, which spell it
-`GasCity` and are two of the three occurrences §13 row 4 catalogues. The two text-only rows
+catalogue**. Further text-only mentions exist in `bin/parlay-spawn`, which carries **52
+lines matching `gascity` case-insensitively** at this commit (`grep -ic gascity
+bin/parlay-spawn`), most of them shell variable names such as `GASCITY_GO_BIN` and the
+`--gascity` flag rather than prose; `:962`, `:963`, `:1318`, and `:1370` are cited here as
+examples, not as that file's enumeration. Text-only mentions also exist in
+`docs/agent-notes/gascity-launcher-a-herdr-free-escape.md` beyond the two rows below, and
+across the other 19 of the **21 tracked files whose text matches the literal `gascity`**.
+Matched case-insensitively the figure is **23**: the two additional files are
+`tools/cli/internal/commands/doctor.go` and `tools/cli/internal/help/help.go`, which spell
+it `GasCity` and are two of the three occurrences §13 row 4 catalogues. The two text-only rows
 that *are* in the table — `bin/parlay-spawn:1445` and the agent-note prose — are there for
 orientation, not as an enumeration.
 
@@ -997,7 +1005,7 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 | `ListRunning(prefix)` | `parlay status` / `crew-state` | Gas City returns names; parlay's returns a verdict with a **frozen** exit-code contract (§8.2). |
 | `AddressDirectory.ResolveAddress` | agent-id lookup | Gas City **refuses** an ambiguous address rather than picking a winner. parlay's `parlay send` needed robots-ngg5 to stop minting phantom channels — same bug class, already solved on the Gas City side. |
 | `PreStart` | worktree setup (`bin/parlay-spawn:925`) | "Failures abort startup so agents never launch into an unprepared workDir." |
-| `SessionSetup` | the `CLAUDECODE` unset block (`:1218-1238`) | Semantically identical; different insertion point. |
+| `SessionSetup` | the `CLAUDECODE` unset block (`:1226-1239`) | Semantically identical; different insertion point. |
 | `ReadyPromptPrefix` / `ReadyDelayMs` | the `READY_$$` handshake (`:1240-1243` — marker appended at `:1240`, wait at `:1243`; `:1219` is the explanatory comment only) | parlay's bespoke echo trick becomes configuration. The `$`-literal vs `$`-expanded distinction is deliberate — preserve the *intent*, not the mechanism. |
 | `requires_gc` | *(nothing — do not use)* | **Parsed and never compared.** §4. |
 | `[events.export]` | `POST /api/chat/events` | Superficially symmetric, opposite directions. Gas City's is opt-in egress, 22 of ~93 types, default-deny. parlay's is ingress with a one-name allowlist that **must not widen** (§8.5). |
@@ -1015,8 +1023,11 @@ contains zero Gas City code** (line count measured at this commit, after this PR
 fix). It contains 54 occurrences of the literal string "gascity", 66 case-insensitively. Line
 8 is the only reference to a Gas City **import path**
 (`github.com/gastownhall/gascity/internal/runtime/subprocess`), and it describes an import
-that was never made; the corrected comment block names the project in prose several more times
-(`:15-16`, `:24`, `:28`, `:35`), all of which are explanation rather than code.
+that was never made; the corrected comment block names the project in prose at `:16`, `:24`,
+`:28`, `:30`, `:35`, and `:38` — counting prose references to Gas City the project, and
+excluding the `gascity-*` verb names (`:1`, `:39`), the import path (`:8`, treated separately
+just above), and the passage discussing the `gascity` identifier itself as residue (`:31`,
+`:32`). All six are explanation rather than code.
 
 The flag `--gascity`, the value `PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn]
 launcher` key, and the project CLAUDE.md line describing "the `gascity` launcher" all imply an
@@ -1065,7 +1076,10 @@ Stated so later units do not assume otherwise:
 
 ## 13. Where verification disagreed with the input
 
-The five scoping reports are excellent and were treated as input, not scripture. Seven claims came back different. **Three of them change what a later unit should do.**
+The five scoping reports are excellent and were treated as input, not scripture. Seven claims
+came back different. **Rows 1, 2, and 7 — the three whose impact is marked Material — are the
+ones that change what a later unit should do**, though row 7 lowers a severity without
+changing its ruling.
 
 | # | Claim as given | What is actually true | Impact |
 |---|---|---|---|
