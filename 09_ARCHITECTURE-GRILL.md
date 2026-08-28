@@ -336,7 +336,12 @@ do not settle whether parlay's chat-history archive/search rides
 the re-cut). Q4 therefore moves back to **OPEN** in `00` with this proposed
 replacement, carrying a "prior verdict superseded pending confirmation" note
 — the confirmation is what decides T-09's substrate, and it is not this
-round's call.
+round's call. **One consequence to weigh alongside the ask:** a `GC_BEADS=file`
+store needs no `bd`, so confirming it puts Q4 in direct tension with Q5/Q5a
+("bd is still the required backend", "beads is the necessary layer") and
+retires Q5b's "bd documented as an install prerequisite" — the same
+confirmation that settles T-09's substrate therefore reopens what `bd`'s
+required-ness means, and all three are captain calls, not this round's.
 
 ---
 
