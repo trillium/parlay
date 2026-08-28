@@ -3,9 +3,10 @@
 `parlay` exists so that a single human can direct a fleet of long-running AI coding agents from a phone, without a keyboard.
 It serves the captain - the one person who owns the machine and the fleet.
 It turns voiced commands and typed replies into routed messages that reach each agent's durable channel.
-It owns exactly one thing: the per-agent chat relay.
+Parlay owns the process and representation plane: routing, staleness, supersession, source contracts, capability declaration, and the human/voice relay.
+It delegates the execution substrate to Gas City: sessions, liveness, process control, dispatch, and the event bus.
 
-## The relay is the only product
+## The relay is the core product
 
 Every agent enrolled in parlay gets one durable channel: a named inbox that survives context resets, relay restarts, and network hiccups.
 The relay delivers messages to named channels and to the fleet as a whole; broadcast targets only live enrollments and the relay enforces rate limits so downstream services are not overwhelmed.
@@ -45,7 +46,8 @@ A verb added to Go must be added to the parity harness.
 
 ## Scope
 
-`parlay` is not a CI system, not an orchestration engine, not a workflow engine.
+`parlay` is not a CI system, not an orchestration engine, not a workflow execution engine.
+Process execution is delegated to Gas City; process representation - routing, staleness, supersession, workflows-as-beads - belongs to parlay.
 Pulse is open source and part of PAI, but not part of this repository; parlay exists and works independently of Pulse and PAI.
 The API surface trusts the network boundary; authentication for external access is the operator's responsibility.
 `packages/server` is a publishable relay library; PAI store layouts and TTS caches are extracted before publishing and are not part of its public contract.

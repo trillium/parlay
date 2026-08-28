@@ -33,6 +33,7 @@ history and are never edited after the other side has replied to them.
 | 04 | — | — | DELETED — its delegated answers are superseded wherever the captain's inline answers in `01`/`03` differ (Q2, Q3a, Q5/Q5a, Q6, Q7/Q7a, Q10, Q13) |
 | 05 | agent | 2026-08-26 | Round 3 — implementation-ticket plan (T-01…T-14 in six phases per Q15 order). Plan now amended by the inline answers — see `07` for the deltas |
 | 07 | agent | 2026-08-26 | Round 4 — synthesis of the inline answers, plan deltas, and follow-ups the captain invited (plugins, pages sidecar, beads hard-dep, tailscale layer, server audit, gascity leverage) |
+| 09 | agent | 2026-08-28 | Round 5 — records the captain's gascity-consensus directive: Q16 reopened + RESOLVED (plane split), Q2b/Q2d RESOLVED, Q4 reopened; open gate (single-binary loss), kill-switch gate, plan re-cut (T-01…T-19). `08` skipped (captain answered by directive, not an even file) |
 
 ## Question status
 
@@ -45,7 +46,7 @@ deferred, with a named revisit condition).
 | Q1 | Endgame for the Bun server (`packages/server`): replace / sidecar / peer | 01 | RESOLVED |
 | Q2 | Which unported routes are product vs Pulse/PAI residue (incl. eval relay, TTS) | 01 | RESOLVED |
 | Q3 | Future of `tools/relay`: keep daemon vs fold into go-server + CLI cursor resume | 01 | RESOLVED |
-| Q4 | Storage for search/audit: pure-stdlib constraint; JSONL scan vs SQLite vs beads | 01 | RESOLVED |
+| Q4 | Storage for search/audit: pure-stdlib constraint; JSONL scan vs SQLite vs beads | 01 | OPEN (reopened in 09 — prior verdict superseded pending captain confirmation of the `GC_BEADS=file` replacement) |
 | Q5 | Mechanics of beads-backed crew status: shell-out vs mirror vs source-of-truth | 01 | RESOLVED |
 | Q6 | Auth: opt-in static bearer token vs strictly network-delegated | 01 | RESOLVED |
 | Q7 | Audit log locus: client-side full-fidelity vs server ingest vs hybrid | 01 | RESOLVED |
@@ -63,13 +64,13 @@ deferred, with a named revisit condition).
 | Q13 | Bun-only SSE identifier leak: patch now vs die with Bun | 03 | RESOLVED |
 | Q14 | `docs/live-commands.md` classification in docs/README | 03 | RESOLVED |
 | Q15 | Sequencing of the full consensus backlog | 03 | RESOLVED |
-| Q2b | Plugin system: what is a plugin concretely (surface, discovery, contract) | 07 | OPEN |
+| Q2b | Plugin system: what is a plugin concretely (surface, discovery, contract) | 07 | RESOLVED (09 — a plugin IS a Gas City Pack, Pack Spec 2.0; bespoke format dropped) |
 | Q2c | Pages as generated-on-install sidecar: generator, source, destination | 07 | OPEN |
-| Q2d | Generic UI-command (command/response) protocol replacing bespoke panel-aiming routes | 07 | OPEN |
+| Q2d | Generic UI-command (command/response) protocol replacing bespoke panel-aiming routes | 07 | RESOLVED (09 — adopt gascity's typed HTTP+SSE wire, event registry, generated clients) |
 | Q5b | Beads hard-dep ergonomics: install prerequisite, absence behavior, version pinning | 07 | RESOLVED (self-answered, delegation rule) |
 | Q6b | Tailscale connection-layer shape: tsnet embed vs `tailscale serve` deploy integration | 07 | OPEN |
 | Q7b | Server-side audit vs wire-redaction rule: token-gated full-fidelity ingest | 07 | RESOLVED (self-answered, delegation rule) |
-| Q16 | Gascity leverage map: which hard parts of parlay move onto gascity | 07 | OPEN |
+| Q16 | Gascity leverage map: which hard parts of parlay move onto gascity | 07 | RESOLVED (09 — REOPENED on corrected premise; plane split: gascity = execution plane, parlay = process + representation plane) |
 
 All ⚑veto windows from `04` are closed: the captain's inline answers exercised
 the veto on Q5a (soft-dep → hard dep) and confirmed Q6a/Q11.
@@ -102,7 +103,15 @@ Q14 — GENERALLY USEFUL — list live-commands.md in docs/README's public table
 Q15 — ORDER ADOPTED, LOW STAKES — take rec; "doesnt matter, is ai built, will all be built in a short window" (03-inline). Phase 1 unblocked.
 Q5b — REFUSE LOUDLY — bd absent = named error with install pointer at the verbs that need it, never a silent degrade; bd documented as an install prerequisite (07, self-answered)
 Q7b — TOKEN-GATED FULL FIDELITY — the audit ingest route requires the bearer token (or loopback when no token is set); the redacted live-commands registry stays as the unauthenticated surface (07, self-answered)
+Q16 — PLANE SPLIT (REOPENED, RESOLVED) — Gas City is parlay's **execution plane** (sessions/providers, liveness, process control, dispatch, event bus, bead store, orders, mail, controller, config/packs, typed API control plane); parlay keeps the **process and representation plane** (routing + confidence hardening, staleness, supersession, source contracts, capability declaration, transient interaction state as records, the human/voice relay). Q16's original anti-recommendation rested on a premise that does not hold (Go-import availability as the extension surface); the designed surface is `city.toml`/packs/formulas/providers/typed-API. §82's "Gastown mayor-style" critique targets the mayor *agent*, not the mechanical substrate; substrate adopted, mayor not. Verified against `~/code/gascity` (MIT, tags to v1.4.1). Two gates NOT settled: (a) the single-binary loss is an unresolved captain decision (open gate); (b) kill-switch — whether formula-v2 can express #128's workflow-bead semantics, verify before any code moves (09)
+Q2b — PLUGIN = GAS CITY PACK — a plugin is a Pack Spec 2.0 pack (`pack.toml` manifest + well-known dirs + imports/discovery + scope/patches/requirements), not a bespoke parlay format; T-15 dropped (09)
+Q2d — ADOPT GASCITY'S TYPED WIRE — the generic UI-command protocol rides gascity's typed HTTP+SSE contract (Huma → OpenAPI 3.1 → generated clients, registered event-payload registry, object-model-at-center/CLI+API-as-projections); the five bespoke routes become ordinary commands on it; parlay adds the subscriber capability-declaration semantics + aliasing window (09)
+Q4 — SUPERSEDED, PENDING CONFIRMATION — the Q4 "LIGHT + CONFIGURABLE (JSONL brute-scan)" verdict is superseded by the proposed `Store` interface + `GC_BEADS=file` FileStore path (no `bd`, no dolt, no server — note: FileStore does use a Go file flock on a sibling `.lock`). Final verdict left to the captain; Q4 reopened. T-09's substrate rides on this (09)
 
 STANDING DIRECTIVE (01-inline, closing note) — actively find scenarios where
 gascity can take over hard parts of parlay: "What does gascity do well, where
 we have to maintain less while gascity trucks along." Tracked as Q16.
+**DISCHARGED by the Q16 verdict in `09`** (plane split): the directive's
+search concluded with gascity adopted as the execution plane. The open gate
+(single-binary loss) and the kill-switch gate (formula-v2 expressiveness of
+#128 semantics) remain open and track separately.
