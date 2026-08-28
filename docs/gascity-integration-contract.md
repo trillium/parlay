@@ -388,10 +388,18 @@ The egress surface is deliberately narrow (`pkg/eventexport/project.go`):
   `ActorHash` (`:233`), `CityHash` (`:249`), `ProjectEvent` (`:269`), `ValidateEnvelope`
   (`:393`), `Validate` (`:479`), `ValidateBatch` (`:512`), and `IsOpaqueRef` (`:576`).
 
-**Coverage: 22 of Gas City's ~93 event types.** That is the reason this is an alternative and
-not the choice — a push feed that structurally cannot carry two thirds of the event space
-cannot be the primary event seam. It remains attractive for a narrow, well-defined subset
-because it removes parlay's polling cost entirely and inverts who must be up first.
+**Coverage: 22 of Gas City's 92 event types — 70 excluded, over two thirds.** Both numbers
+are exact at the pinned ref `7c817e064`, not estimates. Numerator: the 22 keys of
+`allowedTypes`, `pkg/eventexport/project.go:112-133` (the `var` is at `:111`). Denominator:
+the 92 constants in the single `const` block at `internal/events/events.go:19-329` (first
+`:20`, last `:328`), counted as tab-indented `Identifier = "lowercase.dotted.string"`
+assignments, tracked files at that ref, `_test.go` excluded — and no other non-test file
+under `internal/events/` declares one. The 92 strings are distinct, and all 22 allowlisted
+strings are among them, so the fraction compares like with like. That is the reason this is
+an alternative and not the choice — a push feed that structurally cannot carry two thirds of
+the event space cannot be the primary event seam. It remains attractive for a narrow,
+well-defined subset because it removes parlay's polling cost entirely and inverts who must be
+up first.
 
 If a later unit wants it, it is additive to the hybrid decision, not a replacement for it.
 
@@ -1021,7 +1029,7 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 | `SessionSetup` | the `CLAUDECODE` unset block (`:1226-1239`) | Semantically identical; different insertion point. |
 | `ReadyPromptPrefix` / `ReadyDelayMs` | the `READY_$$` handshake (`:1240-1243` — marker appended at `:1240`, wait at `:1243`; `:1219` is the explanatory comment only) | parlay's bespoke echo trick becomes configuration. The `$`-literal vs `$`-expanded distinction is deliberate — preserve the *intent*, not the mechanism. |
 | `requires_gc` | *(nothing — do not use)* | **Parsed and never compared.** §4. |
-| `[events.export]` | `POST /api/chat/events` | Superficially symmetric, opposite directions. Gas City's is opt-in egress, 22 of ~93 types, default-deny. parlay's is ingress with a one-name allowlist that **must not widen** (§8.5). |
+| `[events.export]` | `POST /api/chat/events` | Superficially symmetric, opposite directions. Gas City's is opt-in egress, 22 of 92 types, default-deny (§5). parlay's is ingress with a one-name allowlist that **must not widen** (§8.5). |
 
 ---
 
