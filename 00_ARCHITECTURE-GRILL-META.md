@@ -84,7 +84,7 @@ Q1 — REPLACE, LEAVE PAI — "we do not want to participate in PAI any longer";
 Q2 — PORT + PLUGINS/PAGES VITAL — eval/device-cmd/navigate/reload/alert/debug-log to go-server; TTS "yes, may drop" (pluggable); **plugins are vital** ("expand the capabilities of the commands that can be run"); **pages vital as sidecar** (generated on install/build, not in git); voice = string-eval capability only; panel-aiming vital but generalized to a command/response protocol driving any subscriber's UI; panel product vital (01-inline, OVERRIDES 02's "plugins/pages die")
 Q3 — FOLD — relay daemon ceases; parlay listen becomes a direct long-poll client (01-inline: "B is a good choice")
 Q3a — HYBRID CURSOR — client MAY pass its position (?after=); otherwise the server decides what the client receives; 50-line replay cap + loud skip kept (03-inline)
-Q4 — LIGHT + CONFIGURABLE — sensible smart default (JSONL brute-scan), storage backend swappable later (01-inline)
+Q4 — LIGHT + CONFIGURABLE — sensible smart default (JSONL brute-scan), storage backend swappable later (01-inline) — **SUPERSEDED in `09`, pending captain confirmation; see the later Q4 entry in this register and the status table above before acting on this line**
 Q4a — UNBOUNDED + DOCTOR — no auto-deletion; a doctor-style command tracks archive size/age/since-when so the user can dump at will; migrate rotated Bun history at cutover; search covers ring+archive (03-inline)
 Q5 — BEADS REQUIRED — "bd is still the required backend of this thing, we must use beads, it is a superior tool" (01-inline, OVERRIDES 04's soft-dep)
 Q5a — BEADS IS THE LAYER — beads is the necessary layer for spawn/status/aliveness and "should be depended upon to get that info" (03-inline, veto EXERCISED on 04's soft-dep)

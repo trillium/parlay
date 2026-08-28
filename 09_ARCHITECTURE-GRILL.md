@@ -1,8 +1,12 @@
 # 09 — Architecture grill, Round 5 (agent — recording the captain's decision)
 
-**Status recap.** Round 4's five open questions (Q2b, Q2c, Q2d, Q6b) plus
-Q16 were answered by the captain as a **directive** rather than through an
-even-numbered reply file: this repo adopts Gas City as its execution plane.
+**Status recap.** Round 4 left five questions open — Q2b, Q2c, Q2d, Q6b and
+Q16. The captain answered **Q2b, Q2d and Q16** as a **directive** rather than
+through an even-numbered reply file: this repo adopts Gas City as its
+execution plane. **Q2c and Q6b were not answered and carry forward OPEN,
+untouched** (see "Unchanged: Q2c and Q6b stay OPEN" below). That directive
+also **reopens Q4** — its Round 1 verdict is superseded by a proposed
+replacement whose final call is left to the captain, so Q4 is OPEN again.
 `08` was not created — this round is agent-authored documentation of a
 settled captain decision, so it lands in the next odd file (agent = odd per
 the `00` protocol; IDs are never reused, so the number is skipped, not
@@ -178,11 +182,15 @@ representing workflows as gascity formulas.
 What the repo shows now, for the next round to weigh:
 
 - The **v2 formula contract is already not merely linear**: `check`, `retry`,
-  `fanout`, `drain`, `on_complete`, and `timeout` are graph-only constructs
-  with a `formula_compiler >=2.0.0` declaration
-  (`docs/reference/specs/formula-spec-v2.md`, §1 "constructs marked
-  **graph-only**"), and step beads are independently routable with per-step
-  routing intent resolved at dispatch.
+  `drain`, `on_complete`, and `timeout` are the authorable graph-only step
+  constructs, requiring a `formula_compiler >=2.0.0` declaration
+  (`docs/reference/specs/formula-spec-v2.md` §1.3 "Steps", step-key table,
+  constructs marked **graph-only**). `fanout` is *not* authorable — it is an
+  orchestrator-owned control-bead kind (ibid. §2 "Compilation", the `gc.kind`
+  vocabulary table: "compiler/orchestrator-owned; authored values are not
+  validated and produce unspecified dispatcher behavior") that `on_complete`
+  compiles into as an injected `<step>-fanout` control step. Step beads are
+  independently routable with per-step routing intent resolved at dispatch.
 - That says "not only linear step sequences" — it does **not** yet say
   "can express supersession, SemVer-classified migration severity, and
   staleness propagation along dependency edges." Those are the #128 semantics
@@ -300,8 +308,13 @@ this plane-split decision supersedes:
 **Proposed replacement: the bead store's `Store` interface with the
 `GC_BEADS=file` provider as parlay's storage path.** Verified:
 `internal/beads/beads.go` defines the `Store` interface (CRUD + query +
-metadata + molecule instantiation); provider resolution in `cmd/gc/main.go`
-reads `GC_BEADS` first, then `[beads].provider`, defaulting to `"bd"`; the
+metadata + molecule instantiation); provider resolution lives in
+`cmd/gc/providers.go` — `configuredBeadsProviderValue` reads `GC_BEADS`
+first, then `[beads].provider` from `city.toml` (`:569-577`), and
+`rawBeadsProvider` defaults to `"bd"` (`:611-620`, whose doc comment states
+the priority verbatim); `cmd/gc/main.go`'s `openCityStore` is only the
+factory that builds the selected `Store` (`engdocs/architecture/beads.md`
+names both owners); the
 `"file"` provider is `FileStore`, a JSON-file persistent store with atomic
 writes (`engdocs/architecture/beads.md` §Architecture, §Configuration,
 invariant 15). That gives parlay a storage layer with **no `bd`, no dolt, no
