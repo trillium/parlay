@@ -529,8 +529,23 @@ unexported function in
 (`github.com/trillium/parlay/tools/parlay-bin`) from `tools/cli`
 (`github.com/trillium/parlay/tools/cli`) where `sweep`, `status`, `stale`, and `crew-state`
 live. It is not importable from there, and grep finds **no `gascity` reference at all** in
-`sweep.go`, `status_verb.go`, `stale.go`, or `crew_state.go`. The one repo-wide mention
-outside the file is `bin/parlay-spawn:1445`, and that is error-message text, not a call.
+`sweep.go`, `status_verb.go`, `stale.go`, or `crew_state.go`.
+
+Outside `gascity_spawn.go`, the verb and the predicate are reached from exactly these places:
+
+| Site | Kind |
+|---|---|
+| `tools/parlay-bin/main.go:38` — `case "gascity-ping": os.Exit(runGascityPingCommand(os.Args[2:]))` | **A real dispatch**, not prose. Every `gascity-ping` invocation reaches `gascityAlive` through it. |
+| `tools/parlay-bin/main.go:34`, `:36` | Sibling `gascity-spawn` / `gascity-stop` cases in the same dispatch block. |
+| `tools/parlay-bin/main.go:21` | Usage text naming the verb. |
+| `tools/parlay-bin/gascity_spawn_test.go:31`, `:44`, `:64`, `:102`, `:136` | Five direct `gascityAlive` calls, same package. |
+| `bin/parlay-spawn:1445` | Error-message text only. |
+| `docs/agent-notes/gascity-launcher-a-herdr-free-escape.md:48`, `:100` | Prose, twice. |
+
+`main.go` is **not** new coupling: it is the same module and the same `package main`, and it
+is precisely why the verb is reachable from outside the process at all. The cross-module claim
+is untouched — `tools/cli` (`parlay sweep`, `parlay status`) is a different Go module and
+still cannot see this unexported symbol.
 
 **The ordering rule survives the correction, for a better-stated reason.** `gascityAlive` has
 a **side effect**: it deletes the pid file when it observes a dead pid. It is simultaneously a
@@ -541,8 +556,10 @@ liveness predicate and a state mutation. P9 (spawn) and P10 (teardown) both chan
 > changed by two units at once, is how a stale-pid race ships.
 
 Any later unit that widens `gascityAlive`'s reach — for instance by making `parlay sweep` exec
-`parlay-bin gascity-ping` — **creates** the three-seam collision the reports describe. Doing
-so is a decision, not a refactor, and must be called out explicitly in that unit's PR body.
+`parlay-bin gascity-ping` — **creates** the three-seam collision the reports describe. The
+collision arrives the moment a *different module* execs that verb, and `main.go:38` is the
+exact surface that makes doing so easy. Doing so is a decision, not a refactor, and must be
+called out explicitly in that unit's PR body. That is a P9/P10 concern.
 
 ### 8.2 `crew-state` is a FROZEN WIRE CONTRACT
 
@@ -897,7 +914,7 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 | **bead** | **task** (federated store item) | Same word, different systems. A Gas City bead is a row in its own store; a parlay `task-…` is a bead in the PAI federation. `parlay spawn --bead <id>` binds the latter. Do not conflate. |
 | **city** | *(no parlay equivalent)* | A city is a config-plus-state root: `city.toml` + `.gc/`. parlay has no such scoping concept. Every city-scoped `gc` verb refuses outside one. |
 | `GC_HOME` | `PARLAY_STATE_HOME` / `PARLAY_DATA_DIR` | Loosely analogous. **Not interchangeable, and redirecting one does not redirect the other** — §9.1. |
-| **supervisor** | *(no parlay equivalent)* | parlay has **no supervisor at all** — zero `.plist` in the repo. Gas City's is a machine-wide singleton (§9.1). |
+| **supervisor** | *(no parlay equivalent for a **session** supervisor)* | **Different shape, not absence.** Parlay supervises **per service**: each deployable gets its own launchd job and its own plist under `~/Library/LaunchAgents/`, installed by that service's own `deploy/install.sh` from one of three tracked templates (`packages/go-server/deploy/com.parlay.go-server.plist.template`, `tools/relay/deploy/com.parlay.relay.plist.template`, `tools/eval-engine/deploy/com.parlay.eval-engine.plist.template`; see `packages/go-server/deploy/lib.sh:33`, `tools/relay/deploy/lib.sh:22`, `tools/eval-engine/deploy/install.sh:46`), plus the live `com.parlay.chat-server` job named in the project CLAUDE.md. There is no cross-service supervisor, no session concept, and nothing that owns an agent process. Gas City supervises **centrally**: one machine-wide singleton (launchd label `com.gascity.supervisor`, `127.0.0.1:8372`) owns sessions and their processes (§9.1). What parlay lacks is a **session** supervisor, not process supervision — and because both write into `~/Library/LaunchAgents/`, the two already share a namespace (§9.2). |
 | **runtime provider** | **launcher** | `PARLAY_SPAWN_LAUNCHER` selects parlay's; `cmd/gc/runtime_registry.go` registers Gas City's. |
 | `herdr` provider | the `herdr` launcher (default) | **Both shell out to the same `herdr` binary.** This is the reason the spawn lift is L and not XL. |
 | `subprocess` provider | the `gascity` launcher | Naming collision — parlay's `gascity` launcher is a from-scratch port of subprocess semantics and contains **no Gas City code** (§11). Neither has an input-injection channel. |
@@ -925,9 +942,11 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 
 `tools/parlay-bin/gascity_spawn.go` is **432 lines of parlay's own process supervision and
 contains zero Gas City code** (line count measured at this commit, after this PR's comment
-fix). It contains 54 occurrences of the literal string "gascity", 66 case-insensitively; the
-only reference to the
-actual project is line 8, inside the comment block, describing an import that was never made.
+fix). It contains 54 occurrences of the literal string "gascity", 66 case-insensitively. Line
+8 is the only reference to a Gas City **import path**
+(`github.com/gastownhall/gascity/internal/runtime/subprocess`), and it describes an import
+that was never made; the corrected comment block names the project in prose several more times
+(`:15-16`, `:21`, `:28`, `:35`), all of which are explanation rather than code.
 
 The flag `--gascity`, the value `PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn]
 launcher` key, and the project CLAUDE.md line describing "the `gascity` launcher" all imply an
