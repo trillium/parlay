@@ -588,9 +588,8 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --no-pii)    PII=0; shift ;;
       --worktree)  WANT_WORKTREE=1; shift ;;
       --account)   ACCOUNT="$2"; shift 2 ;;
---subprocess) LAUNCHER="subprocess"; shift ;;
-    --gascity)    LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
-
+      --subprocess) LAUNCHER="subprocess"; shift ;;
+      --gascity)   LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
       --bead)      BEAD_ID="$2"; shift 2 ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
@@ -785,7 +784,7 @@ while [ $# -gt 0 ]; do
     --pane)      IN_PLACE_PANE="$2"; shift 2 ;;
     --workspace) WORKSPACE="$2"; shift 2 ;;
     --subprocess) LAUNCHER="subprocess"; shift ;;
-      --gascity)    LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
+    --gascity)   LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
     --bead)      BEAD_ID="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;

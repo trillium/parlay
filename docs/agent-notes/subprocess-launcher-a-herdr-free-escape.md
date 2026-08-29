@@ -5,16 +5,18 @@
      rule; the full rationale lives here. -->
 
 `bin/parlay-spawn` supports a second launcher path, selected by
-`LAUNCHER` — resolved as a per-invocation `--subprocess` flag (whose
-pre-rename spelling `--gascity` is still accepted as a deprecated alias)
-> `PARLAY_SPAWN_LAUNCHER` env var (> the deprecated value `gascity` still
-normalizes to `subprocess` with a notice) > `~/.parlay/config.toml`'s
-`[spawn] launcher` (parsed via `python3 -c 'import tomllib'`, so a missing
-`python3` silently falls through to the default) > `herdr`. `--subprocess`
-is parsed in all three call shapes (single, `--ephemeral`, and batch
-`id=repo` dispatch, where it is a shared flag forwarded to every pair like
-`--worktree`) and is the cheapest way to try the launcher for one spawn
-without touching config or env. Registration, hello-reply, `context.json`,
+`LAUNCHER` — resolved as a per-invocation `--subprocess` flag >
+`PARLAY_SPAWN_LAUNCHER` env var > `~/.parlay/config.toml`'s `[spawn]
+launcher` (parsed via `python3 -c 'import tomllib'`, so a missing `python3`
+silently falls through to the default) > `herdr`. The pre-rename spelling is
+still accepted at every one of those three inputs for one release: the
+`--gascity` flag, and the value `gascity` from either the env var or the
+config key (both normalized to `subprocess` in one place, after the
+env-over-config resolution), each printing a deprecation notice on stderr.
+`--subprocess` is parsed in all three call shapes (single, `--ephemeral`,
+and batch `id=repo` dispatch, where it is a shared flag forwarded to every
+pair like `--worktree`) and is the cheapest way to try the launcher for one
+spawn without touching config or env. Registration, hello-reply, `context.json`,
 worktree setup (including the treehouse lease), DoD/prompt composition,
 pre-trust, `.env`/`.envrc` collection, and `identity --register` are all
 launcher-agnostic and run unconditionally regardless of `$LAUNCHER` — only

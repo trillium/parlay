@@ -80,7 +80,8 @@ env var nor `config.toml`, only its own flag.
 
 ## Launcher
 
-Controls how the agent tab is created. Default is `herdr`. Override via:
+Controls how the agent tab is created. Default is `herdr`. Override via, highest precedence first:
+- Flag: `--subprocess` (per-spawn; `--gascity` is the deprecated pre-rename spelling — still accepted, prints a notice)
 - Env: `PARLAY_SPAWN_LAUNCHER=subprocess` (`gascity` is the deprecated pre-rename spelling — still accepted, prints a notice)
 - Config: `~/.parlay/config.toml` under `[spawn]` → `launcher = "subprocess"`
 
