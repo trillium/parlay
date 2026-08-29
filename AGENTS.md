@@ -60,7 +60,7 @@ Reach for these instead of the hand-rolled equivalent.
 - **The canonical runtime dir is RESERVED** — a wrong-server relay in it is a fleet outage. Never let an ambient env var configure an installed singleton; a liveness probe is not a correctness probe. → [notes](docs/agent-notes/the-canonical-runtime-dir-is-reserved-robots-93xu.md)
 - **"Not answering /health" ≠ "not running"** — never force-restart a relay. → [notes](docs/agent-notes/not-answering-health-not-running-never-robots-mpr3.md)
 - **`mechanic-dispatch`'s canonical source is `tools/mechanic-dispatch/`**, not the `~/.local/bin` copy. Every launch must name its `--bead`. → [notes](docs/agent-notes/mechanic-dispatch-canonical-source-lives-in.md)
-- **The `gascity` launcher is a herdr-free escape hatch** in `bin/parlay-spawn`, selected by `--gascity` / `PARLAY_SPAWN_LAUNCHER` / config. Its stdin charter delivery is an explicitly unverified assumption. → [notes](docs/agent-notes/gascity-launcher-a-herdr-free-escape.md)
+- **The `subprocess` launcher is a herdr-free escape hatch** in `bin/parlay-spawn`, selected by `--subprocess` / `PARLAY_SPAWN_LAUNCHER` / config (`gascity` is its accepted, deprecated pre-rename spelling). Its stdin charter delivery is an explicitly unverified assumption. → [notes](docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md)
 
 ## Architecture pointers
 

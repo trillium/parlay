@@ -212,7 +212,7 @@ func shellQuote(s string) string {
 // This is NOT byte-for-byte parity with bin/context-reset and must not be
 // described as such. Nothing in this repo execs `parlay reset` today —
 // bin/reincarnate execs bin/context-reset, and bin/parlay-spawn only uses the
-// gascity subcommands — so this port has been allowed to drift: the bash side's
+// subprocess subcommands — so this port has been allowed to drift: the bash side's
 // clean-end pinned-handoff echo to the pane tty (robots-q5yx) has no equivalent
 // here (nor its --handoff <id> flag), and runResetCommand's --dry output omits
 // its handoff-echo line. Wiring

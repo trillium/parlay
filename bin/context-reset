@@ -59,7 +59,7 @@
 # answer onto the tty's INPUT, where the waiting shell reads it as typed characters.
 #
 # COVERAGE BOUNDARY: this echo needs a controlling terminal. An agent whose claude has
-# none — the gascity launcher runs `exec claude` inside a detached `sh -c` child, so
+# none — the subprocess launcher runs `exec claude` inside a detached `sh -c` child, so
 # `ps -o tty=` answers `??` — has no pane to write to, and its handoff is recorded in
 # the watcher log only. Terminal/herdr-launched agents are the covered case.
 #

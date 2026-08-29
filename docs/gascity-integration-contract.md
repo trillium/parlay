@@ -617,7 +617,7 @@ lines matching `gascity` case-insensitively** at this commit (`grep -ic gascity
 bin/parlay-spawn`), most of them shell variable names such as `GASCITY_GO_BIN` and the
 `--gascity` flag rather than prose; `:962`, `:963`, `:1318`, and `:1370` are cited here as
 examples, not as that file's enumeration. Text-only mentions also exist in
-`docs/agent-notes/gascity-launcher-a-herdr-free-escape.md` beyond the two rows below, and
+`docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md` beyond the two rows below, and
 across the remaining tracked files whose text matches the literal `gascity` — enumerate them
 with `git grep -l gascity` at the commit you are reading rather than trusting a count written
 here, because any commit that adds or removes a `gascity` mention changes it. Matching
@@ -635,7 +635,7 @@ orientation, not as an enumeration.
 | `tools/parlay-bin/gascity_spawn_test.go:31`, `:44`, `:64`, `:102`, `:136` | Five direct `gascityAlive` calls, same package. |
 | `bin/parlay-spawn:1365` — `"$GASCITY_GO_BIN" gascity-spawn "$AGENT_ID" …` | **A real production exec of the verb**, from a *different module* and from a *non-Go* caller. It reaches `gascityAlive` as the **first statement of `gascitySpawn`** (`gascity_spawn.go:251`), via `main.go:34` → `runGascitySpawnCommand` (`:89`) → `gascitySpawn` (`:250`). |
 | `bin/parlay-spawn:1445` | Error-message text only. |
-| `docs/agent-notes/gascity-launcher-a-herdr-free-escape.md:48`, `:100` | Prose, twice. |
+| `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:48`, `:100` | Prose, twice. |
 
 `main.go` is **not** new coupling: it is the same module and the same `package main`, and it
 is precisely why the verb is reachable from outside the process at all. The **symbol**-level
@@ -1052,7 +1052,7 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 
 **Scope of that correction:** it covers the Go comment block in
 `tools/parlay-bin/gascity_spawn.go`. A second copy of the same four-clause rejection survives
-uncorrected at `docs/agent-notes/gascity-launcher-a-herdr-free-escape.md:32-35`, is
+uncorrected at `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:32-35`, is
 deliberately left for P9, and is tracked as `task-fx4gn`. Nothing is claimed here about
 whether further copies exist elsewhere.
 

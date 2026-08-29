@@ -17,7 +17,7 @@ parlay-spawn <id> <name> <color> <task> [options]
 
 | Arg | Description |
 |-----|-------------|
-| `<id>` | Short slug — becomes the agent's registration name (e.g. `pr-auditor`, `gascity-scope`) |
+| `<id>` | Short slug — becomes the agent's registration name (e.g. `pr-auditor`, `gas-city-scope`) |
 | `<name>` | Display name shown in the panel (quoted, spaces OK) |
 | `<color>` | Hex color for the panel tab (e.g. `"#f97316"`) |
 | `<task>` | Multi-line task description delivered as the agent's startup prompt |
@@ -81,12 +81,12 @@ env var nor `config.toml`, only its own flag.
 ## Launcher
 
 Controls how the agent tab is created. Default is `herdr`. Override via:
-- Env: `PARLAY_SPAWN_LAUNCHER=gascity`
-- Config: `~/.parlay/config.toml` under `[spawn]` → `launcher = "gascity"`
+- Env: `PARLAY_SPAWN_LAUNCHER=subprocess` (`gascity` is the deprecated pre-rename spelling — still accepted, prints a notice)
+- Config: `~/.parlay/config.toml` under `[spawn]` → `launcher = "subprocess"`
 
 ```toml
 [spawn]
-launcher = "gascity"   # or "herdr" (default)
+launcher = "subprocess"   # or "herdr" (default); "gascity" is a deprecated alias
 ```
 
 ## Token injection
@@ -101,7 +101,7 @@ Spawn exits non-zero with a clear error if no token is found. Token is injected 
 
 ```bash
 # Spawn a background research agent on acc2 (from config.toml)
-parlay-spawn gascity-scope "Gascity Scope" "#f59e0b" \
+parlay-spawn gas-city-scope "Gascity Scope" "#f59e0b" \
   "Auto-discover what gascity is … reply when done." \
   --cwd ~/code/parlay
 
