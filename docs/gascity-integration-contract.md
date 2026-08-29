@@ -1048,7 +1048,7 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 
 ## 11. The stale comment block at `tools/parlay-bin/subprocess_spawn.go` (formerly `gascity_spawn.go`)
 
-**Corrected in this PR. The `gascity` → `subprocess` rename (PR #133) has already landed; this section is about the stale comment block.**
+**Corrected in this PR (P0, PR #132). The `gascity` → `subprocess` rename (PR #133) has already landed; this section is about the stale comment block.**
 
 **Scope of that correction:** it covers the Go comment block in
 `tools/parlay-bin/subprocess_spawn.go` (formerly `gascity_spawn.go` — it was renamed in PR
