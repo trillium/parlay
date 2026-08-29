@@ -71,9 +71,11 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
   correction landed in PR #132, and the `gascity`→`subprocess` rename in PR #133). Control
   verbs shell out with the verb's declared JSON flag (§5 — there is no persistent `--json` on
   the `gc` root) — the launcher is not a session owner, it is a boundary crossing.
-- **parlay seam obligation:** the launcher-selection seam (`PARLAY_SPAWN_LAUNCHER`), the
-  spawn-sidecar flag record, and non-force teardown ordering (P10) are parlay's side of the
-  line; process ownership itself is not.
+- **parlay seam obligation:** the launcher-selection seam (`PARLAY_SPAWN_LAUNCHER`) and the
+  spawn-sidecar flag record are parlay's side of the line; process ownership itself is not, and
+  neither is teardown gate *ordering*. P10's obligation is to **adopt** Gas City's gate ordering
+  and fail-closed posture while holding `isContentLanded` unchanged — §9.5: "P10 may reorder; it
+  may not replace." Same ruling as §3.2 and register row 3.
 - **Evidence anchor:** §5 HYBRID (control → shell-out); §10 translation rows `runtime provider →
   launcher`, `subprocess provider → the gascity launcher`; §11 (the launcher contains zero Gas
   City code).
@@ -143,7 +145,8 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
   provides — moving the oracle does not move the verdict contract.
 - **parlay seam obligation:** the status seam (P6-adjacent) may not change the exit codes or
   the three strings; anything new is a new channel.
-- **Evidence anchor:** §8.2 (BINDING); `internal/commands/crew_state.go:96-101`, `:233-244`.
+- **Evidence anchor:** §8.2 (BINDING); `tools/cli/internal/commands/crew_state.go:96-101`,
+  `:233-244`.
 
 ### 2.3 Supersession / drift policy
 
@@ -213,7 +216,7 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 
 These do not assign to one plane. Each names the split precisely and either the binding ruling
 that already settles it or, where it is open, the evidence that would. The register (§4)
-carries the status for each; §3.1 is register row 1, §3.2 row 3, §3.3 row 5, §3.4 row 6.
+carries the status for each; §3.1 is register row 1, §3.2 rows 3 and 7, §3.3 row 5, §3.4 row 6.
 
 ### 3.1 Liveness oracle vs liveness verdict
 
@@ -233,13 +236,20 @@ carries the status for each; §3.1 is register row 1, §3.2 row 3, §3.3 row 5, 
   City has its own reclaimers — the two §9.5 reclaimers reach **opposite verdicts on
   landability** for the same unpushed parlay branch, and §9.5's correction is to the *cost* of
   that disagreement: a disappearing checkout, not destroyed commits.
-  But parlay's `isContentLanded` content-landing check stays **unchanged** and binding (§9.5);
-  `--force` semantics split further: liveness / borrow-veto / lease are *not* force-bypassable
-  even in Gas City's posture.
+  But parlay's `isContentLanded` content-landing check stays **unchanged** and binding (§9.5).
+  `--force` semantics split further, and that sub-question is **open, not settled**: nothing in
+  the contract rules on `--force` — its one mention (`:825`) is `gc supervisor install` rollback
+  — while parlay's own force paths today waive the uncommitted-work and unpushed-but-unlanded
+  refusals with a warning, and the no-launch-spec hold plus the per-task-spawn proof. Which
+  refusals stay unconditional under Gas City's posture is register row 7.
 - **What settles it:** P10 (teardown ordering) fixes which gate runs first and which side owns
-  the veto; §9.5 names the danger (the weaker gate lets a local branch vouch for itself and
-  removes the checkout) and bounds it (the branch ref survives, so the work is recoverable).
+  the veto, and must state the `--force` bypass matrix explicitly (row 7); §9.5 names the danger
+  (the weaker gate lets a local branch vouch for itself and removes the checkout) and bounds it
+  (the branch ref survives, so the work is recoverable).
 - **Not a clean single owner.** Gas City owns the gate order; parlay owns the landability proof.
+- **Evidence anchor:** §9.5 (BINDING); `tools/cli/internal/commands/teardown.go:124-146`
+  (the two force-waivable refusals); `tools/cli/internal/commands/sweep.go:163`, `:182` (the
+  no-launch-spec hold and the per-task-spawn proof waiver).
 
 ### 3.3 Transport
 
@@ -278,14 +288,15 @@ carries the status for each; §3.1 is register row 1, §3.2 row 3, §3.3 row 5, 
 | 4 | supersession / drift severity policy | **open (parlay-owned but unspecified)** | Gas City detects drift, defines no migrate/supersede/severity policy; parlay has no defined policy either (Bucket C6) | the migrate/supersede/severity design (a parlay policy unit); until it lands, `gc formula version-check` is a raw signal, not a policy |
 | 5 | transport territory | **joint (open)** | "transport" means `/v0` (Gas City) to one seam and relay-singleton (parlay) to another (§3.3) | a seam naming *which* transport it means; parlay's relay singleton stays parlay regardless |
 | 6 | capability policy (R7) | **settled split** | — both owners are named | spawn scope R7: refuse to steer on a no-injection-channel provider; report is Gas City's, decision is parlay's |
+| 7 | `--force` bypass matrix under Gas City's posture | **open** | §9.5 rules on the gates and their ordering but not on which refusals `--force` may waive; the contract's only `--force` mention (`:825`) is `gc supervisor install` rollback, and parlay's force paths today waive uncommitted work, unlanded commits, the no-launch-spec hold, and the per-task-spawn proof | P10 must state the matrix explicitly — which refusals `--force` waives and which are unconditional — because no binding ruling does today |
 
-Three of the six are open (**#1**, **#4**, **#5**); rows 3 and 6 are *settled splits* — two
-owners each, but the ownership question itself is closed, so they are not unresolved. Of the
-open three, **#1** and **#5** are *self-limiting* — they resolve to "the oracle is whichever
+Four of the seven are open (**#1**, **#4**, **#5**, **#7**); rows 3 and 6 are *settled splits*
+— two owners each, but the ownership question itself is closed, so they are not unresolved. Of
+the open four, **#1** and **#5** are *self-limiting* — they resolve to "the oracle is whichever
 probe the currently-shadowed P7 flips" (#1) or "the relay stays parlay regardless of which
 transport a future seam means" (#5), so they are permanent unknowns only if nobody files the
 seam; **#4** is open because the supersession policy genuinely does not exist yet on either
-side.
+side; and **#7** is open because no binding ruling covers `--force` at all.
 
 ---
 
