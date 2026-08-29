@@ -74,8 +74,9 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 - **parlay seam obligation:** the launcher-selection seam (`PARLAY_SPAWN_LAUNCHER`) and the
   spawn-sidecar flag record are parlay's side of the line; process ownership itself is not, and
   neither is teardown gate *ordering*. P10's obligation is to **adopt** Gas City's gate ordering
-  and fail-closed posture while holding `isContentLanded` unchanged — §9.5: "P10 may reorder; it
-  may not replace." Same ruling as §3.2 and register row 3.
+  and fail-closed posture while holding parlay's `hasUnpushed` + `isContentLanded` gate pair
+  unchanged — §9.5: "P10 may reorder; it may not replace." Same ruling as §3.2 and register
+  row 3.
 - **Evidence anchor:** §5 HYBRID (control → shell-out); §10 translation rows `runtime provider →
   launcher`, `subprocess provider → the gascity launcher`; §11 (the launcher contains zero Gas
   City code).
@@ -236,7 +237,9 @@ carries the status for each; §3.1 is register row 1, §3.2 rows 3 and 7, §3.3 
   City has its own reclaimers — the two §9.5 reclaimers reach **opposite verdicts on
   landability** for the same unpushed parlay branch, and §9.5's correction is to the *cost* of
   that disagreement: a disappearing checkout, not destroyed commits.
-  But parlay's `isContentLanded` content-landing check stays **unchanged** and binding (§9.5).
+  But parlay's `hasUnpushed` + `isContentLanded` gate pair stays **unchanged** and binding
+  (§9.5) — it is the stronger of the three gates, and §9.5 forbids both weakening it to match
+  either Gas City gate and adopting `HasUnreachableCommitsResult` in its place.
   `--force` semantics split further, and that sub-question is **open, not settled**: nothing in
   the contract rules on `--force` — its one mention (`:825`) is `gc supervisor install` rollback
   — while parlay's own force paths today waive the uncommitted-work and unpushed-but-unlanded
@@ -262,6 +265,12 @@ carries the status for each; §3.1 is register row 1, §3.2 rows 3 and 7, §3.3 
   parlay's ownership regardless of who carries the bytes.
 - **Not a clean single owner.** Gas City carries session bytes; parlay owns the relay singleton
   and the human chat pipe.
+- **Evidence anchor:** §5 HYBRID (liveness/event streams → typed `/v0` HTTP + SSE); §3
+  (`Last-Event-ID` / `after_cursor` durable cursors, `:240-241`); §10 translation row `event
+  Seq → cursor`; for the parlay side, `docs/agent-notes/the-relay-is-a-per-runtime-robots-buu8.md`
+  (per-runtime-dir singleton bound to one server, 104-byte socket cap) and
+  `docs/agent-notes/the-canonical-runtime-dir-is-reserved-robots-93xu.md` (the reserved canonical
+  runtime dir).
 
 ### 3.4 Capability declaration vs capability policy
 
@@ -278,13 +287,13 @@ carries the status for each; §3.1 is register row 1, §3.2 rows 3 and 7, §3.3 
 
 ---
 
-## 4. The boundary register — unresolved items and what settles each
+## 4. The boundary register — every split, its status, and what settles each
 
 | # | item | status | unresolved because | what settles it |
 |---|---|---|---|---|
 | 1 | liveness oracle source | **joint (open)** | oracle can move to Gas City (P7) but verdict contract stays parlay (§3.1); which `.go` probe is authoritative today is ad hoc | P7 shadow flip closes the oracle question; the verdict contract is already closed (§8.2) |
 | 2 | `crew-state` verdict provenance | **settled** | — | §8.2 BINDING: exit codes + source suffixes frozen, new channels only |
-| 3 | safety-gate split (`isContentLanded`) | **settled split** | — the ruling is closed; only its *implementation* is pending | §9.5 BINDING already settles it: parlay's content-landing proof stays unchanged, gate *order* moves to Gas City. P10 implements that ruling; it does not decide it |
+| 3 | safety-gate split (`hasUnpushed` + `isContentLanded`) | **settled split** | — the ruling is closed; only its *implementation* is pending | §9.5 BINDING already settles it: parlay's `hasUnpushed` + `isContentLanded` pair stays unchanged and unweakened, gate *order* moves to Gas City. P10 implements that ruling; it does not decide it |
 | 4 | supersession / drift severity policy | **open (parlay-owned but unspecified)** | Gas City detects drift, defines no migrate/supersede/severity policy; parlay has no defined policy either (Bucket C6) | the migrate/supersede/severity design (a parlay policy unit); until it lands, `gc formula version-check` is a raw signal, not a policy |
 | 5 | transport territory | **joint (open)** | "transport" means `/v0` (Gas City) to one seam and relay-singleton (parlay) to another (§3.3) | a seam naming *which* transport it means; parlay's relay singleton stays parlay regardless |
 | 6 | capability policy (R7) | **settled split** | — both owners are named | spawn scope R7: refuse to steer on a no-injection-channel provider; report is Gas City's, decision is parlay's |
