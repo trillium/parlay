@@ -1046,17 +1046,18 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 
 ---
 
-## 11. The stale comment block at `tools/parlay-bin/gascity_spawn.go`
+## 11. The stale comment block at `tools/parlay-bin/subprocess_spawn.go` (formerly `gascity_spawn.go`)
 
-**Corrected in this PR. Not renamed, not restructured — that is P9's job.**
+**Corrected in this PR. The `gascity` → `subprocess` rename (PR #133) has already landed; this section is about the stale comment block.**
 
 **Scope of that correction:** it covers the Go comment block in
-`tools/parlay-bin/gascity_spawn.go`. A second copy of the same four-clause rejection lived at
+`tools/parlay-bin/subprocess_spawn.go` (formerly `gascity_spawn.go` — it was renamed in PR
+#133, and the old path is preserved here for the commit-anchored anchors below). A second
+copy of the same four-clause rejection lived at
 `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:32-35` (line numbers as the file
 stood before the rename; the retired-rejection passage now reads at `:35-39`); it has since been
 **corrected**, not merely deferred — PR #133 (the `gascity` → `subprocess` rename, merged
-2026-08-29) updated that note, closing the rename work this section assigns to P9 — the flag,
-the env value, the config key, and the note file — and `task-fx4gn`, in the same move. The
+2026-08-29) updated that note and closed `task-fx4gn` in the same move. The
 spawn seam that §7 labels P9 is a separate unit and has not landed; nothing here moves it
 ahead of P0→P1→P4→P6→P7→P11. The note now reads "That rejection is retired — corrected
 2026-08-28 (P0) in `docs/gascity-integration-contract.md`". Nothing is claimed here about
@@ -1079,13 +1080,16 @@ mentions the project under either spelling — recheck with `sed -n '1,45p'
 tools/parlay-bin/gascity_spawn.go | grep -in -e gascity -e 'gas city'` at the commit you are
 reading rather than trusting a total written here.
 
-The flag `--gascity`, the value `PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn]
-launcher` key, and the project CLAUDE.md line describing "the `gascity` launcher" all imply an
-integration that **does not exist**. Anyone scoping this seam by reading the flag name reaches
-a wrong conclusion. At least one scoping worker nearly did.
+This seam's misleading naming is historical: before PR #133 the flag `--gascity`, the value
+`PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn] launcher` key, and the project
+CLAUDE.md line describing "the `gascity` launcher" all pointed at an integration that
+**does not exist** — the old name misled at least one scoping worker into reaching a wrong
+conclusion by reading the flag name. #133 renamed that surface to `subprocess`, so the old
+spellings now survive only as deprecated aliases.
 
-**Renaming is P9's, and it is not cosmetic** — the flag, the env value, the config key, and
-the docs move together or not at all.
+**That rename has landed** (PR #133) — the flag, the env value, and the config key were
+renamed to `subprocess` with the old `gascity` values retained as deprecated aliases, and the
+docs and the note file moved together.
 
 ### What was wrong, clause by clause
 
