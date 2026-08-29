@@ -28,8 +28,11 @@ The working hypothesis that this document tests, capability by capability, is:
 > human/voice relay that no execution runtime is responsible for.
 
 Most capabilities land cleanly on one side. A minority are **joints** — genuinely split
-between the planes in a way that makes a single "owner" claim false. Those are flagged
-unresolved in the boundary register (§4), with the evidence that would settle each one.
+between the planes in a way that makes a single "owner" claim false. Every joint is entered in
+the boundary register (§4), which records whether the split is **settled** (a binding ruling
+already names both owners) or still **open**, and for every open item the evidence that would
+settle it. A joint is not automatically unresolved: a split can be settled and still have two
+owners.
 
 ## Naming note
 
@@ -47,15 +50,16 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 ### 1.1 Sessions
 
 - **Owner:** Gas City.
-- **Why:** Gas City's `session` is the core mapping target for parlay's `agent` (§6). A Gas
-  City session is bead-backed and survives supervisor restart; parlay's agent is a directory
-  under `~/.parlay/agents/<id>/`. The spawn scope established gas city's session runtime is
+- **Why:** Gas City's `session` is the core mapping target for parlay's `agent` — §10's
+  translation row: a Gas City session is bead-backed and survives supervisor restart, while a
+  parlay agent is a directory under `~/.parlay/agents/<id>/`. §6 does not settle the mapping;
+  it settles who may write the record. The spawn scope established gas city's session runtime is
   the richer superset — parlay's launcher does not implement a session contract and never will,
   because Gas City already owns it.
 - **parlay seam obligation:** the spawn seam (P9) binds to the Gas City session bead as the
   **sole writer** of its identity fields (id, agent name, worktree, project, bead binding,
   creation time) — §6(a).
-- **Evidence anchor:** §6(a) of the binding contract; `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md` (the from-scratch port holds lifecycle semantics, not a session contract).
+- **Evidence anchor:** §10 `session → agent` row (the mapping); §6(a) of the binding contract (the sole-writer obligation); `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md` (the from-scratch port holds lifecycle semantics, not a session contract).
 
 ### 1.2 Process control
 
@@ -205,10 +209,11 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 
 ---
 
-## 3. Joints — genuinely split, flagged unresolved
+## 3. Joints — genuinely split between the planes
 
-These do not assign to one plane. Each names the split precisely and the evidence that would
-settle the boundary.
+These do not assign to one plane. Each names the split precisely and either the binding ruling
+that already settles it or, where it is open, the evidence that would. The register (§4)
+carries the status for each; §3.1 is register row 1, §3.2 row 3, §3.3 row 5, §3.4 row 6.
 
 ### 3.1 Liveness oracle vs liveness verdict
 
@@ -269,16 +274,18 @@ settle the boundary.
 |---|---|---|---|---|
 | 1 | liveness oracle source | **joint (open)** | oracle can move to Gas City (P7) but verdict contract stays parlay (§3.1); which `.go` probe is authoritative today is ad hoc | P7 shadow flip closes the oracle question; the verdict contract is already closed (§8.2) |
 | 2 | `crew-state` verdict provenance | **settled** | — | §8.2 BINDING: exit codes + source suffixes frozen, new channels only |
-| 3 | safety-gate split (`isContentLanded`) | **settled** | — | §9.5 BINDING: unchanged content-landing proof, gate *order* moves to Gas City (P10) |
+| 3 | safety-gate split (`isContentLanded`) | **settled split** | — the ruling is closed; only its *implementation* is pending | §9.5 BINDING already settles it: parlay's content-landing proof stays unchanged, gate *order* moves to Gas City. P10 implements that ruling; it does not decide it |
 | 4 | supersession / drift severity policy | **open (parlay-owned but unspecified)** | Gas City detects drift, defines no migrate/supersede/severity policy; parlay has no defined policy either (Bucket C6) | the migrate/supersede/severity design (a parlay policy unit); until it lands, `gc formula version-check` is a raw signal, not a policy |
 | 5 | transport territory | **joint (open)** | "transport" means `/v0` (Gas City) to one seam and relay-singleton (parlay) to another (§3.3) | a seam naming *which* transport it means; parlay's relay singleton stays parlay regardless |
-| 6 | capability policy (R7) | **settled** | — | spawn scope R7: refuse to steer on a no-injection-channel provider; report is Gas City's, decision is parlay's |
+| 6 | capability policy (R7) | **settled split** | — both owners are named | spawn scope R7: refuse to steer on a no-injection-channel provider; report is Gas City's, decision is parlay's |
 
-Of the six, three are open: **#1** and **#5** are *self-limiting* — they resolve to "the oracle
-is whichever probe the currently-shadowed P7 flips" (#1) or "the relay stays parlay regardless
-of which transport a future seam means" (#5), so they are permanent unknowns only if nobody
-files the seam; **#4** is open because the supersession policy genuinely does not exist yet on
-either side.
+Three of the six are open (**#1**, **#4**, **#5**); rows 3 and 6 are *settled splits* — two
+owners each, but the ownership question itself is closed, so they are not unresolved. Of the
+open three, **#1** and **#5** are *self-limiting* — they resolve to "the oracle is whichever
+probe the currently-shadowed P7 flips" (#1) or "the relay stays parlay regardless of which
+transport a future seam means" (#5), so they are permanent unknowns only if nobody files the
+seam; **#4** is open because the supersession policy genuinely does not exist yet on either
+side.
 
 ---
 

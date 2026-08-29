@@ -1052,7 +1052,8 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 
 **Scope of that correction:** it covers the Go comment block in
 `tools/parlay-bin/gascity_spawn.go`. A second copy of the same four-clause rejection lived at
-`docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:32-35`; it has since been
+`docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:32-35` (line numbers as the file
+stood before the rename; the retired-rejection passage now reads at `:35-39`); it has since been
 **corrected**, not merely deferred — PR #133 (the `gascity` → `subprocess` rename, merged
 2026-08-29) updated that note, closing the rename work this section assigns to P9 — the flag,
 the env value, the config key, and the note file — and `task-fx4gn`, in the same move. The
