@@ -1083,13 +1083,25 @@ reading rather than trusting a total written here.
 This seam's misleading naming is historical: before PR #133 the flag `--gascity`, the value
 `PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn] launcher` key, and the project
 CLAUDE.md line describing "the `gascity` launcher" all pointed at an integration that
-**does not exist** — the old name misled at least one scoping worker into reaching a wrong
-conclusion by reading the flag name. #133 renamed that surface to `subprocess`, so the old
-spellings now survive only as deprecated aliases.
+**does not exist** — the old name nearly misled a scoping worker into reaching a wrong
+conclusion by reading the flag name. **That rename has landed** (PR #133): the flag, the env
+value, and the config key were renamed to `subprocess`, and the docs and the note file moved
+together. It left two *different* kinds of `gascity` residue behind, and they must not be
+conflated:
 
-**That rename has landed** (PR #133) — the flag, the env value, and the config key were
-renamed to `subprocess` with the old `gascity` values retained as deprecated aliases, and the
-docs and the note file moved together.
+- **Time-boxed deprecated aliases.** The flag `--gascity`, the env value
+  `PARLAY_SPAWN_LAUNCHER=gascity`, the `config.toml [spawn] launcher` value, and the
+  `gascity-spawn` / `gascity-stop` / `gascity-ping` verbs still work, but they warn and are
+  slated for removal after the next release — "Still works; will be removed after the next
+  release." (`tools/parlay-bin/main.go:53`).
+- **A deliberately retained live path.** The literal `gascity` directory segment in
+  `defaultSubprocessStateDir` (`tools/parlay-bin/subprocess_spawn.go:96-103`), passed and
+  printed as `$AGENT_DIR/gascity` at `bin/parlay-spawn:1381` and `:1388`, is **not** a
+  deprecated alias and **must not** be renamed or removed on the schedule that governs the
+  aliases above. Its own comment states why: the segment "IS the on-disk state path of every
+  agent already running under the pre-rename launcher name. Renaming the directory would
+  orphan those sessions — a post-rename subprocess-stop would no longer find its own
+  child's pid file."
 
 ### What was wrong, clause by clause
 
