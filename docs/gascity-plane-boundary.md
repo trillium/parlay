@@ -1,0 +1,304 @@
+# The position of the plane boundary
+
+## Purpose and standing
+
+This document states, capability by capability, where the Gas City ↔ parlay boundary falls:
+what Gas City owns, what parlay owns, and the seam obligation parlay must meet for each split
+to stay honest.
+
+**It is a documentation artifact, not a contract.** It reads
+[`docs/gascity-integration-contract.md`](gascity-integration-contract.md) (the binding
+document) and does not re-open anything that document has already settled. Where this section
+would contradict the contract, the contract wins; every capability below restates and cites
+the binding ruling rather than re-deriving it.
+
+**It is documentation-only.** Nothing here changes Go, TS, or config. If a capability's split
+turns out to require a code change to honor, that change is a separate work item, not part of
+this document.
+
+## The plane thesis
+
+The working hypothesis that this document tests, capability by capability, is:
+
+> **Gas City is the EXECUTION plane** — it owns process lifecycle, liveness, health, the event
+> bus, dispatch, and the typed `/v0` HTTP + SSE transport.
+>
+> **parlay is the PROCESS + REPRESENTATION plane** — it owns the policies, frozen wire
+> contracts, security boundary, owner/record rules, agent-facing representation, and the
+> human/voice relay that no execution runtime is responsible for.
+
+Most capabilities land cleanly on one side. A minority are **joints** — genuinely split
+between the planes in a way that makes a single "owner" claim false. Those are flagged
+unresolved in the boundary register (§4), with the evidence that would settle each one.
+
+## Naming note
+
+Gas City's subprocess launcher was renamed from `gascity` to `subprocess` in PR #133 (the
+`gascity`→`subprocess` rename, merged 2026-08-29); `gascity` remains a deprecated alias.
+Where a capability cites the launcher or its note file, the current name is `subprocess` and
+the file is `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md`.
+
+---
+
+## 1. The execution plane — Gas City owns these
+
+Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence anchor**.
+
+### 1.1 Sessions
+
+- **Owner:** Gas City.
+- **Why:** Gas City's `session` is the core mapping target for parlay's `agent` (§6). A Gas
+  City session is bead-backed and survives supervisor restart; parlay's agent is a directory
+  under `~/.parlay/agents/<id>/`. The spawn scope established gas city's session runtime is
+  the richer superset — parlay's launcher does not implement a session contract and never will,
+  because Gas City already owns it.
+- **parlay seam obligation:** the spawn seam (P9) binds to the Gas City session bead as the
+  **sole writer** of its identity fields (id, agent name, worktree, project, bead binding,
+  creation time) — §6(a).
+- **Evidence anchor:** §6(a) of the binding contract; `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md` (the from-scratch port holds lifecycle semantics, not a session contract).
+
+### 1.2 Process control
+
+- **Owner:** Gas City's runtime/provider layer.
+- **Why:** `Provider.Start/Stop/Interrupt` and the supervisor singleton own the process; the
+  `subprocess` provider is gas city semantics (detached `sh -c` child), and parlay's
+  `subprocess` launcher (`tools/parlay-bin/subprocess_spawn.go`) is a from-scratch port of
+  exactly those semantics — it contains **no Gas City code** (§11; the §11 comment-block
+  correction landed in PR #132, and the `gascity`→`subprocess` rename in PR #133). Control
+  verbs shell out with `--json` (§5) — the launcher is not a session owner, it is a boundary
+  crossing.
+- **parlay seam obligation:** the launcher-selection seam (`PARLAY_SPAWN_LAUNCHER`), the
+  spawn-sidecar flag record, and non-force teardown ordering (P10) are parlay's side of the
+  line; process ownership itself is not.
+- **Evidence anchor:** §5 HYBRID (control → shell-out); §10 translation rows `runtime provider →
+  launcher`, `subprocess provider → the gascity launcher`; §11 (the launcher contains zero Gas
+  City code).
+
+### 1.3 Health / patrol
+
+- **Owner:** Gas City's health patrol / controller.
+- **Why:** Gas City reconciles `[[agent]]` declarations against running sessions in its
+  singleton reconcile loop (`cmd/gc/city_runtime.go`). The liveness scope separates parlay's
+  "only supervisor gap" — nothing schedules `parlay sweep` — from what Gas City does: patrol
+  the sessions it already owns.
+- **parlay seam obligation:** none for the patrol itself; parlay must keep its own
+  liveness **verdict** machinery correct (see §3.1) — it is the boundary between Gas City's
+  observation and parlay's representation.
+- **Evidence anchor:** liveness scope (M — design port, not handover); §10 `supervisor`
+  row: "parlay lacks a **session** supervisor, not process supervision."
+
+### 1.4 The event bus
+
+- **Owner:** Gas City's `internal/events` recorder, rotation, and `Seq`.
+- **Why:** Gas City serialises every writer in a city through one append-only event log with
+  gzip rotation (§8.3). parlay's `~/exchange/chat-history.jsonl` is live history and is
+  explicitly **not** equivalent (§10). The bus itself belongs to Gas City under HYBRID
+  (§5: liveliness/event streams → typed `/v0` HTTP + SSE).
+- **parlay seam obligation:** the **loud-skip cursor semantic** the events scope surfaced —
+  `HistorySinceCursor`'s reset/skipped behaviour, which Gas City hooks silently floor — is a
+  parlay-side contract (Q3a HYBRID CURSOR resolution). The `tail -F` CHAT_MSG chat relay stays
+  parlay (see §3.4).
+- **Evidence anchor:** §5; §8.3 (events seam owns the 250 ms shared write budget); §10
+  `event Seq → cursor`, `.gc/events.jsonl → ~/exchange/chat-history.jsonl`.
+
+### 1.5 Dispatch (order send / steering)
+
+- **Owner:** Gas City.
+- **Why:** Gas City's order/sling dispatcher steers a running session — terminal injection that
+  parlay has no native equivalent for (`parlay send` is a chat POST the agent's own listen loop
+  receives, explicitly *not* the same operation as Gas City `Nudge`; §10). Execution-plane
+  steering belongs to Gas City under HYBRID control.
+- **parlay seam obligation:** decide **when** to steer (policy, §3.4) and surface the result to
+  the human; the mechanical delivery of the order to the session is Gas City's.
+- **Evidence anchor:** §10 `Nudge → (nearest: parlay send)` row; §3.4 capability policy.
+
+---
+
+## 2. The process + representation plane — parlay owns these
+
+### 2.1 Staleness / agent collection
+
+- **Owner:** parlay.
+- **Why:** Gas City has **no** staleness/wedge policy. The `stale`/`sweep` hold-guards each
+  came from a real incident; the four incident-derived guards are parlay's, and the liveness
+  scope confirmed the reaper cannot act on a parlay worktree regardless of where the oracle
+  lives. Nothing in Gas City supersedes `parlay sweep`/`stale`.
+- **parlay seam obligation:** unchanged — keep the guards; `parlay sweep [--apply]` remains the
+  only collector that can see parlay agents.
+- **Evidence anchor:** liveness scope (M); §8.2; AGENTS.md "Verbs that exist because a naive
+  command lies" (`parlay sweep`).
+
+### 2.2 The frozen liveness wire contract (`crew-state`)
+
+- **Owner:** parlay.
+- **Why:** `crew-state` exit codes 3/4/5/6 and the three source suffixes are a **frozen wire
+  contract** (§8.2), consumed by `parlay sweep` and `parlay stale`. Four guards, four real
+  incidents. This is parlay representation that rides on whatever liveness oracle Gas City
+  provides — moving the oracle does not move the verdict contract.
+- **parlay seam obligation:** the status seam (P6-adjacent) may not change the exit codes or
+  the three strings; anything new is a new channel.
+- **Evidence anchor:** §8.2 (BINDING); `internal/commands/crew_state.go:96-101`, `:233-244`.
+
+### 2.3 Supersession / drift policy
+
+- **Owner:** parlay.
+- **Why:** the topology scope found `gc formula version-check` detects drift but there is no
+  migrate/supersede/severity **policy** — Gas City surfaces the fact of drift, it does not
+  decide what parlay does about it. That policy is parlay's to define (and currently
+  includes the migrate/supersede gap).
+- **parlay seam obligation:** define the migrate/supersede/severity policy; Gas City provides
+  the drift signal, not the decision.
+- **Evidence anchor:** topology scope (Bucket C6 formula/supersede gap); no binding contract
+  ruling yet — this is genuinely open; see register row 4.
+
+### 2.4 The security boundary (ingress)
+
+- **Owner:** parlay.
+- **Why:** `POST /api/chat/events` is parlay's **out-of-process ingress seam**, allowlisted
+  one name per real producer, default one entry (`tool_event`) — §8.5 HARD BOUNDARY. The
+  `GUARDED_CHAT_PATHS` registry and the no-auth chat API rule are parlay's. No execution
+  runtime is responsible for parlay's ingress security.
+- **parlay seam obligation:** a new ingress producer is a policy decision, not a wiring
+  detail; `JSON_EXEMPT_PATHS` is a closed three-member list. The events seam may not widen the
+  allowlist.
+- **Evidence anchor:** §8.5; `packages/go-server/internal/handlers/events_ingress.go`; §5
+  `[events.export]` → `POST /api/chat/events` row (parlay's ingress **must not widen**).
+
+### 2.5 Owner / record rules
+
+- **Owner:** parlay (as policy); the spawn seam is the sole writer against the Gas City bead.
+- **Why:** §6 is a **parlay policy decision** about who may write the agent record — it
+  constrains parlay's own seams, and it chooses the Gas City session bead as the substrate.
+  The *substrate* (JSONL vs beads Go import) is still open (§6(d), Q4); whichever wins, the
+  **single-writer rule** is parlay's to hold.
+- **parlay seam obligation:** spawn creates exactly one bead; status writes state and **never
+  creates**; an absent bead is an error to report, not a bead to mint; fail-open posture from
+  `worklink.go` is load-bearing.
+- **Evidence anchor:** §6(a)–(d); `tools/cli/internal/identity/worklink.go:75-85`.
+
+### 2.6 Voice + human relay
+
+- **Owner:** parlay.
+- **Why:** the channel split (Q16) assigns TTS and the human/voice relay unconditionally to
+  parlay's representation plane. Gas City's `Nudge` is terminal injection and is **not** `parlay
+  send`; the two must not be mapped 1:1 (§10). The chat spool / relay is live history parlay
+  must not clobber.
+- **parlay seam obligation:** keep TTS under `$PAI_DIR`, keep the chat relay on parlay's side,
+  and never treat `Nudge` as the voice channel.
+- **Evidence anchor:** §10 `Nudge → (nearest: parlay send)` row ("Lossy and dangerous").
+- **Source of authority:** Q16 channel split (topology scope).
+
+### 2.7 Routing-with-confidence policy
+
+- **Owner:** parlay.
+- **Why:** Gas City's `AddressDirectory.ResolveAddress` *refuses* an ambiguous address rather
+  than picking a winner (§10) — the execution plane's guarantee. But "routing with confidence /
+  progressive hardening" — the policy about when parlay may act on a resolved address and when
+  it must hold — is parlay-representation, explicitly assigned to parlay in the topology scope,
+  §4.3. The refusal mechanism is Gas City's; the confidence policy is parlay's.
+- **parlay seam obligation:** express the confidence policy; use Gas City's refusal as the
+  enforcement backstop, not as the whole decision.
+- **Evidence anchor:** §10 `AddressDirectory.ResolveAddress → agent-id lookup`; topology
+  scope §4.3.
+
+---
+
+## 3. Joints — genuinely split, flagged unresolved
+
+These do not assign to one plane. Each names the split precisely and the evidence that would
+settle the boundary.
+
+### 3.1 Liveness oracle vs liveness verdict
+
+- **The split:** Gas City can provide the *observation* (an `IsRunning`/`ProcessAlive`-style
+  truth, or a `/health` probe). The *verdict* — whether the agent is `status`, `status-unenrolled`,
+  or `status-degraded`, and the frozen exit code that results — is parlay representation and
+  must not move.
+- **What settles it:** the shadow-ordering rule (§7) already sequences this: P7 (liveness,
+  [SHADOW]) runs the oriented seam behind a flag feeding the same consumer, then flips the
+  oracle while the verdict contract stays parlay's. Until P7 flips, parlay's registry ∩
+  process-table rule (robots-jkwc) is the oracle and is authoritative.
+- **Not a clean single owner.** Gas City owns the clock; parlay owns the gauge.
+
+### 3.2 Safety gates / teardown ordering
+
+- **The split:** Gas City's *ordering + posture* teardown gates are adopted (P10), and Gas
+  City has its own reclaimers (the two §9.5 reclaimers disagree on *cost*, not *landability*).
+  But parlay's `isContentLanded` content-landing check stays **unchanged** and binding (§9.5);
+  `--force` semantics split further: liveness / borrow-veto / lease are *not* force-bypassable
+  even in Gas City's posture.
+- **What settles it:** P10 (teardown ordering) fixes which gate runs first and which side owns
+  the veto; §9.5 names the danger (the two reclaimers disagree on cost, not on landability).
+- **Not a clean single owner.** Gas City owns the gate order; parlay owns the landability proof.
+
+### 3.3 Transport
+
+- **The split:** "transport" is ambiguous across the boundary. The typed `/v0` HTTP + SSE is
+  Gas City (session transport, durable cursors, LAST EVENTS). The **relay singleton** — one per
+  runtime dir, bound to one server, unix-socket-capped — is parlay infra with a reserved
+  canonical runtime dir. And the human chat relay (`tail -F` CHAT_MSG) is parlay representation.
+- **What settles it:** a future seam must name *which transport* it means. The durable-cursor
+  transport is Gas City's seam; the relay is a **parlay-deployment** concern and stays under
+  parlay's ownership regardless of who carries the bytes.
+- **Not a clean single owner.** Gas City carries session bytes; parlay owns the relay singleton
+  and the human chat pipe.
+
+### 3.4 Capability declaration vs capability policy
+
+- **The split:** Gas City *reports* capabilities (`Capabilities()`, `ProviderCapabilities`).
+  The *policy* — what parlay will and will not do with a reported capability — is parlay's. The
+  spawn scope's R7 is the concrete case: parlay must **refuse to steer** a session whose
+  provider reports no injection channel. Gas City reports "no injection channel"; parlay
+  decides that means "refuse to steer".
+- **What settles it:** the seam that consumes a capability report is parlay's policy layer;
+  the report itself is Gas City's. The owner of the *decision to act* is the owner of the
+  capability — and that decision is parlay's.
+- **Not a clean single owner.** Gas City is the source of the fact; parlay is the source of the
+  meaning.
+
+---
+
+## 4. The boundary register — unresolved items and what settles each
+
+| # | item | status | unresolved because | what settles it |
+|---|---|---|---|---|
+| 1 | liveness oracle source | **joint (open)** | oracle can move to Gas City (P7) but verdict contract stays parlay (§3.1); which `.go` probe is authoritative today is ad hoc | P7 shadow flip closes the oracle question; the verdict contract is already closed (§8.2) |
+| 2 | `crew-state` verdict provenance | **settled** | — | §8.2 BINDING: exit codes + source suffixes frozen, new channels only |
+| 3 | safety-gate split (`isContentLanded`) | **settled** | — | §9.5 BINDING: unchanged content-landing proof, gate *order* moves to Gas City (P10) |
+| 4 | supersession / drift severity policy | **open (parlay-owned but unspecified)** | Gas City detects drift, defines no migrate/supersede/severity policy; parlay has no defined policy either (Bucket C6) | the migrate/supersede/severity design (a parlay policy unit); until it lands, `gc formula version-check` is a raw signal, not a policy |
+| 5 | transport territory | **joint (open)** | "transport" means `/v0` (Gas City) to one seam and relay-singleton (parlay) to another (§3.3) | a seam naming *which* transport it means; parlay's relay singleton stays parlay regardless |
+| 6 | capability policy (R7) | **settled** | — | spawn scope R7: refuse to steer on a no-injection-channel provider; report is Gas City's, decision is parlay's |
+
+Of the six, three are open: **#1** and **#5** are *self-limiting* — they resolve to "the oracle
+is whichever probe the currently-shadowed P7 flips" (#1) or "the relay stays parlay regardless
+of which transport a future seam means" (#5), so they are permanent unknowns only if nobody
+files the seam; **#4** is open because the supersession policy genuinely does not exist yet on
+either side.
+
+---
+
+## 5. Cross-cutting binding restatements (from the contract)
+
+- **No version guarantee (§4).** `requires_gc` is parsed, preserved, and **never compared**.
+  parlay must never rely on it; any version floor parlay needs is its own named-error check.
+- **HYBRID (§5).** Control verbs → shell-out with the verb's declared JSON flag; liveness and
+  event streams → typed `/v0` HTTP + SSE. The Go-library import mode is **closed** — a language
+  rule, not a preference (§5).
+- **Agent record owner (§6).** Spawn creates exactly one bead; status writes state and never
+  creates; an absent bead is an error to report, never a bead to mint. Substrate (Q4) is open.
+- **Ordering rule (§7).** READ BEFORE WRITE. OBSERVE BEFORE CONTROL. The P0→P13 chain is
+  binding ordering, not a unit inventory; P2, P3, P5, P8 are unallocated and nothing here
+  reconstructs one from the bead tree.
+- **Ingress must not widen (§8.5).** `POST /api/chat/events` allowlist stays one-name-per-real-
+  producer; a new producer is a policy decision.
+- **Crew-state is frozen (§8.2).** No new exit codes, no new source suffixes; new meaning goes
+  on a new channel.
+
+---
+
+## 6. Maintaining this document
+
+Keep this file current with the binding contract. When a P0–P13 unit flips an item in the
+register (§4) from *open/joint* to *settled*, update the row and the owning section rather than
+leaving a stale "unresolved". When the contract itself changes a ruling, re-run each capability
+here against it — the contract is authoritative and this file follows it, never leads it.

@@ -1051,10 +1051,13 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 **Corrected in this PR. Not renamed, not restructured — that is P9's job.**
 
 **Scope of that correction:** it covers the Go comment block in
-`tools/parlay-bin/gascity_spawn.go`. A second copy of the same four-clause rejection survives
-uncorrected at `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:32-35`, is
-deliberately left for P9, and is tracked as `task-fx4gn`. Nothing is claimed here about
-whether further copies exist elsewhere.
+`tools/parlay-bin/gascity_spawn.go`. A second copy of the same four-clause rejection lived at
+`docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:32-35`; it has since been
+**corrected**, not merely deferred — PR #133 (the `gascity` → `subprocess` rename, merged
+2026-08-29) updated that note, closing P9 and `task-fx4gn` in the same move. The note now
+reads "That rejection is retired — corrected 2026-08-28 (P0) in
+`docs/gascity-integration-contract.md`". Nothing is claimed here about whether further copies
+exist elsewhere.
 
 ### The file's name is residue
 
