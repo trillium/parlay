@@ -58,7 +58,7 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 - **Why:** Gas City's `session` is the core mapping target for parlay's `agent` — §10's
   translation row: a Gas City session is bead-backed and survives supervisor restart, while a
   parlay agent is a directory under `~/.parlay/agents/<id>/`. §6 does not settle the mapping;
-  it settles who may write the record. The spawn scope established gas city's session runtime is
+  it settles who may write the record. The spawn scope established Gas City's session runtime is
   the richer superset — parlay's launcher does not implement a session contract and never will,
   because Gas City already owns it.
 - **parlay seam obligation:** the spawn seam (P9) binds to the Gas City session bead as the
@@ -70,7 +70,7 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 
 - **Owner:** Gas City's runtime/provider layer.
 - **Why:** `Provider.Start/Stop/Interrupt` and the supervisor singleton own the process; the
-  `subprocess` provider is gas city semantics (detached `sh -c` child), and parlay's
+  `subprocess` provider is Gas City semantics (detached `sh -c` child), and parlay's
   `subprocess` launcher (`tools/parlay-bin/subprocess_spawn.go`) is a from-scratch port of
   exactly those semantics — it contains **no Gas City code** (§11; the §11 comment-block
   correction landed in PR #132, and the `gascity`→`subprocess` rename in PR #133). Control
@@ -105,7 +105,7 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 - **Why:** Gas City serialises every writer in a city through one append-only event log with
   gzip rotation (§8.3). parlay's `~/exchange/chat-history.jsonl` is live history and is
   explicitly **not** equivalent (§10). The bus itself belongs to Gas City under HYBRID
-  (§5: liveliness/event streams → typed `/v0` HTTP + SSE).
+  (§5: liveness/event streams → typed `/v0` HTTP + SSE).
 - **parlay seam obligation:** the **loud-skip cursor semantic** the events scope surfaced —
   `HistorySinceCursor`'s reset/skipped behaviour, which Gas City hooks silently floor — is a
   parlay-side contract (Q3a HYBRID CURSOR resolution). The `tail -F` CHAT_MSG chat relay stays
