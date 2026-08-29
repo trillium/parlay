@@ -1054,10 +1054,12 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 `tools/parlay-bin/gascity_spawn.go`. A second copy of the same four-clause rejection lived at
 `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md:32-35`; it has since been
 **corrected**, not merely deferred — PR #133 (the `gascity` → `subprocess` rename, merged
-2026-08-29) updated that note, closing P9 and `task-fx4gn` in the same move. The note now
-reads "That rejection is retired — corrected 2026-08-28 (P0) in
-`docs/gascity-integration-contract.md`". Nothing is claimed here about whether further copies
-exist elsewhere.
+2026-08-29) updated that note, closing the rename work this section assigns to P9 — the flag,
+the env value, the config key, and the note file — and `task-fx4gn`, in the same move. The
+spawn seam that §7 labels P9 is a separate unit and has not landed; nothing here moves it
+ahead of P0→P1→P4→P6→P7→P11. The note now reads "That rejection is retired — corrected
+2026-08-28 (P0) in `docs/gascity-integration-contract.md`". Nothing is claimed here about
+whether further copies exist elsewhere.
 
 ### The file's name is residue
 

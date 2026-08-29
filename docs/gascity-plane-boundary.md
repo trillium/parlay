@@ -65,8 +65,8 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
   `subprocess` launcher (`tools/parlay-bin/subprocess_spawn.go`) is a from-scratch port of
   exactly those semantics — it contains **no Gas City code** (§11; the §11 comment-block
   correction landed in PR #132, and the `gascity`→`subprocess` rename in PR #133). Control
-  verbs shell out with `--json` (§5) — the launcher is not a session owner, it is a boundary
-  crossing.
+  verbs shell out with the verb's declared JSON flag (§5 — there is no persistent `--json` on
+  the `gc` root) — the launcher is not a session owner, it is a boundary crossing.
 - **parlay seam obligation:** the launcher-selection seam (`PARLAY_SPAWN_LAUNCHER`), the
   spawn-sidecar flag record, and non-force teardown ordering (P10) are parlay's side of the
   line; process ownership itself is not.
@@ -120,9 +120,11 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 
 - **Owner:** parlay.
 - **Why:** Gas City has **no** staleness/wedge policy. The `stale`/`sweep` hold-guards each
-  came from a real incident; the four incident-derived guards are parlay's, and the liveness
-  scope confirmed the reaper cannot act on a parlay worktree regardless of where the oracle
-  lives. Nothing in Gas City supersedes `parlay sweep`/`stale`.
+  came from a real incident; the four incident-derived guards are parlay's. Gas City's bead
+  worktree reaper is a *reclaimer*, not a staleness policy: it is default-off, it never
+  enumerates agents, and where it can reach a parlay worktree at all the outcome is governed
+  by §9.5, not by anything that decides an agent is finished. So the oracle can move without
+  the collection policy moving. Nothing in Gas City supersedes `parlay sweep`/`stale`.
 - **parlay seam obligation:** unchanged — keep the guards; `parlay sweep [--apply]` remains the
   only collector that can see parlay agents.
 - **Evidence anchor:** liveness scope (M); §8.2; AGENTS.md "Verbs that exist because a naive
@@ -161,7 +163,7 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 - **parlay seam obligation:** a new ingress producer is a policy decision, not a wiring
   detail; `JSON_EXEMPT_PATHS` is a closed three-member list. The events seam may not widen the
   allowlist.
-- **Evidence anchor:** §8.5; `packages/go-server/internal/handlers/events_ingress.go`; §5
+- **Evidence anchor:** §8.5; `packages/go-server/internal/handlers/events_ingress.go`; §10
   `[events.export]` → `POST /api/chat/events` row (parlay's ingress **must not widen**).
 
 ### 2.5 Owner / record rules
@@ -223,12 +225,15 @@ settle the boundary.
 ### 3.2 Safety gates / teardown ordering
 
 - **The split:** Gas City's *ordering + posture* teardown gates are adopted (P10), and Gas
-  City has its own reclaimers (the two §9.5 reclaimers disagree on *cost*, not *landability*).
+  City has its own reclaimers — the two §9.5 reclaimers reach **opposite verdicts on
+  landability** for the same unpushed parlay branch, and §9.5's correction is to the *cost* of
+  that disagreement: a disappearing checkout, not destroyed commits.
   But parlay's `isContentLanded` content-landing check stays **unchanged** and binding (§9.5);
   `--force` semantics split further: liveness / borrow-veto / lease are *not* force-bypassable
   even in Gas City's posture.
 - **What settles it:** P10 (teardown ordering) fixes which gate runs first and which side owns
-  the veto; §9.5 names the danger (the two reclaimers disagree on cost, not on landability).
+  the veto; §9.5 names the danger (the weaker gate lets a local branch vouch for itself and
+  removes the checkout) and bounds it (the branch ref survives, so the work is recoverable).
 - **Not a clean single owner.** Gas City owns the gate order; parlay owns the landability proof.
 
 ### 3.3 Transport
