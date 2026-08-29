@@ -10,7 +10,9 @@ to stay honest.
 [`docs/gascity-integration-contract.md`](gascity-integration-contract.md) (the binding
 document) and does not re-open anything that document has already settled. Where this section
 would contradict the contract, the contract wins; every capability below restates and cites
-the binding ruling rather than re-deriving it.
+the binding ruling rather than re-deriving it. A bare `§N` cites that contract; a reference to
+this document's own sections always names what it points at ("the register (§4)", "§3.2
+below").
 
 **It is documentation-only.** Nothing here changes Go, TS, or config. If a capability's split
 turns out to require a code change to honor, that change is a separate work item, not part of
@@ -36,8 +38,11 @@ owners.
 
 ## Naming note
 
-Gas City's subprocess launcher was renamed from `gascity` to `subprocess` in PR #133 (the
-`gascity`→`subprocess` rename, merged 2026-08-29); `gascity` remains a deprecated alias.
+**parlay's** subprocess launcher (`tools/parlay-bin/subprocess_spawn.go`, which contains no
+Gas City code — §11) was renamed from `gascity` to `subprocess` in PR #133 (the
+`gascity`→`subprocess` rename, merged 2026-08-29); `gascity` remains a deprecated alias. It is
+not Gas City's own `subprocess` *provider*, which #133 did not touch — §10 flags that pair as a
+naming collision.
 Where a capability cites the launcher or its note file, the current name is `subprocess` and
 the file is `docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md`.
 
@@ -238,8 +243,11 @@ carries the status for each; §3.1 is register row 1, §3.2 rows 3 and 7, §3.3 
   landability** for the same unpushed parlay branch, and §9.5's correction is to the *cost* of
   that disagreement: a disappearing checkout, not destroyed commits.
   But parlay's `hasUnpushed` + `isContentLanded` gate pair stays **unchanged** and binding
-  (§9.5) — it is the stronger of the three gates, and §9.5 forbids both weakening it to match
-  either Gas City gate and adopting `HasUnreachableCommitsResult` in its place.
+  (§9.5). Within that pair the strength is `isContentLanded`'s: its tree comparison is "the
+  stronger of the three" and beats *both* Gas City gates (§9.5, §13 row 7), while `hasUnpushed`
+  is byte-equivalent to `HasUnpushedCommitsResult` and carries that gate's known weakness. §9.5
+  forbids weakening the pair to match either Gas City gate and forbids adopting
+  `HasUnreachableCommitsResult` in its place — it does not license leaning on `hasUnpushed`.
   `--force` semantics split further, and that sub-question is **open, not settled**: nothing in
   the contract rules on `--force` — its one mention (`:825`) is `gc supervisor install` rollback
   — while parlay's own force paths today waive the uncommitted-work and unpushed-but-unlanded
@@ -265,8 +273,9 @@ carries the status for each; §3.1 is register row 1, §3.2 rows 3 and 7, §3.3 
   parlay's ownership regardless of who carries the bytes.
 - **Not a clean single owner.** Gas City carries session bytes; parlay owns the relay singleton
   and the human chat pipe.
-- **Evidence anchor:** §5 HYBRID (liveness/event streams → typed `/v0` HTTP + SSE); §3
-  (`Last-Event-ID` / `after_cursor` durable cursors, `:240-241`); §10 translation row `event
+- **Evidence anchor:** §5 HYBRID (liveness/event streams → typed `/v0` HTTP + SSE); the
+  contract's §3, the vendored OpenAPI artifact (`Last-Event-ID` / `after_cursor` durable
+  cursors, `:240-242`); §10 translation row `event
   Seq → cursor`; for the parlay side, `docs/agent-notes/the-relay-is-a-per-runtime-robots-buu8.md`
   (per-runtime-dir singleton bound to one server, 104-byte socket cap) and
   `docs/agent-notes/the-canonical-runtime-dir-is-reserved-robots-93xu.md` (the reserved canonical
