@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 const topUsage = `parlay-bin — Go port of bin/parlay-spawn + bin/context-reset
@@ -16,10 +17,21 @@ Usage:
                               note: unlike bin/context-reset, this port does not echo
                               the pinned handoff to the pane on a clean end
   parlay-bin reincarnate ...  alias for 'reset' (legacy invocation name)
-  parlay-bin gascity-spawn ...  start a detached headless session (herdr-free launcher path)
-  parlay-bin gascity-stop ...   stop a gascity-spawn session
-  parlay-bin gascity-ping ...   exit 0 if a gascity-spawn session is alive, 1 if not
+  parlay-bin subprocess-spawn ...  start a detached subprocess session (herdr-free launcher path)
+  parlay-bin subprocess-stop ...   stop a subprocess-spawn session
+  parlay-bin subprocess-ping ...   exit 0 if a subprocess-spawn session is alive, 1 if not
+  parlay-bin gascity-spawn ...     deprecated aliases for subprocess-spawn/-stop/-ping
+  parlay-bin gascity-stop ...      (still accepted; a deprecation notice is printed)
+  parlay-bin gascity-ping ...
 `
+
+// deprecatedAliases maps the pre-rename launcher verbs to their subcommand
+// handlers. They still work identically for one release, printing a notice.
+var deprecatedAliases = map[string]func([]string) int{
+	"gascity-spawn": runSubprocessSpawnCommand,
+	"gascity-stop":  runSubprocessStopCommand,
+	"gascity-ping":  runSubprocessPingCommand,
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -31,12 +43,15 @@ func main() {
 		os.Exit(runSpawnCommand(os.Args[2:]))
 	case "reset", "reincarnate":
 		os.Exit(runResetCommand(os.Args[2:]))
-	case "gascity-spawn":
-		os.Exit(runGascitySpawnCommand(os.Args[2:]))
-	case "gascity-stop":
-		os.Exit(runGascityStopCommand(os.Args[2:]))
-	case "gascity-ping":
-		os.Exit(runGascityPingCommand(os.Args[2:]))
+	case "subprocess-spawn":
+		os.Exit(runSubprocessSpawnCommand(os.Args[2:]))
+	case "subprocess-stop":
+		os.Exit(runSubprocessStopCommand(os.Args[2:]))
+	case "subprocess-ping":
+		os.Exit(runSubprocessPingCommand(os.Args[2:]))
+	case "gascity-spawn", "gascity-stop", "gascity-ping":
+		fmt.Fprintf(os.Stderr, "parlay-bin: WARNING — %q is deprecated; use %q. Still works; will be removed after the next release.\n", os.Args[1], "subprocess-"+strings.TrimPrefix(os.Args[1], "gascity-"))
+		os.Exit(deprecatedAliases[os.Args[1]](os.Args[2:]))
 	case "-h", "--help":
 		fmt.Fprint(os.Stderr, topUsage)
 		os.Exit(0)

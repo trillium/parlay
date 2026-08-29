@@ -65,7 +65,7 @@ func TestClassifySweepHonorsKeepList(t *testing.T) {
 // may own a worktree full of unpushed commits that teardown's git checks
 // never reach, because teardown only checks a RECORDED worktree.
 func TestClassifySweepHoldsAgentWithNoLaunchSpec(t *testing.T) {
-	a := SweepAgent{ID: "gascity-deadlink", State: "done", Detail: "PR #9"}
+	a := SweepAgent{ID: "subprocess-deadlink", State: "done", Detail: "PR #9"}
 	if v := ClassifySweep(a, SweepOpts{}); v.Action != SweepHold {
 		t.Fatalf("empty launch spec must be HELD, got %s", v.Action)
 	}

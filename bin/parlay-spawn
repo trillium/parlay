@@ -49,9 +49,12 @@ fi
 ACCOUNT="${PARLAY_SPAWN_DEFAULT_ACCOUNT:-$_config_account}"
 unset _config_toml _config_account
 
-# Launcher — herdr (default) or gascity (detached-subprocess escape hatch for
-# herdr's SIGKILL failure mode in headless/no-WindowServer environments).
+# Launcher — herdr (default) or subprocess (detached-subprocess escape hatch
+# for herdr's SIGKILL failure mode in headless/no-WindowServer environments).
 # Precedence: PARLAY_SPAWN_LAUNCHER env var > ~/.parlay/config.toml [spawn] launcher > herdr.
+# The value "gascity" is the pre-rename spelling and stays accepted as a
+# deprecated alias for one release — it normalizes to "subprocess" with a
+# notice on stderr.
 _config_toml="${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml"
 _config_launcher=""
 if [ -z "${PARLAY_SPAWN_LAUNCHER:-}" ] && [ -f "$_config_toml" ] && command -v python3 >/dev/null 2>&1; then
@@ -62,9 +65,17 @@ with open(sys.argv[1], "rb") as f:
 PYEOF
 )
 fi
-LAUNCHER="${PARLAY_SPAWN_LAUNCHER:-${_config_launcher:-herdr}}"
-unset _config_toml _config_launcher
-# --gascity (parsed per-mode below) overrides all of the above — highest precedence.
+_resolved_launcher="${PARLAY_SPAWN_LAUNCHER:-${_config_launcher:-herdr}}"
+case "$_resolved_launcher" in
+  gascity)
+    echo "parlay-spawn: WARNING — launcher 'gascity' is deprecated (renamed 'subprocess'); it still works until the next release." >&2
+    LAUNCHER="subprocess"
+    ;;
+  *) LAUNCHER="$_resolved_launcher" ;;
+esac
+unset _config_toml _config_launcher _resolved_launcher
+# --subprocess (parsed per-mode below) overrides all of the above — highest
+# precedence. --gascity is its accepted, deprecated pre-rename spelling.
 
 # beads-required mode — when on, every spawn MUST name an open beads work item
 # (--bead <id>), and that bead's lifecycle then governs the agent's: `parlay
@@ -430,11 +441,12 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   REQUIRED for every spawn when beads-required mode is on
                   ([spawn] beads_required in ~/.parlay/config.toml, or
                   PARLAY_SPAWN_BEADS_REQUIRED=1).
-  --gascity       use the herdr-free detached-subprocess launcher for this spawn
-                  instead of herdr, regardless of PARLAY_SPAWN_LAUNCHER or
-                  ~/.parlay/config.toml [spawn] launcher. Escape hatch for
+  --subprocess    use the herdr-free detached-subprocess launcher for this
+                  spawn instead of herdr, regardless of PARLAY_SPAWN_LAUNCHER
+                  or ~/.parlay/config.toml [spawn] launcher. Escape hatch for
                   herdr's SIGKILL failure mode in headless/no-WindowServer
-                  environments.
+                  environments. --gascity is the deprecated pre-rename
+                  spelling — still accepted, prints a deprecation notice.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -457,7 +469,7 @@ EOF
 #      → refuse (exit 1)
 #
 # CALL ORDER IS THE WHOLE POINT: this must run before the register-agent POST
-# and before any herdr tab / gascity child exists. A refusal afterwards would
+# and before any herdr tab / subprocess child exists. A refusal afterwards would
 # leave an orphaned registration (and possibly a tab) for an agent that never
 # launched — the one failure this gate is shaped to avoid.
 #
@@ -576,7 +588,8 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --no-pii)    PII=0; shift ;;
       --worktree)  WANT_WORKTREE=1; shift ;;
       --account)   ACCOUNT="$2"; shift 2 ;;
-      --gascity)   LAUNCHER="gascity"; shift ;;
+      --subprocess) LAUNCHER="subprocess"; shift ;;
+      --gascity)   LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
       --bead)      BEAD_ID="$2"; shift 2 ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
@@ -646,7 +659,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           BATCH_PII=""
           BATCH_WORKTREE=0
           BATCH_ACCOUNT="$ACCOUNT"
-          BATCH_GASCITY=0
+          BATCH_SUBPROCESS=0
           # A batch --bead is SHARED by every pair, exactly like --account and
           # --model: all of them are working one bead. Whichever agent submits
           # first closes it, and every sibling's relaunch is refused from then
@@ -666,7 +679,8 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
               --no-pii)    BATCH_PII="--no-pii"; shift ;;
               --worktree)  BATCH_WORKTREE=1; shift ;;
               --account)   BATCH_ACCOUNT="$2"; shift 2 ;;
-              --gascity)   BATCH_GASCITY=1; shift ;;
+              --subprocess) BATCH_SUBPROCESS=1; shift ;;
+              --gascity)   BATCH_SUBPROCESS=1; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
               --bead)      BATCH_BEAD="$2"; shift 2 ;;
               --cwd)    echo "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)" >&2; exit 2 ;;
               --ephemeral) echo "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs" >&2; exit 2 ;;
@@ -713,7 +727,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             [ -n "$BATCH_PII" ] && _shared+=("$BATCH_PII")
             [ "$BATCH_WORKTREE" -eq 1 ] && _shared+=(--worktree)
             [ -n "$BATCH_ACCOUNT" ] && _shared+=(--account "$BATCH_ACCOUNT")
-            [ "$BATCH_GASCITY" -eq 1 ] && _shared+=(--gascity)
+            [ "$BATCH_SUBPROCESS" -eq 1 ] && _shared+=(--subprocess)
             [ -n "$BATCH_BEAD" ] && _shared+=(--bead "$BATCH_BEAD")
             if "$SELF" "$_bid" "$_bid" "$_bcolor" "$BATCH_PROMPT" ${_shared[@]+"${_shared[@]}"}; then
               :
@@ -769,7 +783,8 @@ while [ $# -gt 0 ]; do
     --claim)     CLAIM="$2"; shift 2 ;;
     --pane)      IN_PLACE_PANE="$2"; shift 2 ;;
     --workspace) WORKSPACE="$2"; shift 2 ;;
-    --gascity)   LAUNCHER="gascity"; shift ;;
+    --subprocess) LAUNCHER="subprocess"; shift ;;
+    --gascity)   LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
     --bead)      BEAD_ID="$2"; shift 2 ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
@@ -958,9 +973,9 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
           WORKTREE_PATH="$_th_path"
           _wt_created=1
           # Recorded ONLY on a verified treehouse lease (never the plain git
-          # worktree fallback below) — this is what the gascity launch branch
-          # passes to `parlay-bin gascity-spawn --worktree-path`, so
-          # gascity-stop knows to `treehouse return` it and a plain
+          # worktree fallback below) — this is what the subprocess launch branch
+          # passes to `parlay-bin subprocess-spawn --worktree-path`, so
+          # subprocess-stop knows to `treehouse return` it and a plain
           # git-worktree agent is never mistaken for a leased one.
           TREEHOUSE_LEASED_PATH="$WORKTREE_PATH"
           echo "parlay-spawn: worktree via treehouse at $WORKTREE_PATH" >&2
@@ -1148,7 +1163,7 @@ if [ -n "$ACCOUNT" ]; then
   echo "parlay-spawn: using account '$ACCOUNT' (token resolved)" >&2
 fi
 
-if [ "$LAUNCHER" != "gascity" ]; then
+if [ "$LAUNCHER" != "subprocess" ]; then
 # Give the agent its OWN tab (captain's rule 2026-07-13: agents never split the
 # captain's current tab, and they launch unfocused/background). The tab's root
 # pane becomes the agent's pane directly — `agent start` targets it below via
@@ -1310,67 +1325,67 @@ fi
 ( _spawn_snapshot "post-prompt" "$ROOT_PANE" ) &
 
 else
-# gascity launcher: a detached subprocess instead of a herdr terminal tab —
+# subprocess launcher: a detached subprocess instead of a herdr terminal tab —
 # the escape hatch for herdr's SIGKILL failure mode in headless/no-WindowServer
 # environments. No tab/pane exists, so the charter can't be delivered via
 # herdr's paste-safe `agent prompt` channel; instead it is written to disk and
 # piped into the agent process's stdin as part of its one-shot launch command
-# (tools/parlay-bin's gascity-spawn runs `sh -c <command>` once, detached —
-# see tools/parlay-bin/gascity_spawn.go's header comment for the full design
-# rationale, including why this is a from-scratch port of gascity's lifecycle
-# semantics rather than an import or a `gc` CLI wrapper).
-GASCITY_PROMPT_FILE="$AGENT_DIR/startup-prompt.txt"
-printf '%s\n' "$STARTUP_PROMPT" > "$GASCITY_PROMPT_FILE"
+# (tools/parlay-bin's subprocess-spawn runs `sh -c <command>` once, detached —
+# see tools/parlay-bin/subprocess_spawn.go's header comment for the full design
+# rationale, including why this is a from-scratch port of the old gascity
+# lifecycle semantics rather than an import or a `gc` CLI wrapper).
+SUBPROCESS_PROMPT_FILE="$AGENT_DIR/startup-prompt.txt"
+printf '%s\n' "$STARTUP_PROMPT" > "$SUBPROCESS_PROMPT_FILE"
 
 # Same YOLO-mode args as the herdr path's $AGENT_START_ARGS, expressed as a
 # claude CLI flag string instead of a herdr `agent start` argv.
 case "$KIND" in
-  claude) GASCITY_CMD_ARGS="--dangerously-skip-permissions --fallback-model sonnet" ;;
-  *)      GASCITY_CMD_ARGS="" ;;
+  claude) SUBPROCESS_CMD_ARGS="--dangerously-skip-permissions --fallback-model sonnet" ;;
+  *)      SUBPROCESS_CMD_ARGS="" ;;
 esac
-[ -n "$MODEL" ] && GASCITY_CMD_ARGS="$GASCITY_CMD_ARGS --model $(shell_quote "$MODEL")"
+[ -n "$MODEL" ] && SUBPROCESS_CMD_ARGS="$SUBPROCESS_CMD_ARGS --model $(shell_quote "$MODEL")"
 
 # Mirrors the herdr path's in-place `_pane_prep` unset list (line ~968) — new
 # subprocess children inherit this CLI's own CLAUDECODE/CLAUDE_CODE_* env same
 # as a fresh herdr pane does, so the same nesting-marker unset applies here.
-GASCITY_ENV_UNSET="unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT"
-GASCITY_COMMAND="$GASCITY_ENV_UNSET; cd $(shell_quote "$CWD") && exec $(shell_quote "$KIND") $GASCITY_CMD_ARGS < $(shell_quote "$GASCITY_PROMPT_FILE")"
+SUBPROCESS_ENV_UNSET="unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT"
+SUBPROCESS_COMMAND="$SUBPROCESS_ENV_UNSET; cd $(shell_quote "$CWD") && exec $(shell_quote "$KIND") $SUBPROCESS_CMD_ARGS < $(shell_quote "$SUBPROCESS_PROMPT_FILE")"
 
 # Env overrides for the child process — mirrors the herdr path's tab --env set
 # (PARLAY_* profile vars, optional OAuth token, PROJECT_ENV_FLAGS pairs).
-GASCITY_ENV_ARGS=(--env "PARLAY_SERVER=$PARLAY" --env "PARLAY_AGENT_ID=$AGENT_ID" --env "PARLAY_AGENT_NAME=$NAME" --env "PARLAY_AGENT_COLOR=$COLOR")
-[ -n "$MODEL" ] && GASCITY_ENV_ARGS+=(--env "PARLAY_AGENT_MODEL=$MODEL")
-[ -n "${_token:-}" ] && GASCITY_ENV_ARGS+=(--env "CLAUDE_CODE_OAUTH_TOKEN=$_token")
-_ge_i=1
-while [ "$_ge_i" -lt "${#PROJECT_ENV_FLAGS[@]}" ]; do
-  GASCITY_ENV_ARGS+=(--env "${PROJECT_ENV_FLAGS[$_ge_i]}")
-  _ge_i=$((_ge_i + 2))
+SUBPROCESS_ENV_ARGS=(--env "PARLAY_SERVER=$PARLAY" --env "PARLAY_AGENT_ID=$AGENT_ID" --env "PARLAY_AGENT_NAME=$NAME" --env "PARLAY_AGENT_COLOR=$COLOR")
+[ -n "$MODEL" ] && SUBPROCESS_ENV_ARGS+=(--env "PARLAY_AGENT_MODEL=$MODEL")
+[ -n "${_token:-}" ] && SUBPROCESS_ENV_ARGS+=(--env "CLAUDE_CODE_OAUTH_TOKEN=$_token")
+_se_i=1
+while [ "$_se_i" -lt "${#PROJECT_ENV_FLAGS[@]}" ]; do
+  SUBPROCESS_ENV_ARGS+=(--env "${PROJECT_ENV_FLAGS[$_se_i]}")
+  _se_i=$((_se_i + 2))
 done
 
 # Only pass --worktree-path when WORKTREE_PATH came from a verified treehouse
 # lease (TREEHOUSE_LEASED_PATH), never a plain git-worktree fallback — see
 # this file's TREEHOUSE_LEASED_PATH assignment in the worktree-setup step.
-GASCITY_WORKTREE_FLAG=()
-[ -n "$TREEHOUSE_LEASED_PATH" ] && GASCITY_WORKTREE_FLAG=(--worktree-path "$TREEHOUSE_LEASED_PATH")
+SUBPROCESS_WORKTREE_FLAG=()
+[ -n "$TREEHOUSE_LEASED_PATH" ] && SUBPROCESS_WORKTREE_FLAG=(--worktree-path "$TREEHOUSE_LEASED_PATH")
 
 # Build tools/parlay-bin if missing or stale, mirroring bin/parlay's own
 # build-if-stale pattern for tools/cli.
-GASCITY_BIN_DIR="$BIN_DIR/../tools/parlay-bin"
-GASCITY_GO_BIN="$GASCITY_BIN_DIR/bin/parlay-bin"
-if [ ! -x "$GASCITY_GO_BIN" ] || [ -n "$(find "$GASCITY_BIN_DIR" -name '*.go' -newer "$GASCITY_GO_BIN" -print -quit)" ]; then
-  mkdir -p "$(dirname "$GASCITY_GO_BIN")"
-  (cd "$GASCITY_BIN_DIR" && go build -o "$GASCITY_GO_BIN" .) || exit 1
+SUBPROCESS_BIN_DIR="$BIN_DIR/../tools/parlay-bin"
+SUBPROCESS_GO_BIN="$SUBPROCESS_BIN_DIR/bin/parlay-bin"
+if [ ! -x "$SUBPROCESS_GO_BIN" ] || [ -n "$(find "$SUBPROCESS_BIN_DIR" -name '*.go' -newer "$SUBPROCESS_GO_BIN" -print -quit)" ]; then
+  mkdir -p "$(dirname "$SUBPROCESS_GO_BIN")"
+  (cd "$SUBPROCESS_BIN_DIR" && go build -o "$SUBPROCESS_GO_BIN" .) || exit 1
 fi
 
-if ! "$GASCITY_GO_BIN" gascity-spawn "$AGENT_ID" "$GASCITY_COMMAND" "$CWD" \
+if ! "$SUBPROCESS_GO_BIN" subprocess-spawn "$AGENT_ID" "$SUBPROCESS_COMMAND" "$CWD" \
     --state-dir "$AGENT_DIR/gascity" \
-    "${GASCITY_ENV_ARGS[@]}" \
-    ${GASCITY_WORKTREE_FLAG[@]+"${GASCITY_WORKTREE_FLAG[@]}"} \
+    "${SUBPROCESS_ENV_ARGS[@]}" \
+    ${SUBPROCESS_WORKTREE_FLAG[@]+"${SUBPROCESS_WORKTREE_FLAG[@]}"} \
     ${BEAD_ID:+--bead-id "$BEAD_ID"}; then
-  echo "parlay-spawn: gascity-spawn failed to launch $AGENT_ID." >&2
+  echo "parlay-spawn: subprocess-spawn failed to launch $AGENT_ID." >&2
   exit 1
 fi
-echo "parlay-spawn: gascity session '$AGENT_ID' launched (state dir: $AGENT_DIR/gascity)." >&2
+echo "parlay-spawn: subprocess session '$AGENT_ID' launched (state dir: $AGENT_DIR/gascity)." >&2
 fi
 
 # Seed the identity's LAUNCH SPEC (frontmatter) so the agent can reconstitute itself
@@ -1422,30 +1437,30 @@ fi
 #    long before the timeout and this never nudges it. Disable with
 #    PARLAY_SPAWN_NO_WATCHDOG=1; tune with PARLAY_SPAWN_LIVENESS_TIMEOUT_MS.
 LIVENESS_TIMEOUT_MS="${PARLAY_SPAWN_LIVENESS_TIMEOUT_MS:-60000}"
-if [ "$LAUNCHER" = "gascity" ]; then
-  # gascity path: there is no herdr agent to `agent wait` on, so liveness is
+if [ "$LAUNCHER" = "subprocess" ]; then
+  # subprocess path: there is no herdr agent to `agent wait` on, so liveness is
   # observed the same way any client confirms an agent is connected — polling
   # this server's own /api/chat/subscribers for the agent's channel. Same
   # opt-out/tuning knobs as the herdr watchdog for operational parity.
   if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ]; then
-    GASCITY_LIVENESS_TIMEOUT_S=$(( LIVENESS_TIMEOUT_MS / 1000 ))
-    [ "$GASCITY_LIVENESS_TIMEOUT_S" -lt 1 ] && GASCITY_LIVENESS_TIMEOUT_S=60
-    GASCITY_WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-gascity-watchdog.log"
+    SUBPROCESS_LIVENESS_TIMEOUT_S=$(( LIVENESS_TIMEOUT_MS / 1000 ))
+    [ "$SUBPROCESS_LIVENESS_TIMEOUT_S" -lt 1 ] && SUBPROCESS_LIVENESS_TIMEOUT_S=60
+    SUBPROCESS_WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-subprocess-watchdog.log"
     (
-      _gascity_elapsed=0
-      while [ "$_gascity_elapsed" -lt "$GASCITY_LIVENESS_TIMEOUT_S" ]; do
+      _subprocess_elapsed=0
+      while [ "$_subprocess_elapsed" -lt "$SUBPROCESS_LIVENESS_TIMEOUT_S" ]; do
         if curl -fsS "$PARLAY/api/chat/subscribers" 2>/dev/null \
             | jq -e --arg id "$AGENT_ID" '.[] | select(.channel == $id)' >/dev/null 2>&1; then
           echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: observed in /api/chat/subscribers — session live." >&2
           exit 0
         fi
         /bin/sleep 1
-        _gascity_elapsed=$((_gascity_elapsed + 1))
+        _subprocess_elapsed=$((_subprocess_elapsed + 1))
       done
-      echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: did not appear in /api/chat/subscribers within ${GASCITY_LIVENESS_TIMEOUT_S}s — inspect $AGENT_DIR/gascity or run '$GASCITY_GO_BIN gascity-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'." >&2
-    ) </dev/null >>"$GASCITY_WATCHDOG_LOG" 2>&1 &
+      echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: did not appear in /api/chat/subscribers within ${SUBPROCESS_LIVENESS_TIMEOUT_S}s — inspect $AGENT_DIR/gascity or run '$SUBPROCESS_GO_BIN subprocess-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'." >&2
+    ) </dev/null >>"$SUBPROCESS_WATCHDOG_LOG" 2>&1 &
     disown 2>/dev/null || true
-    echo "parlay-spawn: gascity liveness watchdog armed (${GASCITY_LIVENESS_TIMEOUT_S}s → poll /api/chat/subscribers); log: $GASCITY_WATCHDOG_LOG" >&2
+    echo "parlay-spawn: subprocess liveness watchdog armed (${SUBPROCESS_LIVENESS_TIMEOUT_S}s → poll /api/chat/subscribers); log: $SUBPROCESS_WATCHDOG_LOG" >&2
   fi
 elif [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && (_herdr_use_rpc || command -v herdr >/dev/null 2>&1); then
   WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-watchdog.log"
