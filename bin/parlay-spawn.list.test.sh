@@ -150,7 +150,29 @@ else
   fail "--list: unmatched-provider profile row disappeared; got:"$'\n'"$out"
 fi
 
-# ── 6. The mandatory-model refusal error points at --list ───────────────────
+# ── 6. Malformed profiles.toml degrades cleanly, no raw traceback ───────────
+BAD_TOML="$ROOT/bad-profiles.toml"
+printf 'this is [ not valid toml' > "$BAD_TOML"
+out=$(HOME="$HOME_DIR" PATH="$STUB_DIR:$PATH" \
+  PARLAY_SPAWN_PROFILES_TOML="$BAD_TOML" "$SPAWN" --list 2>&1)
+status=$?
+if [ "$status" -eq 2 ]; then
+  pass "--list: malformed profiles.toml → exit 2 (not a raw traceback exit)"
+else
+  fail "--list: malformed profiles.toml → expected exit 2, got $status; output:"$'\n'"$out"
+fi
+if grep -qF "not valid TOML" <<<"$out"; then
+  pass "--list: malformed profiles.toml → clean error message printed"
+else
+  fail "--list: malformed profiles.toml → expected clean error message; got:"$'\n'"$out"
+fi
+if grep -qF "Traceback" <<<"$out"; then
+  fail "--list: malformed profiles.toml → raw Python traceback leaked to output"
+else
+  pass "--list: malformed profiles.toml → no raw traceback"
+fi
+
+# ── 7. The mandatory-model refusal error points at --list ───────────────────
 out=$(HOME="$HOME_DIR" PATH="$STUB_DIR:$PATH" PARLAY_SERVER="http://127.0.0.1:1" \
   PARLAY_SPAWN_PROFILES_TOML="$PROFILES_TOML" \
   PARLAY_SPAWN_SKIP_CONTRACT=1 PARLAY_SPAWN_NO_WATCHDOG=1 \
