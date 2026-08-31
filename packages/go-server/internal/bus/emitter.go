@@ -202,6 +202,11 @@ func (e *Emitter) run(p pending) {
 	// city. Same scrub-then-pin shape as doctor's gcEnvWithScratchHome.
 	cmd.Dir = e.cfg.CityPath
 	cmd.Env = envWithCityPinned(e.cfg.CityPath)
+	// Backstop against a leaked grandchild holding the stderr pipe open past
+	// the timeout kill: after the delay, exec force-closes the parent's pipe
+	// ends so Run cannot wedge the drain goroutine (same rationale as the
+	// consumer's WaitDelay).
+	cmd.WaitDelay = 2 * time.Second
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	err := cmd.Run()

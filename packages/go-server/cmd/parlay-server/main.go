@@ -57,8 +57,12 @@ func main() {
 		// event bus. Default OFF — flag off must be byte-identical to a
 		// build without the sink.
 		busEmitFlag = flag.Bool("bus-emit", envBool("PARLAY_BUS_EMIT"), "dual-write observability SSE events onto the Gas City event bus (default off)")
-		gcBinFlag   = flag.String("gc-bin", envOr("PARLAY_GC", ""), "path to the gc binary; empty resolves from PATH (only used with -bus-emit)")
-		gcCityFlag  = flag.String("gc-city", envOr("PARLAY_GC_CITY", ""), "parlay-owned Gas City city root; empty means <state-dir>/gascity/city (only used with -bus-emit)")
+		// events-lift U2: consume the bus back into the SSE hub. Also
+		// default OFF; needs the city's streaming API (a running gc
+		// supervisor) and degrades to backoff-retry without one.
+		busConsumeFlag = flag.Bool("bus-consume", envBool("PARLAY_BUS_CONSUME"), "consume Gas City bus events into the SSE hub (default off)")
+		gcBinFlag      = flag.String("gc-bin", envOr("PARLAY_GC", ""), "path to the gc binary; empty resolves from PATH (only used with -bus-emit/-bus-consume)")
+		gcCityFlag     = flag.String("gc-city", envOr("PARLAY_GC_CITY", ""), "parlay-owned Gas City city root; empty means <state-dir>/gascity/city (only used with -bus-emit/-bus-consume)")
 	)
 	flag.Parse()
 
@@ -84,6 +88,13 @@ func main() {
 		}
 		defer emitter.Close()
 		hub.SetBusSink(emitter.Emit)
+	}
+	if *busConsumeFlag {
+		consumer, err := newBusConsumer(*gcBinFlag, *gcCityFlag, *dirFlag, hub)
+		if err != nil {
+			log.Fatalf("-bus-consume enabled but unusable: %v", err)
+		}
+		defer consumer.Close()
 	}
 	handlers.RegisterData(mux, st)
 	handlers.RegisterTTS(mux, *paiDirFlag, hub)
@@ -169,20 +180,28 @@ func refuseProductionPort(addr string) error {
 	return nil
 }
 
-// newBusEmitter resolves the gc binary (flag/$PARLAY_GC, else PATH — the
-// same order doctor's gcResolve uses) and the city root (flag/$PARLAY_GC_CITY,
+// resolveGC resolves the gc binary (flag/$PARLAY_GC, else PATH — the same
+// order doctor's gcResolve uses) and the city root (flag/$PARLAY_GC_CITY,
 // else <state-dir>/gascity/city, where `parlay city-scaffold` materialises
-// parlay's own city), then starts the emitter.
-func newBusEmitter(gcBin, cityPath, stateDir string) (*bus.Emitter, error) {
+// parlay's own city). Shared by the emit (U1) and consume (U2) wiring.
+func resolveGC(gcBin, cityPath, stateDir string) (string, string, error) {
 	if gcBin == "" {
 		p, err := exec.LookPath("gc")
 		if err != nil {
-			return nil, errors.New("no gc binary: set -gc-bin/$PARLAY_GC or put gc on PATH (build one with tools/gc-build/build-gc.sh)")
+			return "", "", errors.New("no gc binary: set -gc-bin/$PARLAY_GC or put gc on PATH (build one with tools/gc-build/build-gc.sh)")
 		}
 		gcBin = p
 	}
 	if cityPath == "" {
 		cityPath = filepath.Join(stateDir, "gascity", "city")
+	}
+	return gcBin, cityPath, nil
+}
+
+func newBusEmitter(gcBin, cityPath, stateDir string) (*bus.Emitter, error) {
+	gcBin, cityPath, err := resolveGC(gcBin, cityPath, stateDir)
+	if err != nil {
+		return nil, err
 	}
 	e, err := bus.New(bus.Config{GCBin: gcBin, CityPath: cityPath})
 	if err != nil {
@@ -190,6 +209,28 @@ func newBusEmitter(gcBin, cityPath, stateDir string) (*bus.Emitter, error) {
 	}
 	log.Printf("bus dual-write ON (gc: %s, city: %s)", gcBin, cityPath)
 	return e, nil
+}
+
+// newBusConsumer wires the bus's read side onto the hub. The cursor lives
+// under the state dir next to the rest of the persisted server state.
+func newBusConsumer(gcBin, cityPath, stateDir string, hub *handlers.Hub) (*bus.Consumer, error) {
+	gcBin, cityPath, err := resolveGC(gcBin, cityPath, stateDir)
+	if err != nil {
+		return nil, err
+	}
+	c, err := bus.StartConsumer(bus.ConsumerConfig{
+		GCBin:      gcBin,
+		CityPath:   cityPath,
+		CursorPath: filepath.Join(stateDir, "bus", "consumer-cursor.json"),
+		Broadcast: func(name string, data json.RawMessage) bool {
+			return hub.BroadcastFromBus(name, data)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("bus consume ON (gc: %s, city: %s)", gcBin, cityPath)
+	return c, nil
 }
 
 // envBool reads a boolean env toggle: "1" or "true" (any case) is on,

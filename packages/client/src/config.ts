@@ -23,6 +23,20 @@ export const TOOL_ICONS: Record<string, string> = {
   Workflow: '⬡', Glob: '⊞', Grep: '⊟',
 }
 
+// The panel's interface-capability declaration (docs/interface-capabilities.md):
+// exactly the presentation commands this client has live handlers for —
+// navigate, reload, draft (sse.ts), input_action (input.ts), device_cmd
+// (device-cmd.ts). Sent as ?caps= on the SSE connect; an older server ignores
+// the unknown param. Add a name here only with a live handler to back it.
+export function panelCapsQuery(instance: string): string {
+  const decl = {
+    schema: '1.0.0',
+    surface: { kind: 'panel', instance },
+    accepts: { navigate: {}, reload: {}, device_cmd: {}, input_action: {}, draft: {} },
+  }
+  return `&caps=${encodeURIComponent(JSON.stringify(decl))}`
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 export function esc(s: unknown): string {

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import { history, historyIndex } from "./storage"
 import { sseClients, agents, agentActive, CORS, sseEvent, computePresenceMap } from "./sse"
 import { bundleVersion } from "./bundle-version"
+import { parseDeclaration, recognize, type CapabilityDeclaration } from "./capability"
 
 export function handleEventsRequest(req: Request, pathname: string): Response | null {
   if (req.method === "GET" && pathname === "/api/chat/history") {
@@ -24,6 +25,20 @@ export function handleEventsRequest(req: Request, pathname: string): Response | 
     const url      = new URL(req.url)
     const device   = url.searchParams.get("device") ?? undefined
     const ua       = req.headers.get("user-agent") ?? undefined
+    // Capability declaration (docs/interface-capabilities.md): invalid is a
+    // refusal, not a legacy fallback — fail-open would widen delivery against
+    // the surface's declared intent. No ?caps= at all = legacy, untouched.
+    const rawCaps = url.searchParams.get("caps")
+    let caps: CapabilityDeclaration | undefined
+    if (rawCaps !== null) {
+      const parsedCaps = parseDeclaration(rawCaps)
+      if ("error" in parsedCaps) {
+        return new Response(JSON.stringify({ error: parsedCaps.error }), {
+          status: 400, headers: { "Content-Type": "application/json", ...CORS },
+        })
+      }
+      caps = parsedCaps.decl
+    }
     const afterId  = url.searchParams.get("after") ?? undefined
     const afterIdx = afterId ? historyIndex.get(afterId) : undefined
     let initialHistory: typeof history
@@ -55,9 +70,15 @@ export function handleEventsRequest(req: Request, pathname: string): Response | 
     }
     const stream = new ReadableStream({
       start(controller) {
-        sseClients.set(clientId, { id: clientId, controller, device, ua, connectedAt: new Date().toISOString() })
+        sseClients.set(clientId, { id: clientId, controller, device, ua, connectedAt: new Date().toISOString(), ...(caps ? { caps } : {}) })
         const enc = new TextEncoder()
-        controller.enqueue(enc.encode(sseEvent("connected",      { clientId })))
+        // Declaring clients get the negotiation echo (which accepts names this
+        // server gates on vs. never heard of); legacy clients get the payload
+        // they always got, byte-identical.
+        const connectedPayload = caps
+          ? { clientId, capabilities: { schema: caps.schema, ...recognize(caps) } }
+          : { clientId }
+        controller.enqueue(enc.encode(sseEvent("connected",      connectedPayload)))
         controller.enqueue(enc.encode(sseEvent("history",        initialHistory)))
         controller.enqueue(enc.encode(sseEvent("agents",         Array.from(agents.values()))))
         controller.enqueue(enc.encode(sseEvent("agent_presence", { active: agentActive })))
