@@ -1,0 +1,8 @@
+working: starting the port
+needs-decision [key=api-shape]: REST or gRPC?
+blocked [key=ci-quota]: waiting on a runner
+paused:
+resolved [key=api-shape]: went with REST
+failed: gave up: exit 1
+done: all green — ünïcode & [brackets] survive
+working [key=a.b-c_9]:
