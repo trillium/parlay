@@ -352,8 +352,8 @@ TS response (Go serves a subset — see [Divergences](#divergences-to-fix)):
   "registered": { "count": 3, "agents": [ /* AgentInfo */ ] },
   "presence":   [ { "channel": "id", /* + AgentInfo fields */, "listening": true, "lastSeen": "iso|null", "status": "listening"|"idle"|"offline" } ],
   "presence_broadcasts": 12,                            // TS only
-  "capability_suppressed": { "navigate": 3 },           // TS only — gated event → deliveries suppressed
-  "capability_declarations": [ { "surface": { "kind": "panel", "instance"?: "…" }, "accepts": ["…"], "content": ["…"], "interactions": ["…"], "connectedAt": "iso", "device"?: "uuid" } ],  // TS only — one entry per declared SSE connection (device-identified or not), all three axes
+  "capability_suppressed": { "navigate": 3 },           // both servers — gated event → deliveries suppressed
+  "capability_declarations": [ { "surface": { "kind": "panel", "instance"?: "…" }, "accepts": ["…"], "content": ["…"], "interactions": ["…"], "connectedAt": "iso", "device"?: "uuid" } ],  // both servers — one entry per declared SSE connection (device-identified or not), all three axes
   "devices": [ { "device": "uuid", "ua": "…", "connectedAt": "iso", "surface"?: {...}, "accepts"?: ["…"] } ],  // TS only
   "memory":  { "rssMB": 0, "heapUsedMB": 0, "externalMB": 0, "arrayBuffersMB": 0 },  // TS only
   "history": { "count": 0, "approxBytes": 0, "approxKB": 0, "ssePerConnectKB": 0 }   // TS only
@@ -732,11 +732,13 @@ Query params:
   degrades to that windowed replay, and the `history` event is identical in
   shape either way — a client cannot tell delta from replay, so dedup by
   message id regardless.
-- `caps` — **TS server only** (Go parity is a tracked follow-up): url-encoded
+- `caps` — **both servers**: url-encoded
   JSON interface-capability declaration, contract owned by
   [`docs/interface-capabilities.md`](./interface-capabilities.md) and the
   normative engine `tools/cli/internal/capability` (TS mirror:
-  `packages/server/src/capability.ts`). A declared connection only receives
+  `packages/server/src/capability.ts`; Go-server mirror:
+  `packages/go-server/internal/capability`, sync-tested byte-identical
+  against the engine). A declared connection only receives
   the presentation-command events (`navigate`, `reload`, `device_cmd`,
   `input_action`, `draft`) it lists under `accepts`; all other events are
   ungated, and a declaration can only *subtract* deliveries. No `caps` at all
@@ -755,7 +757,7 @@ to the burst. Keepalive comment frame every 25s (TS `: ka`, Go
 
 | Event | Payload | Notes |
 |---|---|---|
-| `connected` | TS: `{ "clientId": "uuid", "capabilities"?: { "schema", "recognized": [], "unknown": [] } }` · Go: `{}` | Resets client backoff; triggers the `/version` self-upgrade check. `capabilities` echoes the `?caps=` negotiation (which accepts names this server gates on vs. never heard of). |
+| `connected` | TS: `{ "clientId": "uuid", "capabilities"?: { "schema", "recognized": [], "unknown": [] } }` · Go: same minus `clientId` (legacy: `{}`) | Resets client backoff; triggers the `/version` self-upgrade check. `capabilities` echoes the `?caps=` negotiation (which accepts names this server gates on vs. never heard of). |
 | `history` | `ChatMessage[]` | Full, windowed, or delta history depending on `after`/`url`. |
 | `agents` | `AgentInfo[]` | Full registry snapshot. |
 | `agent_register` | `AgentInfo` | Single-agent upsert (registration, auto-register on reply/poll). |
@@ -888,8 +890,8 @@ feature — until then, a portable caller must tolerate both sides.
 
 | # | Route / area | TS server | Go server |
 |---|---|---|---|
-| 1 | `connected` SSE payload | `{ clientId, capabilities? }` | `{}` — no clientId |
-| 2 | `?caps=` capability gate | Implemented (400 on invalid, gated delivery, suppression counters) | Not implemented; param ignored |
+| 1 | `connected` SSE payload | `{ clientId, capabilities? }` | `{ capabilities? }` — no clientId |
+| 2 | `?caps=` capability gate | Implemented (400 on invalid, gated delivery, suppression counters) | Implemented — converged (was ignored); row number retired, not reused |
 | 3 | `presence_map` vocabulary | `"listening"` / `"idle"` | `"online"` |
 | 4 | Poll timeout | 30s | 25s |
 | 5 | Poll message shape | full `ChatMessage` | `{ id, role, text, from? }` subset |
@@ -901,7 +903,7 @@ feature — until then, a portable caller must tolerate both sides.
 | 11 | `reply` minimum body | empty text OK with action/images; agent falls back to env/context | text AND agent required |
 | 12 | Wrong method | 404 fallthrough (except `/pages` 405 JSON) | 405 + `Allow` + plain text, everywhere |
 | 13 | Malformed JSON body | 200 `{ error: "bad request" }` (mostly) | 400 `{ error: "invalid JSON body" }` uniformly |
-| 14 | `subscribers` fields | full (memory, history, devices, presence_broadcasts, capability_suppressed) | subset: parlay/poll/registered + thin presence `{ channel, lastSeen }` |
+| 14 | `subscribers` fields | full (memory, history, devices, presence_broadcasts) | subset: parlay/poll/registered, thin presence `{ channel, lastSeen }`, plus both capability fields (converged) |
 | 15 | `PUT /draft` response | `{ ok: true }` | echoes saved draft object |
 | 16 | `GET /draft` response | `{ text }` | `{ text, clientId?, updatedAt? }` |
 | 17 | `PUT /settings` response | `{ ok, settings }` | stored settings bare, no `ok` |
