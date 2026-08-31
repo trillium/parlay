@@ -2,6 +2,7 @@ import { existsSync, statSync, openSync, readSync, closeSync } from "fs"
 import { join } from "path"
 import { pushHubEvent } from "./hub-ingress"
 import { recordSessionChannel, channelForSession, parseEnrollmentChannel } from "./session-channel"
+import { TOOL_EVENT } from "./tool-event"
 
 // ── Tool event tailer ───────────────────────────────────────────────────────
 // Tails tool-activity.jsonl and broadcasts each new entry as a tool_event SSE,
@@ -55,7 +56,7 @@ export function startToolEventTailer() {
           // Owning tab: the enrolling agent's channel, else the shared System
           // pseudo-tab for sessions that never enrolled (non-agent Claude runs).
           const channel = channelForSession(ev.session_id) ?? "system"
-          pushHubEvent("tool_event", {
+          pushHubEvent(TOOL_EVENT, {
             ts:   ev.timestamp,
             tool: ev.tool_name ?? "?",
             desc: desc.slice(0, 100),

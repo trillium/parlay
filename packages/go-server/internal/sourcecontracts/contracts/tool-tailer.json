@@ -1,0 +1,25 @@
+{
+  "name": "tool-tailer",
+  "version": "1.0.0",
+  "title": "PAI tool tailer",
+  "description": "Tails the PAI tool-activity JSONL (packages/server/src/tool-tailer.ts) and mirrors each tool firing onto the panel as a non-persisted tool_event frame via POST /api/chat/events.",
+  "trust": "observability",
+  "origin": {
+    "fields": [
+      { "name": "ts", "type": "timestamp", "description": "the firing's own timestamp; absent when the tailed line carries none" },
+      { "name": "tool", "type": "string", "required": true, "description": "tool name, \"?\" when the tailed line names none" },
+      { "name": "desc", "type": "string", "required": true, "description": "best-effort description, first 100 chars" },
+      { "name": "cmd", "type": "string", "required": true, "description": "command preview, first 140 chars" },
+      { "name": "out", "type": "string", "required": true, "description": "stdout preview, first 280 chars" },
+      { "name": "err", "type": "string", "required": true, "description": "stderr preview, first 120 chars" },
+      { "name": "channel", "type": "string", "required": true, "description": "the enrolling agent's channel, or the literal \"system\" pseudo-tab for sessions that never enrolled" }
+    ]
+  },
+  "delivery": {
+    "mode": "pull",
+    "route": "POST /api/chat/events",
+    "ordering": "ordered",
+    "guarantee": "at-most-once"
+  },
+  "emits": ["tool_event"]
+}
