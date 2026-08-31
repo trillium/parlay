@@ -1,0 +1,196 @@
+{
+  "capturedFrom": "packages/server (TS)",
+  "regenerate": "packages/go-server/parity/refresh-sse-golden.sh",
+  "steps": [
+    "connect-burst",
+    "register-agent",
+    "poll-park",
+    "send",
+    "reload",
+    "unregister"
+  ],
+  "legacy": [
+    [
+      {
+        "event": "connected",
+        "data": {
+          "clientId": "<norm>"
+        }
+      },
+      {
+        "event": "history",
+        "data": []
+      },
+      {
+        "event": "agents",
+        "data": []
+      },
+      {
+        "event": "agent_presence",
+        "data": {
+          "active": false
+        }
+      }
+    ],
+    [
+      {
+        "event": "agent_register",
+        "data": {
+          "id": "golden",
+          "name": "Golden",
+          "color": "#3FB950"
+        }
+      }
+    ],
+    [
+      {
+        "event": "agent_presence",
+        "data": {
+          "active": true
+        }
+      }
+    ],
+    [
+      {
+        "event": "message",
+        "data": {
+          "id": "<norm>",
+          "role": "user",
+          "ts": "<norm>",
+          "text": "golden message",
+          "channel": "golden",
+          "received": false
+        }
+      },
+      {
+        "event": "message_received",
+        "data": {
+          "id": "<norm>",
+          "channel": "golden"
+        }
+      },
+      {
+        "event": "agent_presence",
+        "data": {
+          "active": false
+        }
+      },
+      {
+        "event": "draft",
+        "data": {
+          "text": ""
+        }
+      },
+      {
+        "event": "presence",
+        "data": {
+          "status": "thinking"
+        }
+      }
+    ],
+    [
+      {
+        "event": "reload",
+        "data": {}
+      }
+    ],
+    [
+      {
+        "event": "agent_unregister",
+        "data": {
+          "id": "golden"
+        }
+      }
+    ]
+  ],
+  "caps": [
+    [
+      {
+        "event": "connected",
+        "data": {
+          "clientId": "<norm>",
+          "capabilities": {
+            "schema": "1.0.0",
+            "recognized": [
+              "navigate"
+            ],
+            "unknown": []
+          }
+        }
+      },
+      {
+        "event": "history",
+        "data": []
+      },
+      {
+        "event": "agents",
+        "data": []
+      },
+      {
+        "event": "agent_presence",
+        "data": {
+          "active": false
+        }
+      }
+    ],
+    [
+      {
+        "event": "agent_register",
+        "data": {
+          "id": "golden",
+          "name": "Golden",
+          "color": "#3FB950"
+        }
+      }
+    ],
+    [
+      {
+        "event": "agent_presence",
+        "data": {
+          "active": true
+        }
+      }
+    ],
+    [
+      {
+        "event": "message",
+        "data": {
+          "id": "<norm>",
+          "role": "user",
+          "ts": "<norm>",
+          "text": "golden message",
+          "channel": "golden",
+          "received": false
+        }
+      },
+      {
+        "event": "message_received",
+        "data": {
+          "id": "<norm>",
+          "channel": "golden"
+        }
+      },
+      {
+        "event": "agent_presence",
+        "data": {
+          "active": false
+        }
+      },
+      {
+        "event": "presence",
+        "data": {
+          "status": "thinking"
+        }
+      }
+    ],
+    [],
+    [
+      {
+        "event": "agent_unregister",
+        "data": {
+          "id": "golden"
+        }
+      }
+    ]
+  ]
+}
