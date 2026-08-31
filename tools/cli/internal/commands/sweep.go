@@ -237,14 +237,16 @@ func sweepCandidates() []string {
 }
 
 // resolveSweepAgent reads one candidate's on-disk launch spec and its
-// reconciled crew state.
-func resolveSweepAgent(id string) SweepAgent {
+// reconciled crew state. The relay registry snapshot (reg, regOK) is fetched
+// once per pass by the caller and shared — per-agent relay probes made a
+// dead-relay sweep cost ~9.5s × fleet size (robots-8783).
+func resolveSweepAgent(id string, reg map[string]bool, regOK bool) SweepAgent {
 	dir := filepath.Join(parlayAgentsDir(), id)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return SweepAgent{ID: id, NotFound: true}
 	}
 	fm := readLocalFrontmatter(filepath.Join(dir, "identity.md"))
-	st := CrewStateForAgent(id)
+	st := crewStateForAgentEnrolled(id, enrollmentOf(reg, regOK, id))
 	return SweepAgent{
 		ID:             id,
 		State:          st.State,
@@ -315,9 +317,14 @@ func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
 		ids = sweepCandidates()
 	}
 
+	// One relay registry fetch for the whole pass (robots-8783): the answer
+	// does not vary by agent, and a dead relay must cost one bounded lookup,
+	// not one per candidate.
+	reg, regOK := fetchRegisteredAgents()
+
 	var swept, refused, held, skipped int
 	for _, id := range ids {
-		agent := resolveSweepAgent(id)
+		agent := resolveSweepAgent(id, reg, regOK)
 		if agent.NotFound {
 			if explicitID != "" {
 				httpc.Die(fmt.Sprintf("parlay sweep: agent %q not found in agents dir", id), config.ExitUsage)

@@ -311,3 +311,21 @@ func TestParseStatusLineSimpleVerbs(t *testing.T) {
 		t.Errorf("parseStatusLine(keyed) = %+v, %v, want verb=blocked key=deploy", p, ok)
 	}
 }
+
+// enrollmentOf is the pure seam sweep's batched registry fetch goes through
+// (robots-8783); the ok flag carries the robots-me7m distinction.
+func TestEnrollmentOf(t *testing.T) {
+	reg := map[string]bool{"agent-a": true}
+	if got := enrollmentOf(reg, true, "agent-a"); got != enrolledYes {
+		t.Errorf("enrollmentOf(present) = %v, want enrolledYes", got)
+	}
+	if got := enrollmentOf(reg, true, "ghost"); got != enrolledNo {
+		t.Errorf("enrollmentOf(absent) = %v, want enrolledNo", got)
+	}
+	if got := enrollmentOf(map[string]bool{}, true, "ghost"); got != enrolledNo {
+		t.Errorf("enrollmentOf(empty registry, real answer) = %v, want enrolledNo", got)
+	}
+	if got := enrollmentOf(nil, false, "agent-a"); got != enrollmentUnknown {
+		t.Errorf("enrollmentOf(failed fetch) = %v, want enrollmentUnknown — never enrolledNo", got)
+	}
+}
