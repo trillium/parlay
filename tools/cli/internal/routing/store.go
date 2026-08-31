@@ -59,6 +59,9 @@ type Event struct {
 	Authority string `json:"authority,omitempty"`
 	// Target: the corrected target (correct events).
 	Target string `json:"target,omitempty"`
+	// Authority-checked feedback and retirement both reference rules.json
+	// entries; Entry is the rule/evidence id a retire event tombstoned.
+	Entry string `json:"entry,omitempty"`
 	// Result: the full evaluation, trace included (decision/proposal events).
 	Result *Result `json:"result,omitempty"`
 	Note   string  `json:"note,omitempty"`
