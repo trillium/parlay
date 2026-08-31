@@ -1,0 +1,51 @@
+# parlay's Gas City city definition — the DEPLOYMENT layer.
+#
+# This file is authored source, not a live city: there is deliberately no `.gc/`
+# here and this directory must never be started in place (see city/README.md —
+# the Gas City supervisor is a shared machine-wide singleton; experiments must
+# redirect GC_HOME and the supervisor port).
+#
+# Authored against the pinned Gas City ref 7c817e064 (v1.4.0-504) per
+# docs/gascity-integration-contract.md §2. Schema reference:
+# ~/code/gascity/docs/reference/config.md. Pack composition lives in the
+# sibling pack.toml (the root city pack), per Pack Spec 2.0: city.toml is the
+# deployment layer, pack.toml carries imports and definitions.
+
+[workspace]
+# Legacy checked-in name; runtime identity resolves from .gc/site.toml at
+# install time (`gc init` writes it there). Kept as the declared fallback and
+# as the source for the bead-ID prefix derivation.
+name = "parlay"
+
+# SAFETY DEFAULT — the city starts suspended: the reconciler spawns no agent
+# from this config. The spawn seam (task-4cfpv.9) flips this deliberately when
+# it lands, honoring the epic's ordering rule: read before write, observe
+# before control. Do not flip it as a side effect of another change.
+suspended_on_start = true
+
+[api]
+# 0 disables the HTTP API server. The events seam (P6, task-4cfpv.11) and the
+# liveness seam (P7, task-4cfpv.10) own turning the typed /v0 HTTP+SSE surface
+# on, per the HYBRID integration mode (contract §5). Until those seams land,
+# an enabled API here would be an unobserved surface.
+port = 0
+
+# ---------------------------------------------------------------------------
+# Deliberately ABSENT sections — each is owned by a specific epic child and
+# must not be pre-decided here:
+#
+#   [beads]      — bead-store backend is Q4, OPEN (task-4cfpv.20). No seam may
+#                  assume a backend until it is ruled; omitting the table keeps
+#                  this file neutral. GC_BEADS=file is ruled OUT as a durable
+#                  substrate (bd cannot read it — epic amendment §5).
+#   [providers]  — provider presets belong to the spawn seam (task-4cfpv.9),
+#                  which owns launch-spec-to-template synthesis.
+#   [[agent]]    — agents arrive via the parlay pack's agents/ directory
+#                  (pack-composed city; see pack.toml), never inline here.
+#   [events]     — event bus config belongs to the events seam (task-4cfpv.11),
+#                  which owns recorder rotation, SSE contract, and the typed
+#                  event-name registry.
+#   [session]    — session provider backend follows the spawn seam.
+#   [daemon]     — controller/health-patrol tuning follows the liveness seam
+#                  (task-4cfpv.10).
+# ---------------------------------------------------------------------------

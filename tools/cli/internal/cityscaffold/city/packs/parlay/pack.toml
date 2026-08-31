@@ -1,0 +1,23 @@
+# The parlay pack (Pack Spec 2.0) — parlay's process + representation plane,
+# packaged for Gas City.
+#
+# Gas City is parlay's EXECUTION plane (sessions, liveness, process control,
+# dispatch, event bus, health patrol, safety gates); parlay keeps the PROCESS +
+# REPRESENTATION plane (routing, staleness, supersession, source contracts,
+# capability declaration, human/voice relay). This pack declares what parlay
+# brings to a city. Plane boundary: docs/gascity-plane-boundary.md; binding
+# rulings: docs/gascity-integration-contract.md.
+#
+# Contents are discovered from the well-known directories beside this file —
+# see README.md here for what lives where and how gc consumes it.
+#
+# `requires_gc` is deliberately omitted: Gas City parses it and never compares
+# it (contract §4). Declaring it would look like a working version gate to any
+# reader of this manifest. parlay's version floor, when one is needed, is a
+# named-error check in parlay code.
+
+[pack]
+name = "parlay"
+schema = 2
+version = "0.1.0"
+description = "parlay's process + representation plane as a Gas City pack: agents, formulas, orders, commands, and doctor checks arrive here as the migration seams land."
