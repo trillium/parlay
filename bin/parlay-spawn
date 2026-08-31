@@ -427,6 +427,106 @@ PYEOF
   printf '%s' "$out"
 }
 
+# list_profiles
+# task-qyu8q (scope 2): renders the packages/spawn-profiles/profiles.toml
+# catalog — name, kind, model, and the account a spawn under that profile
+# lands on — so "what can I even pick?" has an answer instead of forcing a
+# read of profiles.toml. When quota-axi is on PATH, joins in live headroom
+# per provider window (best-effort: quota-axi missing or erroring degrades
+# to the static catalog with a one-line note, never a failed listing).
+list_profiles() {
+  local toml="${PARLAY_SPAWN_PROFILES_TOML:-$REPO_DIR/packages/spawn-profiles/profiles.toml}"
+  if [ ! -f "$toml" ]; then
+    echo "parlay-spawn --list: no profiles.toml at $toml" >&2
+    exit 2
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "parlay-spawn --list: requires python3 (for tomllib) — not found on PATH" >&2
+    exit 2
+  fi
+
+  local quota_file
+  quota_file="$(mktemp "${TMPDIR:-/tmp}/parlay-spawn-quota.XXXXXX")"
+  trap 'rm -f "$quota_file"' RETURN
+  local quota_note="quota-axi not found on PATH — showing static catalog only."
+  if command -v quota-axi >/dev/null 2>&1; then
+    if quota-axi --json >"$quota_file" 2>/dev/null; then
+      quota_note=""
+    else
+      : >"$quota_file"
+      quota_note="quota-axi errored — showing static catalog only."
+    fi
+  fi
+
+  python3 - "$toml" "$ACCOUNT" "$quota_note" "$quota_file" <<'PYEOF'
+import sys, json, tomllib
+
+toml_path, default_account, note, quota_file = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+with open(quota_file, "r") as f:
+    quota_raw = f.read()
+
+with open(toml_path, "rb") as f:
+    data = tomllib.load(f)
+profiles = data.get("profile", [])
+
+# kind -> quota-axi provider name; kinds with no live quota-axi coverage
+# (e.g. "codex" maps 1:1, "opencode" -> "opencode-go") just show nothing.
+KIND_TO_PROVIDER = {"claude": "claude", "opencode": "opencode-go", "codex": "codex"}
+
+quota_by_provider = {}
+if quota_raw.strip():
+    try:
+        q = json.loads(quota_raw)
+        for p in q.get("providers", []):
+            quota_by_provider[p.get("provider")] = p
+    except (json.JSONDecodeError, AttributeError):
+        note = note or "quota-axi output was unreadable — showing static catalog only."
+
+def headroom(kind):
+    prov = quota_by_provider.get(KIND_TO_PROVIDER.get(kind, ""))
+    if not prov:
+        return ""
+    windows = prov.get("windows", [])
+    week = next((w for w in windows if w.get("kind") == "weekly"), None) or (windows[0] if windows else None)
+    if not week:
+        return ""
+    pct = week.get("percentRemaining")
+    resets = (week.get("resetsAt") or "")[11:16]  # HH:MM out of an ISO timestamp
+    label = week.get("label", week.get("id", ""))
+    if pct is None:
+        return ""
+    bits = f"{label} {pct}% remaining"
+    if resets:
+        bits += f", resets {resets}"
+    return bits
+
+rows = []
+for p in profiles:
+    name = p.get("name", "")
+    kind = p.get("kind", "")
+    model = p.get("model", "") or "(none — cannot satisfy the model gate)"
+    account = default_account or "(ambient session token)"
+    quota = headroom(kind)
+    rows.append((name, kind, model, account, quota))
+
+widths = [max(len(r[i]) for r in rows) if rows else 0 for i in range(4)]
+headers = ("NAME", "KIND", "MODEL", "ACCOUNT")
+widths = [max(widths[i], len(headers[i])) for i in range(4)]
+print("  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)) + ("  QUOTA" if quota_by_provider else ""))
+for name, kind, model, account, quota in rows:
+    line = "  ".join([
+        name.ljust(widths[0]), kind.ljust(widths[1]),
+        model.ljust(widths[2]), account.ljust(widths[3]),
+    ])
+    if quota:
+        line += "  " + quota
+    print(line)
+
+if note:
+    print(f"\n{note}", file=sys.stderr)
+PYEOF
+}
+
 # require_model
 # task-qyu8q: refuses to spawn unless a model was chosen deliberately — no
 # implicit "claude session default", no silent sonnet fallback. Satisfied by
@@ -472,7 +572,9 @@ parlay-spawn: refusing to spawn — no model was chosen.
 
 A model/provider must be picked deliberately on every spawn. There is no
 implicit default: the launching session's model is never inherited, and there
-is no silent sonnet fallback. Choose one:
+is no silent sonnet fallback. Run 'parlay-spawn --list' to see available
+profiles (name, kind, model, account, and live quota headroom where
+available), then choose one:
 
   --model <model>   For --kind claude: haiku, sonnet, opus, fable, or a full
                     model id (e.g. claude-sonnet-5, claude-opus-5). Run
@@ -493,9 +595,16 @@ usage() {
 Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> --model MODEL [--cwd PATH] [--focus]
        parlay-spawn --ephemeral <initial-prompt> --model MODEL [--cwd PATH] [--focus]
        parlay-spawn <id>=<repo> [<id>=<repo> ...] --prompt TEXT --model M [--color HEX] [--focus]
+       parlay-spawn --list
 
   --model (or --profile naming a model-bearing profile) is REQUIRED on every
-  form above — see --model/--profile below.
+  spawn form above — see --model/--profile below. Run --list to see what's
+  available before picking.
+
+  --list          Print the packages/spawn-profiles/profiles.toml catalog —
+                  name, kind, model, account — annotated with live quota-axi
+                  headroom per provider when quota-axi is on PATH (degrades
+                  to the static catalog otherwise). Does not spawn anything.
 
   agent-id        kebab-slug, stable across restarts (e.g. code-reviewer)
   display-name    tab header text (e.g. "Code Reviewer")
@@ -680,6 +789,12 @@ bead_gate() {
   esac
   echo "parlay-spawn: bead $BEAD_ID is $_status — binding it to this agent." >&2
 }
+
+# ── --list: render the profile catalog, no spawn attempted ──────────────────
+if [ "${1:-}" = "--list" ]; then
+  list_profiles
+  exit 0
+fi
 
 # ── Ephemeral hash-identity path ────────────────────────────────────────────
 # `parlay-spawn --ephemeral "<prompt>" [--cwd PATH] [--model MODEL] [--focus]`

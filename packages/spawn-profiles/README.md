@@ -15,6 +15,14 @@ model-bearing profile counts as that choice). `command`, `args`, `prompt_mode`,
 `resume_flag`, `env`, and the rest of the field reference below are validated
 by `cmd/validate` but not yet threaded through by `parlay-spawn` itself.
 
+Run `parlay-spawn --list` to see the catalog rendered (name, kind, model, and
+the ccjuggler account a spawn currently lands on), annotated with live
+`quota-axi --json` headroom per provider when `quota-axi` is on PATH. There is
+no per-profile `account` field today — every profile spawns under whatever
+account `parlay-spawn` would otherwise resolve (`--account`, then
+`PARLAY_SPAWN_DEFAULT_ACCOUNT`, then `~/.parlay/config.toml`'s `spawnAccount`).
+This is display/advisory only — `--list` never gates a spawn on quota.
+
 ## Add a profile
 
 1. Append a `[[profile]]` block to `profiles.toml`.
