@@ -82,9 +82,11 @@ describe("delivery gate at the broadcast choke points", () => {
     const legacy = fakeClient("c-legacy")
     const before = suppressedCounts()
 
-    broadcastToClients("navigate", { url: "/x" })   // accepted: both get it
-    broadcastToClients("reload", {})                // not accepted: declared client skipped
-    broadcastToClients("message", { id: "m1" })     // state report: ungated
+    // Return value is delivery truth (same contract as broadcastToDevice):
+    // a suppressed client is not counted, so callers never report it as sent.
+    expect(broadcastToClients("navigate", { url: "/x" })).toBe(2)  // accepted: both get it
+    expect(broadcastToClients("reload", {})).toBe(1)               // not accepted: declared client skipped
+    expect(broadcastToClients("message", { id: "m1" })).toBe(2)    // state report: ungated
 
     expect(declared.filter(f => f.startsWith("event: navigate")).length).toBe(1)
     expect(declared.filter(f => f.startsWith("event: reload")).length).toBe(0)

@@ -1,6 +1,6 @@
 import { rebuildHistoryIndex, currentDraft, saveDraftToDisk } from "./storage"
 import { history } from "./storage"
-import { sseClients, CORS, broadcastToClients, broadcastToDevice } from "./sse"
+import { CORS, broadcastToClients, broadcastToDevice } from "./sse"
 import { handleMessagesRequest } from "./router-messages"
 import { handleEventsRequest } from "./router-events"
 import { handlePollRequest } from "./router-poll"
@@ -147,7 +147,7 @@ function dispatchChatRequest(req: Request, pathname: string): Response | Promise
         const enc = new TextEncoder()
         let device: string | undefined
         try { device = String((await req.json()).device ?? "").trim() || undefined } catch { /* empty body OK — back-compat */ }
-        const clients = device ? broadcastToDevice(device, "reload", {}) : (broadcastToClients("reload", {}), sseClients.size)
+        const clients = device ? broadcastToDevice(device, "reload", {}) : broadcastToClients("reload", {})
         controller.enqueue(enc.encode(JSON.stringify({ ok: true, clients, ...(device ? { device } : {}) })))
         controller.close()
       },
@@ -167,7 +167,7 @@ function dispatchChatRequest(req: Request, pathname: string): Response | Promise
           // device present → drive only that device; absent → global (back-compat)
           const clients = device
             ? broadcastToDevice(device, "navigate", { url, openDrawer })
-            : (broadcastToClients("navigate", { url, openDrawer }), sseClients.size)
+            : broadcastToClients("navigate", { url, openDrawer })
           controller.enqueue(enc.encode(JSON.stringify({ ok: true, clients, url, openDrawer, ...(device ? { device } : {}) })))
         } catch { controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" }))) }
         controller.close()
