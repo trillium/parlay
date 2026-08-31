@@ -17,7 +17,11 @@
 # produce a clean top-level session (2026-07-13).
 #
 # Usage:
-#   parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus] [--model MODEL]
+#   parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus] --model MODEL
+#
+# --model (or a model-bearing --profile) is REQUIRED — task-qyu8q: a model
+# must be chosen deliberately on every spawn, never inherited from the
+# launching session's default and never silently defaulted to sonnet.
 #
 # Example:
 #   parlay-spawn code-reviewer "Code Reviewer" "#c084fc" \
@@ -111,6 +115,12 @@ unset _config_toml _config_beads _beads_required_raw
 # --force overrides beads_required at call time
 FORCE=0
 BEAD_ID=""
+# task-qyu8q: tracks whether the model-required gate already ran (it is
+# called once pre-mint on the ephemeral path and once, idempotently, in the
+# shared section — see require_model below) and whether --kind was passed
+# explicitly (so a --profile's kind never silently overrides it).
+_MODEL_GATE_DONE=""
+KIND_FROM_FLAG=0
 
 # Absolute path to THIS script, so the batch loop can re-exec us in single mode
 # regardless of the cwd or relative path used to invoke us (mirror fm-spawn.sh's
@@ -380,11 +390,112 @@ load_template() {
   printf '%s' "$content"
 }
 
+# resolve_profile <name>
+# Looks up <name> in packages/spawn-profiles/profiles.toml and prints
+# "<kind>\t<model>" for it. Exits 2 if profiles.toml is missing, python3 (for
+# tomllib) is unavailable, or no profile with that name exists — a typo'd
+# profile must not silently fall through to the no-model refusal below with a
+# confusing message. PARLAY_SPAWN_PROFILES_TOML overrides the catalog path
+# (used by tests to point at a fixture instead of the real repo catalog).
+resolve_profile() {
+  local name="$1"
+  local toml="${PARLAY_SPAWN_PROFILES_TOML:-$REPO_DIR/packages/spawn-profiles/profiles.toml}"
+  if [ ! -f "$toml" ]; then
+    echo "parlay-spawn: --profile $name — no profiles.toml at $toml" >&2
+    exit 2
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "parlay-spawn: --profile requires python3 (for tomllib) — not found on PATH" >&2
+    exit 2
+  fi
+  local out
+  out=$(python3 - "$toml" "$name" <<'PYEOF' 2>/dev/null
+import sys, tomllib
+path, name = sys.argv[1], sys.argv[2]
+with open(path, "rb") as f:
+    data = tomllib.load(f)
+for p in data.get("profile", []):
+    if p.get("name") == name:
+        print(f"{p.get('kind','')}\t{p.get('model','')}")
+        break
+PYEOF
+) || out=""
+  if [ -z "$out" ]; then
+    echo "parlay-spawn: --profile '$name' not found in $toml" >&2
+    exit 2
+  fi
+  printf '%s' "$out"
+}
+
+# require_model
+# task-qyu8q: refuses to spawn unless a model was chosen deliberately — no
+# implicit "claude session default", no silent sonnet fallback. Satisfied by
+# an explicit --model, by a --profile whose profiles.toml entry names a
+# model, or by --no-pii's live-verified free-model routing (pii_route_model,
+# called before this in the shared section) — that path is a third
+# deliberate choice, not a silent default: it prints exactly which model it
+# picked and only picks from models opencode currently lists, so it is
+# exactly the failure this gate exists to prevent (never). Idempotent (safe
+# to call more than once) and side-effect-free besides resolving --profile,
+# so it is called once pre-mint on the --ephemeral path (matching
+# bead_gate's "gate before the mint" convention — a refusal here must leave
+# no seeded store behind) and again, harmlessly, in the shared section once
+# PII routing has run.
+require_model() {
+  [ -n "$_MODEL_GATE_DONE" ] && return 0
+
+  if [ -n "${PROFILE:-}" ]; then
+    local _po _pkind _pmodel
+    _po=$(resolve_profile "$PROFILE")
+    _pkind="${_po%%"$(printf '\t')"*}"
+    _pmodel="${_po#*"$(printf '\t')"}"
+    # Apply the profile's kind unless --kind was passed explicitly, and its
+    # model only if --model was not already given — an explicit --model
+    # alongside --profile (e.g. --profile for kind, --model to override it)
+    # still wins.
+    if [ -n "$_pkind" ] && [ "$KIND_FROM_FLAG" != "1" ]; then
+      KIND="$_pkind"
+    fi
+    if [ -n "$_pmodel" ] && [ -z "${MODEL:-}" ]; then
+      MODEL="$_pmodel"
+      echo "parlay-spawn: --profile $PROFILE — using model $MODEL (kind=$KIND)" >&2
+    fi
+  fi
+
+  if [ -n "${MODEL:-}" ]; then
+    _MODEL_GATE_DONE=1
+    return 0
+  fi
+
+  cat >&2 <<EOF
+parlay-spawn: refusing to spawn — no model was chosen.
+
+A model/provider must be picked deliberately on every spawn. There is no
+implicit default: the launching session's model is never inherited, and there
+is no silent sonnet fallback. Choose one:
+
+  --model <model>   For --kind claude: haiku, sonnet, opus, fable, or a full
+                    model id (e.g. claude-sonnet-5, claude-opus-5). Run
+                    'claude --help' (see the --model entry) for the live
+                    alias list — aliases retire, don't trust one written here.
+                    For --kind opencode: opencode-go/<model> (paid) or
+                    opencode/<model> (free); run 'opencode models' for the
+                    live list.
+  --profile <name>  A packages/spawn-profiles/profiles.toml profile that pins
+                    a model, e.g. --profile claude. See that file's README
+                    for the field reference and how to add one.
+EOF
+  exit 2
+}
+
 usage() {
   cat >&2 <<EOF
-Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus]
-       parlay-spawn --ephemeral <initial-prompt> [--cwd PATH] [--model MODEL] [--focus]
-       parlay-spawn <id>=<repo> [<id>=<repo> ...] --prompt TEXT [--model M] [--color HEX] [--focus]
+Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> --model MODEL [--cwd PATH] [--focus]
+       parlay-spawn --ephemeral <initial-prompt> --model MODEL [--cwd PATH] [--focus]
+       parlay-spawn <id>=<repo> [<id>=<repo> ...] --prompt TEXT --model M [--color HEX] [--focus]
+
+  --model (or --profile naming a model-bearing profile) is REQUIRED on every
+  form above — see --model/--profile below.
 
   agent-id        kebab-slug, stable across restarts (e.g. code-reviewer)
   display-name    tab header text (e.g. "Code Reviewer")
@@ -400,10 +511,18 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   Must be the FIRST arg — cannot combine with an explicit agent-id.
   --cwd PATH      working directory for the spawned claude (default: \$HOME)
   --focus         focus the new terminal (default: launched --no-focus)
-  --model MODEL   pin the agent model (claude: sonnet, opus, haiku, or a full
-                  model id; opencode: opencode-go/<model>, e.g.
-                  opencode-go/deepseek-v4-pro); default: claude session default
-                  with sonnet fallback
+  --model MODEL   REQUIRED (unless --profile names one) — pin the agent model.
+                  A model must be chosen deliberately on every spawn; there is
+                  no implicit default and no silent sonnet fallback. claude:
+                  haiku, sonnet, opus, fable, or a full model id (e.g.
+                  claude-sonnet-5); opencode: opencode-go/<model>, e.g.
+                  opencode-go/deepseek-v4-pro. Run 'claude --help' (see
+                  --model) for the live list of claude aliases — they retire,
+                  don't trust one written here.
+  --profile NAME  use a packages/spawn-profiles/profiles.toml profile, which
+                  pins kind + model (see that file's README). Satisfies the
+                  model requirement above in place of --model when the named
+                  profile has a model field; an explicit --model still wins.
   --kind KIND     agent harness to launch via herdr (default: claude). e.g.
                   --kind opencode spawns the opencode TUI and forwards --model
                   verbatim. Two providers: opencode/<model> is the free tier,
@@ -463,9 +582,10 @@ Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
   becomes that agent's --cwd; the display name is the id and the tab color is
   derived from it (or shared via --color). A shared --prompt is required and given
-  to every agent; --model/--focus/--color/--mode/--effort/--worktree/--account are
-  shared too. A failed pair is reported and skipped, the rest still launch, and the
-  batch exits non-zero if any failed.
+  to every agent; --model/--profile/--focus/--color/--mode/--effort/--worktree/--account
+  are shared too. A model or model-bearing profile is still REQUIRED — each
+  child re-checks it independently. A failed pair is reported and skipped, the
+  rest still launch, and the batch exits non-zero if any failed.
     parlay-spawn fix-a=~/code/foo add-b=~/code/bar --prompt "Do the thing" --model sonnet
 
 Env: PARLAY_SERVER (default http://localhost:4242)
@@ -580,6 +700,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
   CWD="$HOME"
   FOCUS_FLAG="--no-focus"
   MODEL=""
+  PROFILE=""
   MODE="report"
   EFFORT=""
   KIND="claude"
@@ -593,9 +714,10 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --cwd)       CWD="$2"; shift 2 ;;
       --focus)     FOCUS_FLAG="--focus"; shift ;;
       --model)     MODEL="$2"; shift 2 ;;
+      --profile)   PROFILE="$2"; shift 2 ;;
       --mode)      MODE="$2"; shift 2 ;;
       --effort)    EFFORT="$2"; shift 2 ;;
-      --kind)      KIND="$2"; shift 2 ;;
+      --kind)      KIND="$2"; KIND_FROM_FLAG=1; shift 2 ;;
       --pii)       PII=1; shift ;;
       --no-pii)    PII=0; shift ;;
       --worktree)  WANT_WORKTREE=1; shift ;;
@@ -610,6 +732,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
   done
 
   # Gate before the mint: a refusal here leaves no seeded store behind.
+  require_model
   bead_gate
 
   # Mint id/name/color and seed the store. Prints a TAB-separated "<id>\t<name>\t<color>"
@@ -664,6 +787,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
           PAIRS=()
           BATCH_PROMPT=""
           BATCH_MODEL=""
+          BATCH_PROFILE=""
           BATCH_COLOR=""
           BATCH_FOCUS="--no-focus"
           BATCH_MODE="report"
@@ -683,6 +807,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             case "$1" in
               --prompt)    BATCH_PROMPT="$2"; shift 2 ;;
               --model)     BATCH_MODEL="$2"; shift 2 ;;
+              --profile)   BATCH_PROFILE="$2"; shift 2 ;;
               --color)     BATCH_COLOR="$2"; shift 2 ;;
               --focus)     BATCH_FOCUS="--focus"; shift ;;
               --mode)      BATCH_MODE="$2"; shift 2 ;;
@@ -733,6 +858,7 @@ if [ "$EPHEMERAL" -eq 0 ] && [ $# -gt 0 ]; then
             _bcolor="${BATCH_COLOR:-$(color_from_id "$_bid")}"
             _shared=(--cwd "$_brepo")
             [ -n "$BATCH_MODEL" ] && _shared+=(--model "$BATCH_MODEL")
+            [ -n "$BATCH_PROFILE" ] && _shared+=(--profile "$BATCH_PROFILE")
             [ "$BATCH_FOCUS" = "--focus" ] && _shared+=(--focus)
             _shared+=(--mode "$BATCH_MODE")
             [ -n "$BATCH_EFFORT" ] && _shared+=(--effort "$BATCH_EFFORT")
@@ -773,6 +899,7 @@ esac
 CWD="$HOME"
 FOCUS_FLAG="--no-focus"
 MODEL=""
+PROFILE=""
 MODE="report"
 EFFORT=""
 KIND="claude"
@@ -786,9 +913,10 @@ while [ $# -gt 0 ]; do
     --cwd)       CWD="$2"; shift 2 ;;
     --focus)     FOCUS_FLAG="--focus"; shift ;;
     --model)     MODEL="$2"; shift 2 ;;
+    --profile)   PROFILE="$2"; shift 2 ;;
     --mode)      MODE="$2"; shift 2 ;;
     --effort)    EFFORT="$2"; shift 2 ;;
-    --kind)      KIND="$2"; shift 2 ;;
+    --kind)      KIND="$2"; KIND_FROM_FLAG=1; shift 2 ;;
     --pii)       PII=1; shift ;;
     --no-pii)    PII=0; shift ;;
     --worktree)  WANT_WORKTREE=1; shift ;;
@@ -829,6 +957,12 @@ pii_apply_bead_label   # label the bead if PII=1 and BEAD_ID is set
 pii_check_bead_label   # set PII=1 if bead already has contains-pii (overrides --no-pii)
 pii_enforce            # PII=1: block non-claude harnesses
 pii_route_model        # PII=0: prefer free models when KIND/MODEL are at defaults
+
+# task-qyu8q: no implicit model. A no-op if the --ephemeral path already
+# satisfied this pre-mint; otherwise resolves --profile (if given) and refuses
+# to spawn if MODEL is still empty — before the worktree lease, the
+# register-agent POST, and any launcher.
+require_model
 
 # branch/pr delivery modes require worktree isolation — auto-enable.
 if [ "$MODE" = "branch" ] || [ "$MODE" = "pr" ]; then
