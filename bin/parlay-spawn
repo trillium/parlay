@@ -1484,24 +1484,47 @@ fi
 #    long before the timeout and this never nudges it. Disable with
 #    PARLAY_SPAWN_NO_WATCHDOG=1; tune with PARLAY_SPAWN_LIVENESS_TIMEOUT_MS.
 LIVENESS_TIMEOUT_MS="${PARLAY_SPAWN_LIVENESS_TIMEOUT_MS:-60000}"
-if [ "$LAUNCHER" = "subprocess" ] || [ "$LAUNCHER" = "gc" ]; then
-  # subprocess/gc paths: there is no herdr agent to `agent wait` on, so
+if [ "$LAUNCHER" = "gc" ]; then
+  # gc path (unit 6): confirm-or-report is delegated to `parlay gc-liveness`.
+  # It confirms the startup turn from the agent's own emitted effect — its
+  # channel appearing in /api/chat/subscribers — and on timeout routes any
+  # steering through the gc-nudge capability gate (R7): a typed refusal on
+  # the subprocess provider, a short fixed kick on injection-capable ones,
+  # NEVER a charter re-prompt. The charter went out exactly once via the gc
+  # template; this watchdog is structurally unable to send it again. The
+  # verb's --json envelope is appended to $AGENT_DIR/charter-delivery as the
+  # durable answer to "was the startup turn confirmed?".
+  if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ]; then
+    GC_WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-gc-watchdog.log"
+    (
+      # gc-liveness exits 1 on the report path while still emitting its JSON
+      # envelope — capture stdout regardless of exit (robots-dcag: a plain
+      # VAR=$(cmd) under set -e is not best-effort).
+      GC_LIVENESS_JSON="$("$BIN_DIR/parlay" gc-liveness "$AGENT_ID" \
+        ${GC_SESSION_ID:+--session "$GC_SESSION_ID"} \
+        --server "$PARLAY" --timeout-ms "$LIVENESS_TIMEOUT_MS" --json)" || true
+      if [ -n "$GC_LIVENESS_JSON" ]; then
+        printf '%s\n' "$GC_LIVENESS_JSON" >>"$AGENT_DIR/charter-delivery" || true
+        echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: gc-liveness envelope recorded in $AGENT_DIR/charter-delivery" >&2
+        printf '%s\n' "$GC_LIVENESS_JSON" >&2
+      else
+        echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: gc-liveness emitted no envelope — inspect the gc session: <pinned gc> --city ${GC_CITY_DIR:-\$PARLAY_STATE_HOME/gascity/city} session list --json" >&2
+      fi
+    ) </dev/null >>"$GC_WATCHDOG_LOG" 2>&1 &
+    disown 2>/dev/null || true
+    echo "parlay-spawn: gc liveness watchdog armed (confirm-or-report via 'parlay gc-liveness', ${LIVENESS_TIMEOUT_MS}ms); log: $GC_WATCHDOG_LOG" >&2
+  fi
+elif [ "$LAUNCHER" = "subprocess" ]; then
+  # subprocess launcher path: there is no herdr agent to `agent wait` on, so
   # liveness is observed the same way any client confirms an agent is
   # connected — polling this server's own /api/chat/subscribers for the
   # agent's channel. Same opt-out/tuning knobs as the herdr watchdog for
-  # operational parity. Observation only, never a re-prompt: under gc the
-  # charter went out once via the template, and resubmitting it is exactly
-  # the double-delivery the provider contract forbids (unit 6 owns the
-  # confirm-or-report refinement).
+  # operational parity. Observation only, never a re-prompt.
   if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ]; then
     SUBPROCESS_LIVENESS_TIMEOUT_S=$(( LIVENESS_TIMEOUT_MS / 1000 ))
     [ "$SUBPROCESS_LIVENESS_TIMEOUT_S" -lt 1 ] && SUBPROCESS_LIVENESS_TIMEOUT_S=60
     SUBPROCESS_WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-subprocess-watchdog.log"
-    if [ "$LAUNCHER" = "gc" ]; then
-      SUBPROCESS_TIMEOUT_HINT="inspect the gc session: <pinned gc> --city ${GC_CITY_DIR:-\$PARLAY_STATE_HOME/gascity/city} session list --json"
-    else
-      SUBPROCESS_TIMEOUT_HINT="inspect $AGENT_DIR/gascity or run '$SUBPROCESS_GO_BIN subprocess-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'"
-    fi
+    SUBPROCESS_TIMEOUT_HINT="inspect $AGENT_DIR/gascity or run '$SUBPROCESS_GO_BIN subprocess-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'"
     (
       _subprocess_elapsed=0
       while [ "$_subprocess_elapsed" -lt "$SUBPROCESS_LIVENESS_TIMEOUT_S" ]; do
