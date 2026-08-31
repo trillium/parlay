@@ -1,4 +1,5 @@
 import type { SSEClient, PollWaiter, AgentInfo, ChatMessage } from "./types"
+import { shouldDeliver, countSuppressed } from "./capability"
 
 // ── SSE state ───────────────────────────────────────────────────────────────
 
@@ -95,20 +96,28 @@ export function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
 
+// Both broadcast paths run the capability delivery gate
+// (docs/interface-capabilities.md): a client that declared ?caps= only
+// receives the gated presentation commands it accepts; undeclared clients are
+// legacy and get everything, byte-identical. Suppressions are counted — a
+// silent gate is indistinguishable from a gate that never runs.
 export function broadcastToClients(event: string, data: unknown) {
   const payload = sseEvent(event, data)
   for (const client of sseClients.values()) {
+    if (!shouldDeliver(client.caps, event)) { countSuppressed(event); continue }
     try { client.controller.enqueue(new TextEncoder().encode(payload)) } catch { /* client closed */ }
   }
 }
 
 // Scoped variant: deliver only to SSE clients that registered the given device id.
-// Returns how many clients matched.
+// Returns how many clients the command was delivered to — a suppressed client
+// does not count, so callers report delivery truth, not addressing truth.
 export function broadcastToDevice(deviceId: string, event: string, data: unknown): number {
   const payload = sseEvent(event, data)
   let matched = 0
   for (const client of sseClients.values()) {
     if (client.device !== deviceId) continue
+    if (!shouldDeliver(client.caps, event)) { countSuppressed(event); continue }
     matched++
     try { client.controller.enqueue(new TextEncoder().encode(payload)) } catch { /* client closed */ }
   }

@@ -315,6 +315,7 @@ interface SubscribersInfo {
   poll?: { count?: number; channels?: Array<{ channel: string | null; id?: string; name?: string }> }
   registered?: { count?: number; agents?: AgentInfo[] }
   presence_broadcasts?: number
+  capability_suppressed?: Record<string, number>  // TS server only: gated event → deliveries suppressed by capability declarations; devices[] entries likewise carry surface/accepts when the connection declared ?caps=
   presence?: Array<{ channel: string; lastSeen: string | null }>   // read by tab-online.ts
   memory?: Record<string, number>     // read by commands-doctor.ts, optional
   history?: Record<string, number>    // read by commands-doctor.ts, optional
@@ -599,18 +600,30 @@ Delivered to the browser as the `device_cmd` SSE event — see below.
 
 ## SSE Events
 
-### `GET /api/chat/events?device=<uuid>&after=<lastMsgId>&url=<currentPageUrl>`
+### `GET /api/chat/events?device=<uuid>&after=<lastMsgId>&url=<currentPageUrl>&caps=<declaration>`
 One persistent `EventSource` per tab. `after` (only sent once a message has
 been received) asks the server for a delta instead of a full history replay;
 `url` lets the server scope `history` more deeply for the page's owning
 channel. On any error the client closes and reconnects with exponential
 backoff (1s → doubling, capped 30s).
 
+`caps` is **TS server only** (Go-server parity is a tracked follow-up): a
+url-encoded JSON interface-capability declaration, contract owned by
+[`docs/interface-capabilities.md`](./interface-capabilities.md) and the
+normative engine `tools/cli/internal/capability`. A declared connection only
+receives the presentation-command events (`navigate`, `reload`, `device_cmd`,
+`input_action`, `draft`) it lists under `accepts`; all other events are
+ungated. No `caps` at all = legacy client, byte-identical full delivery. An
+*invalid* declaration is refused with `400 {"error"}` rather than falling back
+to legacy — fail-open would widen delivery against declared intent. Unrelated
+to `register-agent`'s free-form `caps` field, which is INPUT-direction agent
+metadata.
+
 Caller: `packages/client/src/sse.ts` (`connect`).
 
 | Event | Payload | Notes |
 |---|---|---|
-| `connected` | *(none)* | Resets reconnect backoff to 1s; triggers a `GET /version` self-upgrade check. |
+| `connected` | `{ "clientId": "string", "capabilities"?: { "schema": "string", "recognized": ["string"], "unknown": ["string"] } }` | Resets reconnect backoff to 1s; triggers a `GET /version` self-upgrade check. The client reads no fields today. `capabilities` (TS server only) echoes the negotiation iff the connection declared `caps`: which accepts names this server gates on vs. has never heard of. |
 | `history` | `ChatMessage[]` | Full or delta history depending on `after`. Persisted to IndexedDB. |
 | `agents` | `AgentInfo[]` | Full agent-registry snapshot, upserted into local `agentInfo` map. |
 | `agent_register` | `AgentInfo` | Single-agent upsert (incremental, vs. the bulk `agents` event). |
