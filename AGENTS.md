@@ -26,6 +26,7 @@ Each of these has already caused a real incident on the captain's box.
 - **A best-effort probe written as `VAR=$(cmd)` is not best-effort.** Under `set -euo pipefail` a plain assignment takes the substitution's exit status. Write `VAR="$(cmd)" || VAR=""`. → [notes](docs/agent-notes/a-best-effort-probe-written-as-robots-dcag.md)
 - **CI is `.github/workflows/ci.yml`** — four jobs (go, bun, shell, hygiene), including a 2 MiB tracked-blob ceiling. Several harnesses are deliberately excluded. → [notes](docs/agent-notes/ci-is-github-workflows-ci-yml.md)
 - **Never assert on elapsed time across a subprocess.** `bun` startup jitter is bigger than most quantities worth testing, so a bound loose enough not to flake cannot fail — assert on emitted output, and test-the-test. → [notes](docs/agent-notes/a-timing-assertion-loose-enough-not.md)
+- **`tools/cli` sweeps need `CGO_ENABLED=0`** — a default-CGO `go build ./...`/`go test ./...` there dies on missing ICU C++ headers (the beads dependency's embedded-Dolt tree); `bin/parlay` (`go build .`) is unaffected. → [docs/status-lift-topology.md](docs/status-lift-topology.md)
 
 ## The security boundary
 
