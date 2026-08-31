@@ -48,6 +48,11 @@ const (
 	// DecisionKeyPrefix + <slug> tracks one keyed decision; values are
 	// DecisionOpen or DecisionResolved.
 	DecisionKeyPrefix = "decision."
+	// KeyGCSession is the attachment pointer to the agent record the SPAWN
+	// seam owns (report §6.1 point 4): the gc session bead id stamped into
+	// identity.md at gc-spawn. Written when the stamp exists; a crew bead
+	// carries status ABOUT that record, it never replaces it.
+	KeyGCSession = "gc_session"
 )
 
 // Keyed-decision states (the values under DecisionKeyPrefix keys).
