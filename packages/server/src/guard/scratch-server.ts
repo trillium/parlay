@@ -74,8 +74,12 @@ async function assertNotListening(url: string): Promise<void> {
  * Starts the server and resolves once it answers AS ITSELF. Each caller gets
  * its own process on its own reserved port with its own data dir, so test
  * files stay independent.
+ *
+ * `extraEnv` is layered over the isolation env — for knobs a suite needs
+ * (e.g. PARLAY_ASSETS_DIR for the static tests), NOT for un-redirecting
+ * HOME/data/state, which would point the process at the captain's live dirs.
  */
-export async function startScratchServer(): Promise<ScratchServer> {
+export async function startScratchServer(extraEnv: Record<string, string> = {}): Promise<ScratchServer> {
   const port = reservePort()
   const evalPort = reservePort()
   const dir = mkdtempSync(join(tmpdir(), "parlay-guard-"))
@@ -113,6 +117,7 @@ export async function startScratchServer(): Promise<ScratchServer> {
       // good a proof as a 200 here: the request got past the guard and into
       // the handler, which is what these tests assert.
       PARLAY_EVAL_ENGINE_URL: `http://127.0.0.1:${evalPort}`,
+      ...extraEnv,
     },
     stdout: "pipe",
     stderr: "pipe",
