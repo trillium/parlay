@@ -35,8 +35,10 @@ should be an escalation mechanism rather than the default router").
    ("Dave, check the thing" → `dave`). #128 §34: "The system can interpret
    the first portion as a potential routing key and the remainder as
    content." Confidence 1.0 by construction. The known-target roster is
-   supplied by the caller (`--targets`, or the server's agent list when
-   reachable) — the engine itself holds no roster.
+   supplied by the caller via `--targets` — the engine itself holds no
+   roster, and the CLI deliberately does not ask the server for one:
+   `route decide` stays deterministic and offline. Wiring the live agent
+   list in is part of the live-path integration (gap-fill 5).
 2. **Authored rules** — operator-written `key → target` entries
    (`parlay route rule add`). A rule matches when its normalized key is a
    word-boundary **prefix** of the normalized input — prefix-only on
