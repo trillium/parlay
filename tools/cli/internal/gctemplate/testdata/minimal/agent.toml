@@ -1,0 +1,12 @@
+# Synthesised by parlay from a launch spec (internal/gctemplate) — do not
+# hand-edit; change the spec and re-synthesise. Spawn-lift unit 4, epic
+# task-4cfpv.9. Field semantics: Pack Spec 2.0 (pinned Gas City ref).
+description = "parlay agent probe_1 (launch-spec synthesis)"
+suspended = true
+start_command = "claude"
+args = ["--dangerously-skip-permissions"]
+prompt_mode = "arg"
+process_names = ["claude"]
+
+[env]
+PARLAY_AGENT_ID = "probe_1"

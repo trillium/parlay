@@ -1,5 +1,6 @@
 import { history } from "./storage"
 import { agents, pollWaiters, sseClients, CORS, lastPollByChannel, LISTEN_WINDOW_MS, presenceBroadcasts } from "./sse"
+import { suppressedCounts } from "./capability"
 
 // GET /api/chat/subscribers — full presence/memory snapshot used by agents and
 // the CLI (`parlay subscribers`). Extracted from router-messages.ts to keep
@@ -26,7 +27,12 @@ export function handleSubscribersRequest(req: Request, pathname: string): Respon
   })
   const devices = Array.from(sseClients.values())
     .filter(c => c.device)
-    .map(c => ({ device: c.device, ua: c.ua, connectedAt: c.connectedAt }))
+    .map(c => ({
+      device: c.device, ua: c.ua, connectedAt: c.connectedAt,
+      // Declared capability surface, when the connection sent ?caps= — the
+      // observability half of the delivery gate (docs/interface-capabilities.md).
+      ...(c.caps ? { surface: c.caps.surface, accepts: Object.keys(c.caps.accepts).sort() } : {}),
+    }))
   const mem = process.memoryUsage()
   const historyBytes = history.reduce((n, m) => n + JSON.stringify(m).length, 0)
   const body = {
@@ -35,6 +41,7 @@ export function handleSubscribersRequest(req: Request, pathname: string): Respon
     registered: { count: registered.length, agents: registered },
     presence,
     presence_broadcasts: presenceBroadcasts,
+    capability_suppressed: suppressedCounts(),
     devices,
     memory: {
       rssMB:          +(mem.rss / 1048576).toFixed(1),

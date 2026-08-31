@@ -26,6 +26,7 @@ Each of these has already caused a real incident on the captain's box.
 - **A best-effort probe written as `VAR=$(cmd)` is not best-effort.** Under `set -euo pipefail` a plain assignment takes the substitution's exit status. Write `VAR="$(cmd)" || VAR=""`. → [notes](docs/agent-notes/a-best-effort-probe-written-as-robots-dcag.md)
 - **CI is `.github/workflows/ci.yml`** — four jobs (go, bun, shell, hygiene), including a 2 MiB tracked-blob ceiling. Several harnesses are deliberately excluded. → [notes](docs/agent-notes/ci-is-github-workflows-ci-yml.md)
 - **Never assert on elapsed time across a subprocess.** `bun` startup jitter is bigger than most quantities worth testing, so a bound loose enough not to flake cannot fail — assert on emitted output, and test-the-test. → [notes](docs/agent-notes/a-timing-assertion-loose-enough-not.md)
+- **`tools/cli` sweeps need `CGO_ENABLED=0`** — a default-CGO `go build ./...`/`go test ./...` there dies on missing ICU C++ headers (the beads dependency's embedded-Dolt tree); `bin/parlay` (`go build .`) is unaffected. → [docs/status-lift-topology.md](docs/status-lift-topology.md)
 
 ## The security boundary
 
@@ -76,7 +77,10 @@ Reach for these instead of the hand-rolled equivalent.
 - **`tools/cli/internal/staleness` is representation-plane RECORD staleness** (#128 §21–§24: Dagster version pairing — derived by comparison, never eagerly cascaded; reads carry nothing; budgeted passes) — a different concept from `parlay stale`/`sweep` agent-worktree staleness; never entangle them. → [docs/staleness-model.md](docs/staleness-model.md)
 - **`tools/cli/internal/supersession` is the supersession policy** (#128 §13–§19: records superseded never mutated, SemVer bump validated against a classified changeset floor, severity mandates a reprocessing requirement; major = staleness source; superseding a captain-acted-on record is never silent). → [docs/supersession.md](docs/supersession.md)
 - **Input surfaces enroll via source contracts**: canonical `contracts/sources/*.json`, validated by `tools/cli/internal/sourcecontract`; the go-server events-ingress allowlist is DERIVED from the embedded mirror (`packages/go-server/internal/sourcecontracts`) — enroll a contract, never hand-edit `ingressEvents`. → [docs/source-contracts.md](docs/source-contracts.md)
+- **`tools/cli/internal/capability` is the interface-capability engine** (#128 §65–§74, grill Q2d: a surface declares via `?caps=` on the SSE connect which presentation commands it accepts; delivery gated at the broadcast choke points; a declaration only subtracts — undeclared clients are legacy, byte-identical). The Go package is normative; the TS mirror `packages/server/src/capability.ts` must stay in lockstep. → [docs/interface-capabilities.md](docs/interface-capabilities.md)
+- **`parlay route` hardens by arithmetic, not a flag** — Beta(1,1) posterior over *captain-only* feedback; un-hardening is just a correction; only exit 0 acts. Model: `docs/routing.md`. → [notes](docs/agent-notes/route-hardening-is-arithmetic-over.md)
 - **`city/` is parlay's authored Gas City city + pack source, not a live city** — never run city-mutating `gc` verbs against it with the default `GC_HOME`; validate against a copy with `GC_HOME` redirected. → [notes](docs/agent-notes/city-is-the-authored-gas-city-source.md)
+- **The pinned gc cannot use the captain's bd fork** — a gc city store needs an upstream `bd` (schema/config skew fails `session new` both directions); sandbox recipe + lifecycle traps in the gated test. → [notes](docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md)
 
 ## Port-ticket archaeology
 

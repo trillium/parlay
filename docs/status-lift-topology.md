@@ -93,10 +93,29 @@ guaranteed.)
 2. **CGO or server mode.** Embedded Dolt requires CGO (`beads_cgo.go`); a non-CGO
    build errors at open time with *"embedded Dolt requires CGO; use server mode
    (bd init --server)"* (`beads_nocgo.go`). parlay's build must either accept CGO
-   or run the store in server mode. Whether embedded-CGO is acceptable in parlay's
-   build is settled by a build experiment in unit 1, not assumed here.
-3. **A real dependency tree** lands in `tools/cli/go.mod`. Binary-size and
-   build-time growth are measured, not guessed, in unit 1.
+   or run the store in server mode. **Measured in unit 1:** a CGO build
+   additionally needs the ICU C++ headers — the embedded-Dolt tree pulls in
+   `go-icu-regex`, whose cgo directives link `icui18n`/`icuuc`/`icudata` with no
+   pkg-config fallback, and Homebrew's `icu4c` is keg-only, so a default darwin
+   `go build ./...` in `tools/cli` dies with *"'unicode/regex.h' file not
+   found"* after ~30s of cgo compilation. The adopted posture:
+   - **Default builds: `CGO_ENABLED=0`.** Compiles in ~1s, all hermetic tests
+     pass, and on darwin `-race` works without cgo. Embedded mode then refuses
+     at runtime with the message above; server mode is unaffected. `bin/parlay`
+     (`go build .`) never sees any of this — `parlaybeads` is a leaf until a
+     verb adopts it. On linux `-race` still requires cgo, so CI's test step
+     alone runs `CGO_ENABLED=1` with `libicu-dev` installed; build/vet/gofmt
+     stay cgo-free.
+   - **Exercising embedded mode** (the opt-in `TestRealStoreRoundTrip`,
+     `PARLAY_BEADS_INTEGRATION=1`) needs `brew install icu4c` plus
+     `CGO_CXXFLAGS`/`CGO_CFLAGS` `-I/opt/homebrew/opt/icu4c/include` and
+     `CGO_LDFLAGS -L/opt/homebrew/opt/icu4c/lib`; the round trip against a
+     real embedded store passes with those (verified 2026-08-30, beads
+     v1.1.1-0.20260805093327).
+3. **A real dependency tree** lands in `tools/cli/go.mod` (measured in unit 1:
+   ~440 distinct module paths in `go.sum`; with `CGO_ENABLED=0` the module's full build stays
+   in the low seconds because the heavy embedded-Dolt tree compiles only under
+   CGO).
 
 ## Ruled out on principle: `GC_BEADS=file`
 

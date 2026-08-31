@@ -1,3 +1,5 @@
+import type { CapabilityDeclaration } from "./capability"
+
 // ── Chat types ──────────────────────────────────────────────────────────────
 
 // Agent-suggested view change — rendered as an inline card; nothing happens
@@ -39,6 +41,7 @@ export type SSEClient = {
   device?:     string   // client-generated localStorage uuid (?device= on /events)
   ua?:         string   // user-agent header, human-readable device label
   connectedAt: string
+  caps?:       CapabilityDeclaration   // validated ?caps= declaration; absent = legacy, gated by nothing
 }
 
 export type PollWaiter = {
