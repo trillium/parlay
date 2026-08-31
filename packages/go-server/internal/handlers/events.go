@@ -227,6 +227,29 @@ func (h *Hub) broadcast(name string, data any) {
 	}
 }
 
+// BroadcastFromBus delivers a bus-consumed event to every connected client
+// (events-lift U2). It differs from broadcast in exactly two ways, both
+// deliberate: it never touches busSink — a consumed event re-entering the
+// dual-write would echo around the bus forever — and it enforces
+// busEmitEvents itself, because the bus's event log is a file any local
+// process can append to, so the hub (not the consumer subprocess plumbing)
+// is where a smuggled panel-aiming name must die. Returns whether the name
+// was accepted; a nil Hub accepts nothing.
+func (h *Hub) BroadcastFromBus(name string, data any) bool {
+	if h == nil || !busEmitEvents[name] {
+		return false
+	}
+	h.mu.Lock()
+	for ch := range h.clients {
+		select {
+		case ch <- sseEvent{name: name, data: data}:
+		default:
+		}
+	}
+	h.mu.Unlock()
+	return true
+}
+
 // broadcastToDevice delivers (name, data) to every connected client whose
 // device matches the given deviceId. Returns the count of clients that
 // received the event. If deviceId is empty, broadcasts to all clients
