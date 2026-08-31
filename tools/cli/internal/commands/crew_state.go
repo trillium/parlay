@@ -136,6 +136,19 @@ var sleep = time.Sleep
 // which reads as dead to any supervisor polling this command. Retries first,
 // and only reports enrolledNo when the relay actually answered.
 func agentEnrollment(agentID string) enrollment {
+	reg, ok := fetchRegisteredAgents()
+	return enrollmentOf(reg, ok, agentID)
+}
+
+// fetchRegisteredAgents reads the relay's whole registry once (with the
+// retry/backoff above). ok=false means the relay could not be asked; ok=true
+// with an empty set is a real "nobody is registered" answer.
+//
+// robots-8783: sweep used to call agentEnrollment per candidate — 3 attempts
+// × 3s timeout each, serially, so a dead relay cost ~9.5s × ~254 agents
+// (>120s wall clock, sometimes far more). The registry answer does not vary
+// by agent, so batch callers fetch it once and share it across the pass.
+func fetchRegisteredAgents() (map[string]bool, bool) {
 	for attempt := 0; attempt < relayLookupAttempts; attempt++ {
 		if attempt > 0 {
 			sleep(relayLookupBackoff)
@@ -146,17 +159,28 @@ func agentEnrollment(agentID string) enrollment {
 		}
 		// A 2xx with no registered block is a real answer ("nobody is
 		// registered"), not a failed lookup.
-		if subs.Registered == nil {
-			return enrolledNo
-		}
-		for _, a := range subs.Registered.Agents {
-			if a.ID == agentID {
-				return enrolledYes
+		reg := map[string]bool{}
+		if subs.Registered != nil {
+			for _, a := range subs.Registered.Agents {
+				reg[a.ID] = true
 			}
 		}
-		return enrolledNo
+		return reg, true
 	}
-	return enrollmentUnknown
+	return nil, false
+}
+
+// enrollmentOf maps one agent's presence in a fetched registry snapshot onto
+// the three-way enrollment answer. Pure; the robots-me7m distinction lives in
+// ok: a failed fetch is enrollmentUnknown, never enrolledNo.
+func enrollmentOf(reg map[string]bool, ok bool, agentID string) enrollment {
+	if !ok {
+		return enrollmentUnknown
+	}
+	if reg[agentID] {
+		return enrolledYes
+	}
+	return enrolledNo
 }
 
 // CrewStateResult is the reconciled {state, source, detail} triple crew-state
@@ -226,7 +250,13 @@ func noteOf(p parsedStatus) string {
 // statusFileForAgent doc): resolves agentID's status file directly instead
 // of the caller's own env-derived one.
 func CrewStateForAgent(agentID string) CrewStateResult {
-	enrolled := agentEnrollment(agentID)
+	return crewStateForAgentEnrolled(agentID, agentEnrollment(agentID))
+}
+
+// crewStateForAgentEnrolled is CrewStateForAgent with the relay half already
+// answered — the seam batch callers (sweep) use to share one registry fetch
+// across a whole pass instead of re-asking the relay per agent (robots-8783).
+func crewStateForAgentEnrolled(agentID string, enrolled enrollment) CrewStateResult {
 	sr := readStatusFor(statusFileForAgent(agentID))
 
 	// Source suffix records HOW much to trust the status line: plain

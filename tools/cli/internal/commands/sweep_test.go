@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,5 +159,66 @@ func TestReadSweepKeepMissingFileIsEmpty(t *testing.T) {
 	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
 	if keep := readSweepKeep(); len(keep) != 0 {
 		t.Fatalf("a missing keep-list must be empty, got %v", keep)
+	}
+}
+
+// robots-8783: a sweep pass over N candidates must ask the relay for its
+// registry exactly once, not once per candidate — per-agent probes made a
+// dead-relay sweep of ~254 agents take >120s (3 attempts × 3s timeout each,
+// serially). Pinned by counting subscriber hits, not by timing.
+func TestSweepPassFetchesRegistryOnce(t *testing.T) {
+	noRetrySleep(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+
+	subscriberCalls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", func(w http.ResponseWriter, r *http.Request) {
+		subscriberCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"registered":{"agents":[{"id":"agent-a","name":"n","color":"#fff"}]}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+
+	for _, id := range []string{"agent-a", "agent-b", "agent-c", "agent-d"} {
+		if err := os.MkdirAll(filepath.Join(home, ".parlay", "agents", id), 0o755); err != nil {
+			t.Fatalf("mkdir agent home: %v", err)
+		}
+	}
+
+	sweepPass("", false, false, SweepOpts{})
+
+	if subscriberCalls != 1 {
+		t.Fatalf("sweep pass over 4 candidates hit /api/chat/subscribers %d times, want exactly 1", subscriberCalls)
+	}
+}
+
+// The batched fetch must preserve the robots-me7m three-way answer: a dead
+// relay yields enrollmentUnknown for every candidate (status-degraded /
+// fail-open), never enrolledNo.
+func TestSweepDeadRelayIsUnknownNotUnenrolled(t *testing.T) {
+	noRetrySleep(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1") // nothing listening
+
+	if err := os.MkdirAll(filepath.Join(home, ".parlay", "agents", "leg9"), 0o755); err != nil {
+		t.Fatalf("mkdir agent home: %v", err)
+	}
+	writeStatus(t, home, "leg9", "working: still going\n")
+
+	reg, regOK := fetchRegisteredAgents()
+	agent := resolveSweepAgent("leg9", reg, regOK)
+	if agent.State != "working" {
+		t.Fatalf("resolveSweepAgent with dead relay = %+v, want state=working from the status file", agent)
+	}
+	if strings.Contains(agent.Detail, "not registered") || strings.Contains(agent.Detail, "does not list") {
+		t.Errorf("detail = %q must not claim unenrollment — the relay never answered", agent.Detail)
 	}
 }
