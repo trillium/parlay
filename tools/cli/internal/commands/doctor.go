@@ -38,6 +38,14 @@ func engineURL() string {
 	return "http://127.0.0.1:4343"
 }
 
+// evalEngineFix is the repair line both `health` (FAIL) and `doctor` (WARN)
+// print for an unreachable eval-engine. It must hold on any clone: the old
+// text hardcoded the author's ~/code/parlay checkout path and a
+// ./parlay-eval-engine binary that nothing on a fresh clone builds — the
+// binary is a gitignored artifact only `go build` (or the installer, which
+// builds it if missing) produces.
+const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd), or: cd packages/eval-engine && go build -o parlay-eval-engine . && nohup ./parlay-eval-engine > engine.log 2>&1 &"
+
 // jsonAttempt is the outcome of tryJSON: either decoded data, or a short
 // error string describing why it failed (network error, non-2xx status, or
 // undecodable body) — used to render the FAIL/-- lines below verbatim.
@@ -175,7 +183,7 @@ func Health(argv []string) {
 			reason = engineRes.err
 		}
 		fmt.Printf("FAIL  eval-engine %s — %s\n", engine, reason)
-		fmt.Printf("      fix: cd ~/code/parlay/packages/eval-engine && nohup ./parlay-eval-engine > engine.log 2>&1 &\n")
+		fmt.Printf("      fix: %s\n", evalEngineFix)
 	}
 
 	if sick {
@@ -373,7 +381,7 @@ func Doctor(argv []string) {
 		verdicts = append(verdicts, report(vPass, fmt.Sprintf("eval-engine healthy at %s", engine), ""))
 	} else {
 		verdicts = append(verdicts, report(vWarn, fmt.Sprintf("eval-engine unreachable at %s — panel voice commands degraded", engine),
-			"cd ~/code/parlay/packages/eval-engine && nohup ./parlay-eval-engine > engine.log 2>&1 &"))
+			evalEngineFix))
 	}
 
 	// 7. Context rotation advisory (informational). Claude Code exposes no context gauge
