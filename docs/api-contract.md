@@ -321,8 +321,8 @@ Broadcasts `agent_register` with the stored `AgentInfo`.
 Deregister an agent's channel. **Status-error convention**: **400**
 `{"error": "id required"}`, **404** `{"error": "…"}` on unknown id.
 
-Request: `{ "id": "agent-id" }`. Success (200): TS `{ "ok": true, "id": "…" }`;
-Go `{ "ok": true }`. Broadcasts `agent_unregister`.
+Request: `{ "id": "agent-id" }`. Success (200): `{ "ok": true, "id": "…" }` on
+both servers. Broadcasts `agent_unregister`.
 
 ### `DELETE /api/chat/agents/:id`
 REST alias of `unregister` (same handler path, id from the URL). Same
@@ -892,7 +892,7 @@ feature — until then, a portable caller must tolerate both sides.
 | 6 | Poll unresolvable cursor | silent (never emits reset) | `cursorReset`/`skipped`, 50-message window |
 | 7 | `message_received` payload | `{ id, channel? }` | `{ id }` |
 | 8 | `register-agent` response | `{ ok, …stored entry }` | `{ ok, nicknames? }` |
-| 9 | `unregister` success body | `{ ok, id }` | `{ ok }` |
+| 9 | `unregister` success body | `{ ok, id }` | `{ ok, id }` — converged (was `{ ok }`); row number retired, not reused |
 | 10 | `alert` with no targets | global channel + all registered agents | registered agents only |
 | 11 | `reply` minimum body | empty text OK with action/images; agent falls back to env/context | text AND agent required |
 | 12 | Wrong method | 404 fallthrough (except `/pages` 405 JSON) | 405 + `Allow` + plain text, everywhere |

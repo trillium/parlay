@@ -58,11 +58,12 @@
 //     reasoning — no preflight permission this server does not already grant.
 //
 // One divergence that is not a policy choice: the guarded path SETS differ
-// because the two servers do not implement the same routes. Go has
-// /api/chat/message (TS does not); TS has /system, /declare-channel, /clear,
-// /navigate, /reload, /device-cmd, /eval, /eval-push, the /tts family, the
-// /plugin/ RPC prefix, /api/debug/ and DELETE /api/chat/agents/:id, none of
-// which exist here. Every route the two DO share is classified identically.
+// where the two servers do not implement the same routes. Go has
+// /api/chat/message (TS does not); TS has /api/debug/input-timing, which does
+// not exist here (the /api/debug/ prefix below pre-lands its boundary
+// anyway). Every route the two DO share is classified identically — except
+// the exact path /api/chat/agents, whose deliberate asymmetry is explained at
+// the /api/chat/agents/ prefix entry.
 //
 // # How a route gets into GuardedPaths
 //
@@ -245,12 +246,10 @@ var jsonExemptPaths = map[string]bool{
 //     carry the legacy wildcard CORS. Same boundary, different defaults — that
 //     divergence is correct and pinned by tests on both sides).
 //   - /api/debug/ — input-timing telemetry, keyed by device id. No Go handler
-//     yet.
-//
-// Two of these three have no Go handler today, which is the same
-// land-the-entry-first discipline the map above documents: the predictable way
-// this boundary fails is a route added by someone editing internal/handlers who
-// never opens this file.
+//     yet (the contract marks the route ts-only), which is the same
+//     land-the-entry-first discipline the map above documents: the predictable
+//     way this boundary fails is a route added by someone editing
+//     internal/handlers who never opens this file.
 var guardedPrefixes = []string{
 	"/api/chat/agents/",
 	"/api/chat/plugin/",

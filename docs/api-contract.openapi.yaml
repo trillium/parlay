@@ -325,7 +325,7 @@ paths:
                 id: { type: string }
       responses:
         "200":
-          description: "TS: {ok, id}; Go: {ok} (x-parlay-divergence 9). Broadcasts agent_unregister."
+          description: "{ok, id} on both (divergence 9 converged). Broadcasts agent_unregister."
           content:
             application/json:
               schema:

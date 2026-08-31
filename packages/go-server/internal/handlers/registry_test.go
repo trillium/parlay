@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"parlay/go-server/internal/store"
 )
@@ -34,14 +35,14 @@ func TestHandleRegisterAgentUpsertsAndReturnsNicknames(t *testing.T) {
 }
 
 func TestHandleUnregisterUnknownIDReturns404(t *testing.T) {
-	rec := postJSON(t, handleUnregister(newTestStore(t)), map[string]any{"id": "ghost"})
+	rec := postJSON(t, handleUnregister(newTestStore(t), nil), map[string]any{"id": "ghost"})
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
 func TestHandleUnregisterMissingIDReturns400(t *testing.T) {
-	rec := postJSON(t, handleUnregister(newTestStore(t)), map[string]any{})
+	rec := postJSON(t, handleUnregister(newTestStore(t), nil), map[string]any{})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -52,12 +53,110 @@ func TestHandleUnregisterRemovesRegisteredAgent(t *testing.T) {
 	if _, err := st.Registry.Upsert(store.AgentInfo{ID: "c1"}); err != nil {
 		t.Fatal(err)
 	}
-	rec := postJSON(t, handleUnregister(st), map[string]any{"id": "c1"})
+	rec := postJSON(t, handleUnregister(st, nil), map[string]any{"id": "c1"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
+	var got unregisterResponse
+	decodeBody(t, rec, &got)
+	if !got.OK || got.ID != "c1" {
+		t.Errorf("response = %+v, want {ok:true id:c1}", got)
+	}
 	if _, ok := st.Registry.Get("c1"); ok {
 		t.Error("Registry.Get(c1) still found after unregister")
+	}
+}
+
+func TestHandleUnregisterBroadcastsAgentUnregister(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.Registry.Upsert(store.AgentInfo{ID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	hub := newHub(newBroker())
+	sub, cancel := hub.subscribe("")
+	defer cancel()
+
+	rec := postJSON(t, handleUnregister(st, hub), map[string]any{"id": "c1"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	select {
+	case ev := <-sub:
+		if ev.name != eventAgentUnregister {
+			t.Fatalf("broadcast event = %q, want %q", ev.name, eventAgentUnregister)
+		}
+		payload, ok := ev.data.(map[string]string)
+		if !ok || payload["id"] != "c1" {
+			t.Errorf("broadcast payload = %#v, want map with id=c1", ev.data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hub did not receive agent_unregister event")
+	}
+}
+
+func deleteAgentRequest(t *testing.T, st *store.Store, hub *Hub, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, target, nil)
+	rec := httptest.NewRecorder()
+	handleDeleteAgent(st, hub)(rec, req)
+	return rec
+}
+
+func TestHandleDeleteAgentRemovesAndEchoesID(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.Registry.Upsert(store.AgentInfo{ID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	hub := newHub(newBroker())
+	sub, cancel := hub.subscribe("")
+	defer cancel()
+
+	rec := deleteAgentRequest(t, st, hub, "/api/chat/agents/c1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got unregisterResponse
+	decodeBody(t, rec, &got)
+	if !got.OK || got.ID != "c1" {
+		t.Errorf("response = %+v, want {ok:true id:c1}", got)
+	}
+	if _, ok := st.Registry.Get("c1"); ok {
+		t.Error("Registry.Get(c1) still found after DELETE")
+	}
+	select {
+	case ev := <-sub:
+		if ev.name != eventAgentUnregister {
+			t.Errorf("broadcast event = %q, want %q", ev.name, eventAgentUnregister)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hub did not receive agent_unregister event")
+	}
+}
+
+func TestHandleDeleteAgentUnknownIDReturns404(t *testing.T) {
+	rec := deleteAgentRequest(t, newTestStore(t), nil, "/api/chat/agents/ghost")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleDeleteAgentEmptyIDReturns400(t *testing.T) {
+	// Both the bare subtree root and a whitespace-only segment (the TS side
+	// trims after URL-decoding) are "id required", not a lookup.
+	for _, target := range []string{"/api/chat/agents/", "/api/chat/agents/%20%20"} {
+		rec := deleteAgentRequest(t, newTestStore(t), nil, target)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("DELETE %s status = %d, want 400", target, rec.Code)
+		}
+	}
+}
+
+func TestHandleDeleteAgentWrongMethodReturns405(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/chat/agents/c1", nil)
+	rec := httptest.NewRecorder()
+	handleDeleteAgent(newTestStore(t), nil)(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != http.MethodDelete {
+		t.Errorf("status = %d Allow = %q, want 405 with Allow: DELETE", rec.Code, rec.Header().Get("Allow"))
 	}
 }
 
