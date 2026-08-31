@@ -191,6 +191,7 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/tts-correction":        true, // rewrites persisted pronunciation substitutions
 	"/api/chat/tts/validate-splits":   true, // origin check only, see jsonExemptPaths
 	"/api/chat/tts-event":             true, // broadcasts a tts_event frame carrying a device uuid
+	"/api/chat/debug-log":             true, // appends client console errors to a log file on disk
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to

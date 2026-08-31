@@ -97,6 +97,13 @@ export const GUARDED_CHAT_PATHS = new Set([
   "/api/chat/tts/validate-splits", // POST scores a split against a local model
                                   // — origin-guarded, see JSON_EXEMPT_PATHS
 
+  // POST appends attacker-shapeable lines to a log file on disk
+  // ($PARLAY_STATE_HOME/debug.log) — a state write, same class as
+  // /tts-report. Its only in-repo caller (packages/client/src/debug-log.ts)
+  // sends `Content-Type: application/json`, so the JSON gate costs it
+  // nothing.
+  "/api/chat/debug-log",
+
   // A GET that mutates. router-poll.ts registers an unknown `channel` on
   // first poll: it inserts into `agents`, broadcasts `agent_register` to
   // every SSE client, and calls persistAgents() — a registry write, an
