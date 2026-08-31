@@ -146,9 +146,35 @@ func TestGCResolveBeadShowAPIEnvelope(t *testing.T) {
 	}
 }
 
-func TestGCResolveBySessionNameWhenUnstamped(t *testing.T) {
+func TestGCResolveByTemplateWhenUnstamped(t *testing.T) {
+	// The pin's real naming: `gc session new parlay.agent-y` records the
+	// argument as the TEMPLATE and generates session_name
+	// "agent-y-adhoc-<hash>". Rule 2 must match on the template, or no
+	// gc-spawn-created session can ever resolve by name (soak pass 1 defect).
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_AGENT_HOME", t.TempDir()) // no identity.md at all
+	out := sessionListJSON(
+		map[string]any{"id": "pa-7", "session_name": "agent-y-adhoc-d665c919cc", "template": "parlay.agent-y", "state": "active", "closed": false},
+		map[string]any{"id": "pa-8", "session_name": "other-adhoc-0badc0ffee", "template": "parlay.other", "state": "active", "closed": false},
+	)
+	bin, _ := writeSpawnFakeGC(t, out, 0)
+	t.Setenv("PARLAY_GC", bin)
+
+	res, err := gcResolveRun("agent-y")
+	if err != nil {
+		t.Fatalf("gcResolveRun: %v", err)
+	}
+	if !res.OK || res.SessionID != "pa-7" || res.Via != "session-name" {
+		t.Errorf("want pa-7 via session-name (template match), got %+v", res)
+	}
+}
+
+func TestGCResolveByExactSessionNameWhenUnstamped(t *testing.T) {
+	// The exact-session_name leg stays: a session literally named
+	// "parlay.<id>" (hand-created or a future gc that honors the name)
+	// resolves too.
+	testsupport.TempStateHome(t)
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
 	out := sessionListJSON(
 		map[string]any{"id": "pa-7", "session_name": "parlay.agent-y", "state": "active", "closed": false},
 		map[string]any{"id": "pa-8", "session_name": "parlay.other", "state": "active", "closed": false},
@@ -171,7 +197,7 @@ func TestGCResolveClosedNameDoesNotResolve(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
 	out := sessionListJSON(
-		map[string]any{"id": "pa-9", "session_name": "parlay.agent-z", "state": "closed", "closed": true},
+		map[string]any{"id": "pa-9", "session_name": "agent-z-adhoc-1234abcd", "template": "parlay.agent-z", "state": "closed", "closed": true},
 	)
 	bin, _ := writeSpawnFakeGC(t, out, 0)
 	t.Setenv("PARLAY_GC", bin)
@@ -183,7 +209,7 @@ func TestGCResolveClosedNameDoesNotResolve(t *testing.T) {
 	if res.OK {
 		t.Errorf("closed session must not resolve by name, got %+v", res)
 	}
-	if !strings.Contains(res.Reason, "no live session named parlay.agent-z") {
+	if !strings.Contains(res.Reason, "no live session named or templated parlay.agent-z") {
 		t.Errorf("reason = %q", res.Reason)
 	}
 }
@@ -191,9 +217,11 @@ func TestGCResolveClosedNameDoesNotResolve(t *testing.T) {
 func TestGCResolveAmbiguousLiveNameErrors(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+	// One claims by exact session_name, one by template: the union of both
+	// legs still counts as two claimants — ambiguity, never a coin flip.
 	out := sessionListJSON(
 		map[string]any{"id": "pa-a", "session_name": "parlay.agent-q", "state": "active", "closed": false},
-		map[string]any{"id": "pa-b", "session_name": "parlay.agent-q", "state": "active", "closed": false},
+		map[string]any{"id": "pa-b", "session_name": "agent-q-adhoc-9f9f9f", "template": "parlay.agent-q", "state": "active", "closed": false},
 	)
 	bin, _ := writeSpawnFakeGC(t, out, 0)
 	t.Setenv("PARLAY_GC", bin)

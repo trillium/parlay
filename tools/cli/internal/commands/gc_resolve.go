@@ -23,11 +23,15 @@
 //     closed record must fetch that one ID explicitly"), so the moment a
 //     session retires it vanishes from `session list --state all` and only
 //     the single-ID fetch can still see it.
-//  2. else live session_name match on "parlay.<agent-id>" (the name gc-spawn
-//     always creates with), over `gc session list --state all --json`. An
-//     ambiguous name — two live sessions claiming it — is an error, never a
-//     guess: resolving to the wrong session is worse than not resolving (the
-//     directory's own safety property).
+//  2. else live match on "parlay.<agent-id>" over `gc session list --state
+//     all --json` — against the row's template (what `gc session new
+//     parlay.<id>` actually records: at the pin the argument is the TEMPLATE
+//     and the generated session_name is "<id>-adhoc-<hash>", so a bare
+//     session_name match can never see a gc-spawn-created session) or, for
+//     robustness, an exact session_name. An ambiguous match — two live
+//     sessions claiming it — is an error, never a guess: resolving to the
+//     wrong session is worse than not resolving (the directory's own safety
+//     property).
 package commands
 
 import (
@@ -72,6 +76,7 @@ type gcResolveResult struct {
 type gcSessionRow struct {
 	ID          string `json:"id"`
 	SessionName string `json:"session_name"`
+	Template    string `json:"template"`
 	State       string `json:"state"`
 	Closed      bool   `json:"closed"`
 }
@@ -213,12 +218,16 @@ func gcResolveRun(agentID string) (gcResolveResult, error) {
 		return res, err
 	}
 
-	// Rule 2: live session_name match on gc-spawn's canonical name. Two live
-	// claimants is ambiguity, never a coin flip.
+	// Rule 2: live match on gc-spawn's canonical name. The pin records the
+	// `session new parlay.<id>` argument as the row's TEMPLATE and generates
+	// session_name "<id>-adhoc-<hash>", so the template is the field a
+	// gc-spawn-created session actually carries; the session_name leg is kept
+	// for exact-named sessions. Two live claimants is ambiguity, never a coin
+	// flip.
 	wantName := "parlay." + agentID
 	var matches []gcSessionRow
 	for _, s := range sessions {
-		if !s.Closed && s.SessionName == wantName {
+		if !s.Closed && (s.SessionName == wantName || s.Template == wantName) {
 			matches = append(matches, s)
 		}
 	}
@@ -233,13 +242,13 @@ func gcResolveRun(agentID string) (gcResolveResult, error) {
 		return res, nil
 	case 0:
 		if res.Stamped != "" {
-			res.Reason = fmt.Sprintf("stamped gc_session %s not in the city's bead store and no live session named %s", res.Stamped, wantName)
+			res.Reason = fmt.Sprintf("stamped gc_session %s not in the city's bead store and no live session named or templated %s", res.Stamped, wantName)
 		} else {
-			res.Reason = fmt.Sprintf("no gc_session stamped in identity.md and no live session named %s", wantName)
+			res.Reason = fmt.Sprintf("no gc_session stamped in identity.md and no live session named or templated %s", wantName)
 		}
 		return res, nil
 	default:
-		return res, fmt.Errorf("ambiguous: %d live sessions claim session_name %s — refusing to guess (resolving to the wrong session is worse than not resolving)", len(matches), wantName)
+		return res, fmt.Errorf("ambiguous: %d live sessions claim %s — refusing to guess (resolving to the wrong session is worse than not resolving)", len(matches), wantName)
 	}
 }
 
