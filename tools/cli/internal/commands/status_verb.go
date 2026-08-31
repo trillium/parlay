@@ -10,6 +10,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -128,7 +129,7 @@ func StatusVerb(argv []string) {
 	}
 
 	note := strings.TrimSpace(strings.Join(r.Positionals[1:], " "))
-	_, file := statusSink()
+	agent, file := statusSink()
 	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		httpc.Die(fmt.Sprintf("parlay status: %v", err), config.ExitRuntime)
@@ -143,6 +144,20 @@ func StatusVerb(argv []string) {
 	if closeErr != nil {
 		httpc.Die(fmt.Sprintf("parlay status: %v", closeErr), config.ExitRuntime)
 		return
+	}
+
+	// Dual-write (unit 3, gated on PARLAY_CREW_STORE): the file above is the
+	// operative record and has landed; a new-pipeline failure after it is
+	// still a loud death (Q5b), phrased so the caller knows the line itself
+	// was not lost. The identity-less shape (PARLAY_STATUS_FILE with no
+	// PARLAY_AGENT_ID) is structural, not transient — noted, not fatal.
+	if dwErr := crewDualWrite(agent, verb, key, note); dwErr != nil {
+		if errors.Is(dwErr, errNoCrewIdentity) {
+			fmt.Fprintf(os.Stderr, "parlay status: note — crew-store dual-write skipped: %v\n", dwErr)
+		} else {
+			httpc.Die(fmt.Sprintf("parlay status: status line landed at %s but the crew-store dual-write failed (PARLAY_CREW_STORE=%s): %v", file, crewStoreDir(), dwErr), config.ExitRuntime)
+			return
+		}
 	}
 
 	keyPart := ""

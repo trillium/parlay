@@ -248,6 +248,7 @@ func claimNoWork(agent, name, color, taskID, title, reason, detail string, regis
 // procedure — so it reports whether it landed rather than dying, and the brief
 // only claims credit for what actually happened.
 func claimRecordFailure(agent, taskID, reason string) bool {
+	note := fmt.Sprintf("claim %s: %s", taskID, reason)
 	file := strings.TrimSpace(os.Getenv("PARLAY_STATUS_FILE"))
 	if file == "" {
 		if agent == "" {
@@ -262,9 +263,18 @@ func claimRecordFailure(agent, taskID, reason string) bool {
 	if err != nil {
 		return false
 	}
-	_, writeErr := f.WriteString(buildStatusLine("failed", "", fmt.Sprintf("claim %s: %s", taskID, reason)))
+	_, writeErr := f.WriteString(buildStatusLine("failed", "", note))
 	closeErr := f.Close()
-	return writeErr == nil && closeErr == nil
+	recorded := writeErr == nil && closeErr == nil
+
+	// Dual-write (unit 3, gated on PARLAY_CREW_STORE). Same best-effort
+	// contract as the file above — this path is already reporting a failure
+	// and must not withhold the exit procedure — but never a SILENT drop: a
+	// pipeline failure is noted on stderr (§7.1).
+	if dwErr := crewDualWrite(agent, "failed", "", note); dwErr != nil {
+		fmt.Fprintf(os.Stderr, "parlay claim: note — crew-store dual-write did not land: %v\n", dwErr)
+	}
+	return recorded
 }
 
 // claimAnnounceNoWork registers the agent and announces the failed claim on its

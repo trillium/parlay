@@ -76,6 +76,13 @@ gascity `info_codec.go` style.
 | `status_note` | the free-text note, verbatim | every status write |
 | `status_at` | RFC3339 timestamp of the last status write | every status write |
 | `decision.<slug>` | `open` \| `resolved` | keyed-decision transitions (below) |
+| `gc_session` | the spawn seam's gc session bead id | every status write, when `identity.md` carries the `gc_session` stamp (gc-spawned agents) |
+
+`gc_session` is the **attachment pointer** required by report §6.1 point 4:
+the spawn seam owns the agent record (the gc session bead `gc-spawn` mints);
+the crew bead is status *attached to* that record, never a second agent
+record. Unit 3's writer copies the stamp from `identity.md` frontmatter; an
+agent that was not gc-spawned simply has no such key.
 
 Unknown keys are tolerated on read (the client's lenient metadata decode) and
 never written: growing this vocabulary is a schema change that lands in this
@@ -96,9 +103,11 @@ old grammar.
 The `[key=<slug>]` open/close fold has no beads-native primitive (report
 §4.3.1). The report offers two representations: a child bead per decision
 with a `blocks` dependency, or metadata with per-key compare-and-set. **This
-schema adopts the metadata representation**: a `needs-decision [key=X]` write
-merges `decision.X=open`; a `resolved [key=X]` write merges
-`decision.X=resolved`. Rationale:
+schema adopts the metadata representation**: a `needs-decision [key=X]` or
+`blocked [key=X]` write merges `decision.X=open` (both openers, matching
+firstmate's fold, which classifies a keyed `blocked` as an open decision the
+same as a keyed `needs-decision` — report §4.3); a `resolved [key=X]` write
+merges `decision.X=resolved`. Rationale:
 
 - `MergeMetadata` is per-key atomic in the beads API the client already
   wraps; the child-bead route needs dependency APIs `parlaybeads.Client`
