@@ -62,9 +62,9 @@ func TestKnownAgentsDiscoversValidIdentities(t *testing.T) {
 	t.Setenv("HOME", home)
 	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "")
 
-	known := knownAgents()
-	if len(known) != 1 {
-		t.Fatalf("knownAgents() = %+v, want 1 entry", known)
+	known, unlaunchable := knownAgents()
+	if len(known) != 1 || unlaunchable != 0 {
+		t.Fatalf("knownAgents() = %+v (unlaunchable %d), want 1 entry", known, unlaunchable)
 	}
 	if known[0].id != "agent-a" || known[0].name != "Agent A" || known[0].color != "#ff0000" || known[0].cwd != "/work/a" {
 		t.Errorf("knownAgents()[0] = %+v", known[0])
@@ -81,8 +81,8 @@ func TestKnownAgentsSkipsIncompleteFrontmatter(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(dir, "identity.md"), []byte("---\nid: agent-b\nname: Agent B\n---\n"), 0o644)
 
-	if known := knownAgents(); len(known) != 0 {
-		t.Errorf("knownAgents() = %+v, want none (missing color)", known)
+	if known, unlaunchable := knownAgents(); len(known) != 0 || unlaunchable != 1 {
+		t.Errorf("knownAgents() = %+v (unlaunchable %d), want none known and 1 unlaunchable (missing color)", known, unlaunchable)
 	}
 }
 
@@ -91,7 +91,7 @@ func TestKnownAgentsCwdDefaultsToHome(t *testing.T) {
 	t.Setenv("HOME", home)
 	writeIdentityFixture(t, home, "agent-c", "Agent C", "#00ff00", "", "")
 
-	known := knownAgents()
+	known, _ := knownAgents()
 	if len(known) != 1 || known[0].cwd != home {
 		t.Errorf("knownAgents() = %+v, want cwd=%q", known, home)
 	}
@@ -99,8 +99,8 @@ func TestKnownAgentsCwdDefaultsToHome(t *testing.T) {
 
 func TestKnownAgentsNoAgentsDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if known := knownAgents(); len(known) != 0 {
-		t.Errorf("knownAgents() = %+v, want none", known)
+	if known, unlaunchable := knownAgents(); len(known) != 0 || unlaunchable != 0 {
+		t.Errorf("knownAgents() = %+v (unlaunchable %d), want none", known, unlaunchable)
 	}
 }
 
@@ -129,6 +129,33 @@ func TestLaunchNoKnownAgentsPrintsHint(t *testing.T) {
 	}
 	if !strings.Contains(out, "parlay-spawn <id> <name> <color> <prompt> [--cwd PATH]") {
 		t.Errorf("Launch() output = %q, want the creation hint", out)
+	}
+}
+
+// A home whose identity.md lacks the id/name/color launch spec (a bare
+// `identity '<fact>'` write, never `identity --register`) must not be
+// reported as "no agent homes found" — the directory visibly exists, so
+// that line reads as a lie and points away from the real repair.
+func TestLaunchUnlaunchableHomesNamedInHint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1") // unreachable, must not die
+	t.Setenv("PATH", "")
+	dir := filepath.Join(home, ".parlay", "agents", "factual")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "identity.md"), []byte("- a fact, no frontmatter\n"), 0o644)
+
+	out := captureStdout(t, func() { Launch(nil) })
+	if !strings.Contains(out, "1 agent home(s) exist but lack") {
+		t.Errorf("Launch() output = %q, want the unlaunchable-homes hint", out)
+	}
+	if !strings.Contains(out, "identity --register") {
+		t.Errorf("Launch() output = %q, want the identity --register repair", out)
+	}
+	if strings.Contains(out, "No agent homes found") {
+		t.Errorf("Launch() output = %q, must not claim no homes exist", out)
 	}
 }
 

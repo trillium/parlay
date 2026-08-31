@@ -45,11 +45,18 @@ type knownAgent struct {
 // `/^(\w+):\s*"?([^"]*)"?\s*$/` regex pair guard.go already carries for
 // commands-teardown.ts/commands-variant.ts's local parseFm — same shape, so
 // no third copy here.
-func knownAgents() []knownAgent {
+// The second return counts agent homes that exist on disk but were skipped
+// because their identity.md carries no complete id/name/color launch spec —
+// a home created by a bare `identity '<fact>'` write, not `identity
+// --register`. The no-agents listing needs the distinction: reporting "no
+// agent homes found" over a directory that visibly contains homes reads as
+// a lie and hides the actual repair (seed the frontmatter).
+func knownAgents() ([]knownAgent, int) {
 	var known []knownAgent
+	unlaunchable := 0
 	entries, err := os.ReadDir(parlayAgentsDir())
 	if err != nil {
-		return known
+		return known, unlaunchable
 	}
 	for _, d := range entries {
 		if !d.IsDir() {
@@ -59,6 +66,7 @@ func knownAgents() []knownAgent {
 		fm := readLocalFrontmatter(identityFile)
 		id, name, color := fm.Get("id"), fm.Get("name"), fm.Get("color")
 		if id == "" || name == "" || color == "" {
+			unlaunchable++
 			continue
 		}
 		cwd := fm.Get("cwd")
@@ -67,7 +75,7 @@ func knownAgents() []knownAgent {
 		}
 		known = append(known, knownAgent{id: id, name: name, color: color, cwd: cwd, model: fm.Get("model"), account: fm.Get("account"), identityFile: identityFile})
 	}
-	return known
+	return known, unlaunchable
 }
 
 // spawnerNames lists the agent-spawning binaries in preference order:
@@ -131,7 +139,7 @@ func Launch(argv []string) {
 	// place this override is ever needed is the closed-bead refusal below,
 	// which names it in full.
 	r := args.Parse("launch", argv, []string{"--force"}, nil)
-	known := knownAgents()
+	known, unlaunchable := knownAgents()
 
 	if len(r.Positionals) > 0 {
 		targetID := r.Positionals[0]
@@ -209,8 +217,13 @@ func Launch(argv []string) {
 	// processes. Intersect with the process table for the truthful answer.
 	listeners, listenersKnown := liveListeners()
 	if len(known) == 0 {
-		fmt.Printf("No agent homes found in %s\n", parlayAgentsDir())
-		fmt.Println("Agents are created with: " + spawnUsageHint())
+		if unlaunchable > 0 {
+			fmt.Printf("No launchable agents in %s — %d agent home(s) exist but lack the id/name/color identity frontmatter a launch needs\n", parlayAgentsDir(), unlaunchable)
+			fmt.Println("Seed one with: parlay identity --register --name <name> --color <hex> (as that agent), or create agents with: " + spawnUsageHint())
+		} else {
+			fmt.Printf("No agent homes found in %s\n", parlayAgentsDir())
+			fmt.Println("Agents are created with: " + spawnUsageHint())
+		}
 		return
 	}
 	home := parlayHomeDir()

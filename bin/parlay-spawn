@@ -104,6 +104,8 @@ case "$(printf '%s' "$_beads_required_raw" | tr '[:upper:]' '[:lower:]')" in
   *)             BEADS_REQUIRED=0 ;;
 esac
 unset _config_toml _config_beads _beads_required_raw
+# --force overrides beads_required at call time
+FORCE=0
 BEAD_ID=""
 
 # Absolute path to THIS script, so the batch loop can re-exec us in single mode
@@ -441,6 +443,7 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   REQUIRED for every spawn when beads-required mode is on
                   ([spawn] beads_required in ~/.parlay/config.toml, or
                   PARLAY_SPAWN_BEADS_REQUIRED=1).
+  --force         bypass beads-required mode for this spawn (no bead needed)
   --subprocess    use the herdr-free detached-subprocess launcher for this
                   spawn instead of herdr, regardless of PARLAY_SPAWN_LAUNCHER
                   or ~/.parlay/config.toml [spawn] launcher. Escape hatch for
@@ -478,6 +481,7 @@ EOF
 # path; the second call is a no-op rather than a second store round-trip.
 bead_gate() {
   [ -n "${_BEAD_GATE_DONE:-}" ] && return 0
+  [ "${FORCE:-0}" -eq 1 ] && BEADS_REQUIRED=0
   _BEAD_GATE_DONE=1
 
   if [ -z "$BEAD_ID" ]; then
@@ -591,6 +595,7 @@ if [ "${1:-}" = "--ephemeral" ]; then
       --subprocess) LAUNCHER="subprocess"; shift ;;
       --gascity)   LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
       --bead)      BEAD_ID="$2"; shift 2 ;;
+      --force)     FORCE=1; shift ;;
       --ephemeral) echo "parlay-spawn: --ephemeral given twice" >&2; usage ;;
       *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
     esac
@@ -786,6 +791,7 @@ while [ $# -gt 0 ]; do
     --subprocess) LAUNCHER="subprocess"; shift ;;
     --gascity)   LAUNCHER="subprocess"; echo "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release." >&2; shift ;;
     --bead)      BEAD_ID="$2"; shift 2 ;;
+    --force)     FORCE=1; shift ;;
     --ephemeral) echo "parlay-spawn: --ephemeral must be the first argument (cannot combine with an explicit agent-id)" >&2; usage ;;
     *) echo "parlay-spawn: unknown arg: $1" >&2; usage ;;
   esac

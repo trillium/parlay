@@ -16,6 +16,7 @@ Each of these has already caused a real incident on the captain's box.
 - **Never `git worktree remove --force` directly.** Route it through `checkWorktreeGitSafety`. → [notes](docs/agent-notes/every-path-that-removes-a-worktree-robots-cncx.md)
 - **Deploy scripts trash, never `rm`.** A `uninstall.sh --purge` once permanently deleted the live `~/.parlay`. → [notes](docs/agent-notes/go-server-ticket-c6-parlay-server.md)
 - **Never let `gh` pick the repo implicitly.** It prefers an `upstream` remote over `origin`, so a bare `gh pr view N` reads someone else's PR. Always pass `--repo`.
+- **Never plan to push directly to `origin/main` — it is impossible, not just discouraged.** Branch protection (the 4 required CI checks + `enforce_admins: true`) declines the push for every account including the owner; "protected branch hook declined" is that refusal, not a transient error. Work lands only via a PR whose checks passed. Never modify the protection itself — that is captain-only.
 
 ## Test and sandbox rules
 

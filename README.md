@@ -179,7 +179,6 @@ of every module in the repo:
 | `packages/go-server` | An in-progress Go rewrite of the same HTTP/SSE surface. See [`docs/api-contract.md`](docs/api-contract.md). |
 | `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, and more. `bin/parlay` builds and execs this binary. |
-| `packages/cli` | The original TS command surface. Superseded by `tools/cli`; kept only for `lavish-import`, which `bin/parlay` still routes here pending a Go port. |
 | `packages/eval-engine` | A compiled Go (RE2) engine that matches spoken/typed phrases to a closed set of panel actions — the voice layer. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
 
@@ -195,7 +194,7 @@ your running server alone — read its limits in [`examples/`](examples/) before
 ## Development
 
 ```sh
-cd packages/<name> && bun test    # a TS package (server/client/cli/input), from inside it — see note below
+cd packages/<name> && bun test    # a TS package (server/client/input), from inside it — see note below
 cd tools/cli && go test ./...     # the Go CLI
 ```
 
