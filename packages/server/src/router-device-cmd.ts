@@ -1,4 +1,4 @@
-import { CORS, broadcastToClients, broadcastToDevice, sseClients } from "./sse"
+import { CORS, broadcastToClients, broadcastToDevice } from "./sse"
 
 // Agent-triggerable device commands: POST /api/chat/device-cmd broadcasts a
 // device_cmd SSE event that the client handles for live debugging without a
@@ -22,7 +22,7 @@ export function handleDeviceCmdRequest(req: Request, pathname: string): Response
         const payload = { cmd, args }
         const sent = device
           ? broadcastToDevice(device, "device_cmd", payload)
-          : (broadcastToClients("device_cmd", payload), sseClients.size)
+          : broadcastToClients("device_cmd", payload)
         controller.enqueue(enc.encode(JSON.stringify({ ok: true, cmd, sent })))
       } catch {
         controller.enqueue(enc.encode(JSON.stringify({ error: "bad request" })))

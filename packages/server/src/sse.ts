@@ -101,12 +101,17 @@ export function sseEvent(event: string, data: unknown): string {
 // receives the gated presentation commands it accepts; undeclared clients are
 // legacy and get everything, byte-identical. Suppressions are counted — a
 // silent gate is indistinguishable from a gate that never runs.
-export function broadcastToClients(event: string, data: unknown) {
+// Returns how many clients the event was delivered to — a suppressed client
+// does not count, so callers report delivery truth, not addressing truth.
+export function broadcastToClients(event: string, data: unknown): number {
   const payload = sseEvent(event, data)
+  let delivered = 0
   for (const client of sseClients.values()) {
     if (!shouldDeliver(client.caps, event)) { countSuppressed(event); continue }
+    delivered++
     try { client.controller.enqueue(new TextEncoder().encode(payload)) } catch { /* client closed */ }
   }
+  return delivered
 }
 
 // Scoped variant: deliver only to SSE clients that registered the given device id.
