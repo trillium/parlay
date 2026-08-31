@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
-import { join } from "path"
+import { join, relative } from "path"
 import { handleStaticRequest } from "./static"
 import { startScratchServer, type ScratchServer } from "./guard/scratch-server"
 
@@ -110,6 +110,16 @@ describe("handleStaticRequest", () => {
     }
   })
 
+  test("a RELATIVE assets dir serves files — the containment check must not refuse them", async () => {
+    // PARLAY_ASSETS_DIR can arrive relative; the handler absolutizes it, or
+    // the containment prefix check would compare absolute-vs-relative and
+    // refuse every real file.
+    const rel = relative(process.cwd(), dist)
+    const res = handleStaticRequest(get("/parlay-agent.js"), "/parlay-agent.js", rel)!
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("// parlay-agent")
+  })
+
   test("undecodable percent-encoding is a 400, not a crash", () => {
     expect(handleStaticRequest(get("/"), "/%zz", dist)!.status).toBe(400)
   })
@@ -137,7 +147,15 @@ describe("standalone hosting through the real server", () => {
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "parlay-static-e2e-"))
-    s = await startScratchServer({ PARLAY_ASSETS_DIR: makeDist(root) })
+    s = await startScratchServer({
+      PARLAY_ASSETS_DIR: makeDist(root),
+      // Hostile on purpose: extraEnv must NOT be able to un-redirect the
+      // isolation set. The "state writes stay scratched" test below proves
+      // these were ignored; if they ever won, this suite would be writing
+      // into /scratch-must-ignore (or worse, a real HOME).
+      HOME: "/scratch-must-ignore",
+      PARLAY_STATE_HOME: "/scratch-must-ignore",
+    })
   })
   afterAll(() => {
     s.stop()
@@ -195,5 +213,19 @@ describe("standalone hosting through the real server", () => {
     const res = await fetch(`${s.base}/bookmarked/panel/route`)
     expect(res.status).toBe(200)
     expect(await res.text()).toBe("<html>panel-shell</html>")
+  })
+
+  test("state writes stay scratched — extraEnv cannot override the isolation set", async () => {
+    // This server was started with hostile HOME/PARLAY_STATE_HOME overrides
+    // (see beforeAll). A state write must still land in the scratch stateDir,
+    // proving the isolation env wins over extraEnv.
+    const res = await fetch(`${s.base}/api/chat/debug-log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: s.panelOrigin },
+      body: JSON.stringify({ device: "iso", entries: [{ level: "warn", source: "t", message: "landed-in-scratch" }] }),
+    })
+    expect(res.status).toBe(204)
+    const { readFileSync } = await import("fs")
+    expect(readFileSync(join(s.stateDir, "debug.log"), "utf8")).toContain("landed-in-scratch")
   })
 })

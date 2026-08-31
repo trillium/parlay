@@ -86,6 +86,10 @@ export function handleStaticRequest(
   if (!dir) {
     return new Response("no assets directory configured (set PARLAY_ASSETS_DIR)", { status: 503 })
   }
+  // Absolutize once: a relative PARLAY_ASSETS_DIR would make the containment
+  // check compare an absolute candidate against a relative prefix and refuse
+  // every real file.
+  dir = resolve(dir)
   try { statSync(dir) } catch {
     return new Response("assets directory not found: " + dir, { status: 503 })
   }

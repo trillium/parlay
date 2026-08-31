@@ -75,9 +75,10 @@ async function assertNotListening(url: string): Promise<void> {
  * its own process on its own reserved port with its own data dir, so test
  * files stay independent.
  *
- * `extraEnv` is layered over the isolation env — for knobs a suite needs
- * (e.g. PARLAY_ASSETS_DIR for the static tests), NOT for un-redirecting
- * HOME/data/state, which would point the process at the captain's live dirs.
+ * `extraEnv` adds knobs a suite needs (e.g. PARLAY_ASSETS_DIR for the static
+ * tests). It is spread BEFORE the isolation set, so it structurally cannot
+ * un-redirect HOME/data/state/eval-engine — overriding those would point the
+ * process at the captain's live dirs.
  */
 export async function startScratchServer(extraEnv: Record<string, string> = {}): Promise<ScratchServer> {
   const port = reservePort()
@@ -103,6 +104,7 @@ export async function startScratchServer(extraEnv: Record<string, string> = {}):
   const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "index.ts")], {
     env: {
       ...process.env,
+      ...extraEnv,
       HOME: dir,
       PARLAY_PORT: String(port),
       PARLAY_DATA_DIR: dataDir,
@@ -117,7 +119,6 @@ export async function startScratchServer(extraEnv: Record<string, string> = {}):
       // good a proof as a 200 here: the request got past the guard and into
       // the handler, which is what these tests assert.
       PARLAY_EVAL_ENGINE_URL: `http://127.0.0.1:${evalPort}`,
-      ...extraEnv,
     },
     stdout: "pipe",
     stderr: "pipe",
