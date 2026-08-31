@@ -62,7 +62,7 @@ declares".)
 | Surface | Gets in via | Special-cased how | Posture it maps to |
 |---|---|---|---|
 | Web panel composer | `POST /api/chat/send`, `PUT /draft` | the *unmarked default*: no `from`, no `source` — absence is the captain's identity (`packages/server/src/router-messages.ts`) | `control` |
-| Voice dictation (Talon → composer) | `POST /api/chat/eval` / `eval-push` | hard-coded phrase manifest (`packages/eval-engine/default_commands.json`), device-keyed stream map | `control` |
+| Voice dictation (Talon → composer) | `POST /api/chat/eval` / `eval-push` | hard-coded phrase manifest (`tools/cli/internal/evalengine/default_commands.json`), device-keyed stream map | `control` |
 | Cursorless plugin RPC (Talon) | `POST /api/chat/plugin/cursorless/rpc` | plugin id `"cursorless"` hard-coded in the manifest list, the path switch, and the guard entry | `control` |
 | PAI **tool** tailer | `POST /api/chat/events` | `"tool_event"` sole member of the ingress allowlist (`events_ingress.go`) *and* of the Gas City bus dual-write list (`events.go` `busEmitEvents`); `tool_name === "Monitor"` special case for session enrollment | `observability` |
 | PAI **hook** tailer | `POST /api/chat/message` | free-form `source` (verbatim from an out-of-repo JSONL, ≤60 chars, `"hook"` fallback); `source: "turn"` drives a bespoke length cap | `content` |

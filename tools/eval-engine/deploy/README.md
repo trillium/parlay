@@ -1,6 +1,7 @@
 # Deploying the Parlay eval-engine as an always-on service (macOS)
 
-The eval-engine (`packages/eval-engine`, compiled Go, `:4343`) computes every
+The eval-engine (`parlay eval serve` — `tools/cli/internal/evalengine`, compiled
+Go, `:4343`) computes every
 voice-command action for the Parlay chat panel. In the pure server-side-eval
 model the client does no local matching, so if the engine is down every phone
 voice command silently fails (submit "bravely", tab switches, clear, …). It
@@ -12,15 +13,21 @@ days after a reboot (robots-t9f). This directory gives it the same launchd
 
 | Thing | Location | Tracked in git? |
 |-------|----------|-----------------|
-| Engine binary | `packages/eval-engine/parlay-eval-engine` | no (built artifact, `go build`) |
+| Engine binary | `tools/cli/bin/parlay-eval-engine` (dedicated build of the unified parlay CLI) | no (built artifact, `go build`) |
 | LaunchAgent plist | `~/Library/LaunchAgents/com.parlay.eval-engine.plist` | **no — machine config, outside the repo by design** |
 | stdout/stderr logs | `~/Library/Logs/parlay/eval-engine.{out,err}.log` | no |
 
+Since the task-0ke9 unification the engine ships inside the single parlay
+binary; the plist runs `parlay-eval-engine eval serve`. A dedicated copy is
+built (rather than pointing at an interactive `parlay` install) so rebuilding
+the CLI never yanks the supervised service's binary mid-flight.
+
 Unlike the relay, the plist execs the **checkout binary in place** rather than
 a copy installed elsewhere — the engine reads an optional `commands.json` next
-to the binary (`os.Executable` dir) for hot-reloadable command customization,
-so keeping it in the checkout preserves that beside-binary manifest feature
-(see the template's header comment for the full rationale).
+to the binary (`os.Executable` dir, so `tools/cli/bin/commands.json`) for
+hot-reloadable command customization, so keeping it in the checkout preserves
+that beside-binary manifest feature (see the template's header comment for the
+full rationale).
 
 ## Install
 

@@ -69,5 +69,6 @@ Four things worth knowing before editing it:
 The `go` job's artifact guard is `git status --porcelain` being empty after
 a full `go build ./...`, not a filename list, so a newly added main package
 cannot reintroduce the 9.6 MB `tools/relay/relay` binary that one PR committed —
-that path is now gitignored alongside the pre-existing
-`packages/eval-engine/eval-engine` entry.
+that path is now gitignored alongside the other Go modules' binary paths
+(the pre-existing `packages/eval-engine/eval-engine` entry went away when that
+module merged into tools/cli, task-0ke9).

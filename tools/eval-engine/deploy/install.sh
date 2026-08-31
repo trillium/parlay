@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Install the Parlay eval-engine as a supervised, always-on macOS LaunchAgent.
 #
-# WHY: the eval-engine (packages/eval-engine, compiled Go, :4343) computes every
+# WHY: the eval-engine (`parlay eval serve`, compiled Go, :4343) computes every
 # voice-command action for the Parlay chat panel. In the pure server-side-eval
 # model the client does NO local matching, so if the engine is down EVERY phone
 # voice command silently fails (submit "bravely", tab switches, clear, …). The
 # relay runs supervised under launchd; the engine used to be a bare `nohup`
 # process with no supervisor, so it died on a reboot and stayed down for days
 # (robots-t9f). This gives it the same KeepAlive supervision the relay has.
+#
+# The engine merged into the unified parlay binary (task-0ke9): it now lives in
+# tools/cli/internal/evalengine and starts via `parlay eval serve`. This
+# installer builds a dedicated copy of that binary (parlay-eval-engine, so the
+# supervised service is not disturbed by rebuilds of the interactive parlay
+# binary) and points launchd at `parlay-eval-engine eval serve`.
 #
 # What it does (idempotent — safe to re-run to update):
 #   1. Builds the engine binary if it is missing (or --rebuild), via `go build`.
@@ -40,7 +46,8 @@ while [ $# -gt 0 ]; do
 done
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-ENGINE_DIR="$(cd "${HERE}/../../../packages/eval-engine" && pwd)"
+CLI_DIR="$(cd "${HERE}/../../cli" && pwd)"        # tools/cli — the unified parlay module
+ENGINE_DIR="${CLI_DIR}/bin"                        # gitignored build-output dir
 ENGINE_BIN="${ENGINE_DIR}/parlay-eval-engine"
 LABEL="com.parlay.eval-engine"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
@@ -52,8 +59,9 @@ HEALTH_URL="http://${EVAL_ADDR}/health"
 
 # ── 1. Build if needed ─────────────────────────────────────────────────────────
 if [ "${REBUILD}" = 1 ] || [ ! -x "${ENGINE_BIN}" ]; then
-  echo "==> building eval-engine binary" >&2
-  ( cd "${ENGINE_DIR}" && go build -o parlay-eval-engine . )
+  echo "==> building eval-engine binary (unified parlay CLI, tools/cli)" >&2
+  mkdir -p "${ENGINE_DIR}"
+  ( cd "${CLI_DIR}" && go build -o "${ENGINE_BIN}" . )
 fi
 [ -x "${ENGINE_BIN}" ] || { echo "install.sh: no engine binary at ${ENGINE_BIN} (run with --rebuild)" >&2; exit 1; }
 

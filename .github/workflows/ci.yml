@@ -41,8 +41,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/eval-engine,
-  #    packages/go-server ───────────────────────────────────────────────────
+  # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/go-server,
+  #    packages/spawn-profiles ──────────────────────────────────────────────
   # Separate modules, no root go.work, so each is entered on its own.
   # Every module except tools/cli is pure standard library; tools/cli requires
   # the beads library (crew store, docs/status-lift-topology.md) and is the
@@ -68,7 +68,7 @@ jobs:
     # about that module. Naming a count here is what went stale, so the check
     # derives the truth from the filesystem instead.
     env:
-      GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/eval-engine packages/go-server packages/spawn-profiles
+      GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/go-server packages/spawn-profiles
       # CGO off by default: with CGO on, the beads dependency's embedded-Dolt
       # path drags in a C++ ICU binding that needs ICU headers installed (and
       # minutes of cgo compilation). CGO_ENABLED=0 selects the library's
@@ -93,7 +93,6 @@ jobs:
             tools/cli/go.sum
             tools/relay/go.mod
             tools/parlay-bin/go.mod
-            packages/eval-engine/go.mod
             packages/go-server/go.mod
             packages/spawn-profiles/go.mod
 
@@ -227,7 +226,7 @@ jobs:
             echo "::error::go build ./... produced files that are neither tracked nor gitignored:"
             git status --porcelain
             echo "Add the binary to .gitignore (see the existing"
-            echo "packages/eval-engine/eval-engine and tools/cli/bin/ entries)."
+            echo "tools/relay/relay and tools/cli/bin/ entries)."
             exit 1
           fi
           echo "working tree clean after a full build"
@@ -480,7 +479,7 @@ jobs:
       #
       # Sizes come from `git ls-tree -l`, i.e. the tracked blob, not `stat` on
       # the worktree path. This repo tracks symlinks (CLAUDE.md,
-      # packages/eval-engine/commands.json); `stat` follows them, so it would
+      # tools/cli/internal/evalengine/commands.json); `stat` follows them, so it would
       # measure whatever they point at — and under `set -e` a symlink whose
       # target is missing after checkout would abort the step with an opaque
       # "cannot stat" rather than a size verdict. A symlink's blob is just its

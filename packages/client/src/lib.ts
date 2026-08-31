@@ -5,7 +5,7 @@
 //
 //   up:   scheduleEval() POSTs the (debounced) buffer to the parlay server's
 //         /api/chat/eval, which relays to the compiled Go phrase-matching
-//         engine (packages/eval-engine) and returns/broadcasts an action
+//         engine (tools/cli/internal/evalengine) and returns/broadcasts an action
 //         envelope over the same server's /api/chat/events SSE stream.
 //   down: applyEnvelope() drives those actions (setText/clear/submitNow/…)
 //         against a host-supplied CommandContext — the ONLY surface a host

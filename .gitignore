@@ -7,7 +7,6 @@ packages/client/plugins/
 # Build/runtime junk that kept leaking into git status (tree-hygiene, decision-u6v).
 *.log
 *.bak-*
-packages/eval-engine/eval-engine
 tools/relay/relay
 interceptor-screenshot-*.png
 packages/server/server.js
@@ -19,9 +18,10 @@ tools/cli/bin/
 # The remaining compiled Go binaries `go build ./...` drops in each module root.
 # ~28 MB of these were committed once and still weigh on every clone, so every
 # module's output is listed here so none can be re-added.
-# (packages/eval-engine/eval-engine and tools/relay/relay are already ignored
-# above; tools/parlay-bin also carries its own nested .gitignore, and the entry
-# here keeps every module's binary path visible in this one file.)
+# (tools/relay/relay is already ignored above; tools/parlay-bin also carries
+# its own nested .gitignore, and the entry here keeps every module's binary
+# path visible in this one file. packages/eval-engine merged into tools/cli —
+# task-0ke9 — so its binary entry is gone.)
 #
 # packages/spawn-profiles/validate was missing until 2026-08-26. Nothing caught
 # it because that module was also missing from CI's GO_MODULES, so the go job's

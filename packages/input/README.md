@@ -7,7 +7,7 @@ assumptions — it operates on a plain DOM `Element`.
 It implements parlay's real input protocol: a REST up-channel plus a single
 shared Server-Sent Events down-channel, with client-owned version/seq staleness
 handling. There is no client-side evaluation — every edit is relayed to the
-compiled Go engine (`packages/eval-engine`), which decides what happens (clear
+compiled Go engine (`tools/cli/internal/evalengine`, run as `parlay eval serve`), which decides what happens (clear
 the box, submit, show a picker, …) and pushes the result back down the SSE
 stream.
 

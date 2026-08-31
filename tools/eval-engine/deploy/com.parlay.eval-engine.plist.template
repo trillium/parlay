@@ -8,7 +8,8 @@
     ~/Library/LaunchAgents/com.parlay.eval-engine.plist
   because launchd plists cannot reference $HOME or expand env vars in paths.
 
-  WHY THIS EXISTS: the eval-engine is the compiled Go server (packages/eval-engine)
+  WHY THIS EXISTS: the eval-engine is the compiled Go server (`parlay eval serve`,
+  tools/cli/internal/evalengine since the task-0ke9 unification)
   that computes ALL voice-command actions for the Parlay chat panel. In the pure
   server-side-eval model the client does NO local matching — so if the engine is
   down, EVERY phone voice command silently fails (submit "bravely"/"lap", tab
@@ -21,13 +22,16 @@
   KeepAlive  -> launchd restarts it on any exit (crash or kill), so the engine is
                 always available for the relay's /api/chat/eval up-channel.
 
-  It execs the checkout binary in place (ProgramArguments points at the absolute
-  binary path). Unlike the relay — which copies its binary to a stable support
-  dir — the engine is left in the checkout because (a) this machine already
-  couples to the checkout via com.parlay.bundle-rebuild, and (b) the engine reads
-  an optional `commands.json` sitting NEXT TO the binary (os.Executable dir) for
-  hot-reloadable command customization; keeping the binary in the checkout keeps
-  that beside-binary manifest feature working exactly as it does interactively.
+  It execs a checkout-built binary in place (ProgramArguments points at the
+  absolute path of tools/cli/bin/parlay-eval-engine — a dedicated build of the
+  unified parlay binary — followed by `eval serve`). Unlike the relay — which
+  copies its binary to a stable support dir — the engine is left in the checkout
+  because (a) this machine already couples to the checkout via
+  com.parlay.bundle-rebuild, and (b) the engine reads an optional `commands.json`
+  sitting NEXT TO the binary (os.Executable dir) for hot-reloadable command
+  customization; keeping the binary in the checkout keeps that beside-binary
+  manifest feature working exactly as it does interactively (drop a
+  commands.json into tools/cli/bin/ to customize; PARLAY_COMMANDS still wins).
 -->
 <plist version="1.0">
 <dict>
@@ -37,6 +41,8 @@
   <key>ProgramArguments</key>
   <array>
     <string>__ENGINE_BIN__</string>
+    <string>eval</string>
+    <string>serve</string>
   </array>
 
   <key>WorkingDirectory</key>
