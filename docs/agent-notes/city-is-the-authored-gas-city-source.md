@@ -35,15 +35,21 @@ well-known location without restructuring.
   grill Q2b). Imports live in the root `pack.toml`, not `city.toml`, per
   pack-spec: city.toml is the deployment layer.
 
-**Validation recipe that actually works:** build the pinned ref `7c817e064`
-per contract §1 (the four ICU env vars, or `CGO_ENABLED=0`), copy `city/` to a
-scratch dir, `GC_HOME=<scratch>` and run read-only config verbs there. The
-`gc` binaries already on `PATH` are the wrong artifact (contract §2).
+**Validation recipe that actually works:** build the pinned ref (currently
+`ac6c9c685`; `tools/gc-build/build-gc.sh`, or contract §1's four ICU env vars /
+`CGO_ENABLED=0`), copy `city/` to a scratch dir, `GC_HOME=<scratch>` and run
+read-only config verbs there. The `gc` binaries already on `PATH` are the
+wrong artifact (contract §2).
 
-**Two validation warnings are expected, not defects** (details in
-`city/README.md`): the missing builtin-pack imports (`core`, `bd`) are written
-by `gc init` at install with the installing binary's own pins — and `bd` only
-under the bd beads provider, which is open Q4 — so committing them would be
-both version skew and a Q4 pre-decision; and the `workspace.name` deprecation
-is non-fatal migration guidance whose target (`.gc/site.toml`) is a
-machine-local install artifact that can't hold the authored identity.
+**The scaffold is warning-free at the pinned gc, by design** (task-u4uc6;
+details in `city/README.md`). The two warnings this source used to trip are
+fixed at source: `pack.toml` declares `[imports.core]`/`[imports.bd]`
+**versionless** — a versionless bundled source resolves the *running*
+binary's embedded pin offline, so there is no committed-sha skew — and
+`workspace.name` is gone from `city.toml`; the authored identity is seeded
+into machine-local `.gc/site.toml` by `cityscaffold.Materialize`
+(create-only). Guarded by `TestAuthoredSourceIsWarningFreeShaped` (CI) and
+`TestScaffoldConfigShowWarningFree` (gated, needs a pinned gc). The
+`core.control-dispatcher` singleton advisory that remains is gc's own core
+pack warning about itself — every city importing core gets it; don't author
+around it.

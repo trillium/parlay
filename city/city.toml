@@ -5,17 +5,19 @@
 # the Gas City supervisor is a shared machine-wide singleton; experiments must
 # redirect GC_HOME and the supervisor port).
 #
-# Authored against the pinned Gas City ref 7c817e064 (v1.4.0-504) per
+# Authored against the pinned Gas City ref ac6c9c685 (v1.4.0-681) per
 # docs/gascity-integration-contract.md §2. Schema reference:
 # ~/code/gascity/docs/reference/config.md. Pack composition lives in the
 # sibling pack.toml (the root city pack), per Pack Spec 2.0: city.toml is the
 # deployment layer, pack.toml carries imports and definitions.
 
 [workspace]
-# Legacy checked-in name; runtime identity resolves from .gc/site.toml at
-# install time (`gc init` writes it there). Kept as the declared fallback and
-# as the source for the bead-ID prefix derivation.
-name = "parlay"
+# Workspace identity (name/prefix) is deliberately ABSENT: declaring it here
+# is deprecated at the pinned gc ("workspace identity fields are deprecated in
+# v2; move them to .gc/site.toml"). The authored identity ("parlay", the
+# bead-ID prefix source) lives in .gc/site.toml — machine-local, never
+# committed — seeded by cityscaffold.Materialize when absent and rewritten by
+# `gc init` at install (P12).
 
 # SAFETY DEFAULT — the city starts suspended: the reconciler spawns no agent
 # from this config. The spawn seam (task-4cfpv.9) flips this deliberately when
