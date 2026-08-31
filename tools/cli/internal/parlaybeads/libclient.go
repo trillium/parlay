@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	beads "github.com/steveyegge/beads"
 )
@@ -84,7 +85,38 @@ func Init(ctx context.Context, cfg Config) (Client, error) {
 			return nil, fmt.Errorf("parlaybeads: seeding issue prefix: %w", err)
 		}
 	}
+	// The crew bead's issue type is not a beads built-in: validation admits it
+	// only when the store's types.custom config lists it, so a store that
+	// never got this seed rejects the very first ApplyStatus create with
+	// "invalid issue type: agent". The writer owns store bring-up (the unit-3
+	// decision above), so it owns this seed too — for stores Init creates AND
+	// stores an operator brought up via `bd init`, which seeds no custom
+	// types either.
+	if err := ensureCustomType(ctx, lc.store, BeadTypeAgent); err != nil {
+		_ = lc.Close()
+		return nil, fmt.Errorf("parlaybeads: seeding custom issue type %q: %w", BeadTypeAgent, err)
+	}
 	return c, nil
+}
+
+// ensureCustomType appends typ to the store's types.custom config when it is
+// not already listed. Append-only: an operator's existing custom types are
+// never dropped or reordered.
+func ensureCustomType(ctx context.Context, store storageAPI, typ string) error {
+	existing, err := store.GetConfig(ctx, "types.custom")
+	if err != nil {
+		existing = ""
+	}
+	for _, t := range strings.Split(existing, ",") {
+		if strings.TrimSpace(t) == typ {
+			return nil
+		}
+	}
+	value := typ
+	if strings.TrimSpace(existing) != "" {
+		value = existing + "," + typ
+	}
+	return store.SetConfig(ctx, "types.custom", value)
 }
 
 func open(ctx context.Context, cfg Config) (Client, error) {

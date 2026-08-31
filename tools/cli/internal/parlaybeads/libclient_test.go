@@ -28,6 +28,7 @@ type fakeStore struct {
 
 	getErr error
 	closed bool
+	config map[string]string
 }
 
 func newFakeStore() *fakeStore {
@@ -111,9 +112,19 @@ func (f *fakeStore) GetIssuesByLabel(_ context.Context, label string) ([]*beads.
 	return out, nil
 }
 
-func (f *fakeStore) GetConfig(_ context.Context, _ string) (string, error) { return "", nil }
-func (f *fakeStore) SetConfig(_ context.Context, _, _ string) error        { return nil }
-func (f *fakeStore) Close() error                                          { f.closed = true; return nil }
+func (f *fakeStore) GetConfig(_ context.Context, key string) (string, error) {
+	return f.config[key], nil
+}
+
+func (f *fakeStore) SetConfig(_ context.Context, key, value string) error {
+	if f.config == nil {
+		f.config = map[string]string{}
+	}
+	f.config[key] = value
+	return nil
+}
+
+func (f *fakeStore) Close() error { f.closed = true; return nil }
 
 func fakeClient() (*libClient, *fakeStore) {
 	f := newFakeStore()
@@ -289,5 +300,40 @@ func TestBeadsImportConfined(t *testing.T) {
 				t.Errorf("%s imports the beads library; only libclient.go may (topology seam)", name)
 			}
 		}
+	}
+}
+
+// The crew bead's "agent" issue type is not a beads built-in — a store whose
+// types.custom config does not list it rejects the first ApplyStatus create
+// with "invalid issue type: agent". ensureCustomType is the Init seed that
+// prevents that, and it must be append-only: never drop an operator's
+// existing custom types, never duplicate an entry already present.
+func TestEnsureCustomTypeSeedsAgent(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name     string
+		existing string // pre-set types.custom ("" = unset)
+		want     string
+	}{
+		{"unset store seeds the type", "", "agent"},
+		{"existing types are appended to, not clobbered", "convoy,gate2", "convoy,gate2,agent"},
+		{"already listed is left untouched", "convoy,agent", "convoy,agent"},
+		{"listed with surrounding spaces still counts", "convoy, agent", "convoy, agent"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeStore()
+			if tc.existing != "" {
+				if err := f.SetConfig(ctx, "types.custom", tc.existing); err != nil {
+					t.Fatalf("pre-set: %v", err)
+				}
+			}
+			if err := ensureCustomType(ctx, f, BeadTypeAgent); err != nil {
+				t.Fatalf("ensureCustomType: %v", err)
+			}
+			if got := f.config["types.custom"]; got != tc.want {
+				t.Fatalf("types.custom = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
