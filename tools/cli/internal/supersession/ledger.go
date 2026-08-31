@@ -36,9 +36,14 @@ type Event struct {
 	// Required on supersede events: an unexplained supersession is an
 	// unanswerable Explain query later.
 	Reason string `json:"reason,omitempty"`
-	// DeclaredSeverity is the BumpKind of the version step, recorded at
-	// supersede time so the log carries the classification evidence.
+	// DeclaredSeverity is the BumpKind of the version step — how severe
+	// the author claims the change is. It is the EFFECTIVE severity: the
+	// one reprocessing keys on.
 	DeclaredSeverity Severity `json:"declaredSeverity,omitempty"`
+	// ClassifiedSeverity is the floor the changeset proves (Classify).
+	// Always <= DeclaredSeverity, or the supersession was rejected. Both
+	// are recorded so Explain can show claim vs evidence.
+	ClassifiedSeverity Severity `json:"classifiedSeverity,omitempty"`
 
 	RecordID string `json:"recordId,omitempty"`
 	Note     string `json:"note,omitempty"`
@@ -192,8 +197,10 @@ type Supersession struct {
 //     replaces a version, never re-identifies the definition.
 //   - the version step must be a valid BumpKind (increase + reset rule).
 //   - Changes must be non-empty with known classes; Reason must be set.
+//   - the declared bump must be at least the changeset's classified
+//     severity (see classify.go) — understated bumps are rejected.
 //
-// The declared severity (the BumpKind) is recorded on the event.
+// Both severities (declared and classified) are recorded on the event.
 func (l *Ledger) Supersede(s Supersession) (Event, error) {
 	r := s.Record
 	if err := r.validate(); err != nil {
@@ -233,13 +240,24 @@ func (l *Ledger) Supersede(s Supersession) (Event, error) {
 	if s.Reason == "" {
 		return Event{}, fmt.Errorf("supersede %s: reason must not be empty — a supersession must say why", r.ID)
 	}
+	classified, err := Classify(s.Changes)
+	if err != nil {
+		return Event{}, fmt.Errorf("supersede %s: %w", r.ID, err)
+	}
+	// The asymmetric rule (see classify.go): an understated bump is how a
+	// breaking change sneaks past reprocessing, so it is rejected; an
+	// overstated bump only buys more revalidation and is allowed.
+	if !declared.AtLeast(classified) {
+		return Event{}, fmt.Errorf("supersede %s: declared bump %s → %s is a %s, but the changeset classifies as %s — understated severity",
+			r.ID, target.Version, r.Version, declared, classified)
+	}
 	l.records[r.ID] = r
 	l.heads[r.Name] = r.ID
 	l.supersededBy[target.ID] = r.ID
 	rec := r
 	return l.append(Event{
 		Kind: EventSupersede, Record: &rec, Changes: s.Changes, Reason: s.Reason,
-		DeclaredSeverity: declared, Actor: s.Actor, At: s.At,
+		DeclaredSeverity: declared, ClassifiedSeverity: classified, Actor: s.Actor, At: s.At,
 	}), nil
 }
 
