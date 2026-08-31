@@ -1535,8 +1535,17 @@ elif [ "$LAUNCHER" = "subprocess" ]; then
     (
       _subprocess_elapsed=0
       while [ "$_subprocess_elapsed" -lt "$SUBPROCESS_LIVENESS_TIMEOUT_S" ]; do
+        # /subscribers is an OBJECT, not an array ('.[]' over it dies on the
+        # first array-valued field, so the old array parse could never match).
+        # Registration rows don't count — this script's own register-agent
+        # POST creates those before the agent runs; only the agent's poll
+        # listener (an open waiter, or a listening presence row) is its own
+        # emitted effect. Kept in lockstep with gcLivenessObserved
+        # (tools/cli/internal/commands/gc_liveness.go).
         if curl -fsS "$PARLAY/api/chat/subscribers" 2>/dev/null \
-            | jq -e --arg id "$AGENT_ID" '.[] | select(.channel == $id)' >/dev/null 2>&1; then
+            | jq -e --arg id "$AGENT_ID" \
+              '((.poll.channels // []) | any(.channel == $id)) or ((.presence // []) | any(.channel == $id and .listening == true))' \
+              >/dev/null 2>&1; then
           echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: observed in /api/chat/subscribers — session live." >&2
           exit 0
         fi
