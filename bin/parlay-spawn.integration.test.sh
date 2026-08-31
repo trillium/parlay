@@ -26,7 +26,7 @@ fi
 echo "Testing default prompt template loading..." >&2
 
 TEMPLATES_DIR="$BIN_DIR/../launch-templates"
-PARLAY="http://localhost:31337"
+PARLAY="http://localhost:4242"
 AGENT_ID="test-agent"
 NAME="Test Agent"
 COLOR="#abc123"
@@ -51,7 +51,7 @@ else
   fail "default template missing AGENT_ID interpolation"
 fi
 
-if printf '%s' "$STARTUP_PROMPT" | grep -q "http://localhost:31337"; then
+if printf '%s' "$STARTUP_PROMPT" | grep -q "http://localhost:4242"; then
   pass "default template contains interpolated PARLAY"
 else
   fail "default template missing PARLAY interpolation"

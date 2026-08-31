@@ -147,7 +147,7 @@ LOG="${TMPDIR:-/tmp}/reincarnate-$CLAUDE_PID.log"
 if [ -n "${AID:-}" ]; then RECEIPT_DIR="${PARLAY_AGENT_HOME:-$HOME/.parlay/agents}/${AID}"; else RECEIPT_DIR="$HOME/.parlay"; fi
 RECEIPT="$RECEIPT_DIR/reincarnations.log"   # legacy name kept deliberately (see note above)
 mkdir -p "$RECEIPT_DIR" 2>/dev/null || true
-PARLAY="${PARLAY_SERVER:-http://localhost:31337}"   # for Change 3 self-verify
+PARLAY="${PARLAY_SERVER:-http://localhost:4242}"   # for Change 3 self-verify
 
 # ── measurements the pin resolution below depends on ────────────────────────
 # Elapsed-time -> epoch for claude's own start. `ps -o etime=` ([[DD-]HH:]MM:SS) is

@@ -10,7 +10,7 @@
 #   pipeline-selftest <name>       # run just one check: tab|ready|start|api|dispatch|full
 set -uo pipefail
 
-PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
+PARLAY="${PARLAY_SERVER:-http://localhost:4242}"
 SELFTEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PASS=0
 FAIL=0

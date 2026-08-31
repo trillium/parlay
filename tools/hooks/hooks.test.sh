@@ -10,7 +10,7 @@
 # silently stop testing for it.
 #
 # The real delivery path is never reached. packages/client/build.ts POSTs to a
-# live Pulse server on 127.0.0.1:31337 and force-reloads whatever panels are
+# live parlay chat server on 127.0.0.1:4242 and force-reloads whatever panels are
 # connected, so three independent barriers keep it out of this harness:
 #   1. $HOME is redirected into the scratch dir AND "$HOME/.bun/bin" is prepended
 #      to PATH, so BOTH arms of the hooks' `command -v bun || $HOME/.bun/bin/bun`
