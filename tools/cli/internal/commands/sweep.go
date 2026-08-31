@@ -296,21 +296,30 @@ func Sweep(argv []string) {
 		Force:    r.Bool("--force"),
 	}
 
-	sweepPass(explicitID, apply, r.Bool("--verbose"), opts)
+	// Loop mode gets an edge-triggered tracker so an unchanged HOLD/REFUSED
+	// surfaces once per reason, not once per tick (teardown_telemetry.go); a
+	// one-shot sweep keeps the nil tracker and surfaces everything.
+	var tracker *sweepSkipTracker
+	if intervalSec > 0 {
+		tracker = newSweepSkipTracker()
+	}
+	sweepPass(explicitID, apply, r.Bool("--verbose"), opts, tracker)
 	if intervalSec == 0 {
 		return
 	}
 	// Loop mode: the daemon cadence (run it alongside robots-watch).
 	for {
 		time.Sleep(time.Duration(intervalSec * float64(time.Second)))
-		sweepPass(explicitID, apply, r.Bool("--verbose"), opts)
+		sweepPass(explicitID, apply, r.Bool("--verbose"), opts, tracker)
 	}
 }
 
 // sweepPass runs one full pass: enumerate → classify → report → (optionally)
 // tear down. A teardown refusal is reported and the pass continues; one
 // stuck agent must never stall the collector.
-func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
+func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts, tracker *sweepSkipTracker) {
+	tracker.beginPass()
+	defer tracker.endPass()
 	opts.Keep = readSweepKeep()
 	ids := []string{explicitID}
 	if explicitID == "" {
@@ -342,12 +351,15 @@ func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
 		switch v.Action {
 		case SweepSkip:
 			skipped++
-			if verbose {
+			surfaced := tracker.shouldSurface(id, "skip: "+v.Reason)
+			if verbose && surfaced {
 				fmt.Printf("skip     %s — %s\n", id, v.Reason)
 			}
 		case SweepHold:
 			held++
-			fmt.Printf("HOLD     %s — %s\n", id, v.Reason)
+			if tracker.shouldSurface(id, "hold: "+v.Reason) {
+				fmt.Printf("HOLD     %s — %s\n", id, v.Reason)
+			}
 		case SweepTeardown:
 			if !apply {
 				swept++
@@ -357,7 +369,9 @@ func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
 			msg, err := teardownAgentLive(id, false, probes)
 			if err != nil {
 				refused++
-				fmt.Printf("REFUSED  %s — %v\n", id, err)
+				if tracker.shouldSurface(id, "refused: "+err.Error()) {
+					fmt.Printf("REFUSED  %s — %v\n", id, err)
+				}
 				continue
 			}
 			swept++
