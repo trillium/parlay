@@ -189,4 +189,21 @@ if grep -qF "CLAUDE_CODE_OAUTH_TOKEN=default-tok" "$ENV4"; then
   fail "default account token leaked despite --account override"
 fi
 
+# ── 5. config.toml spawnAccount → correct token injected with no --account flag ─
+HOME5="$ROOT/home5"; mkdir -p "$HOME5"
+mkdir -p "$HOME5/.parlay"
+printf 'spawnAccount = "acc2"\n' > "$HOME5/.parlay/config.toml"
+mkdir -p "$HOME5/.ccjuggler/acc2"
+printf 'tok-from-acc2' > "$HOME5/.ccjuggler/acc2/.oauth-token"
+ENV5="$ROOT/env-config-toml.txt"; > "$ENV5"
+export STUB_SECURITY_TOKEN=""          # keychain misses → flat-file
+export RECORDED_ENV_FILE="$ENV5"
+run_spawn "$HOME5" toml-acct "TOML Acct" "#aabbcc" "task"   # no --account flag
+unset STUB_SECURITY_TOKEN RECORDED_ENV_FILE
+if grep -qF "CLAUDE_CODE_OAUTH_TOKEN=tok-from-acc2" "$ENV5"; then
+  pass "config.toml spawnAccount: correct token injected when no --account flag"
+else
+  fail "config.toml spawnAccount: expected acc2 token; recorded:"$'\n'"$(cat "$ENV5")"
+fi
+
 exit "$FAILED"
