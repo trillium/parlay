@@ -3,8 +3,10 @@ package cityscaffold
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	toml "github.com/pelletier/go-toml/v2"
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
 
@@ -85,6 +87,119 @@ func TestMaterializeIsIdempotentAndHealsDrift(t *testing.T) {
 	}
 	if string(healed) == "# hand edit\n" {
 		t.Error("city.toml drift not healed — Materialize must overwrite managed files that differ")
+	}
+}
+
+func TestMaterializeSeedsSiteIdentityCreateOnly(t *testing.T) {
+	testsupport.TempStateHome(t)
+
+	first, err := Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sitePath := filepath.Join(first.Dir, ".gc", "site.toml")
+	data, err := os.ReadFile(sitePath)
+	if err != nil {
+		t.Fatalf("fresh Materialize must seed .gc/site.toml with the authored identity: %v", err)
+	}
+	if string(data) != "workspace_name = \"parlay\"\n" {
+		t.Errorf(".gc/site.toml seed = %q, want workspace_name = \"parlay\"", data)
+	}
+
+	// gc owns the file after the seed: a rewritten site.toml must survive
+	// every later Materialize untouched.
+	if err := os.WriteFile(sitePath, []byte("workspace_name = \"other\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Materialize(); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(sitePath)
+	if err != nil || string(data) != "workspace_name = \"other\"\n" {
+		t.Errorf("existing .gc/site.toml clobbered on re-run: %q, %v", data, err)
+	}
+}
+
+// TestAuthoredSourceIsWarningFreeShaped guards, without a gc binary, the two
+// properties that keep the scaffold warning-free against the pinned gc
+// (task-u4uc6): no workspace identity fields in city.toml (deprecated — they
+// live in .gc/site.toml), and required builtin pack imports core and bd
+// declared in pack.toml WITHOUT a version pin (versionless bundled sources
+// resolve the running binary's embedded pin offline; a committed sha would
+// go network-only once gc's canonical pin moves). The real bar is the gated
+// TestScaffoldConfigShowWarningFree below.
+func TestAuthoredSourceIsWarningFreeShaped(t *testing.T) {
+	cityToml, err := sourceFS.ReadFile("city/city.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"name =", "prefix ="} {
+		for _, line := range strings.Split(string(cityToml), "\n") {
+			if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, field) {
+				t.Errorf("city.toml declares workspace identity (%q) — deprecated at the pinned gc; identity is seeded into .gc/site.toml by Materialize", trimmed)
+			}
+		}
+	}
+
+	packToml, err := sourceFS.ReadFile("city/pack.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Imports map[string]struct {
+			Source  string `toml:"source"`
+			Version string `toml:"version"`
+		} `toml:"imports"`
+	}
+	if err := toml.Unmarshal(packToml, &manifest); err != nil {
+		t.Fatalf("parsing embedded pack.toml: %v", err)
+	}
+	for _, name := range []string{"core", "bd"} {
+		imp, ok := manifest.Imports[name]
+		if !ok {
+			t.Errorf("pack.toml missing required builtin import %q — the pinned gc warns on every load without it", name)
+			continue
+		}
+		if imp.Version != "" {
+			t.Errorf("imports.%s pins version = %q — bundled imports must stay versionless so they track the running binary's embedded pin", name, imp.Version)
+		}
+	}
+}
+
+// TestScaffoldConfigShowWarningFree is the task-u4uc6 verification bar: the
+// pinned gc loads the fresh scaffold without either scaffold-attributable
+// warning (missing builtin pack imports, deprecated workspace identity). The
+// core.control-dispatcher singleton advisory is upstream noise from gc's own
+// builtin core pack (a bare `gc init` city gets it too) and is deliberately
+// not asserted on. Gated exactly like TestScaffoldAnswersGCSessionList.
+func TestScaffoldConfigShowWarningFree(t *testing.T) {
+	if os.Getenv("PARLAY_GC_INTEGRATION") != "1" {
+		t.Skip("integration probe — set PARLAY_GC_INTEGRATION=1 and PARLAY_GC=<pinned gc> to run")
+	}
+	gc := os.Getenv("PARLAY_GC")
+	if gc == "" {
+		t.Fatal("PARLAY_GC_INTEGRATION=1 but PARLAY_GC is unset")
+	}
+	testsupport.TempStateHome(t)
+
+	res, err := Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, code := runGCConfigShow(t, gc, res.Dir)
+	if code != 0 {
+		t.Fatalf("gc --city %s config show exited %d:\n%s", res.Dir, code, out)
+	}
+	for _, fragment := range []string{
+		"does not import required builtin pack",
+		"workspace identity fields are deprecated",
+	} {
+		if strings.Contains(out, fragment) {
+			t.Errorf("scaffold still trips %q:\n%s", fragment, out)
+		}
+	}
+	if !strings.Contains(out, "name = \"parlay\"") {
+		t.Errorf("composed config lost the seeded workspace identity (want name = \"parlay\"):\n%s", out)
 	}
 }
 

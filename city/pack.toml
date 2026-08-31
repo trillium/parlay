@@ -17,3 +17,22 @@ description = "Root city pack for the parlay city. Deployment glue; all parlay d
 # (pack-spec §2.5). Address imported agents by the qualified name.
 [imports.parlay]
 source = "packs/parlay"
+
+# Required builtin packs. The pinned gc warns ("does not import required
+# builtin pack(s) core, bd") on any city whose composed config does not reach
+# these; gc init writes the same imports with a `version = "sha:…"` pin copied
+# from the installing binary. `version` is deliberately OMITTED here: for a
+# recognized bundled source with no declared version, gc resolves the running
+# binary's own embedded canonical pin from its synthetic cache — offline, and
+# never skewed against whatever binary is actually running
+# (config.resolveBundledSourceWithoutLock at the pinned ref). A committed sha
+# would instead degrade to a network-only remote import the moment gc's
+# canonical pin moves past it.
+[imports.core]
+source = "https://github.com/gastownhall/gascity/tree/main/internal/bootstrap/packs/core"
+
+# bd is required because the city's beads provider defaults to "bd" when no
+# [beads] table is declared (and city.toml deliberately declares none — Q4,
+# task-4cfpv.20). If Q4 rules a non-bd provider in, drop this import with it.
+[imports.bd]
+source = "https://github.com/gastownhall/gascity/tree/main/examples/bd"

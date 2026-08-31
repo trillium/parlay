@@ -46,23 +46,33 @@ Gas City ref, readable in the local clone `~/code/gascity`):
 
 ## Validating changes to this tree
 
-Build the pinned ref per contract §1, copy `city/` to a scratch directory,
-redirect `GC_HOME` (and `HOME`) there, and run read-only config verbs —
-`gc config show` resolving with exit 0 is the bar. Two warnings are
-**expected and correct** against this authored source:
+Build the pinned ref per contract §1 (`tools/gc-build/build-gc.sh`), copy
+`city/` to a scratch directory, redirect `GC_HOME` (and `HOME`) there, and run
+read-only config verbs — `gc config show` resolving with exit 0 and **no
+scaffold-attributable warnings** is the bar (task-u4uc6; the gated test
+`TestScaffoldConfigShowWarningFree` in `tools/cli/internal/cityscaffold`
+asserts it). Two warnings this source used to trip are fixed at source:
 
-- *"does not import required builtin pack(s) core, bd"* — `gc init` at
-  install (P12) writes those imports itself, pinned to the installing
-  binary's embedded commits. Committing hand-copied pins here would skew
-  against whatever binary P12 installs, and the `bd` import is only written
-  for cities on the `bd` beads provider — exactly the open Q4 decision
-  (task-4cfpv.20). Do not "fix" this warning in source.
+- *"does not import required builtin pack(s) core, bd"* — `pack.toml` now
+  declares `[imports.core]` and `[imports.bd]` with **no `version` pin**. A
+  versionless bundled source resolves to the *running* binary's embedded
+  canonical pin, offline, so there is no skew against whatever binary P12
+  installs (a committed sha would degrade to a network-only import once gc's
+  pin moves). The `bd` import matches the provider default ("bd" when no
+  `[beads]` table is declared); it follows Q4 (task-4cfpv.20) if that ruling
+  changes the provider.
 - *"workspace identity fields are deprecated in v2; move them to
-  .gc/site.toml"* — `.gc/site.toml` is a machine-local install artifact that
-  is never committed; the authored identity has to live somewhere, so
-  `workspace.name` stays here and install migrates it. The warning is
-  explicitly non-fatal migration guidance (`IsNonFatalSiteBindingWarning`),
-  even in strict mode.
+  .gc/site.toml"* — `workspace.name` is gone from `city.toml`. The authored
+  identity (`parlay`) is seeded into `.gc/site.toml` (machine-local, never
+  committed) by `cityscaffold.Materialize` when absent; `gc init` at install
+  owns it thereafter. A bare copy of `city/` without that seed simply has no
+  declared identity (gc falls back to the directory basename) — still
+  warning-free.
+
+One warning **remains expected and is not scaffold-attributable**: the
+`core.control-dispatcher` `max_active_sessions=1` singleton advisory comes
+from gc's own builtin core pack and fires for every city that imports it
+(including a bare `gc init` city). Upstream noise; do not author around it.
 
 ## What is deliberately absent, and who owns filling it in
 

@@ -31,6 +31,28 @@ func runGCSessionList(t *testing.T, gc, cityDir string) (string, int) {
 	return string(out), code
 }
 
+// runGCConfigShow invokes `gc --city <dir> config show` with the same
+// GC_HOME/supervisor-port isolation as runGCSessionList and returns the
+// combined stdout+stderr (warnings go to stderr) and the exit code.
+func runGCConfigShow(t *testing.T, gc, cityDir string) (string, int) {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "supervisor.toml"), []byte("[supervisor]\nport = 18372\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(gc, "--city", cityDir, "config", "show")
+	cmd.Dir = home
+	cmd.Env = append(os.Environ(), "GC_HOME="+home)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatalf("running %s: %v", gc, err)
+	}
+	return string(out), code
+}
+
 // jsonHasEmptySessions parses gc's typed session-list JSON and reports
 // whether it declares zero sessions.
 func jsonHasEmptySessions(t *testing.T, out string) bool {

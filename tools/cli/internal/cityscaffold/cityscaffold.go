@@ -115,5 +115,20 @@ func Materialize() (Result, error) {
 	if err := os.MkdirAll(filepath.Join(root, ".gc"), 0o755); err != nil {
 		return res, fmt.Errorf("materialize city scaffold at %s: %w", root, err)
 	}
+
+	// Seed the authored workspace identity into .gc/site.toml, create-only.
+	// The pinned gc deprecates identity fields in city.toml (they belong in
+	// machine-local .gc/site.toml), so the authored city/ no longer declares
+	// workspace.name — without this seed a fresh scaffold's identity would
+	// fall back to the directory basename ("city"). gc owns the file from
+	// here: an existing site.toml, whatever its content, is never touched.
+	sitePath := filepath.Join(root, ".gc", "site.toml")
+	if _, err := os.Stat(sitePath); os.IsNotExist(err) {
+		if err := os.WriteFile(sitePath, []byte("workspace_name = \"parlay\"\n"), 0o644); err != nil {
+			return res, fmt.Errorf("materialize city scaffold at %s: %w", root, err)
+		}
+	} else if err != nil {
+		return res, fmt.Errorf("materialize city scaffold at %s: %w", root, err)
+	}
 	return res, nil
 }
