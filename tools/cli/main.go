@@ -155,6 +155,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Mechanic(args)
 	case "merge-gate":
 		commands.MergeGate(args)
+	case "route":
+		commands.Route(args)
 	case "branch-audit":
 		commands.BranchAudit(args)
 	case "commands":
