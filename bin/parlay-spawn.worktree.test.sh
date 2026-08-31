@@ -90,7 +90,7 @@ run_spawn() {
 
 # ── 1. treehouse is resolved against --cwd, not the caller's shell cwd ───────
 mkdir -p "$ROOT/home"
-out=$(run_spawn wt-ok "WT OK" "#ffffff" "task" --cwd "$TARGET" --worktree)
+out=$(run_spawn wt-ok "WT OK" "#ffffff" "task" --model sonnet --cwd "$TARGET" --worktree)
 if grep -qF "worktree via treehouse at $ROOT/pool/target" <<<"$out"; then
   pass "treehouse runs with cwd=\$PROJECT_PATH (leases the --cwd repo's worktree)"
 else
@@ -104,7 +104,7 @@ fi
 rm -rf "$ROOT/home"; mkdir -p "$ROOT/home"
 mv "$STUB/treehouse" "$STUB/treehouse-honest"
 mv "$STUB/treehouse-liar" "$STUB/treehouse"
-out=$(run_spawn wt-liar "WT Liar" "#ffffff" "task" --cwd "$TARGET" --worktree)
+out=$(run_spawn wt-liar "WT Liar" "#ffffff" "task" --model sonnet --cwd "$TARGET" --worktree)
 mv "$STUB/treehouse" "$STUB/treehouse-liar"
 mv "$STUB/treehouse-honest" "$STUB/treehouse"
 if grep -q "WRONG-REPO WORKTREE" <<<"$out"; then

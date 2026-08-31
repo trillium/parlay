@@ -8,6 +8,13 @@ This package is **agent-focused**: adding a profile is a one-block edit to
 `profiles.toml`, gated by a validator that tells you exactly what's wrong. No
 single human owns it.
 
+**Current wiring (task-qyu8q):** `parlay-spawn --profile <name>` resolves only
+`kind` and `model` from the named profile today — that's enough to satisfy the
+model-required gate (every spawn must pick a model deliberately; a
+model-bearing profile counts as that choice). `command`, `args`, `prompt_mode`,
+`resume_flag`, `env`, and the rest of the field reference below are validated
+by `cmd/validate` but not yet threaded through by `parlay-spawn` itself.
+
 ## Add a profile
 
 1. Append a `[[profile]]` block to `profiles.toml`.

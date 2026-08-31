@@ -115,7 +115,7 @@ run_spawn() {
 # ── 1. Missing token → loud exit, message printed, no tab created ─────────────
 HOME1="$ROOT/home1"; mkdir -p "$HOME1"
 export STUB_SECURITY_TOKEN=""
-out=$(run_spawn "$HOME1" bad-acct "Bad Acct" "#aabbcc" "task" --account ghost-acc)
+out=$(run_spawn "$HOME1" bad-acct "Bad Acct" "#aabbcc" "task" --model sonnet --account ghost-acc)
 if grep -q "no token found" <<<"$out"; then
   pass "missing token: 'no token found' message printed"
 else
@@ -127,14 +127,14 @@ fi
 ENV1="$ROOT/env-missing.txt"; > "$ENV1"
 export STUB_SECURITY_TOKEN=""
 export RECORDED_ENV_FILE="$ENV1"
-run_spawn "$HOME1" bad-acct3 "Bad Acct" "#aabbcc" "task" --account ghost-acc >/dev/null 2>/dev/null || true
+run_spawn "$HOME1" bad-acct3 "Bad Acct" "#aabbcc" "task" --model sonnet --account ghost-acc >/dev/null 2>/dev/null || true
 unset STUB_SECURITY_TOKEN RECORDED_ENV_FILE
 if [ -s "$ENV1" ]; then
   fail "missing token: herdr tab create was still called (env file non-empty)"
 else
   pass "missing token: spawn exits before herdr tab create"
 fi
-if run_spawn "$HOME1" bad-acct2 "Bad Acct" "#aabbcc" "task" --account ghost-acc >/dev/null 2>&1; then
+if run_spawn "$HOME1" bad-acct2 "Bad Acct" "#aabbcc" "task" --model sonnet --account ghost-acc >/dev/null 2>&1; then
   fail "missing token: parlay-spawn exited 0 (should be non-zero)"
 else
   pass "missing token: parlay-spawn exits non-zero"
@@ -145,7 +145,7 @@ HOME2="$ROOT/home2"; mkdir -p "$HOME2"
 ENV2="$ROOT/env-keychain.txt"; > "$ENV2"
 export STUB_SECURITY_TOKEN="tok-from-keychain"
 export RECORDED_ENV_FILE="$ENV2"
-run_spawn "$HOME2" kc-acct "KC Acct" "#aabbcc" "task" --account kc-acc >/dev/null
+run_spawn "$HOME2" kc-acct "KC Acct" "#aabbcc" "task" --model sonnet --account kc-acc >/dev/null
 unset STUB_SECURITY_TOKEN RECORDED_ENV_FILE
 if grep -qF "CLAUDE_CODE_OAUTH_TOKEN=tok-from-keychain" "$ENV2"; then
   pass "keychain hit: CLAUDE_CODE_OAUTH_TOKEN injected via herdr tab --env"
@@ -160,7 +160,7 @@ printf 'tok-from-file' > "$HOME3/.ccjuggler/file-acc/.oauth-token"
 ENV3="$ROOT/env-flatfile.txt"; > "$ENV3"
 export STUB_SECURITY_TOKEN=""          # keychain misses → falls to file
 export RECORDED_ENV_FILE="$ENV3"
-run_spawn "$HOME3" ff-acct "FF Acct" "#aabbcc" "task" --account file-acc >/dev/null
+run_spawn "$HOME3" ff-acct "FF Acct" "#aabbcc" "task" --model sonnet --account file-acc >/dev/null
 unset STUB_SECURITY_TOKEN RECORDED_ENV_FILE
 if grep -qF "CLAUDE_CODE_OAUTH_TOKEN=tok-from-file" "$ENV3"; then
   pass "flat-file fallback: CLAUDE_CODE_OAUTH_TOKEN injected via herdr tab --env"
@@ -178,7 +178,7 @@ ENV4="$ROOT/env-override.txt"; > "$ENV4"
 export STUB_SECURITY_TOKEN=""
 export RECORDED_ENV_FILE="$ENV4"
 export PARLAY_SPAWN_DEFAULT_ACCOUNT="default-acc"
-run_spawn "$HOME4" ov-acct "Override" "#aabbcc" "task" --account explicit-acc >/dev/null
+run_spawn "$HOME4" ov-acct "Override" "#aabbcc" "task" --model sonnet --account explicit-acc >/dev/null
 unset STUB_SECURITY_TOKEN RECORDED_ENV_FILE PARLAY_SPAWN_DEFAULT_ACCOUNT
 if grep -qF "CLAUDE_CODE_OAUTH_TOKEN=explicit-tok" "$ENV4"; then
   pass "--account flag overrides PARLAY_SPAWN_DEFAULT_ACCOUNT"
@@ -198,7 +198,7 @@ printf 'tok-from-acc2' > "$HOME5/.ccjuggler/acc2/.oauth-token"
 ENV5="$ROOT/env-config-toml.txt"; > "$ENV5"
 export STUB_SECURITY_TOKEN=""          # keychain misses → flat-file
 export RECORDED_ENV_FILE="$ENV5"
-run_spawn "$HOME5" toml-acct "TOML Acct" "#aabbcc" "task"   # no --account flag
+run_spawn "$HOME5" toml-acct "TOML Acct" "#aabbcc" "task" --model sonnet   # no --account flag
 unset STUB_SECURITY_TOKEN RECORDED_ENV_FILE
 if grep -qF "CLAUDE_CODE_OAUTH_TOKEN=tok-from-acc2" "$ENV5"; then
   pass "config.toml spawnAccount: correct token injected when no --account flag"
