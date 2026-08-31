@@ -51,7 +51,11 @@ type LaunchSpec struct {
 	// verification escape hatch (a sandboxed `gc session new` should start
 	// something inert, not a real claude), kept because later seams need the
 	// same knob. When StartCommand is set, prompt_mode becomes "none": an
-	// arbitrary command has no defined prompt argument.
+	// arbitrary command has no defined prompt argument. Args are folded into
+	// the rendered start_command as one shell-quoted command line — gc's
+	// agent-level start_command is "the complete command line"
+	// (internal/config/resolve.go at the pin resolves it as an escape hatch
+	// that ignores any separate args field).
 	StartCommand string
 	Args         []string
 }
@@ -77,27 +81,6 @@ func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
 		args = spec.Args
 	}
 
-	var b strings.Builder
-	b.WriteString("# Synthesised by parlay from a launch spec (internal/gctemplate) — do not\n")
-	b.WriteString("# hand-edit; change the spec and re-synthesise. Spawn-lift unit 4, epic\n")
-	b.WriteString("# task-4cfpv.9. Field semantics: Pack Spec 2.0 (pinned Gas City ref).\n")
-	name := spec.Name
-	if name == "" {
-		name = spec.ID
-	}
-	fmt.Fprintf(&b, "description = %s\n", tomlString("parlay agent "+name+" (launch-spec synthesis)"))
-	if spec.Cwd != "" {
-		fmt.Fprintf(&b, "work_dir = %s\n", tomlString(spec.Cwd))
-	}
-	// Template presence must never mean autostart: the reconciler skips
-	// suspended agents, and an explicit `gc session new` still works. Same
-	// doctrine as the city's suspended_on_start = true.
-	b.WriteString("suspended = true\n")
-	fmt.Fprintf(&b, "start_command = %s\n", tomlString(start))
-	fmt.Fprintf(&b, "args = %s\n", tomlStringArray(args))
-	fmt.Fprintf(&b, "prompt_mode = %s\n", tomlString(promptMode))
-	fmt.Fprintf(&b, "process_names = %s\n", tomlStringArray([]string{filepath.Base(start)}))
-
 	env := map[string]string{"PARLAY_AGENT_ID": spec.ID}
 	if spec.Name != "" {
 		env["PARLAY_AGENT_NAME"] = spec.Name
@@ -114,13 +97,54 @@ func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
 	if spec.Model != "" {
 		env["PARLAY_AGENT_MODEL"] = spec.Model
 	}
-	b.WriteString("\n[env]\n")
-	keys := make([]string, 0, len(env))
+	envKeys := make([]string, 0, len(env))
 	for k := range env {
-		keys = append(keys, k)
+		envKeys = append(envKeys, k)
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	sort.Strings(envKeys)
+
+	var b strings.Builder
+	b.WriteString("# Synthesised by parlay from a launch spec (internal/gctemplate) — do not\n")
+	b.WriteString("# hand-edit; change the spec and re-synthesise. Spawn-lift unit 4, epic\n")
+	b.WriteString("# task-4cfpv.9. Field semantics: Pack Spec 2.0 (pinned Gas City ref).\n")
+	name := spec.Name
+	if name == "" {
+		name = spec.ID
+	}
+	fmt.Fprintf(&b, "description = %s\n", tomlString("parlay agent "+name+" (launch-spec synthesis)"))
+	if spec.Cwd != "" {
+		fmt.Fprintf(&b, "work_dir = %s\n", tomlString(spec.Cwd))
+	}
+	// Template presence must never mean autostart: the reconciler skips
+	// suspended agents, and an explicit `gc session new` still works. Same
+	// doctrine as the city's suspended_on_start = true.
+	b.WriteString("suspended = true\n")
+	// start_command carries the COMPLETE command line, env included: gc's
+	// agent-level start_command is the escape-hatch provider resolution
+	// (internal/config/resolve.go step 1 at the pin) and it skips
+	// mergeAgentOverrides, silently dropping BOTH a separate args field and
+	// the agent [env] table (cmd/gc/worker_handle.go sources session env only
+	// from the resolved provider's Env, which the escape hatch leaves nil).
+	// So the env rides as a /usr/bin/env prefix on the command line itself —
+	// the one channel the escape hatch provably delivers. Quoting mirrors
+	// gc's internal/shellquote.Join, which the subprocess provider
+	// round-trips through `sh -c`. process_names stays the REAL command's
+	// basename, never "env".
+	cmdline := append(make([]string, 0, len(envKeys)+len(args)+1), start)
+	cmdline = append(cmdline, args...)
+	envArgs := make([]string, 0, len(envKeys))
+	for _, k := range envKeys {
+		envArgs = append(envArgs, k+"="+env[k])
+	}
+	fmt.Fprintf(&b, "start_command = %s\n", tomlString(shellJoin("/usr/bin/env", append(envArgs, cmdline...))))
+	fmt.Fprintf(&b, "prompt_mode = %s\n", tomlString(promptMode))
+	fmt.Fprintf(&b, "process_names = %s\n", tomlStringArray([]string{filepath.Base(start)}))
+
+	// The [env] table is kept as the structured record of the same pairs: gc
+	// drops it today under start_command (see above), and if a future pin
+	// starts honouring it the child just receives identical values twice.
+	b.WriteString("\n[env]\n")
+	for _, k := range envKeys {
 		fmt.Fprintf(&b, "%s = %s\n", k, tomlString(env[k]))
 	}
 
@@ -169,6 +193,29 @@ func WriteInto(packDir string, spec LaunchSpec) ([]string, error) {
 	}
 	sort.Strings(written)
 	return written, nil
+}
+
+// shellMetacharacters matches gc's internal/shellquote metacharacter set at
+// the pin — an arg containing any of these gets single-quoted.
+const shellMetacharacters = " \t\r\n\"'\\|&;$!(){}[]<>?*~#`"
+
+// shellJoin renders command + args as one POSIX shell command line, with the
+// same quoting gc's shellquote.Join produces (simple args stay readable, the
+// command word is carried verbatim like gc's CommandString does).
+func shellJoin(command string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, command)
+	for _, arg := range args {
+		switch {
+		case arg == "":
+			parts = append(parts, "''")
+		case strings.ContainsAny(arg, shellMetacharacters):
+			parts = append(parts, "'"+strings.ReplaceAll(arg, "'", `'\''`)+"'")
+		default:
+			parts = append(parts, arg)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // tomlString renders s as a TOML basic string.
