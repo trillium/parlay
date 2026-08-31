@@ -430,24 +430,33 @@ PYEOF
 # require_model
 # task-qyu8q: refuses to spawn unless a model was chosen deliberately — no
 # implicit "claude session default", no silent sonnet fallback. Satisfied by
-# an explicit --model, or by a --profile whose profiles.toml entry names a
-# model. Idempotent (safe to call more than once) and side-effect-free besides
-# resolving --profile, so it is called once pre-mint on the --ephemeral path
-# (matching bead_gate's "gate before the mint" convention — a refusal here
-# must leave no seeded store behind) and again, harmlessly, in the shared
-# section once PII routing (which can itself set MODEL) has run.
+# an explicit --model, by a --profile whose profiles.toml entry names a
+# model, or by --no-pii's live-verified free-model routing (pii_route_model,
+# called before this in the shared section) — that path is a third
+# deliberate choice, not a silent default: it prints exactly which model it
+# picked and only picks from models opencode currently lists, so it is
+# exactly the failure this gate exists to prevent (never). Idempotent (safe
+# to call more than once) and side-effect-free besides resolving --profile,
+# so it is called once pre-mint on the --ephemeral path (matching
+# bead_gate's "gate before the mint" convention — a refusal here must leave
+# no seeded store behind) and again, harmlessly, in the shared section once
+# PII routing has run.
 require_model() {
   [ -n "$_MODEL_GATE_DONE" ] && return 0
 
-  if [ -n "${PROFILE:-}" ] && [ -z "${MODEL:-}" ]; then
+  if [ -n "${PROFILE:-}" ]; then
     local _po _pkind _pmodel
     _po=$(resolve_profile "$PROFILE")
     _pkind="${_po%%"$(printf '\t')"*}"
     _pmodel="${_po#*"$(printf '\t')"}"
+    # Apply the profile's kind unless --kind was passed explicitly, and its
+    # model only if --model was not already given — an explicit --model
+    # alongside --profile (e.g. --profile for kind, --model to override it)
+    # still wins.
     if [ -n "$_pkind" ] && [ "$KIND_FROM_FLAG" != "1" ]; then
       KIND="$_pkind"
     fi
-    if [ -n "$_pmodel" ]; then
+    if [ -n "$_pmodel" ] && [ -z "${MODEL:-}" ]; then
       MODEL="$_pmodel"
       echo "parlay-spawn: --profile $PROFILE — using model $MODEL (kind=$KIND)" >&2
     fi
