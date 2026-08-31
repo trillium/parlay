@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http/httptest"
 	"reflect"
 	"testing"
@@ -57,6 +58,77 @@ func TestBroadcastToDeviceNeverReachesBusSink(t *testing.T) {
 
 	if len(rec.calls) != 0 {
 		t.Fatalf("device-scoped broadcast reached the bus sink: %v", rec.calls)
+	}
+}
+
+func TestBroadcastFromBusEnforcesAllowlistAndNeverReEntersSink(t *testing.T) {
+	h := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	rec := &sinkRecorder{}
+	h.SetBusSink(rec.record)
+	ch, cancel := h.subscribe("")
+	defer cancel()
+
+	if !h.BroadcastFromBus(eventMessage, json.RawMessage(`{"id":"m1"}`)) {
+		t.Fatal("allowlisted bus event refused")
+	}
+	// A smuggled panel-aiming name on the bus dies at the hub, not at a
+	// client. This is the security seam: the bus file is writable by any
+	// local process.
+	for _, name := range []string{"reload", "navigate", "device_cmd", "input_action", "tts_event"} {
+		if h.BroadcastFromBus(name, json.RawMessage(`{}`)) {
+			t.Errorf("non-allowlisted bus event %q accepted", name)
+		}
+	}
+
+	got := <-ch
+	if got.name != eventMessage {
+		t.Fatalf("client got %q, want %q", got.name, eventMessage)
+	}
+	select {
+	case extra := <-ch:
+		t.Fatalf("refused bus event reached a client: %v", extra)
+	default:
+	}
+	// Loop prevention: a consumed event must never re-enter the dual-write.
+	if len(rec.calls) != 0 {
+		t.Fatalf("bus-consumed event re-entered the bus sink: %v", rec.calls)
+	}
+
+	var nilHub *Hub
+	if nilHub.BroadcastFromBus(eventMessage, nil) {
+		t.Fatal("nil hub accepted a bus event")
+	}
+}
+
+// TestBusDeliveredEventRendersIdenticalSSEWireBytes is the browser-contract
+// assertion: a client cannot distinguish an event that arrived via the bus
+// (raw JSON payload) from the same event broadcast in-process — the SSE
+// frame bytes are identical.
+func TestBusDeliveredEventRendersIdenticalSSEWireBytes(t *testing.T) {
+	payload := map[string]string{"id": "m1", "text": "hello"}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	receive := func(h *Hub, send func()) sseEvent {
+		ch, cancel := h.subscribe("")
+		defer cancel()
+		send()
+		return <-ch
+	}
+	inProc := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	viaBus := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	evInProc := receive(inProc, func() { inProc.broadcast(eventMessage, payload) })
+	evViaBus := receive(viaBus, func() { viaBus.BroadcastFromBus(eventMessage, json.RawMessage(raw)) })
+
+	render := func(ev sseEvent) []byte {
+		rec := httptest.NewRecorder()
+		writeSSE(rec, ev.name, ev.data)
+		return rec.Body.Bytes()
+	}
+	if !bytes.Equal(render(evInProc), render(evViaBus)) {
+		t.Fatalf("SSE wire bytes differ:\nin-proc: %q\nvia bus: %q", render(evInProc), render(evViaBus))
 	}
 }
 
