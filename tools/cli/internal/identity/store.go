@@ -56,6 +56,13 @@ var (
 		// parlay-spawn's registration warns but does not abort, so the agent
 		// would launch with no bead recorded and no relaunch suppression.
 		"--bead",
+		// --gc-session/--gc-city stamp the Gas City session pointer at spawn
+		// time (spawn-lift unit 7): the session's bead id and city dir, the
+		// projection of the bead-backed AddressDirectory identity that
+		// `parlay gc-resolve` resolves through. Value flags, so the same
+		// robots-6xq7 trap applies: dropping either from this table would
+		// kill the WHOLE register call (worktree included) with EXIT_USAGE.
+		"--gc-session", "--gc-city",
 	}
 )
 

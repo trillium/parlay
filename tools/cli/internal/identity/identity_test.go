@@ -214,3 +214,36 @@ func TestRegisterRecordsAllLifecycleFields(t *testing.T) {
 		}
 	}
 }
+
+// Spawn-lift unit 7: --gc-session/--gc-city dual-write the Gas City session
+// pointer into the launch spec. Two properties, both robots-6xq7-shaped:
+// the new value flags must be in MemValueFlags (a missing one kills the
+// WHOLE register call with EXIT_USAGE, worktree included), and the gc
+// fields must land ALONGSIDE worktree, never instead of it — identity.md
+// stays the projection `parlay teardown` reads for its git safety.
+func TestRegisterRecordsGCSessionPointerAlongsideWorktree(t *testing.T) {
+	startHarness(t)
+	trapExit(t)
+	home := freshHome(t)
+
+	captureStdout(t, func() {
+		CmdIdentity([]string{
+			"--register", "--agent", "gc-worker", "--name", "GC Worker",
+			"--color", "#010203", "--cwd", "/tmp/repo",
+			"--worktree", "/tmp/wt/gc-worker", "--project", "/tmp/repo",
+			"--gc-session", "pa-4fj2", "--gc-city", "/tmp/state/gascity/city",
+		})
+	})
+
+	fm := ReadFrontmatter(filepath.Join(home, "gc-worker", "identity.md"))
+	for k, want := range map[string]string{
+		"worktree":   "/tmp/wt/gc-worker",
+		"project":    "/tmp/repo",
+		"gc_session": "pa-4fj2",
+		"gc_city":    "/tmp/state/gascity/city",
+	} {
+		if got := fm.Get(k); got != want {
+			t.Errorf("fm.%s = %q, want %q", k, got, want)
+		}
+	}
+}
