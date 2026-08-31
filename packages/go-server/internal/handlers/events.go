@@ -46,15 +46,23 @@ import (
 //	                  POST /api/chat/events, the only name that ingress
 //	                  accepts today. See events_ingress.go, which owns the
 //	                  allowlist and the rule for widening it.
-//	agent_presence, presence, draft, lavish_session, reload, navigate,
-//	input_action, device_cmd, pages_patch
+//	agent_presence    live (added after C2, for TS parity) — sent once per
+//	                  connection on open with the current {active} value,
+//	                  and broadcast on the 0↔1 parked-long-poll-waiter flips
+//	                  driven from handlePoll (see pollWaiterParked).
+//	reload, navigate, device_cmd
+//	                  live (after C2) — broadcast from the panel command
+//	                  routes (panel.go), globally or device-scoped.
+//	pages_patch       live (after C2) — broadcast from the pages watcher
+//	                  (pages.go).
+//	presence, draft, lavish_session, input_action
 //	                  not live — each names a real client-side handler (see
-//	                  sse.ts) but no C0/C1/C2 code path in this server
-//	                  produces the underlying state change yet (no draft-set
-//	                  endpoint, no device-cmd endpoint, no session relay, no
-//	                  thinking-status signal). broadcast can carry any of
-//	                  these the moment a future ticket wires a producer;
-//	                  encoding/transport is not what's missing.
+//	                  sse.ts) but no code path in this server produces the
+//	                  underlying state change yet (no draft broadcast, no
+//	                  session relay, no thinking-status signal). broadcast
+//	                  can carry any of these the moment a future ticket
+//	                  wires a producer; encoding/transport is not what's
+//	                  missing.
 //
 // That is 17 documented names, 8 of them live from this ticket alone (9
 // counting `message`, whose live is via the pre-existing C1 endpoints that
@@ -83,6 +91,7 @@ const (
 	eventAgents          = "agents"
 	eventAgentRegister   = "agent_register"
 	eventAgentUnregister = "agent_unregister"
+	eventAgentPresence   = "agent_presence"
 	eventPresenceMap     = "presence_map"
 	eventMessage         = "message"
 	eventMessageReceived = "message_received"
@@ -163,6 +172,14 @@ type Hub struct {
 	caps *capability.Registry
 	// nextConn mints connection ids for caps entries, under mu.
 	nextConn int
+	// pollWaiters counts currently PARKED legacy long-poll waiters (under
+	// mu) — the source for the agent_presence event, mirroring the TS
+	// server's pollWaiters array + setAgentPresence
+	// (packages/server/src/sse.ts). Only a poll that actually parks counts:
+	// a backlog-served poll returns before parking and never touches
+	// presence, which is why handlePoll drives this explicitly around its
+	// blocking select rather than broker.subscribe counting implicitly.
+	pollWaiters int
 }
 
 // SetBusSink installs the dual-write sink. The sink must never block: it
@@ -413,6 +430,57 @@ type messageReceivedPayload struct {
 	ID string `json:"id"`
 }
 
+// agentPresencePayload is the `agent_presence` event's `{active}` shape —
+// true while ≥1 legacy long-poll waiter is parked (the panel's "agent away"
+// banner listens for this).
+type agentPresencePayload struct {
+	Active bool `json:"active"`
+}
+
+// pollWaiterParked / pollWaiterDeparted bracket a parked long-poll waiter's
+// lifetime (handlePoll calls them around its blocking select) and broadcast
+// agent_presence on the 0↔1 flips only, mirroring the TS server's
+// setAgentPresence (packages/server/src/sse.ts): repeat states are
+// swallowed, so two concurrent waiters produce one true and one false, not
+// two of each. The flip is computed under mu but broadcast after releasing
+// it — broadcast takes mu itself.
+func (h *Hub) pollWaiterParked() {
+	if h == nil { // same convention as broadcast: nil hub = no SSE side at all
+		return
+	}
+	h.mu.Lock()
+	h.pollWaiters++
+	flip := h.pollWaiters == 1
+	h.mu.Unlock()
+	if flip {
+		h.broadcast(eventAgentPresence, agentPresencePayload{Active: true})
+	}
+}
+
+func (h *Hub) pollWaiterDeparted() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.pollWaiters--
+	flip := h.pollWaiters == 0
+	h.mu.Unlock()
+	if flip {
+		h.broadcast(eventAgentPresence, agentPresencePayload{Active: false})
+	}
+}
+
+// agentActive reports whether any long-poll waiter is currently parked —
+// the connect burst's agent_presence value.
+func (h *Hub) agentActive() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.pollWaiters > 0
+}
+
 // presenceMapPayload derives the `presence_map` event's channel→status map
 // — see the package doc comment above for the "online iff an active poller"
 // design choice.
@@ -521,6 +589,7 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 		}
 		writeSSE(w, eventHistory, st.Messages.HistorySince(after))
 		writeSSE(w, eventAgents, st.Registry.List())
+		writeSSE(w, eventAgentPresence, agentPresencePayload{Active: hub.agentActive()})
 		writeSSE(w, eventPresenceMap, presenceMapPayload(st))
 		writeSSE(w, eventCommands, st.Commands.List())
 		flusher.Flush()
