@@ -210,6 +210,23 @@ records are never destroyed, #128 §15, §79; the checked-in head plus git
 history is today's representation of the contract-version chain until the
 supersession-ledger integration lands).
 
+Concretely, one enrollment PR touches three places, and the checks refuse
+a PR that touches only the first (see `contracts/sources/tool-tailer.json`
+for a complete declaration to copy from):
+
+1. `contracts/sources/<name>.json` — the canonical declaration.
+2. `packages/go-server/internal/sourcecontracts/contracts/<name>.json` —
+   the byte-identical embedded mirror ("Cross-module plumbing" below);
+   its sync test reds on divergence.
+3. `tools/cli/internal/sourcecontract/canonical_test.go` — deliberately
+   pins the enrolled set and the exact derived allowlist, so every
+   enrollment is a reviewed change to that pin, never a silent widening.
+
+Validate locally with `cd tools/cli && CGO_ENABLED=0 go test
+./internal/sourcecontract/` and `cd packages/go-server && go test
+./internal/sourcecontracts/` — there is no CLI verb for this; the test
+suites are the validator (see "The registry engine").
+
 Why this is the right v1 mechanism and not a runtime enrollment endpoint:
 
 1. **It is structurally incapable of being a hole.** The chat API has no
