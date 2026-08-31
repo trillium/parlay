@@ -22,6 +22,12 @@ describe("guarded route set", () => {
     expect(isGuardedChatPath("/api/chat/agents")).toBe(true)
   })
 
+  // POST /api/chat/debug-log appends request-shaped lines to a file on disk
+  // ($PARLAY_STATE_HOME/debug.log) — a state write, guarded like /tts-report.
+  test("debug-log is guarded", () => {
+    expect(isGuardedChatPath("/api/chat/debug-log")).toBe(true)
+  })
+
   // task-6ai1 / D9: these five are the routes the end-to-end verifier chained
   // into full control of the panel. Each of these assertions FAILS against the
   // pre-fix route set.
