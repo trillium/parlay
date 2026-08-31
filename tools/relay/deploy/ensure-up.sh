@@ -120,6 +120,14 @@ relay_up_and_bound_right() {
   exit 3
 }
 
+# Cap the relay logs on every ensure-up, so a long-lived relay's logs stay
+# bounded between restarts (robots-dcgg: relay.err.log reached 277 MB with no
+# rotation anywhere). Guarded on the helper for pairing with an older installed
+# lib.sh; best-effort — rotation must never block the health path.
+if command -v parlay_relay_rotate_logs >/dev/null 2>&1; then
+  parlay_relay_rotate_logs || true
+fi
+
 # Fast path: already up, do nothing. (Skipped under --force-restart, whose whole
 # point is to replace a relay that may well be answering /health.)
 if [ "${FORCE_RESTART}" != 1 ] && relay_up_and_bound_right; then

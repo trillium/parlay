@@ -529,3 +529,86 @@ func TestUpstream500KeepsRetrying(t *testing.T) {
 		t.Fatal("relay never polled")
 	}
 }
+
+// ── Backoff + error-log throttling (robots-dcgg) ─────────────────────────────
+// The live defect: a permanently failing poll retried on a flat 2s cadence
+// forever, writing an identical error line each time — ~25 MiB/day of log for
+// a poll that could never succeed. Backoff bounds the retry rate; the throttle
+// bounds the log rate.
+
+func TestNextBackoffDoublesToCap(t *testing.T) {
+	got := []time.Duration{}
+	d := reconnectDelay
+	for i := 0; i < 8; i++ {
+		got = append(got, d)
+		d = nextBackoff(d)
+	}
+	want := []time.Duration{
+		2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second,
+		30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second,
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("backoff step %d = %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
+func TestErrorLogThrottleSuppressesRepeats(t *testing.T) {
+	var th errorLogThrottle
+	logged := 0
+	for i := 1; i <= 1000; i++ {
+		if logIt, _ := th.observe("HTTP 502 Bad Gateway"); logIt {
+			logged++
+		}
+	}
+	// 1st (fresh) + decade milestones 10, 100, 1000.
+	if logged != 4 {
+		t.Errorf("1000 identical errors produced %d log lines, want 4", logged)
+	}
+}
+
+func TestErrorLogThrottleNewMessageAlwaysLogs(t *testing.T) {
+	var th errorLogThrottle
+	th.observe("HTTP 502")
+	th.observe("HTTP 502")
+	logIt, count := th.observe("connection refused")
+	if !logIt || count != 1 {
+		t.Errorf("a changed error message must log immediately: logIt=%v count=%d", logIt, count)
+	}
+	// And the run restarts: the old message is fresh again after a change.
+	logIt, count = th.observe("HTTP 502")
+	if !logIt || count != 1 {
+		t.Errorf("returning to a prior message is a fresh run: logIt=%v count=%d", logIt, count)
+	}
+}
+
+func TestErrorLogThrottleRecoveredReportsAndResets(t *testing.T) {
+	var th errorLogThrottle
+	for i := 0; i < 37; i++ {
+		th.observe("HTTP 502")
+	}
+	if n := th.recovered(); n != 37 {
+		t.Errorf("recovered() = %d, want 37", n)
+	}
+	if n := th.recovered(); n != 0 {
+		t.Errorf("second recovered() = %d, want 0", n)
+	}
+	// After recovery the same message is fresh again.
+	if logIt, count := th.observe("HTTP 502"); !logIt || count != 1 {
+		t.Errorf("post-recovery observe: logIt=%v count=%d, want true/1", logIt, count)
+	}
+}
+
+func TestIsDecade(t *testing.T) {
+	for _, n := range []int{10, 100, 1000, 10000} {
+		if !isDecade(n) {
+			t.Errorf("isDecade(%d) = false, want true", n)
+		}
+	}
+	for _, n := range []int{1, 2, 9, 11, 20, 50, 99, 101, 200, 999, 1001} {
+		if isDecade(n) {
+			t.Errorf("isDecade(%d) = true, want false", n)
+		}
+	}
+}

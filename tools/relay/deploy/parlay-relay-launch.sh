@@ -22,6 +22,9 @@ if [ -r "${HERE}/lib.sh" ]; then
   . "${HERE}/lib.sh"
   RUNTIME="$(parlay_relay_runtime_dir)"
   BIN="${HERE}/parlay-relay"
+  # Cap the logs before the relay starts appending to them (robots-dcgg: no
+  # rotation existed and relay.err.log reached 277 MB). Best-effort.
+  parlay_relay_rotate_logs || true
 else
   BASE="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)"
   [ -n "${BASE}" ] || BASE="${TMPDIR:-/tmp}"
