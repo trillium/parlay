@@ -728,7 +728,10 @@ Query params:
   burst is the delta after that id. When absent (TS), history is windowed
   per-channel: the newest 50 per channel (`PER_CHANNEL`), except the channel
   owning the page named by `url` gets 200 (`OWNER_LIMIT`), merged and sorted
-  by timestamp.
+  by timestamp. An unresolvable `after` (evicted or never-existed id) also
+  degrades to that windowed replay, and the `history` event is identical in
+  shape either way — a client cannot tell delta from replay, so dedup by
+  message id regardless.
 - `caps` — **TS server only** (Go parity is a tracked follow-up): url-encoded
   JSON interface-capability declaration, contract owned by
   [`docs/interface-capabilities.md`](./interface-capabilities.md) and the
