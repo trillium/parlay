@@ -9,7 +9,8 @@ pins in `docs/gascity-integration-contract.md`) — line anchors cite that ref.
 Suggested issue title:
 
 > Integrator feedback: publish openapi.json as a release artifact; `requires_gc` is parsed
-> but never enforced; two silent-failure findings; two doc/code mismatches
+> but never enforced; two silent-failure findings; two doc/code mismatches; rotation
+> anchor can reuse archived seqs
 
 ---
 
@@ -121,7 +122,54 @@ content already landed?" without the reachability approximation).
   from the census, and MemStore is a test double (as `:265` itself notes), not a
   factory-selectable backend.
 
-None of this blocks us — we've built our contract around what the code actually does, and
+## 5. Rotation can allocate an anchor event below already-archived seqs, breaking city-wide seq uniqueness
+
+Found while end-to-end testing our event-bus consumer against a scratch city (pinned
+`ac6c9c685`, `archive_retain_age=1ms`). When a second process has appended to the active
+events file since the rotating recorder's own last write, the `events.rotated` anchor is
+allocated a seq **below** seqs already sealed into the archive, and post-rotation appends
+then reuse archived seqs.
+
+**Exact repro.** A supervisor holding its in-process `FileRecorder`; five events appended
+by CLI `gc event emit` subprocesses (direct file writes under flock), taking the active
+file's seqs to 10–14 while the supervisor recorder's in-memory `r.seq` is still 9 (its own
+last write); then `POST /v0/city/{city}/events/rotate?wait=true`. The response reports the
+archive as `first_seq=1 last_seq=14` — but `anchor_event.seq=10`. Appends after the
+rotation continue from the anchor (11, 12, …), reusing seqs 11–14 that exist in the
+archive.
+
+**Mechanism** (`internal/events/recorder.go` at `ac6c9c685`): `rotateLocked` reads the seq
+window (`:481`), renames the active file away (`:497`), opens the fresh empty active file
+(`:510`), and only **then** writes the anchor through `writeRecordLocked` (`:533`). But
+`writeRecordLocked`'s resync (`:386-388`) reads `readLatestActiveSeq(r.path)` — which is
+now the just-created empty file — and only ever raises `r.seq` (`latest > r.seq`), so the
+recorder's stale in-memory seq wins and the anchor regresses below the archived window.
+The flock is held throughout; this is not a race but an ordering bug — the resync source
+is emptied one step before the resync runs.
+
+**Why it matters to an integrator.** City-wide seq uniqueness is the property that makes
+at-least-once delivery consumable: any consumer that dedups by seq — including gc's own
+`--follow` resume — will treat the reused post-rotation seqs as already-seen and silently
+drop real events whose seqs are ≤ its cursor. In our case the consumer's contract is
+"never skip silently; announce every gap," and a seq that goes *backwards* across an
+`events.rotated` anchor produces exactly the unannounced gap that contract exists to
+prevent. It also makes the anchor self-inconsistent: its payload says the archive sealed
+`first_seq..last_seq`, while its own envelope seq sits inside that window.
+
+**Suggested fix direction.** `rotateLocked` already computed the pre-swap window's `last`
+at `:481` — seeding `r.seq = max(r.seq, last)` before writing the anchor closes the hole
+with one line; alternatively `writeRecordLocked`'s resync could read the just-rotated
+file's tail for the anchor write. Either preserves the existing locking and best-effort
+posture.
+
+---
+
+A note on our side of #5: until it's fixed we defensively key rotation-crossing dedup on
+the anchor rather than trusting absolute monotonicity — a consumer that sees
+`anchor_event.seq` ≤ the archive's `last_seq` must treat subsequent seqs as a fresh
+epoch, not as replays. We'd rather delete that workaround than document it.
+
+Items 1–4 don't block us — we've built our contract around what the code actually does, and
 the code has generally been the more trustworthy of the two surfaces, which is its own
 compliment. Happy to provide more detail on any of these, or to PR the doc fixes in #4 if
 that's welcome.
