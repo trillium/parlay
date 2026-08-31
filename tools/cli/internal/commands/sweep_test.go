@@ -190,7 +190,7 @@ func TestSweepPassFetchesRegistryOnce(t *testing.T) {
 		}
 	}
 
-	sweepPass("", false, false, SweepOpts{})
+	sweepPass("", false, false, SweepOpts{}, nil)
 
 	if subscriberCalls != 1 {
 		t.Fatalf("sweep pass over 4 candidates hit /api/chat/subscribers %d times, want exactly 1", subscriberCalls)

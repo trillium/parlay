@@ -26,10 +26,24 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 )
 
-// hasUncommitted reports whether repoPath has uncommitted changes.
+// hasUncommitted reports whether repoPath has uncommitted changes. The one
+// exclusion: an untracked stale marker (written by a previous REFUSED pass —
+// see writeWorktreeStaleMarker) is teardown's own bookkeeping, not the
+// agent's work. Without this filter, any refusal on a clean tree (freshness,
+// borrow) would convert itself into a permanent uncommitted-changes refusal
+// on every later pass.
 func hasUncommitted(repoPath string) bool {
 	r := sh("git", "-C", repoPath, "status", "--porcelain")
-	return r.ok && r.out != ""
+	if !r.ok {
+		return false
+	}
+	for _, line := range strings.Split(r.out, "\n") {
+		if line == "" || line == "?? "+worktreeStaleMarkerName {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // hasUnpushed reports whether repoPath has commits not on any remote.
@@ -258,16 +272,32 @@ func teardownAgentLive(agentID string, force bool, probes *teardownProbes) (stri
 	}
 
 	// Refuse to destroy a leased, live, borrowed, quarantined, uncommitted,
-	// or unlanded tree.
+	// or unlanded tree — and record the reason in the tree itself, so the
+	// next pass and `parlay guard` read it instead of re-deriving it.
 	if err := checkWorktreeGitSafetyLive("parlay teardown", agentID, worktree, force, probes); err != nil {
+		writeWorktreeStaleMarker(worktree, err.Error())
 		return "", err
 	}
 
-	// Remove the worktree.
+	// Remove the worktree — non-force first (liveness lift unit 4): git's own
+	// refusal to remove a dirty or locked tree is a second line of defence
+	// behind the gates above, exactly as in Gas City's reaper. On failure,
+	// re-run the FULL safety check with fresh probes — the caller's scan is
+	// pass-scoped and a process may have arrived since — and only when the
+	// tree still proves safe retry with --force, which keeps the pre-unit-4
+	// success rate for the mechanical failures (our own stale marker, ignored
+	// files, a stale lock) that non-force removal trips on.
 	if project != "" {
-		rr := sh("git", "-C", project, "worktree", "remove", "--force", worktree)
+		rr := sh("git", "-C", project, "worktree", "remove", worktree)
 		if !rr.ok {
-			fmt.Fprintf(os.Stderr, "warn: worktree remove failed — %s\n", rr.err)
+			if err := checkWorktreeGitSafetyLive("parlay teardown", agentID, worktree, force, nil); err != nil {
+				writeWorktreeStaleMarker(worktree, err.Error())
+				return "", err
+			}
+			rr = sh("git", "-C", project, "worktree", "remove", "--force", worktree)
+			if !rr.ok {
+				fmt.Fprintf(os.Stderr, "warn: worktree remove failed — %s\n", rr.err)
+			}
 		}
 	}
 
