@@ -110,6 +110,7 @@ run() {
     ROOT="$ROOT" \
     PARLAY_RELAY_HEALTH_WAIT="${WAIT:-1}" \
     PARLAY_RELAY_HEALTH_MAX_WAIT="${MAXWAIT:-20}" \
+    PARLAY_RELAY_LOG_CAP_BYTES="${LOGCAP:-67108864}" \
     /bin/bash "$ENSURE_UP" "$@" >"$ROOT/out" 2>&1 || RC=$?
 }
 
@@ -257,6 +258,41 @@ if [ "$RC" -ne 2 ]; then
   fail "unknown flag: exit $RC, want 2"
 else
   pass "unknown flag exits 2"
+fi
+
+# ── 10. An over-cap relay log is rotated in place (robots-dcgg) ───────────────
+# relay.err.log reached 277 MB on the live box with no rotation anywhere. Every
+# ensure-up now caps the logs: over-cap content is truncated IN PLACE (a live
+# launchd relay holds an O_APPEND fd on this exact path, so `mv` would leave it
+# growing the renamed file) with the last 1 MiB kept in <log>.1.
+python3 -c "import sys; open(sys.argv[1],'w').write('relay: agent poll error\n' * 200)" "$ERR_LOG"
+BIG_SIZE="$(wc -c < "$ERR_LOG" | tr -d ' ')"
+LOGCAP=1000 run running 0
+NEW_SIZE="$(wc -c < "$ERR_LOG" | tr -d ' ')"
+if [ "$RC" -ne 0 ]; then
+  fail "log rotation: healthy run exited $RC, want 0 ($(cat "$ROOT/out"))"
+elif [ "$NEW_SIZE" -ge "$BIG_SIZE" ]; then
+  fail "log rotation: err log not truncated (${BIG_SIZE} -> ${NEW_SIZE} bytes)"
+elif [ ! -s "$ERR_LOG.1" ]; then
+  fail "log rotation: no tail kept in relay.err.log.1"
+elif ! grep -q "log rotated" "$ERR_LOG"; then
+  fail "log rotation: truncated log carries no rotation marker line"
+else
+  pass "over-cap err log is truncated in place with its tail kept in .1"
+fi
+
+# ── 11. An under-cap log is left alone ────────────────────────────────────────
+printf 'small\n' > "$ERR_LOG"
+rm -f "$ERR_LOG.1"
+run running 0
+if [ "$RC" -ne 0 ]; then
+  fail "under-cap log: healthy run exited $RC, want 0"
+elif [ "$(cat "$ERR_LOG")" != "small" ]; then
+  fail "under-cap log: was modified ($(cat "$ERR_LOG"))"
+elif [ -e "$ERR_LOG.1" ]; then
+  fail "under-cap log: a .1 was created for a log under the cap"
+else
+  pass "under-cap log is left untouched"
 fi
 
 if [ "$FAILED" -ne 0 ]; then

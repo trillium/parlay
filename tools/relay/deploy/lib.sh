@@ -28,6 +28,30 @@ PARLAY_RELAY_LOG_DIR="${HOME}/Library/Logs/parlay"
 PARLAY_RELAY_OUT_LOG="${PARLAY_RELAY_LOG_DIR}/relay.out.log"
 PARLAY_RELAY_ERR_LOG="${PARLAY_RELAY_LOG_DIR}/relay.err.log"
 
+# Size cap for each relay log before rotation (robots-dcgg: relay.err.log
+# reached 277 MB on the live box; no rotation existed at all). Overridable for
+# tests via PARLAY_RELAY_LOG_CAP_BYTES.
+PARLAY_RELAY_LOG_CAP_BYTES="${PARLAY_RELAY_LOG_CAP_BYTES:-67108864}"  # 64 MiB
+
+# parlay_relay_rotate_logs — cap the relay logs. For each log over the cap,
+# keep its last 1 MiB in <log>.1 (overwriting any previous .1) and truncate the
+# log IN PLACE. In-place truncation (': >') rather than mv is load-bearing: a
+# live launchd relay holds an O_APPEND fd on this exact file, so truncation
+# takes effect immediately while a rename would leave the writer growing the
+# renamed file forever. Best-effort throughout — rotation must never break a
+# relay start.
+parlay_relay_rotate_logs() {
+  local log size
+  for log in "${PARLAY_RELAY_OUT_LOG}" "${PARLAY_RELAY_ERR_LOG}"; do
+    [ -f "${log}" ] || continue
+    size="$(wc -c < "${log}" 2>/dev/null | tr -d ' ')" || continue
+    [ -n "${size}" ] && [ "${size}" -gt "${PARLAY_RELAY_LOG_CAP_BYTES}" ] || continue
+    tail -c 1048576 "${log}" > "${log}.1" 2>/dev/null || true
+    : > "${log}" || true
+    echo "$(date '+%Y/%m/%d %H:%M:%S') log rotated: ${size} bytes exceeded cap ${PARLAY_RELAY_LOG_CAP_BYTES} (tail kept in ${log##*/}.1)" >> "${log}" 2>/dev/null || true
+  done
+}
+
 # ── Upstream Pulse server (relay's own default is the same) ────────────────────
 PARLAY_RELAY_SERVER_DEFAULT="http://localhost:31337"
 
