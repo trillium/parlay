@@ -171,6 +171,27 @@ func Collect() State {
 	return State{records: records, Scanned: true, Source: SourceLsof}
 }
 
+// Record is one live working directory for StateOf.
+type Record struct {
+	PID string
+	Cwd string
+}
+
+// StateOf builds a scanned State from explicit records, normalized the same
+// way Collect normalizes real ones. It exists for the callers' test seams
+// (var collectWorktreeLiveness = worktreeliveness.Collect): a stub has to be
+// able to return a state in which some path IS live, and the record set is
+// deliberately unexported. Production code gets State only from Collect.
+func StateOf(recs ...Record) State {
+	s := State{Scanned: true, Source: SourceLsof}
+	for _, r := range recs {
+		if canon := normalizePath(r.Cwd); canon != "" {
+			s.records = append(s.records, cwdRecord{pid: r.PID, cwd: canon})
+		}
+	}
+	return s
+}
+
 // LiveAt reports whether any live process cwd sits at or beneath path — a
 // process running in a nested test/build subdirectory of its worktree still
 // counts. The reason names the pid and the matching cwd for the refusal

@@ -20,6 +20,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/trillium/parlay/tools/cli/internal/worktreeliveness"
 )
 
 // variantFixture builds a real repo with a real origin, a variant worktree
@@ -52,6 +55,15 @@ func variantFixture(t *testing.T) (variantID, wkPath string) {
 	git(t, repo, "worktree", "add", "-q", wkPath, "-b", "parlay-variant/"+variantID)
 	git(t, wkPath, "config", "user.email", "t@t.t")
 	git(t, wkPath, "config", "user.name", "t")
+
+	// These tests pin the GIT refusals, so the pre-git gates (liveness,
+	// freshness — teardown_gates.go) are satisfied here: a stubbed idle scan,
+	// and a worktree aged past the quarantine.
+	stubLiveness(t, worktreeliveness.StateOf())
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(wkPath, ".git"), old, old); err != nil {
+		t.Fatalf("Chtimes .git: %v", err)
+	}
 
 	store := filepath.Join(home, ".parlay", "agents", variantID)
 	if err := os.MkdirAll(store, 0o755); err != nil {

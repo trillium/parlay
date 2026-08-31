@@ -24,6 +24,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/worktreeliveness"
 )
 
 // hasUncommitted reports whether repoPath has uncommitted changes.
@@ -122,6 +123,19 @@ func isContentLanded(repoPath, headRef string) bool {
 // wrapping, so the trailing period and second sentence must not be reworded to
 // satisfy ST1005.
 func checkWorktreeGitSafety(cmd, agentID, worktree string, force bool) error {
+	return checkWorktreeGitSafetyLive(cmd, agentID, worktree, force, nil)
+}
+
+// checkWorktreeGitSafetyLive is checkWorktreeGitSafety with the caller's
+// pre-collected liveness scan threaded in (nil self-serves through the seam
+// in teardown_gates.go). The pre-git gates — process liveness, freshness
+// quarantine — run FIRST: they answer "is anyone still using this tree",
+// which moots the git questions, and liveness is the one gate --force cannot
+// bypass (see teardown_gates.go).
+func checkWorktreeGitSafetyLive(cmd, agentID, worktree string, force bool, live *worktreeliveness.State) error {
+	if err := checkWorktreePreGitSafety(cmd, agentID, worktree, force, live); err != nil {
+		return err
+	}
 	// Check for uncommitted changes.
 	if hasUncommitted(worktree) {
 		if !force {
@@ -193,6 +207,14 @@ func Teardown(argv []string) {
 // refuse one agent and keep going. Warnings still go straight to stderr,
 // matching the TS original's byte-for-byte output when driven by `teardown`.
 func teardownAgent(agentID string, force bool) (string, error) {
+	return teardownAgentLive(agentID, force, nil)
+}
+
+// teardownAgentLive is teardownAgent with the caller's pre-collected liveness
+// scan: a sweep pass pays for ONE process-table probe and shares it across
+// every candidate (the same batching robots-8783 forced on the relay lookup,
+// applied to a heavier probe). nil self-serves per call.
+func teardownAgentLive(agentID string, force bool, live *worktreeliveness.State) (string, error) {
 	idHome := filepath.Join(parlayAgentsDir(), agentID)
 	if _, err := os.Stat(idHome); err != nil {
 		return "", fmt.Errorf("parlay teardown: agent '%s' not found in %s", agentID, idHome)
@@ -216,8 +238,8 @@ func teardownAgent(agentID string, force bool) (string, error) {
 		return fmt.Sprintf("agent %s torn down (worktree already gone)%s", agentID, closeHerdrSurface(agentID)), nil
 	}
 
-	// Refuse to destroy uncommitted changes or unlanded commits.
-	if err := checkWorktreeGitSafety("parlay teardown", agentID, worktree, force); err != nil {
+	// Refuse to destroy a live, quarantined, uncommitted, or unlanded tree.
+	if err := checkWorktreeGitSafetyLive("parlay teardown", agentID, worktree, force, live); err != nil {
 		return "", err
 	}
 
