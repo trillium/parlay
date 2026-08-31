@@ -16,6 +16,9 @@ const (
 	// EventActedOn: the captain (or another actor) acted on a record —
 	// the mark that makes later supersession of it captain-visible.
 	EventActedOn EventKind = "acted-on"
+	// EventRequirementResolved: a reprocessing requirement was discharged
+	// with evidence (see requirements.go).
+	EventRequirementResolved EventKind = "resolve"
 )
 
 // Event is one ledger entry. It is a flat struct on purpose — one JSONL
@@ -46,7 +49,9 @@ type Event struct {
 	ClassifiedSeverity Severity `json:"classifiedSeverity,omitempty"`
 
 	RecordID string `json:"recordId,omitempty"`
-	Note     string `json:"note,omitempty"`
+	// RequirementID names the requirement a resolve event discharges.
+	RequirementID string `json:"requirementId,omitempty"`
+	Note          string `json:"note,omitempty"`
 
 	// Actor is who caused the event. "captain" is load-bearing on
 	// acted-on events (see ActedOnMark); everywhere else it is history.
@@ -72,11 +77,13 @@ type ActedOnMark struct {
 // per-name chains, current heads, and acted-on marks. Zero value is not
 // usable; construct with NewLedger or Replay.
 type Ledger struct {
-	events       []Event
-	records      map[string]Record
-	heads        map[string]string // chain name → head record id
-	supersededBy map[string]string // record id → successor record id
-	actedOn      map[string][]ActedOnMark
+	events           []Event
+	records          map[string]Record
+	heads            map[string]string // chain name → head record id
+	supersededBy     map[string]string // record id → successor record id
+	actedOn          map[string][]ActedOnMark
+	requirements     map[string]*Requirement
+	requirementOrder []string
 }
 
 // NewLedger returns an empty ledger.
@@ -86,6 +93,7 @@ func NewLedger() *Ledger {
 		heads:        map[string]string{},
 		supersededBy: map[string]string{},
 		actedOn:      map[string][]ActedOnMark{},
+		requirements: map[string]*Requirement{},
 	}
 }
 
@@ -116,6 +124,8 @@ func Replay(events []Event) (*Ledger, error) {
 			})
 		case EventActedOn:
 			_, err = l.MarkActedOn(ev.RecordID, ActedOnMark{Actor: ev.Actor, Note: ev.Note, At: ev.At})
+		case EventRequirementResolved:
+			_, err = l.ResolveRequirement(ev.RequirementID, Resolution{Actor: ev.Actor, Note: ev.Note, At: ev.At})
 		default:
 			return nil, fmt.Errorf("replay: event %d has unknown kind %q", ev.Seq, ev.Kind)
 		}
@@ -251,9 +261,20 @@ func (l *Ledger) Supersede(s Supersession) (Event, error) {
 		return Event{}, fmt.Errorf("supersede %s: declared bump %s → %s is a %s, but the changeset classifies as %s — understated severity",
 			r.ID, target.Version, r.Version, declared, classified)
 	}
+	// Derive the reprocessing requirement before mutating anything, at the
+	// seq the event is about to take, so an error leaves the ledger
+	// untouched.
+	req, err := l.requirementFor(len(l.events)+1, declared, r.ID, target.ID)
+	if err != nil {
+		return Event{}, fmt.Errorf("supersede %s: %w", r.ID, err)
+	}
 	l.records[r.ID] = r
 	l.heads[r.Name] = r.ID
 	l.supersededBy[target.ID] = r.ID
+	if req != nil {
+		l.requirements[req.ID] = req
+		l.requirementOrder = append(l.requirementOrder, req.ID)
+	}
 	rec := r
 	return l.append(Event{
 		Kind: EventSupersede, Record: &rec, Changes: s.Changes, Reason: s.Reason,
