@@ -182,10 +182,9 @@ var tomlTableRe = regexp.MustCompile(`^\s*\[`)
 // spawnAccountConfigPath is the TOML config bin/parlay-spawn reads. Note this
 // is NOT configPath(): the persisted CLI config is config.json, while
 // spawnAccount has always lived in config.toml alongside it. Both hang off
-// StateHome(). config.toml is hand-edited today — the `parlay spawn-account
-// set/show/clear` verbs skills/parlay-spawn/SKILL.md used to advertise were
-// never ported to Go, and writing the key back needs a TOML writer that
-// preserves the existing [spawn] table (robots-ni5p). This is the read half.
+// StateHome(). The `parlay spawn-account set/show/clear` verbs write and read
+// this file (via SetSpawnAccount / PersistedSpawnAccount below), preserving
+// the existing [spawn] table on writes (robots-ni5p).
 func spawnAccountConfigPath() string {
 	return filepath.Join(StateHome(), "config.toml")
 }
@@ -282,6 +281,15 @@ func trimSpawnAccountValue(raw string) string {
 // (config.json, see ConfigFilePath).
 func SpawnAccountConfigPath() string {
 	return spawnAccountConfigPath()
+}
+
+// PersistedSpawnAccount returns the spawnAccount persisted in config.toml,
+// deliberately ignoring the PARLAY_SPAWN_DEFAULT_ACCOUNT env override:
+// commands-spawn-account.ts's persistedSpawnAccount() read the config file
+// only, and `parlay spawn-account` keeps that contract. SpawnAccount above is
+// the env-aware resolver spawners use.
+func PersistedSpawnAccount() string {
+	return spawnAccountFromTOML(spawnAccountConfigPath())
 }
 
 // SetSpawnAccount persists account as the default ccjuggler spawn account in

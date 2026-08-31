@@ -29,7 +29,7 @@ Owner is the Go port workstream ticket (see `docs/agent-notes/go-cli-ticket-*.md
 | `agents` | `commands.ts` | ported | B3 |
 | `agent-down` | `commands-agent-down.ts` | ported | B3 |
 | `remote` | `commands-remote.ts` | ported | B3 |
-| `spawn-account` | `commands-spawn-account.ts` | **missing — port in flight (this workstream, fm/go-cli-1)** | The one dispatch gap (robots-ni5p): functionality exists as Go-only `defaults`, but the TS verb name is unreachable. Port: thin verb over `config.PersistedSpawnAccount`/`SetSpawnAccount`, same TS output/exit contract. |
+| `spawn-account` | `commands-spawn-account.ts` | ported | fm/go-cli-1 (`commands/spawn_account.go`) — was the one dispatch gap left after T-08 (robots-ni5p): functionality existed as Go-only `defaults`, but the TS verb name was unreachable. Thin verb over `config.PersistedSpawnAccount`/`SetSpawnAccount`, TS output/exit contract. |
 | `nickname` | `commands-nickname.ts` | ported | B3 |
 | `send` | `commands.ts` | ported | B3 |
 | `say` / `reply` | `commands.ts` (`cmdSay`) | ported | B4 (+ `internal/sayguard`) |

@@ -101,6 +101,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Remote(args)
 	case "defaults":
 		commands.Defaults(args)
+	case "spawn-account":
+		commands.SpawnAccount(args)
 	case "nickname":
 		commands.Nickname(args)
 	case "send":
