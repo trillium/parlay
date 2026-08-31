@@ -21,6 +21,7 @@ var fullSpec = LaunchSpec{
 	Cwd:     "/Users/example/code/foo",
 	Model:   "opus",
 	Account: "acc2",
+	Server:  "http://localhost:14242",
 }
 
 var minimalSpec = LaunchSpec{
@@ -112,8 +113,7 @@ func TestStartCommandOverrideDisablesPromptArg(t *testing.T) {
 	}
 	toml := string(files["agents/inert/agent.toml"])
 	for _, want := range []string{
-		`start_command = "/bin/sleep"`,
-		`args = ["300"]`,
+		`start_command = "/usr/bin/env PARLAY_AGENT_ID=inert /bin/sleep 300"`,
 		`prompt_mode = "none"`,
 		`process_names = ["sleep"]`,
 		"suspended = true",
@@ -122,8 +122,38 @@ func TestStartCommandOverrideDisablesPromptArg(t *testing.T) {
 			t.Errorf("agent.toml missing %q:\n%s", want, toml)
 		}
 	}
+	// gc's agent-level start_command is an escape hatch that ignores any
+	// separate args field (internal/config/resolve.go step 1 at the pin) —
+	// a rendered `args =` line would be silently dropped at launch.
+	if strings.Contains(toml, "args =") {
+		t.Error("agent.toml must not render a separate args field — gc ignores it under start_command")
+	}
 	if strings.Contains(toml, "--dangerously-skip-permissions") {
 		t.Error("start-command override must not inherit the claude default args")
+	}
+}
+
+func TestStartCommandArgsAreShellQuoted(t *testing.T) {
+	files, err := Synthesize(LaunchSpec{
+		ID:           "quoted",
+		Name:         "Quoted Probe",
+		Server:       "http://localhost:14242",
+		StartCommand: "/bin/sh",
+		Args:         []string{"-c", "echo 'hi there' > /tmp/x; exec sleep 300"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toml := string(files["agents/quoted/agent.toml"])
+	// TOML-escaped rendering of the shell-quoted line: the env rides as a
+	// /usr/bin/env prefix (gc's start_command escape hatch drops the agent
+	// [env] table — this prefix is the delivery channel), K=V pairs with
+	// metacharacters are single-quoted, and the arg with spaces, quotes, and
+	// metacharacters rides inside single quotes with the embedded single
+	// quotes escaped the way gc's shellquote round-trips them.
+	want := `start_command = "/usr/bin/env PARLAY_AGENT_ID=quoted 'PARLAY_AGENT_NAME=Quoted Probe' PARLAY_SERVER=http://localhost:14242 /bin/sh -c 'echo '\\''hi there'\\'' > /tmp/x; exec sleep 300'"`
+	if !strings.Contains(toml, want) {
+		t.Errorf("agent.toml missing %s\ngot:\n%s", want, toml)
 	}
 }
 

@@ -4,13 +4,14 @@
 description = "parlay agent Review Bot (launch-spec synthesis)"
 work_dir = "/Users/example/code/foo"
 suspended = true
-start_command = "claude"
-args = ["--dangerously-skip-permissions", "--model", "opus"]
+start_command = "/usr/bin/env 'PARLAY_AGENT_COLOR=#c084fc' PARLAY_AGENT_ID=review-bot PARLAY_AGENT_MODEL=opus 'PARLAY_AGENT_NAME=Review Bot' PARLAY_SERVER=http://localhost:14242 PARLAY_SPAWN_DEFAULT_ACCOUNT=acc2 claude --dangerously-skip-permissions --model opus"
 prompt_mode = "arg"
 process_names = ["claude"]
 
 [env]
 PARLAY_AGENT_COLOR = "#c084fc"
 PARLAY_AGENT_ID = "review-bot"
+PARLAY_AGENT_MODEL = "opus"
 PARLAY_AGENT_NAME = "Review Bot"
+PARLAY_SERVER = "http://localhost:14242"
 PARLAY_SPAWN_DEFAULT_ACCOUNT = "acc2"

@@ -3,8 +3,7 @@
 # task-4cfpv.9. Field semantics: Pack Spec 2.0 (pinned Gas City ref).
 description = "parlay agent probe_1 (launch-spec synthesis)"
 suspended = true
-start_command = "claude"
-args = ["--dangerously-skip-permissions"]
+start_command = "/usr/bin/env PARLAY_AGENT_ID=probe_1 claude --dangerously-skip-permissions"
 prompt_mode = "arg"
 process_names = ["claude"]
 

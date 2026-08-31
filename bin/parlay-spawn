@@ -49,12 +49,16 @@ fi
 ACCOUNT="${PARLAY_SPAWN_DEFAULT_ACCOUNT:-$_config_account}"
 unset _config_toml _config_account
 
-# Launcher — herdr (default) or subprocess (detached-subprocess escape hatch
-# for herdr's SIGKILL failure mode in headless/no-WindowServer environments).
+# Launcher — herdr (default), subprocess (detached-subprocess escape hatch
+# for herdr's SIGKILL failure mode in headless/no-WindowServer environments),
+# or gc (opt-in Gas City session runtime — spawn-lift unit 5, task-4cfpv.9;
+# the launch runs through `parlay gc-spawn`, which owns pinned-gc resolution,
+# the city scaffold, template synthesis, and `gc session new`).
 # Precedence: PARLAY_SPAWN_LAUNCHER env var > ~/.parlay/config.toml [spawn] launcher > herdr.
-# The value "gascity" is the pre-rename spelling and stays accepted as a
-# deprecated alias for one release — it normalizes to "subprocess" with a
-# notice on stderr.
+# The value "gascity" is the pre-rename spelling of SUBPROCESS (not of gc: it
+# predates the real Gas City launcher) and stays accepted as a deprecated
+# alias for one release — it normalizes to "subprocess" with a notice on
+# stderr.
 _config_toml="${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml"
 _config_launcher=""
 if [ -z "${PARLAY_SPAWN_LAUNCHER:-}" ] && [ -f "$_config_toml" ] && command -v python3 >/dev/null 2>&1; then
@@ -450,6 +454,10 @@ Usage: parlay-spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cw
                   herdr's SIGKILL failure mode in headless/no-WindowServer
                   environments. --gascity is the deprecated pre-rename
                   spelling — still accepted, prints a deprecation notice.
+                  A third launcher, PARLAY_SPAWN_LAUNCHER=gc (env/config only,
+                  no flag yet), routes the launch through Gas City's session
+                  runtime via 'parlay gc-spawn' — opt-in, claude-kind only;
+                  see 'parlay gc-spawn --help'.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned by re-execing this script in single mode. The <repo>
@@ -1169,7 +1177,40 @@ if [ -n "$ACCOUNT" ]; then
   echo "parlay-spawn: using account '$ACCOUNT' (token resolved)" >&2
 fi
 
-if [ "$LAUNCHER" != "subprocess" ]; then
+if [ "$LAUNCHER" = "gc" ]; then
+# gc launcher (spawn-lift unit 5, epic task-4cfpv.9): route the launch through
+# Gas City's session runtime instead of a herdr tab or the hand-rolled
+# detached subprocess. Strictly opt-in (PARLAY_SPAWN_LAUNCHER=gc or [spawn]
+# launcher = "gc"); the heavy lifting — pinned-gc resolution ($PARLAY_GC wins,
+# refuse-loudly if absent), city scaffold reconciliation, launch-spec-to-
+# template synthesis, and `gc session new parlay.<id> --json --no-attach`
+# under a parlay-owned GC_HOME with the supervisor port redirected — lives in
+# the Go verb `parlay gc-spawn` (tools/cli/internal/commands/gc_spawn.go).
+# The city runs the SUBPROCESS session provider (city/city.toml [session]),
+# so the launched session is a detached process: no tab, no tmux.
+if [ "$KIND" != "claude" ]; then
+  echo "parlay-spawn: the gc launcher only supports --kind claude for now (got '$KIND') — use herdr or --subprocess." >&2
+  exit 1
+fi
+GC_PROMPT_FILE="$AGENT_DIR/startup-prompt.txt"
+printf '%s\n' "$STARTUP_PROMPT" > "$GC_PROMPT_FILE"
+# The resolved account token (OAUTH_ENV_FLAG) is deliberately NOT forwarded:
+# the gc template's [env] is persisted to disk, and a secret must never
+# travel that way. The account NAME rides along instead (the template's
+# PARLAY_SPAWN_DEFAULT_ACCOUNT env), per gctemplate.LaunchSpec's contract.
+if ! GC_SPAWN_JSON=$("$BIN_DIR/parlay" gc-spawn "$AGENT_ID" \
+    --name "$NAME" --color "$COLOR" --cwd "$CWD" \
+    --prompt-file "$GC_PROMPT_FILE" --server "$PARLAY" \
+    ${MODEL:+--model "$MODEL"} ${ACCOUNT:+--account "$ACCOUNT"} \
+    --json); then
+  echo "parlay-spawn: gc-spawn failed to launch $AGENT_ID." >&2
+  exit 1
+fi
+GC_SESSION_ID=$(printf '%s' "$GC_SPAWN_JSON" | jq -r '.session_id // empty' 2>/dev/null) || GC_SESSION_ID=""
+GC_CITY_DIR=$(printf '%s' "$GC_SPAWN_JSON" | jq -r '.city_dir // empty' 2>/dev/null) || GC_CITY_DIR=""
+echo "parlay-spawn: gc session '${GC_SESSION_ID:-unknown}' launched for $AGENT_ID (city: ${GC_CITY_DIR:-unknown})." >&2
+
+elif [ "$LAUNCHER" != "subprocess" ]; then
 # Give the agent its OWN tab (captain's rule 2026-07-13: agents never split the
 # captain's current tab, and they launch unfocused/background). The tab's root
 # pane becomes the agent's pane directly — `agent start` targets it below via
@@ -1443,15 +1484,24 @@ fi
 #    long before the timeout and this never nudges it. Disable with
 #    PARLAY_SPAWN_NO_WATCHDOG=1; tune with PARLAY_SPAWN_LIVENESS_TIMEOUT_MS.
 LIVENESS_TIMEOUT_MS="${PARLAY_SPAWN_LIVENESS_TIMEOUT_MS:-60000}"
-if [ "$LAUNCHER" = "subprocess" ]; then
-  # subprocess path: there is no herdr agent to `agent wait` on, so liveness is
-  # observed the same way any client confirms an agent is connected — polling
-  # this server's own /api/chat/subscribers for the agent's channel. Same
-  # opt-out/tuning knobs as the herdr watchdog for operational parity.
+if [ "$LAUNCHER" = "subprocess" ] || [ "$LAUNCHER" = "gc" ]; then
+  # subprocess/gc paths: there is no herdr agent to `agent wait` on, so
+  # liveness is observed the same way any client confirms an agent is
+  # connected — polling this server's own /api/chat/subscribers for the
+  # agent's channel. Same opt-out/tuning knobs as the herdr watchdog for
+  # operational parity. Observation only, never a re-prompt: under gc the
+  # charter went out once via the template, and resubmitting it is exactly
+  # the double-delivery the provider contract forbids (unit 6 owns the
+  # confirm-or-report refinement).
   if [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ]; then
     SUBPROCESS_LIVENESS_TIMEOUT_S=$(( LIVENESS_TIMEOUT_MS / 1000 ))
     [ "$SUBPROCESS_LIVENESS_TIMEOUT_S" -lt 1 ] && SUBPROCESS_LIVENESS_TIMEOUT_S=60
     SUBPROCESS_WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-subprocess-watchdog.log"
+    if [ "$LAUNCHER" = "gc" ]; then
+      SUBPROCESS_TIMEOUT_HINT="inspect the gc session: <pinned gc> --city ${GC_CITY_DIR:-\$PARLAY_STATE_HOME/gascity/city} session list --json"
+    else
+      SUBPROCESS_TIMEOUT_HINT="inspect $AGENT_DIR/gascity or run '$SUBPROCESS_GO_BIN subprocess-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'"
+    fi
     (
       _subprocess_elapsed=0
       while [ "$_subprocess_elapsed" -lt "$SUBPROCESS_LIVENESS_TIMEOUT_S" ]; do
@@ -1463,10 +1513,10 @@ if [ "$LAUNCHER" = "subprocess" ]; then
         /bin/sleep 1
         _subprocess_elapsed=$((_subprocess_elapsed + 1))
       done
-      echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: did not appear in /api/chat/subscribers within ${SUBPROCESS_LIVENESS_TIMEOUT_S}s — inspect $AGENT_DIR/gascity or run '$SUBPROCESS_GO_BIN subprocess-ping $AGENT_ID --state-dir $AGENT_DIR/gascity'." >&2
+      echo "$(date -u +%FT%TZ) parlay-spawn[$AGENT_ID]: did not appear in /api/chat/subscribers within ${SUBPROCESS_LIVENESS_TIMEOUT_S}s — $SUBPROCESS_TIMEOUT_HINT." >&2
     ) </dev/null >>"$SUBPROCESS_WATCHDOG_LOG" 2>&1 &
     disown 2>/dev/null || true
-    echo "parlay-spawn: subprocess liveness watchdog armed (${SUBPROCESS_LIVENESS_TIMEOUT_S}s → poll /api/chat/subscribers); log: $SUBPROCESS_WATCHDOG_LOG" >&2
+    echo "parlay-spawn: $LAUNCHER liveness watchdog armed (${SUBPROCESS_LIVENESS_TIMEOUT_S}s → poll /api/chat/subscribers); log: $SUBPROCESS_WATCHDOG_LOG" >&2
   fi
 elif [ "${PARLAY_SPAWN_NO_WATCHDOG:-0}" != "1" ] && (_herdr_use_rpc || command -v herdr >/dev/null 2>&1); then
   WATCHDOG_LOG="${TMPDIR:-/tmp}/parlay-spawn-watchdog.log"
