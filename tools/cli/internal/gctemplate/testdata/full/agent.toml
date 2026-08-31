@@ -1,0 +1,16 @@
+# Synthesised by parlay from a launch spec (internal/gctemplate) — do not
+# hand-edit; change the spec and re-synthesise. Spawn-lift unit 4, epic
+# task-4cfpv.9. Field semantics: Pack Spec 2.0 (pinned Gas City ref).
+description = "parlay agent Review Bot (launch-spec synthesis)"
+work_dir = "/Users/example/code/foo"
+suspended = true
+start_command = "claude"
+args = ["--dangerously-skip-permissions", "--model", "opus"]
+prompt_mode = "arg"
+process_names = ["claude"]
+
+[env]
+PARLAY_AGENT_COLOR = "#c084fc"
+PARLAY_AGENT_ID = "review-bot"
+PARLAY_AGENT_NAME = "Review Bot"
+PARLAY_SPAWN_DEFAULT_ACCOUNT = "acc2"

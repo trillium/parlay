@@ -78,6 +78,7 @@ Reach for these instead of the hand-rolled equivalent.
 - **`tools/cli/internal/supersession` is the supersession policy** (#128 §13–§19: records superseded never mutated, SemVer bump validated against a classified changeset floor, severity mandates a reprocessing requirement; major = staleness source; superseding a captain-acted-on record is never silent). → [docs/supersession.md](docs/supersession.md)
 - **`tools/cli/internal/capability` is the interface-capability engine** (#128 §65–§74, grill Q2d: a surface declares via `?caps=` on the SSE connect which presentation commands it accepts; delivery gated at the broadcast choke points; a declaration only subtracts — undeclared clients are legacy, byte-identical). The Go package is normative; the TS mirror `packages/server/src/capability.ts` must stay in lockstep. → [docs/interface-capabilities.md](docs/interface-capabilities.md)
 - **`city/` is parlay's authored Gas City city + pack source, not a live city** — never run city-mutating `gc` verbs against it with the default `GC_HOME`; validate against a copy with `GC_HOME` redirected. → [notes](docs/agent-notes/city-is-the-authored-gas-city-source.md)
+- **The pinned gc cannot use the captain's bd fork** — a gc city store needs an upstream `bd` (schema/config skew fails `session new` both directions); sandbox recipe + lifecycle traps in the gated test. → [notes](docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md)
 
 ## Port-ticket archaeology
 
