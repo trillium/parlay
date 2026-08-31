@@ -51,7 +51,7 @@ sq_case "it's"        "'it'\\''s'"
 # shaped after the ticket title that exposed this (robots-2h4n).
 HOSTILE='robots-2h4n: $( ) in a title, `id`, $HOME, "quoted", and it'\''s'
 
-PARLAY='http://localhost:31337'
+PARLAY='http://localhost:4242'
 AGENT_ID='mc-robots-2h4n'
 NAME="$HOSTILE"
 COLOR='#f97316'

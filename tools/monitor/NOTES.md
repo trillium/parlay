@@ -66,7 +66,7 @@ and the agent appeared in the captain's **live** registry, with no error anywher
 Two mechanisms, both needed:
 
 1. **Scoped runtime dir.** The canonical dir is reserved for the default server
-   (`http://localhost:31337`). Any other `$PARLAY_SERVER` resolves to
+   (`http://localhost:4242`). Any other `$PARLAY_SERVER` resolves to
    `<canonical>/srv-<hash>` and therefore gets its own relay
    (`parlay_relay_scoped_runtime_dir` in `../relay/deploy/lib.sh`). The monitor
    exports the result so `ensure-up.sh` and the relay launcher agree, announces
@@ -145,7 +145,7 @@ its runtime dir. Go-side: `internal/monitor/monitor_test.go`.
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `PARLAY_SERVER` | `http://localhost:31337` | upstream server; a non-default value gets its own scoped runtime dir + relay |
+| `PARLAY_SERVER` | `http://localhost:4242` | upstream server; a non-default value gets its own scoped runtime dir + relay |
 | `PARLAY_RELAY_RUNTIME` | `$TMPDIR/parlay`, or `$TMPDIR/parlay/srv-<hash>` when `PARLAY_SERVER` is non-default | runtime dir with `relay.sock` + `<agent>.chan` |
 | `PARLAY_RELAY_SOCK`    | `<runtime>/relay.sock` | explicit control-socket path |
 | `PARLAY_NOTIFY_BUDGET` | `400` | `--notify-safe` per-line char budget before truncating |

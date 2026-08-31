@@ -3,7 +3,7 @@
 // The bridge is a top-level script that ends in process.exit(), so it is
 // exercised as a subprocess rather than imported. Every run gets a throwaway
 // PARLAY_RELAY_RUNTIME and points at ephemeral ports, so no test can reach the
-// captain's live Parlay on :31337 or the real cursor files under $TMPDIR/parlay.
+// captain's live Parlay on :4242 or the real cursor files under $TMPDIR/parlay.
 
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"

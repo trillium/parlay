@@ -117,7 +117,7 @@ export interface ParlayEnv {
   PARLAY_PORT: string
   /** server history/spool dir (server reads PARLAY_DATA_DIR, default ~/exchange) */
   PARLAY_DATA_DIR: string
-  /** CLI/relay target base URL (default http://localhost:4242 for CLI, :31337 for relay) */
+  /** CLI/relay target base URL (default http://localhost:4242 for CLI and relay) */
   PARLAY_SERVER: string
   /** relay spool + control-socket dir (resolved by CLI/deploy, passed to relay as --runtime-dir) */
   PARLAY_RELAY_RUNTIME: string

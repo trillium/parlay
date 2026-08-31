@@ -4,8 +4,9 @@
 # The defect: install.sh defaulted SERVER from an AMBIENT $PARLAY_SERVER. The
 # LaunchAgent it installs is a fixed singleton serving the CANONICAL runtime dir,
 # and that dir is reserved for the default server — so an install run from any
-# shell that happened to export a non-default $PARLAY_SERVER (a go-server dev
-# shell on :4242, say) permanently rebound the production relay. Every agent on
+# shell that happened to export a non-default $PARLAY_SERVER (at the time the
+# default was Pulse on :31337 and the rebinding shell was a go-server dev shell
+# on :4242) permanently rebound the production relay. Every agent on
 # the default server was then refused enrollment, fleet-wide, with no other
 # symptom. That is exactly what happened on the captain's box.
 #
@@ -17,8 +18,10 @@ set -u
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL="$SELF_DIR/install.sh"
-DEFAULT_SERVER="http://localhost:31337"
-OTHER_SERVER="http://localhost:4242"
+DEFAULT_SERVER="http://localhost:4242"
+# Any URL other than the default works here; the legacy Pulse port is the
+# realistic stray a shell on this box might still export.
+OTHER_SERVER="http://localhost:31337"
 
 FAILED=0
 fail() { printf 'FAIL: %s\n' "$1" >&2; [ -n "${2:-}" ] && printf '      %s\n' "$2" >&2; FAILED=1; }

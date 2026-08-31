@@ -53,7 +53,7 @@ parlay_relay_rotate_logs() {
 }
 
 # ── Upstream Pulse server (relay's own default is the same) ────────────────────
-PARLAY_RELAY_SERVER_DEFAULT="http://localhost:31337"
+PARLAY_RELAY_SERVER_DEFAULT="http://localhost:4242"
 
 # parlay_relay_runtime_dir prints the canonical per-user runtime dir the relay
 # and every `parlay monitor` agree on. It MUST match relay/main.go's

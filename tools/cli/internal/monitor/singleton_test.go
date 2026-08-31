@@ -61,7 +61,7 @@ func TestListensForAgentIgnoresNonParlayProcesses(t *testing.T) {
 	// not the listener, and on the observed host its `--agent` value carries
 	// a trailing quote from the eval — either way it must not be a candidate.
 	cases := []string{
-		"/bin/zsh -c eval 'PARLAY_SERVER=http://localhost:31337 parlay listen --agent mayor'",
+		"/bin/zsh -c eval 'PARLAY_SERVER=http://localhost:4242 parlay listen --agent mayor'",
 		"grep listen --agent mayor",
 		"tail -F /tmp/parlay/mayor.chan",
 		"listen --agent mayor",

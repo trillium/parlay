@@ -32,7 +32,7 @@ else
   BIN="${HERE}/parlay-relay"
 fi
 
-SERVER="${PARLAY_SERVER:-http://localhost:31337}"
+SERVER="${PARLAY_SERVER:-http://localhost:4242}"
 
 mkdir -p "${RUNTIME}"
 

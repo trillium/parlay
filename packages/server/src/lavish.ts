@@ -42,7 +42,10 @@ function ensureAgent() {
 }
 
 function fileName(p: string) { return p.split("/").pop() ?? p }
-function proxyUrl(key: string) { return `http://127.0.0.1:31337/lavish-proxy/session/${key}` }
+// Self-referential: the proxy route lives on this server (Pulse used to
+// front it on :31337; off-Pulse the panel talks straight to us).
+const SELF_PORT = Number(process.env.PARLAY_PORT ?? 4242)
+function proxyUrl(key: string) { return `http://127.0.0.1:${SELF_PORT}/lavish-proxy/session/${key}` }
 
 async function readState(): Promise<Record<string, LavishSession> | null> {
   try { return JSON.parse(await readFile(STATE_FILE, "utf8")).sessions }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Bridges `lavish poll <file>` to Parlay chat at 31337.
+// Bridges `lavish poll <file>` to Parlay chat at 4242.
 // True concurrent racing: Parlay (chat) vs 4387 (layout_warnings, session-end, dom_snapshot).
 // Whichever has data first wins. When 4387 wins, Parlay is aborted immediately; when Parlay wins,
 // the 4387 request is held open through a short grace window so it can still contribute a

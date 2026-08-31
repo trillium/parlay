@@ -83,11 +83,12 @@ temp dir — nothing under `~/exchange` or `~/.parlay` is touched.
 
 ## Relationship to Pulse
 
-Pulse (the personal assistant that serves `http://localhost:31337`) historically
-mounted this chat module **in-process** by importing it at startup. That coupling
-is being removed: Pulse should instead **reverse-proxy `/api/chat/*` to this
-standalone server**, so the chat API's availability no longer depends on Pulse's
-import succeeding.
+Pulse (the PAI-era assistant that served `http://localhost:31337`) historically
+mounted this chat module **in-process** by importing it at startup. That
+coupling is gone: this server is standalone, serves the panel bundle itself
+(`src/static.ts`), and clients point at it directly on `:4242`. A legacy Pulse
+may still sit in front as a reverse proxy of `/api/chat/*` while it is being
+retired, but nothing here depends on it.
 
 The in-process path had a fatal failure mode that took down chat entirely: the
 files under `src/` were once committed symlinks pointing at

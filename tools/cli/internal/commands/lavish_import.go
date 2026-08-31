@@ -40,7 +40,7 @@ type lavishMsg struct {
 // existing Lavish session chat history into Parlay. Reads
 // ~/.lavish-axi/state.json, finds open sessions, fetches each session's SSE
 // stream from Lavish at 4387, and replays the chat messages into Parlay at
-// 31337 via /api/chat/reply (agent) and /api/chat/send (user).
+// 4242 via /api/chat/reply (agent) and /api/chat/send (user).
 func LavishImport(argv []string) {
 	if helpWanted("lavish-import", argv) {
 		return

@@ -17,7 +17,7 @@
 # it, and the legacy poll path keeps working untouched.
 #
 # Usage:  install.sh [--rebuild] [--server <url>] [--allow-non-default-server]
-# Env:    PARLAY_SERVER  upstream Pulse server (default http://localhost:31337).
+# Env:    PARLAY_SERVER  upstream parlay chat server (default http://localhost:4242).
 #                        Refused unless it IS the default — see below.
 set -euo pipefail
 

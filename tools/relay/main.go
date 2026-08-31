@@ -41,8 +41,9 @@ import (
 	"time"
 )
 
-// defaultServer matches bin/parlay: the Pulse server on port 31337.
-const defaultServer = "http://localhost:31337"
+// defaultServer matches the CLI's coded default: the parlay chat server on
+// port 4242 (off-Pulse cutover, task-h9zk).
+const defaultServer = "http://localhost:4242"
 
 // pollTimeout bounds a single upstream long-poll HTTP request. The server's own
 // long-poll times out at 30s and returns {"timeout":true}; we allow a margin so

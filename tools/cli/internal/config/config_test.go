@@ -27,14 +27,14 @@ func TestPersistedConfigWinsOverDefault(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_SERVER", "")
 
-	if err := SetPersistedServer("http://macbook:31337"); err != nil {
+	if err := SetPersistedServer("http://macbook:4242"); err != nil {
 		t.Fatalf("SetPersistedServer: %v", err)
 	}
-	if got := ServerURL(); got != "http://macbook:31337" {
-		t.Errorf("ServerURL() = %q, want http://macbook:31337", got)
+	if got := ServerURL(); got != "http://macbook:4242" {
+		t.Errorf("ServerURL() = %q, want http://macbook:4242", got)
 	}
 	src := ServerSource()
-	if src.Source != SourceConfig || src.URL != "http://macbook:31337" {
+	if src.Source != SourceConfig || src.URL != "http://macbook:4242" {
 		t.Errorf("ServerSource() = %+v", src)
 	}
 }
@@ -42,7 +42,7 @@ func TestPersistedConfigWinsOverDefault(t *testing.T) {
 func TestEnvWinsOverPersistedConfig(t *testing.T) {
 	testsupport.TempStateHome(t)
 
-	if err := SetPersistedServer("http://macbook:31337"); err != nil {
+	if err := SetPersistedServer("http://macbook:4242"); err != nil {
 		t.Fatalf("SetPersistedServer: %v", err)
 	}
 	t.Setenv("PARLAY_SERVER", "http://env-override:9999")
@@ -60,11 +60,11 @@ func TestSetPersistedServerTrimsTrailingSlashesAndClears(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_SERVER", "")
 
-	if err := SetPersistedServer("http://mini1:31337///"); err != nil {
+	if err := SetPersistedServer("http://mini1:4242///"); err != nil {
 		t.Fatalf("SetPersistedServer: %v", err)
 	}
-	if got := PersistedServerURL(); got != "http://mini1:31337" {
-		t.Errorf("PersistedServerURL() = %q, want http://mini1:31337", got)
+	if got := PersistedServerURL(); got != "http://mini1:4242" {
+		t.Errorf("PersistedServerURL() = %q, want http://mini1:4242", got)
 	}
 
 	if err := SetPersistedServer(""); err != nil {

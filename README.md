@@ -102,16 +102,14 @@ clone first:
 
 ```sh
 cd /path/to/parlay                         # the directory you cloned into above
-export PARLAY_SERVER=http://localhost:4242
 ```
 
-Export it in every shell you run `./bin/parlay` from. `PARLAY_SERVER` in the
-environment always wins over the address `parlay remote set` persists to
-`~/.parlay/config.json`, and the `bin/parlay` wrapper sets `PARLAY_SERVER` to
-`http://localhost:31337` for you when it is unset — that is the port the author's own
-page host happens to listen on, so exporting `:4242` above is what points the CLI at
-the standalone server you just started. Nothing in this Quickstart needs anything
-listening on `:31337`.
+No `PARLAY_SERVER` export is needed: the CLI's coded default is
+`http://localhost:4242` — exactly where step 1 put the server — and the
+`bin/parlay` wrapper adds no environment of its own. If your server lives
+somewhere else, either export `PARLAY_SERVER` (the environment always wins) or
+run `parlay remote set <url>` (persists to `~/.parlay/config.json`, which beats
+the coded default but loses to the env var).
 
 **3. Talk to it:**
 
@@ -238,10 +236,11 @@ Repo conventions worth knowing:
   `PA_VERSION` (`packages/client/src/version.ts`, auto-bumped per client change).
 - **Build the panel bundle with `cd packages/client && bun run build`** (that runs
   `build.ts`, which writes `dist/parlay-agent.js`). On success it also POSTs a
-  best-effort reload beacon to `127.0.0.1:31337`; if nothing is listening there it
-  just logs that and moves on. If you *are* running a live server on that port, the
-  build will force-reload its connected clients — use `bun test` or a scoped
-  `bun build src/<file>.ts --outdir=<tmp>` when you only want to validate a change.
+  best-effort reload beacon to `$PARLAY_RELOAD_TARGET` (default `127.0.0.1:4242`);
+  if nothing is listening there it just logs that and moves on. If you *are*
+  running a live server on that port, the build will force-reload its connected
+  clients — use `bun test` or a scoped `bun build src/<file>.ts --outdir=<tmp>`
+  when you only want to validate a change.
 
 Docs of note: [`docs/api-contract.md`](docs/api-contract.md) (the HTTP contract
 between client, CLI, and server), [`docs/COMMAND_DESIGN_CONTRACT.md`](docs/COMMAND_DESIGN_CONTRACT.md)

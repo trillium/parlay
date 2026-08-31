@@ -37,14 +37,14 @@ Server URL resolution, highest wins (`tools/cli/internal/config`):
 corrupt file is treated as empty — resolution just falls through.
 
 **Note for readers of this repo:** the `bin/parlay` wrapper in the repo root
-exports `PARLAY_SERVER=http://localhost:31337` before exec'ing the binary, because
-this fleet serves parlay through Pulse on that port. That env var beats
-`config.json`, so `bin/parlay` ignores the file. Build the CLI directly —
-`cd tools/cli && go build -o <scratch-dir>/bin/parlay .`, then invoke it by that
-path — if you want `config.json` to be the thing that decides. Build somewhere of
-your own rather than onto your `PATH`: in a clone of this repo the `parlay` on
-your `PATH` is usually a symlink to `bin/parlay`, and building over it replaces
-that wrapper for everything else on the machine.
+deliberately exports nothing — it only resolves the repo checkout (through any
+symlinks) and execs the CLI, so the three-step resolution above applies
+unchanged whether you run the binary directly or through the wrapper. (It used
+to force `PARLAY_SERVER` to the legacy Pulse port, which silently beat
+`config.json` for every caller.) If you build the CLI yourself, build somewhere
+of your own rather than onto your `PATH`: in a clone of this repo the `parlay`
+on your `PATH` is usually a symlink to `bin/parlay`, and building over it
+replaces that wrapper for everything else on the machine.
 
 ## `agents/<id>/`
 

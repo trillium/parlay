@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Wrapper: routes parlay to the Pulse server running on port 31337.
-# Override with PARLAY_SERVER env var if needed.
-export PARLAY_SERVER="${PARLAY_SERVER:-http://localhost:31337}"
+# Wrapper: builds (when stale) and execs the Go CLI. Server resolution lives
+# in the CLI itself — PARLAY_SERVER env > `parlay remote set` config > coded
+# default http://localhost:4242 — so this wrapper deliberately exports
+# nothing: the Pulse-era forced export here overrode persisted config for
+# every caller (off-Pulse cutover, task-h9zk).
 # Resolve this script through any symlinks (e.g. ~/.local/bin/parlay -> repo bin/parlay),
 # then derive the CLI path from the repo location — never hardcode /Users/<name>, which
 # breaks for any other user/host (robots-su0j: mini3 runs as a different user).
