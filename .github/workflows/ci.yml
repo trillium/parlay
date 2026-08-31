@@ -43,13 +43,17 @@ concurrency:
 jobs:
   # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/eval-engine,
   #    packages/go-server ───────────────────────────────────────────────────
-  # Five separate modules, no root go.work, so each is entered on its own.
-  # All five are pure standard library (no go.sum, no external requires), which
-  # is why the whole suite runs in seconds.
+  # Separate modules, no root go.work, so each is entered on its own.
+  # Every module except tools/cli is pure standard library; tools/cli requires
+  # the beads library (crew store, docs/status-lift-topology.md) and is the
+  # only module with a go.sum.
   go:
     name: Go (build, vet, test, gofmt)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 25 not 10: on a cold build cache the Test step's -race+cgo compile of
+    # the beads dependency's embedded-Dolt tree takes several minutes; warm
+    # runs stay in single digits.
+    timeout-minutes: 25
     # The module list, consumed unquoted by gofmt/build/vet/test below so the
     # shell splits it on whitespace. It is shared across every step on purpose;
     # a per-step list would let one step drift and leave a module silently
@@ -65,6 +69,16 @@ jobs:
     # derives the truth from the filesystem instead.
     env:
       GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/eval-engine packages/go-server packages/spawn-profiles
+      # CGO off by default: with CGO on, the beads dependency's embedded-Dolt
+      # path drags in a C++ ICU binding that needs ICU headers installed (and
+      # minutes of cgo compilation). CGO_ENABLED=0 selects the library's
+      # no-cgo build (embedded mode then refuses at runtime; server mode still
+      # works) and compiles in seconds. The Test step overrides this to 1
+      # because -race requires cgo on linux; every other step stays cgo-free.
+      # The store round-trip that exercises real embedded Dolt is the opt-in
+      # TestRealStoreRoundTrip (PARLAY_BEADS_INTEGRATION=1), run manually on
+      # dependency bumps, not here.
+      CGO_ENABLED: 0
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -72,11 +86,11 @@ jobs:
         with:
           # Matches the `go 1.26` directive every module declares.
           go-version: '1.26'
-          # No module has a go.sum (zero external dependencies), so the cache
-          # key is keyed off the go.mod files instead. The value here is the
-          # build cache, not a download cache.
+          # Keyed off each module's go.mod plus the one go.sum that exists
+          # (tools/cli). The value here is the build + module download cache.
           cache-dependency-path: |
             tools/cli/go.mod
+            tools/cli/go.sum
             tools/relay/go.mod
             tools/parlay-bin/go.mod
             packages/eval-engine/go.mod
@@ -180,9 +194,19 @@ jobs:
       # something rare and destructive on the captain's box. If a module ever
       # legitimately cannot run under -race, exclude that MODULE by name here
       # with a stated reason — do not drop the flag for everything.
+      # -race requires cgo on linux (unlike darwin), so the test step alone
+      # runs CGO_ENABLED=1 — which drags in the beads dependency's embedded-
+      # Dolt tree and its ICU C++ binding. The headers it links against:
+      - name: Install ICU headers (test step runs with cgo)
+        run: sudo apt-get install -y -qq libicu-dev
+
       - name: Test
         env:
           HOME: ${{ runner.temp }}/go-home
+          # Overrides the job-level CGO_ENABLED=0: -race needs cgo on linux.
+          # Build/vet/gofmt above stay cgo-free and fast; this step pays the
+          # instrumented cgo compile once, then the build cache absorbs it.
+          CGO_ENABLED: 1
         run: |
           mkdir -p "$HOME"
           for m in $GO_MODULES; do
