@@ -1,0 +1,19 @@
+# Root city pack for the parlay city (Pack Spec 2.0).
+#
+# Deployment glue only: this manifest exists to import the parlay pack. All
+# parlay definitions (agents, formulas, orders, commands, doctor checks) live
+# in packs/parlay/ so the pack stays reusable and importable by binding into
+# any other city, independent of this city.toml.
+#
+# Spec: ~/code/gascity/docs/reference/specs/pack-spec.md (schema 2).
+
+[pack]
+name = "parlay-city"
+schema = 2
+description = "Root city pack for the parlay city. Deployment glue; all parlay definitions live in packs/parlay."
+
+# The binding name qualifies every agent the import contributes: an agent
+# `X` defined in packs/parlay/agents/X/ has runtime name `parlay.X`
+# (pack-spec §2.5). Address imported agents by the qualified name.
+[imports.parlay]
+source = "packs/parlay"

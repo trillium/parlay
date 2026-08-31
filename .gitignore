@@ -35,3 +35,8 @@ packages/spawn-profiles/validate
 
 # Go server build artifact (9.9MB) — CI hygiene gate caps tracked blobs at 2 MiB
 packages/go-server/parlay-server
+
+# city/ is authored Gas City source, never a live city. Running gc against it
+# in place writes a .gc/ state dir — that is a bug (see city/README.md), but
+# committing that live state would be worse, so it is ignored as a backstop.
+city/.gc/
