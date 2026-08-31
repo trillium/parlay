@@ -11,6 +11,13 @@ Use `parlay spawn` — the Go CLI's sole public entry point for launching agents
 scope 3). It forwards your arguments to `bin/parlay-spawn` after setting the handshake env
 that script requires; calling `bin/parlay-spawn` directly now refuses.
 
+**Caveat:** "sole public entry point" holds only for `bin/parlay-spawn`. `resolveSpawner()`
+prefers `tools/parlay-bin` over `bin/parlay-spawn` whenever both are on PATH (see [Default
+account](#default-account) below) — that binary is a separate Go port with no
+`PARLAY_SPAWN_VIA_CLI` handshake and no mandatory-model gate of its own (task-21d36). If
+`tools/parlay-bin` is installed on PATH, both gates are bypassed regardless of how you invoke
+`parlay spawn`.
+
 ## Signature
 
 ```
