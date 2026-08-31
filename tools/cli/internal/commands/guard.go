@@ -134,12 +134,20 @@ func (f *localFrontmatter) set(key, val string) {
 // file or missing block yields an empty localFrontmatter, matching parseFm's
 // existsSync-guarded call site.
 func readLocalFrontmatter(file string) *localFrontmatter {
-	fm := &localFrontmatter{vals: make(map[string]string)}
 	data, err := os.ReadFile(file)
 	if err != nil {
-		return fm
+		return &localFrontmatter{vals: make(map[string]string)}
 	}
-	m := localFrontmatterBlockRe.FindStringSubmatch(string(data))
+	return parseLocalFrontmatter(string(data))
+}
+
+// parseLocalFrontmatter is the parse half of readLocalFrontmatter, split out
+// for the one caller that must see the read error itself: the borrow-veto
+// scan (teardown_gates.go) fails closed on an unreadable identity.md, where
+// readLocalFrontmatter's swallow-to-empty would silently drop a borrower.
+func parseLocalFrontmatter(data string) *localFrontmatter {
+	fm := &localFrontmatter{vals: make(map[string]string)}
+	m := localFrontmatterBlockRe.FindStringSubmatch(data)
 	if m == nil {
 		return fm
 	}

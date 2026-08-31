@@ -213,6 +213,12 @@ func (s State) LiveAt(path string) (bool, string) {
 	return false, ""
 }
 
+// NormalizePath is the canonical comparable form this package matches paths
+// in, exported so the teardown gates can key their own path lookups (the
+// borrow index, treehouse-pool detection) in the same form the liveness
+// records already use — one normalization rule, not two drifting ones.
+func NormalizePath(path string) string { return normalizePath(path) }
+
 // normalizePath makes a path comparable: absolute, cleaned, symlinks resolved
 // (on macOS /tmp is a symlink to /private/tmp, and lsof reports the resolved
 // form). A path that fails to resolve — already gone, or unreadable — falls
