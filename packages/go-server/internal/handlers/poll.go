@@ -189,6 +189,8 @@ func handlePoll(st *store.Store, b *broker, hub *Hub, timeout time.Duration) htt
 
 		st.Presence.AddPoller(channel)
 		defer st.Presence.RemovePoller(channel)
+		hub.pollWaiterParked()
+		defer hub.pollWaiterDeparted()
 
 		timer := time.NewTimer(timeout)
 		defer timer.Stop()
