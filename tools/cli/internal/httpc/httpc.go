@@ -12,8 +12,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
@@ -58,6 +60,27 @@ func Die(msg string, code int) {
 	panic("unreachable: httpc.Exit returned instead of terminating")
 }
 
+// errorBodyLimit bounds how much of an error response's body is read into a
+// Die message. Enough for any real error explanation; small enough that a
+// misbehaving server cannot flood stderr.
+const errorBodyLimit = 512
+
+// errorDetail returns a one-line, bounded rendering of an error response's
+// body, prefixed for appending to a Die message — or "" when there is
+// nothing useful. The server's error bodies are where the actual reason
+// lives: a bare "400 Bad Request" once cost a multi-hour hunt because the
+// explanatory body was read by nobody (the register-agent defect). Reading
+// the body also drains the connection, so a pooled keep-alive socket is
+// never returned with unread bytes on it.
+func errorDetail(resp *http.Response) string {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
+	s := strings.Join(strings.Fields(string(b)), " ")
+	if s == "" {
+		return ""
+	}
+	return " — " + s
+}
+
 // GetJSON issues a GET to base+path (base = config.ServerURL()) and decodes
 // the JSON response into T. A network error or non-2xx status dies with
 // EXIT_RUNTIME, matching http.ts's getJSON().
@@ -72,8 +95,9 @@ func GetJSON[T any](path string) T {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// resp.Status is already "<code> <text>" (e.g. "404 Not Found"),
 		// matching http.ts's `${res.status} ${res.statusText}" — do not also
-		// prefix resp.StatusCode or the code prints twice.
-		Die(fmt.Sprintf("GET %s failed: %s", path, resp.Status), config.ExitRuntime)
+		// prefix resp.StatusCode or the code prints twice. The body carries
+		// the server's actual reason, so it rides along (bounded).
+		Die(fmt.Sprintf("GET %s failed: %s%s", path, resp.Status, errorDetail(resp)), config.ExitRuntime)
 	}
 
 	var out T
@@ -101,8 +125,9 @@ func PostJSON[T any](path string, body any) T {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// See GetJSON's comment: resp.Status already includes the code.
-		Die(fmt.Sprintf("POST %s failed: %s", path, resp.Status), config.ExitRuntime)
+		// See GetJSON's comment: resp.Status already includes the code, and
+		// the body carries the server's actual reason.
+		Die(fmt.Sprintf("POST %s failed: %s%s", path, resp.Status, errorDetail(resp)), config.ExitRuntime)
 	}
 
 	var out T
