@@ -2,6 +2,7 @@ import { existsSync, statSync, openSync, readSync, closeSync } from "fs"
 import { join } from "path"
 import { pushHubEvent } from "./hub-ingress"
 import { recordSessionChannel, channelForSession, parseEnrollmentChannel } from "./session-channel"
+import { TOOL_EVENT } from "./tool-event"
 
 // ── Tool event tailer ───────────────────────────────────────────────────────
 // Tails tool-activity.jsonl and broadcasts each new entry as a tool_event SSE,
@@ -16,13 +17,6 @@ import { recordSessionChannel, channelForSession, parseEnrollmentChannel } from 
 // the TS/Pulse home so the tailer stays here, but the panel's SSE connection is
 // served by the Go hub. See hub-ingress.ts — the push is fire-and-forget and an
 // unreachable hub must never stop the tail loop.
-
-// The one event name this producer emits, pinned to its enrollment
-// declaration (contracts/sources/tool-tailer.json) by
-// source-contract-pin.test.ts. The Go server derives its ingress allowlist
-// from that declaration, so renaming this without superseding the contract
-// would make the hub 400 every push.
-export const TOOL_EVENT = "tool_event"
 
 export function startToolEventTailer() {
   const HOME           = process.env.HOME ?? ""

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "fs"
 import { fileURLToPath } from "url"
-import { TOOL_EVENT } from "./tool-tailer"
+import { TOOL_EVENT } from "./tool-event"
 
 // Pins the TS producer to its enrollment declaration
 // (docs/source-contracts.md). The tool tailer is enrolled as
