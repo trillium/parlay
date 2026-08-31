@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"parlay/go-server/internal/store"
 )
@@ -59,6 +60,11 @@ type unregisterRequest struct {
 	ID string `json:"id"`
 }
 
+type unregisterResponse struct {
+	OK bool   `json:"ok"`
+	ID string `json:"id"`
+}
+
 // handleUnregister implements POST /api/chat/unregister. docs/api-contract.md
 // documents this endpoint as "failing loud with a non-2xx status on an
 // unknown/already-gone id" — the opposite HTTP convention from
@@ -67,7 +73,11 @@ type unregisterRequest struct {
 // as an idempotent no-op at the storage layer (its own doc comment); this
 // handler is what translates that store-level no-op into the contract's
 // documented HTTP-level failure.
-func handleUnregister(st *store.Store) http.HandlerFunc {
+//
+// A successful removal broadcasts `agent_unregister {id}` (the incremental
+// counterpart to agent_register, same as the TS side's unregisterAgent) and
+// answers `{ok, id}` — divergence 9's bare `{ok}` converged to the TS shape.
+func handleUnregister(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -77,21 +87,47 @@ func handleUnregister(st *store.Store) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if req.ID == "" {
-			writeStatusError(w, http.StatusBadRequest, "id is required")
-			return
-		}
-		removed, err := st.Registry.Remove(req.ID)
-		if err != nil {
-			writeStatusError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if !removed {
-			writeStatusError(w, http.StatusNotFound, "unknown agent id")
-			return
-		}
-		writeJSON(w, map[string]bool{"ok": true})
+		removeAgent(w, st, hub, req.ID)
 	}
+}
+
+// handleDeleteAgent implements DELETE /api/chat/agents/{id} — the REST alias
+// of POST /api/chat/unregister (same removal, id from the trailing URL path
+// instead of a JSON body) with the same status-error convention. The TS side
+// URL-decodes and trims the trailing segment before the lookup; r.URL.Path
+// arrives percent-decoded, so only the trim needs mirroring here. The
+// /api/chat/agents/ subtree is guarded (internal/guard.guardedPrefixes), so
+// this handler lands inside the boundary that pre-landed for it.
+func handleDeleteAgent(st *store.Store, hub *Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			methodNotAllowed(w, http.MethodDelete)
+			return
+		}
+		id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/chat/agents/"))
+		removeAgent(w, st, hub, id)
+	}
+}
+
+// removeAgent is the shared removal path behind unregister and its REST
+// alias: 400 on an empty id, 404 on an unknown one, and on success an
+// agent_unregister broadcast plus the contract's `{ok, id}` body.
+func removeAgent(w http.ResponseWriter, st *store.Store, hub *Hub, id string) {
+	if id == "" {
+		writeStatusError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	removed, err := st.Registry.Remove(id)
+	if err != nil {
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !removed {
+		writeStatusError(w, http.StatusNotFound, "unknown agent id")
+		return
+	}
+	hub.broadcast(eventAgentUnregister, map[string]string{"id": id})
+	writeJSON(w, unregisterResponse{OK: true, ID: id})
 }
 
 // handleAgents implements GET /api/chat/agents.

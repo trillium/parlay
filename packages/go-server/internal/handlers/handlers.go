@@ -81,8 +81,9 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	mux.HandleFunc("/api/chat/history", handleHistory(st))
 
 	mux.HandleFunc("/api/chat/register-agent", handleRegisterAgent(st, hub))
-	mux.HandleFunc("/api/chat/unregister", handleUnregister(st))
+	mux.HandleFunc("/api/chat/unregister", handleUnregister(st, hub))
 	mux.HandleFunc("/api/chat/agents", handleAgents(st))
+	mux.HandleFunc("/api/chat/agents/", handleDeleteAgent(st, hub))
 	mux.HandleFunc("/api/chat/subscribers", handleSubscribers(st))
 
 	mux.HandleFunc("/api/chat/poll", handlePoll(st, b, hub, defaultPollTimeout))

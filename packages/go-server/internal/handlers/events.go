@@ -79,6 +79,7 @@ const (
 	eventHistory         = "history"
 	eventAgents          = "agents"
 	eventAgentRegister   = "agent_register"
+	eventAgentUnregister = "agent_unregister"
 	eventPresenceMap     = "presence_map"
 	eventMessage         = "message"
 	eventMessageReceived = "message_received"
