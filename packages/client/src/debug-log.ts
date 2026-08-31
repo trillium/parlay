@@ -8,12 +8,13 @@
 // disable. Default on. Initialized as early as possible (see init.ts) so it
 // catches errors thrown during the rest of client init, not just post-load.
 //
-// The server endpoint (packages/server/src/debug-log.ts) isn't wired into
-// the router yet — see AGENTS.md. Until it is, POSTs 404. This shim treats
-// that as a permanent no-op for the session (see `endpointUnavailable`
-// below) rather than retrying every flush, so it stays harmless — no queued
-// entries pile up, and it doesn't spam failed requests into the very
-// on-screen console (mobile-console.ts) the captain would use to look at it.
+// The server endpoint (packages/server/src/debug-log.ts) is wired at
+// POST /api/chat/debug-log. Against an older server without the route, a
+// 404 is treated as a permanent no-op for the session (see
+// `endpointUnavailable` below) rather than retrying every flush, so it stays
+// harmless — no queued entries pile up, and it doesn't spam failed requests
+// into the very on-screen console (mobile-console.ts) the captain would use
+// to look at it.
 
 import { CHAT_BASE } from './config'
 
@@ -30,9 +31,9 @@ const FLUSH_MS = 2000
 
 let queue: DebugEntry[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
-// Set once a flush confirms the server route 404s — the endpoint isn't wired
-// in yet (see AGENTS.md). Once true, flush() stops sending for the rest of
-// the session instead of retrying every 2s forever.
+// Set once a flush confirms the server route 404s (an older server without
+// the route). Once true, flush() stops sending for the rest of the session
+// instead of retrying every 2s forever.
 let endpointUnavailable = false
 
 function deviceId(): string {
@@ -72,8 +73,8 @@ function flush() {
     body,
     keepalive: true,
   }).then((res) => {
-    // 404 means the route isn't wired server-side yet — stop trying rather
-    // than spamming failed requests into eruda's network tab every 2s.
+    // 404 means a server without the route — stop trying rather than
+    // spamming failed requests into eruda's network tab every 2s.
     if (res.status === 404) endpointUnavailable = true
   }).catch(() => {})
 }
