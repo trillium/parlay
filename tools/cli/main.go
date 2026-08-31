@@ -169,6 +169,10 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.CityScaffold(args)
 	case "gc-spawn":
 		commands.GCSpawn(args)
+	case "gc-nudge":
+		commands.GCNudge(args)
+	case "gc-liveness":
+		commands.GCLiveness(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		finish(config.ExitUsage)
