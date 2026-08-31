@@ -76,6 +76,16 @@ type ConsumerConfig struct {
 	// trying to smuggle a non-observability name through, so the consumer
 	// logs it. Must never block (Hub.BroadcastFromBus satisfies this).
 	Broadcast func(name string, data json.RawMessage) bool
+	// OnCursorReset, when non-nil, receives the loud-skip announcement
+	// (events-lift U3): afterSeq is the cursor that could not be honored,
+	// firstSeq the next sequence the bus actually delivered, and skipped =
+	// firstSeq-afterSeq-1 the number of events lost in between. Same
+	// contract as pollMessage's cursorReset/skipped over message-id cursors
+	// (store.MessageStore.HistorySinceCursor): the resume still happens,
+	// and the drop is announced rather than passing silently. The consumer
+	// always logs the reset; this hook exists for callers (and U4's
+	// bus-backed history reads) that need the numbers, not just the line.
+	OnCursorReset func(afterSeq, firstSeq, skipped uint64)
 	// Backoff overrides defaultConsumerBackoff; tests shrink it. Zero means
 	// the default.
 	Backoff time.Duration
@@ -267,6 +277,23 @@ func (c *Consumer) handleLine(line []byte) bool {
 	}
 	if ev.Seq <= c.lastSeq {
 		return false // at-least-once replay from gc: seq-dedup, the sanctioned mechanism
+	}
+	// Loud-skip (U3): bus sequence numbers are dense — gc's recorder
+	// allocates them with a bare increment per record, and this consumer
+	// runs unfiltered — so a delivered seq that is not lastSeq+1 means the
+	// events in between are gone: a resume whose after_seq fell below the
+	// retained floor (rotation + archive retention while we were down), or
+	// an unparseable line skipped above. Port of HistorySinceCursor's
+	// reset/skipped contract onto after_seq: resume anyway, announce the
+	// gap rather than let it pass silently. lastSeq==0 is exempt — a first
+	// run (or a corrupt cursor, which already logged loudly) tails from
+	// head by design, so head-minus-zero is not a loss.
+	if c.lastSeq > 0 && ev.Seq > c.lastSeq+1 {
+		skipped := ev.Seq - c.lastSeq - 1
+		log.Printf("bus: cursorReset — after_seq %d predates the retained floor (next delivered seq %d): %d events skipped, not replayable", c.lastSeq, ev.Seq, skipped)
+		if c.cfg.OnCursorReset != nil {
+			c.cfg.OnCursorReset(c.lastSeq, ev.Seq, skipped)
+		}
 	}
 	c.lastSeq = ev.Seq
 

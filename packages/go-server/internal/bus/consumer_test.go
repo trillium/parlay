@@ -320,6 +320,129 @@ func TestConsumerCorruptCursorTailsFromHead(t *testing.T) {
 	}
 }
 
+// cursorReset is one OnCursorReset announcement (events-lift U3).
+type cursorReset struct {
+	afterSeq, firstSeq, skipped uint64
+}
+
+// startResetConsumer is startTestConsumer plus the U3 announcement hook,
+// delivering resets on their own channel (the callback fires on the run
+// goroutine, so tests must not share memory with it).
+func startResetConsumer(t *testing.T, gcBin, city, cursorPath string, ch chan delivery, resets chan cursorReset) *Consumer {
+	t.Helper()
+	c, err := StartConsumer(ConsumerConfig{
+		GCBin:      gcBin,
+		CityPath:   city,
+		CursorPath: cursorPath,
+		Broadcast:  recordingBroadcast(testAllow, ch),
+		Backoff:    10 * time.Millisecond,
+		OnCursorReset: func(afterSeq, firstSeq, skipped uint64) {
+			resets <- cursorReset{afterSeq: afterSeq, firstSeq: firstSeq, skipped: skipped}
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartConsumer: %v", err)
+	}
+	return c
+}
+
+func TestConsumerAnnouncesCursorResetOnResumeBelowFloor(t *testing.T) {
+	city := newTestCity(t)
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "capture.txt")
+	cursorPath := filepath.Join(dir, "cursor.json")
+	if err := os.WriteFile(cursorPath, []byte(`{"after_seq":10}`), 0o644); err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+	// The bus rotated and reaped while we were down: the resume from 10 gets
+	// seq 20 as its first event — 11..19 are gone, not replayable.
+	writeFixture(t, dir, 1,
+		busLine(20, "parlay.message", "p", `{"n":20}`),
+		busLine(21, "parlay.message", "p", `{"n":21}`),
+	)
+	ch := make(chan delivery, 16)
+	resets := make(chan cursorReset, 16)
+	c := startResetConsumer(t, fakeGCEvents(t, dir, capture, "hang"), city, cursorPath, ch, resets)
+	defer c.Close()
+
+	// The gap is announced with the exact loss...
+	select {
+	case r := <-resets:
+		if want := (cursorReset{afterSeq: 10, firstSeq: 20, skipped: 9}); r != want {
+			t.Fatalf("reset: want %+v, got %+v", want, r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("cursor reset never announced")
+	}
+	// ...and the resume still happens: everything retained is delivered and
+	// the cursor moves on (announce the drop, never stall on it).
+	got := collect(t, ch, 2)
+	for i, want := range []string{`{"n":20}`, `{"n":21}`} {
+		if got[i].payload != want {
+			t.Errorf("delivery %d: want %s, got %s", i, want, got[i].payload)
+		}
+	}
+	waitForCursor(t, cursorPath, 21)
+	select {
+	case r := <-resets:
+		t.Fatalf("gap announced more than once: %+v", r)
+	default:
+	}
+}
+
+func TestConsumerNoResetOnContiguousResume(t *testing.T) {
+	city := newTestCity(t)
+	dir := t.TempDir()
+	cursorPath := filepath.Join(dir, "cursor.json")
+	if err := os.WriteFile(cursorPath, []byte(`{"after_seq":42}`), 0o644); err != nil {
+		t.Fatalf("seed cursor: %v", err)
+	}
+	writeFixture(t, dir, 1, busLine(43, "parlay.message", "p", `{"n":43}`))
+	ch := make(chan delivery, 16)
+	resets := make(chan cursorReset, 16)
+	c := startResetConsumer(t, fakeGCEvents(t, dir, filepath.Join(dir, "capture.txt"), "hang"), city, cursorPath, ch, resets)
+	defer c.Close()
+
+	collect(t, ch, 1)
+	select {
+	case r := <-resets:
+		t.Fatalf("contiguous resume announced a reset: %+v", r)
+	default:
+	}
+}
+
+func TestConsumerAnnouncesMidStreamGapButNotFirstEvent(t *testing.T) {
+	city := newTestCity(t)
+	dir := t.TempDir()
+	// No cursor: the first event (seq 3, from a head tail) is NOT a gap —
+	// tailing from head is the documented first-run behavior. The 4→7 jump
+	// mid-stream IS one.
+	writeFixture(t, dir, 1,
+		busLine(3, "parlay.message", "p", `{"n":3}`),
+		busLine(4, "parlay.message", "p", `{"n":4}`),
+		busLine(7, "parlay.message", "p", `{"n":7}`),
+	)
+	ch := make(chan delivery, 16)
+	resets := make(chan cursorReset, 16)
+	c := startResetConsumer(t, fakeGCEvents(t, dir, filepath.Join(dir, "capture.txt"), "hang"), city, filepath.Join(dir, "cursor.json"), ch, resets)
+	defer c.Close()
+
+	collect(t, ch, 3)
+	select {
+	case r := <-resets:
+		if want := (cursorReset{afterSeq: 4, firstSeq: 7, skipped: 2}); r != want {
+			t.Fatalf("reset: want %+v, got %+v", want, r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("mid-stream gap never announced")
+	}
+	select {
+	case r := <-resets:
+		t.Fatalf("extra reset announced: %+v", r)
+	default:
+	}
+}
+
 // waitForCursor polls (liveness wait, not a timing assertion) until the
 // cursor file holds want — persistence happens after Broadcast returns, so
 // a delivery arriving on the channel doesn't guarantee the write finished.
