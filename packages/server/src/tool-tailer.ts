@@ -17,6 +17,13 @@ import { recordSessionChannel, channelForSession, parseEnrollmentChannel } from 
 // served by the Go hub. See hub-ingress.ts — the push is fire-and-forget and an
 // unreachable hub must never stop the tail loop.
 
+// The one event name this producer emits, pinned to its enrollment
+// declaration (contracts/sources/tool-tailer.json) by
+// source-contract-pin.test.ts. The Go server derives its ingress allowlist
+// from that declaration, so renaming this without superseding the contract
+// would make the hub 400 every push.
+export const TOOL_EVENT = "tool_event"
+
 export function startToolEventTailer() {
   const HOME           = process.env.HOME ?? ""
   const PAI_DIR        = process.env.PAI_DIR ?? join(HOME, ".claude", "PAI")
@@ -55,7 +62,7 @@ export function startToolEventTailer() {
           // Owning tab: the enrolling agent's channel, else the shared System
           // pseudo-tab for sessions that never enrolled (non-agent Claude runs).
           const channel = channelForSession(ev.session_id) ?? "system"
-          pushHubEvent("tool_event", {
+          pushHubEvent(TOOL_EVENT, {
             ts:   ev.timestamp,
             tool: ev.tool_name ?? "?",
             desc: desc.slice(0, 100),
