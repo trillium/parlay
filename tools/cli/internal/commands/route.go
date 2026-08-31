@@ -62,8 +62,12 @@ func Route(argv []string) {
 		routeCorrect(rest)
 	case "rule":
 		routeRule(rest)
+	case "explain":
+		routeExplain(rest)
+	case "rules":
+		routeRules(rest)
 	default:
-		httpc.Die("parlay route: subcommand required: decide | why | propose | confirm | correct | rule (see 'parlay route --help')", config.ExitUsage)
+		httpc.Die("parlay route: subcommand required: decide | why | propose | confirm | correct | rule | explain | rules (see 'parlay route --help')", config.ExitUsage)
 	}
 }
 
@@ -539,6 +543,7 @@ func renderRouteEvent(ev routing.Event) string {
 	if ev.Result.Outcome == routing.OutcomeNeedsInference {
 		fmt.Fprintf(&b, "\nrun inference, then: parlay route propose --decision %s --target <t> --confidence <0..1>", ev.ID)
 	}
+	fmt.Fprintf(&b, "\nexplain later: parlay route explain %s", ev.ID)
 	return b.String()
 }
 
