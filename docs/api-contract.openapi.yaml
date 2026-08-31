@@ -1,0 +1,1503 @@
+# Parlay HTTP API — machine-readable contract (OpenAPI 3.1).
+#
+# AUTHORITY: this file is the authoritative contract. docs/api-contract.md is
+# its human-readable twin; when the two disagree, THIS FILE WINS and the .md
+# must be corrected to match. Both were derived from handler source
+# (packages/server/src and packages/go-server/internal) on 2026-08-30.
+#
+# Server annotations: routes present on only one implementation carry
+# `x-parlay-server: ts-only | go-only`. Everything else exists on both.
+# Behavioral TS-vs-Go mismatches on shared routes are catalogued in
+# docs/api-contract.md § "Divergences to fix" and flagged inline here with
+# `x-parlay-divergence`.
+#
+# Error conventions (see api-contract.md § Conventions):
+#   - "app-error-on-200": HTTP 200 with {"error": "..."} — most write routes.
+#   - "status-error": non-2xx with {"error": "..."} — unregister, message,
+#     poll (410), eval (502), eval-push (400/404), caps (400).
+# The origin guard can additionally answer 403 (foreign Origin) or 415
+# (guarded POST/PUT without application/json) on any guarded route; those
+# responses are not repeated per-operation.
+
+openapi: 3.1.0
+info:
+  title: Parlay chat server API
+  version: "2026.08.30"
+  description: >
+    The /api/chat surface served by both the TS server (packages/server, Bun)
+    and the Go server (packages/go-server). No authentication; the surface
+    trusts the network boundary (local/tailnet only) plus an origin guard for
+    cross-origin browser callers. This file is authoritative over
+    docs/api-contract.md on conflict.
+servers:
+  - url: http://localhost:4242
+    description: Default dev/production address (PARLAY_SERVER overrides).
+
+paths:
+  /api/chat/send:
+    post:
+      operationId: send
+      summary: Send a user-role message into a channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: []
+              properties:
+                text: { type: string, description: Required unless images present. }
+                toAgent: { type: string, description: Target channel (agent id). }
+                images:
+                  type: array
+                  items: { type: string, maxLength: 500 }
+                  description: Up to 8 kept; extras/oversize appended to text as plain URLs.
+                from: { type: string, description: "Sender attribution, truncated to 40 chars." }
+      responses:
+        "200":
+          description: OkId on success; app-error-on-200 otherwise.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/OkId"
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/reply:
+    post:
+      operationId: reply
+      summary: Agent reply on its own channel
+      description: >
+        TS falls back to environment/session context when `agent` is absent
+        and accepts empty text with action/images; Go requires text AND agent.
+        May auto-register the agent (response then carries new_channel).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+                agent: { type: string }
+                name: { type: string }
+                color: { type: string }
+                action:
+                  $ref: "#/components/schemas/ChatAction"
+                  description: TS only.
+                images:
+                  type: array
+                  items: { type: string }
+                  description: TS only.
+      responses:
+        "200":
+          description: OkId (+ new_channel iff auto-registered) or app error.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - $ref: "#/components/schemas/OkId"
+                      - type: object
+                        properties:
+                          new_channel: { const: true }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/alert:
+    post:
+      operationId: alert
+      summary: Broadcast a message to multiple channels
+      description: >
+        Omitted `agents` broadcasts to all — TS includes the global
+        (no-channel) history plus every registered agent; Go targets
+        registered agents only (x-parlay-divergence 10). An explicit empty
+        array delivers to nobody.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+                agents:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, channels, delivered]
+                    properties:
+                      ok: { const: true }
+                      channels: { type: integer, description: Channels recorded against. }
+                      delivered: { type: integer, description: Live pollers woken. }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/system:
+    post:
+      operationId: postSystem
+      summary: Post a system_update line onto the "system" channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, description: "Truncated to 500 chars (TS UTF-16 units, Go runes)." }
+                source: { type: string }
+                meta: { type: object }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/OkId"
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/message:
+    post:
+      operationId: postMessage
+      x-parlay-server: go-only
+      summary: Persist-and-broadcast ingress for out-of-process producers
+      description: >
+        Stores the message, then broadcasts the resulting `message` SSE event.
+        Used by parlay supervise and the PAI hook tailer (hub-ingress.ts).
+        The TS server 404s on this path. Status-error convention.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel, text]
+              properties:
+                channel: { type: string }
+                role: { type: string, default: agent }
+                text: { type: string }
+                type: { type: string, description: "ChatMessage.type passthrough, e.g. system_update." }
+                source: { type: string }
+                meta: { type: object }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkId" }
+        "400":
+          description: channel and text are required / invalid JSON body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppError" }
+
+  /api/chat/history:
+    get:
+      operationId: history
+      summary: Recent chat history, oldest first
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200 }
+          description: Non-numeric or non-positive falls back to 200.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ChatMessage" }
+
+  /api/chat/poll:
+    get:
+      operationId: poll
+      summary: Agent long-poll (blocks until message or timeout)
+      description: >
+        Server-side timeout TS 30s / Go 25s (x-parlay-divergence 4). TS
+        returns the full ChatMessage; Go a subset with optional
+        cursorReset/skipped loud-skip fields (divergences 5-6). Polling an
+        unknown non-tombstoned channel auto-registers it on TS. Delivery
+        broadcasts message_received. No `after` = wait for next message only.
+      parameters:
+        - name: after
+          in: query
+          schema: { type: string }
+          description: Last-seen message id (cursor).
+        - name: channel
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [timeout]
+                    properties:
+                      timeout: { const: true }
+                  - $ref: "#/components/schemas/ChatMessage"
+                  - type: object
+                    description: Go poll subset, possibly with loud-skip fields.
+                    required: [id, role, text]
+                    properties:
+                      id: { type: string }
+                      role: { type: string }
+                      text: { type: string }
+                      from: { type: string }
+                      cursorReset:
+                        const: true
+                        description: after-cursor unresolvable; resumed from newest min(50, retained).
+                      skipped:
+                        type: integer
+                        description: Older retained messages left outside the replay window.
+        "410":
+          description: Channel is tombstoned (unregistered via agent-down).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, gone]
+                properties:
+                  error: { type: string }
+                  gone: { const: true }
+
+  /api/chat/register-agent:
+    post:
+      operationId: registerAgent
+      summary: Upsert an agent registry entry (idempotent; clears tombstones)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string }
+                name: { type: string }
+                color: { type: string }
+                nicknames:
+                  type: array
+                  items: { type: string }
+                  description: Explicit [] clears; omitted keeps existing.
+                urls: { type: array, items: { type: string } }
+                path: { type: array, items: { type: string } }
+                caps: { description: "Free-form agent metadata (unrelated to SSE ?caps=)." }
+      responses:
+        "200":
+          description: >
+            TS echoes the stored entry ({ok, ...AgentInfo}); Go returns only
+            {ok, nicknames?} (x-parlay-divergence 8).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok]
+                    properties:
+                      ok: { const: true }
+                      id: { type: string }
+                      name: { type: string }
+                      color: { type: string }
+                      nicknames: { type: array, items: { type: string } }
+                      urls: { type: array, items: { type: string } }
+                      path: { type: array, items: { type: string } }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/unregister:
+    post:
+      operationId: unregister
+      summary: Deregister an agent channel (status-error convention)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string }
+      responses:
+        "200":
+          description: "TS: {ok, id}; Go: {ok} (x-parlay-divergence 9). Broadcasts agent_unregister."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { const: true }
+                  id: { type: string }
+        "400":
+          description: id required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppError" }
+        "404":
+          description: Unknown id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppError" }
+
+  /api/chat/agents/{id}:
+    delete:
+      operationId: deleteAgent
+      summary: REST alias of unregister (id from URL)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { const: true }
+                  id: { type: string }
+        "400": { description: id required., content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } } }
+        "404": { description: Unknown id., content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } } }
+
+  /api/chat/agents:
+    get:
+      operationId: listAgents
+      summary: List all registered agents (unguarded read)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AgentInfo" }
+
+  /api/chat/subscribers:
+    get:
+      operationId: subscribers
+      summary: Connection/presence/memory snapshot (guarded)
+      description: >
+        Go serves a subset — parlay/poll/registered plus thin presence
+        entries {channel, lastSeen}; no memory/history/devices/
+        presence_broadcasts/capability_suppressed (x-parlay-divergence 14).
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  parlay:
+                    type: object
+                    properties:
+                      clients: { type: integer }
+                  poll:
+                    type: object
+                    properties:
+                      count: { type: integer }
+                      channels:
+                        type: array
+                        items:
+                          type: object
+                          description: "{channel: string|null} merged with AgentInfo fields when registered."
+                          properties:
+                            channel: { type: [string, "null"] }
+                            id: { type: string }
+                            name: { type: string }
+                            color: { type: string }
+                  registered:
+                    type: object
+                    properties:
+                      count: { type: integer }
+                      agents:
+                        type: array
+                        items: { $ref: "#/components/schemas/AgentInfo" }
+                  presence:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        channel: { type: string }
+                        listening: { type: boolean }
+                        lastSeen: { type: [string, "null"] }
+                        status: { enum: [listening, idle, offline] }
+                  presence_broadcasts: { type: integer, description: TS only. }
+                  capability_suppressed:
+                    type: object
+                    additionalProperties: { type: integer }
+                    description: "TS only: gated event name -> suppressed delivery count."
+                  devices:
+                    type: array
+                    description: TS only.
+                    items:
+                      type: object
+                      properties:
+                        device: { type: string }
+                        ua: { type: string }
+                        connectedAt: { type: string }
+                        surface: { type: object }
+                        accepts: { type: array, items: { type: string } }
+                  memory:
+                    type: object
+                    description: TS only (MB, one decimal).
+                    additionalProperties: { type: number }
+                  history:
+                    type: object
+                    description: TS only.
+                    additionalProperties: { type: number }
+
+  /api/chat/declare-channel:
+    post:
+      operationId: declareChannel
+      summary: Bind a session id to a channel (hook attribution)
+      description: >
+        TS echoes the requested channel; Go declarations are sticky per
+        session and echo the effective channel (x-parlay-divergence 22).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, channel]
+              properties:
+                session_id: { type: string }
+                channel: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, session_id, channel]
+                    properties:
+                      ok: { const: true }
+                      session_id: { type: string }
+                      channel: { type: string }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/clear:
+    post:
+      operationId: clear
+      summary: Clear chat history (all, or one channel); broadcasts reload
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel: { type: string, description: Absent/empty clears everything. }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, removed, remaining]
+                properties:
+                  ok: { const: true }
+                  removed: { type: integer }
+                  remaining: { type: integer }
+
+  /api/chat/reload:
+    post:
+      operationId: reload
+      summary: Force connected panels to reload; broadcasts reload
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device: { type: string, description: Scope to one device; omit for all. }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, clients]
+                properties:
+                  ok: { const: true }
+                  clients: { type: integer }
+                  device: { type: string }
+
+  /api/chat/navigate:
+    post:
+      operationId: navigate
+      summary: Navigate connected panels; broadcasts navigate
+      description: >
+        Response field is `openDrawer` on TS, `open_drawer` on Go
+        (x-parlay-divergence 21); the SSE payload is `openDrawer` on both.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+                open_drawer: { type: boolean }
+                device: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, clients, url]
+                    properties:
+                      ok: { const: true }
+                      clients: { type: integer }
+                      url: { type: string }
+                      openDrawer: { type: boolean, description: TS field name. }
+                      open_drawer: { type: boolean, description: Go field name. }
+                      device: { type: string }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/device-cmd:
+    post:
+      operationId: deviceCmd
+      summary: Drive a client device; broadcasts device_cmd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cmd]
+              properties:
+                cmd:
+                  type: string
+                  description: reload | reset-tts | ping | switch-channel | list-channels | set-hands-free (open set).
+                args:
+                  type: object
+                  description: "switch-channel: {channel}; set-hands-free: {enabled: 'true'|'false'} (omit to toggle)."
+                device: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, cmd, sent]
+                    properties:
+                      ok: { const: true }
+                      cmd: { type: string }
+                      sent: { type: integer }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/draft:
+    get:
+      operationId: getDraft
+      summary: Read the shared input draft
+      responses:
+        "200":
+          description: "TS: {text}; Go adds clientId/updatedAt (x-parlay-divergence 16)."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: { type: string }
+                  clientId: { type: string }
+                  updatedAt: { type: string }
+    put:
+      operationId: putDraft
+      summary: Save (or clear) the shared input draft; broadcasts draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+                clientId: { type: string, description: Lets the origin client ignore its own SSE echo. }
+      responses:
+        "200":
+          description: "TS: {ok: true} or {error}; Go echoes the saved draft object (x-parlay-divergence 15)."
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      ok: { const: true }
+                  - type: object
+                    properties:
+                      text: { type: string }
+                      clientId: { type: string }
+                      updatedAt: { type: string }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/upload:
+    post:
+      operationId: upload
+      summary: Upload an image (multipart; images only; 10MB max)
+      description: >
+        JSON-content-type exempt in the guard (multipart by contract). TS
+        validates by MIME/extension; Go sniffs bytes. Failure body differs
+        (x-parlay-divergences 19-20).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, url]
+                    properties:
+                      ok: { const: true }
+                      url: { type: string, description: "/api/chat/uploads/<sha1-12>.<ext>" }
+                      bytes: { type: integer, description: TS only. }
+                  - $ref: "#/components/schemas/AppError"
+                  - type: object
+                    description: Go failure shape.
+                    required: [ok]
+                    properties:
+                      ok: { const: false }
+
+  /api/chat/uploads/{name}:
+    get:
+      operationId: serveUpload
+      summary: Serve an uploaded image inline (unguarded read)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            description: "TS enforces ^[a-z0-9]+\\.(png|jpg|gif|webp|svg)$."
+      responses:
+        "200":
+          description: Image bytes; TS sets immutable cache headers (content-addressed).
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        "400": { description: "Bad name (TS, plain text)." }
+        "404": { description: Not found (plain text). }
+
+  /api/chat/parlay/settings:
+    get:
+      operationId: getSettings
+      summary: Load persisted panel settings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ParlaySettings" }
+    put:
+      operationId: putSettings
+      summary: Whole-document replace of panel settings (never a patch)
+      description: >
+        TS responds {ok, settings} and clamps textScale 85-160 /
+        voiceSettleMs 0-3000; Go echoes the stored settings bare and
+        round-trips noKeyboardMode, which the TS server interface lacks
+        (x-parlay-divergences 17-18).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ParlaySettings" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, settings]
+                    properties:
+                      ok: { const: true }
+                      settings: { $ref: "#/components/schemas/ParlaySettings" }
+                  - $ref: "#/components/schemas/ParlaySettings"
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/eval:
+    post:
+      operationId: eval
+      summary: Relay input evaluation to the eval engine; broadcasts input_action
+      description: >
+        The synchronous response is informational; the device-scoped
+        input_action SSE event is the source of truth for applying actions.
+        Engine at PARLAY_EVAL_ENGINE_URL (default http://127.0.0.1:4343).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device]
+              properties:
+                streamId: { type: string, description: Defaults to eval-<device>-main. }
+                version: { type: integer }
+                text: { type: string }
+                cursor:
+                  type: object
+                  properties:
+                    anchor: { type: integer }
+                    active: { type: integer }
+                reason: { type: string, default: input }
+                voiceEnabled: { type: boolean }
+                device: { type: string }
+                tabs:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      name: { type: string }
+                      nicknames: { type: array, items: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, sseClients]
+                    properties:
+                      ok: { const: true }
+                      sseClients: { type: integer }
+                      v: { type: integer }
+                      streamId: { type: string }
+                      seq: { type: integer }
+                      baseVersion: { type: integer }
+                      actions: { type: array }
+                      engineEvalNs: { type: integer }
+                      timing: { $ref: "#/components/schemas/EvalTiming" }
+                  - $ref: "#/components/schemas/AppError"
+        "502":
+          description: Engine unreachable or invalid engine response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppError" }
+
+  /api/chat/eval-push:
+    post:
+      operationId: evalPush
+      summary: Engine-owned submit fire; broadcasts input_action (serverOwnedFire)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [streamId]
+              properties:
+                streamId: { type: string }
+                seq: { type: integer }
+                baseVersion: { type: integer }
+                v: { type: integer, description: Defaults to 1. }
+                action: { description: Single action; wrapped into the actions array. }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, sseClients]
+                properties:
+                  ok: { const: true }
+                  sseClients: { type: integer }
+        "400":
+          description: streamId required.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+        "404":
+          description: Unknown stream (mapping evicted or engine restarted; client re-registers on next keystroke).
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+
+  /api/chat/tts:
+    post:
+      operationId: tts
+      summary: Synthesize speech (audio/wav)
+      description: >
+        Errors are JSON {error} — but the TS server types the error body
+        audio/wav (the panel sniffs RIFF magic); Go types it
+        application/json (x-parlay-divergence 24).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 2000 }
+                voice: { type: string }
+                speed: { type: number }
+      responses:
+        "200":
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { $ref: "#/components/schemas/AppError" }
+
+  /api/chat/tts-correction:
+    post:
+      operationId: ttsCorrection
+      summary: Persist a pronunciation substitution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from: { type: string, maxLength: 100 }
+                to: { type: string, maxLength: 200 }
+                sentence: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, substitutions]
+                    properties:
+                      ok: { const: true }
+                      substitutions: { type: integer, description: Total stored. }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/tts-report:
+    post:
+      operationId: ttsReport
+      summary: Report a mispronounced sentence (appends to tts-pronunciation-reports.jsonl)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sentence]
+              properties:
+                sentence: { type: string, maxLength: 500 }
+                voice: { type: string }
+                clipMeta:
+                  type: object
+                  properties:
+                    source: { type: string }
+                    msgId: { type: [string, "null"] }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok]
+                    properties:
+                      ok: { const: true }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/tts-event:
+    post:
+      operationId: ttsEvent
+      summary: Fan a TTS lifecycle event out as the tts_event SSE event
+      description: >
+        Free-form body; server stamps ts if absent. TS additionally resolves
+        every pending long-poll waiter with the event; Go broadcasts to SSE
+        only (x-parlay-divergence 25).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok]
+                    properties:
+                      ok: { const: true }
+                  - $ref: "#/components/schemas/AppError"
+
+  /api/chat/tts/validate-splits:
+    post:
+      operationId: ttsValidateSplits
+      summary: Validate sentence-split quality (LLM-assisted; JSON-content-type exempt)
+      description: Go currently returns a placeholder evaluation (x-parlay-divergence 26).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+                model: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [blocks, evaluation, model, ms]
+                properties:
+                  blocks: { type: array }
+                  evaluation:
+                    type: object
+                    properties:
+                      overall_score: { type: number }
+                      verdict: { type: string }
+                      issues: { type: array }
+                      suggestion: { type: string }
+                  model: { type: string }
+                  ms: { type: number }
+        "400":
+          description: text required / bad request.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+        "502":
+          description: Evaluating model unreachable (TS).
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+
+  /api/chat/pages:
+    get:
+      operationId: pages
+      summary: List servable pages from ~/pulse-pages/ (30s cache)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pages]
+                properties:
+                  pages:
+                    type: array
+                    items:
+                      type: object
+                      required: [tag, title]
+                      properties:
+                        tag: { type: string }
+                        title: { type: string }
+        "405":
+          description: "Non-GET. TS: JSON {error: 'GET only'}; Go: plain text."
+
+  /api/chat/plugins:
+    get:
+      operationId: plugins
+      summary: Installed plugin manifests, load-ordered (speak first)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, version]
+                  properties:
+                    id: { type: string }
+                    version: { type: string }
+                    minPanel: { type: string }
+                    description: { type: string }
+                    defaultEnabled: { type: boolean }
+
+  /api/chat/plugin/cursorless/rpc:
+    post:
+      operationId: cursorlessRpc
+      summary: Talon-side Cursorless RPC entry (blocks up to 2.5s for the panel)
+      description: >
+        JSON-content-type exempt (out-of-repo Python caller); still
+        origin-guarded. TS honors `device` scoping; Go ignores it and
+        broadcasts to all (x-parlay-divergence 27).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [op]
+              properties:
+                op: { type: string }
+                args: {}
+                device: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [ok, result]
+                    properties:
+                      ok: { const: true }
+                      result: {}
+                  - type: object
+                    required: [ok, error]
+                    properties:
+                      ok: { const: false }
+                      error: { type: string }
+
+  /api/chat/plugin/cursorless/response:
+    post:
+      operationId: cursorlessResponse
+      summary: Panel-side RPC reply leg
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rpcId]
+              properties:
+                rpcId: { type: string }
+                result: {}
+      responses:
+        "200":
+          description: ok=false when the rpcId was unknown or expired.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+
+  /api/chat/version:
+    get:
+      operationId: version
+      summary: Bundle version (PWA self-upgrade check)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version]
+                properties:
+                  version: { type: string, description: '"unknown" = no-op.' }
+
+  /api/chat/events:
+    get:
+      operationId: sseEvents
+      summary: The SSE stream (one EventSource per tab)
+      description: >
+        Connect burst in order — TS: connected, history, agents,
+        agent_presence, presence_map; Go adds commands. Keepalive comment
+        every 25s. Event names and payloads: see docs/api-contract.md § SSE
+        Events (the x-sse-events list below enumerates the names). Guarded on
+        Go, unguarded on TS (x-parlay-divergence 28).
+      x-sse-events:
+        - connected
+        - history
+        - agents
+        - agent_register
+        - agent_unregister
+        - presence_map
+        - message
+        - message_received
+        - presence
+        - draft
+        - agent_presence
+        - tool_event
+        - tts_event
+        - lavish_session
+        - reload
+        - navigate
+        - input_action
+        - device_cmd
+        - pages_patch
+        - cursorless_rpc
+        - commands
+        - command_update
+      parameters:
+        - name: device
+          in: query
+          schema: { type: string }
+          description: Client-generated uuid; enables device-scoped delivery. TS stores it; Go accepts without storing.
+        - name: after
+          in: query
+          schema: { type: string }
+          description: Last-seen message id; resolvable = delta history, else per-channel windowing (TS).
+        - name: url
+          in: query
+          schema: { type: string }
+          description: Current page URL; the owning channel's history window widens to 200 (TS).
+        - name: caps
+          in: query
+          schema: { type: string }
+          description: >
+            TS only. URL-encoded JSON capability declaration
+            (docs/interface-capabilities.md). Invalid = 400, not legacy
+            fallback. Gates delivery of navigate/reload/device_cmd/
+            input_action/draft, subtraction-only.
+      responses:
+        "200":
+          description: text/event-stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400":
+          description: Invalid ?caps= declaration (TS).
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+    post:
+      operationId: eventsIngress
+      x-parlay-server: go-only
+      summary: External-producer ingress into the SSE hub (allowlist)
+      description: >
+        One name per real producer — tool_event alone today. The allowlist is
+        derived at init from enrolled source contracts (contracts/sources/,
+        observability trust posture); widening it means landing a reviewed
+        contract. Everything else is 400, including server-produced names and
+        panel-aiming names (those refusal rosters stay hard-coded in the
+        handler). Contract owned by events_ingress.go's doc comment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event]
+              properties:
+                event: { type: string, description: Must be in the allowlist (tool_event). }
+                data: { type: object, description: "Forwarded byte-identical; absent broadcasts {}." }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, event]
+                properties:
+                  ok: { const: true }
+                  event: { type: string }
+        "400":
+          description: event is required / event not accepted from an external producer.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+
+  /api/chat/commands:
+    get:
+      operationId: listCommands
+      x-parlay-server: go-only
+      summary: Live-command registry snapshot (contract owned by docs/live-commands.md)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, now, running, staleAfterMs, commands]
+                properties:
+                  ok: { const: true }
+                  now: { type: string }
+                  running: { type: integer }
+                  staleAfterMs: { type: integer }
+                  commands:
+                    type: array
+                    items: { $ref: "#/components/schemas/CommandInvocation" }
+
+  /api/chat/command-start:
+    post:
+      operationId: commandStart
+      x-parlay-server: go-only
+      summary: Register a running CLI verb (415 without POST+JSON content type)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, verb]
+              properties:
+                id: { type: string }
+                verb: { type: string }
+                agent: { type: string }
+                flags: { type: array, items: { type: string }, description: Flag NAMES only — never values. }
+                pid: { type: integer }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { const: true }
+                  id: { type: string }
+                  state: { const: running }
+        "415": { description: Not POST+application/json. }
+
+  /api/chat/command-heartbeat:
+    post:
+      operationId: commandHeartbeat
+      x-parlay-server: go-only
+      summary: Keep a command's registration fresh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: string }
+      responses:
+        "200":
+          description: Unknown id answers {ok:false, unknown:true} (200) — the CLI stops heartbeating.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  unknown: { const: true }
+        "415": { description: Not POST+application/json. }
+
+  /api/chat/command-end:
+    post:
+      operationId: commandEnd
+      x-parlay-server: go-only
+      summary: Report a command's terminal state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, state]
+              properties:
+                id: { type: string }
+                state: { enum: [exited, failed] }
+                exitCode: { type: integer }
+                outcome: { type: string, description: "Outcome token, not free-form text." }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id, state]
+                properties:
+                  ok: { const: true }
+                  id: { type: string }
+                  state: { type: string }
+        "415": { description: Not POST+application/json. }
+
+  /api/debug/input-timing:
+    post:
+      operationId: postInputTiming
+      x-parlay-server: ts-only
+      summary: Mobile keystroke-latency telemetry (guarded via /api/debug/ prefix)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device, samples]
+              properties:
+                device: { type: string, maxLength: 40 }
+                ua: { type: string, maxLength: 200 }
+                samples:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      costMs: { type: number }
+                      sinceLastMs: { type: number }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, stored]
+                properties:
+                  ok: { const: true }
+                  stored: { type: integer }
+    get:
+      operationId: getInputTiming
+      x-parlay-server: ts-only
+      summary: Per-device latency digest over the last 10 minutes
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    ua: { type: string }
+                    samples: { type: integer }
+                    cost:
+                      type: object
+                      properties:
+                        p50: { type: number }
+                        p95: { type: number }
+                        max: { type: number }
+                    cadence:
+                      type: [object, "null"]
+                      properties:
+                        p50: { type: number }
+                        p95: { type: number }
+
+  /parlay-ui.js:
+    get:
+      operationId: parlayUi
+      x-parlay-server: ts-only
+      summary: The embeddable panel loader (application/javascript)
+      responses:
+        "200":
+          content:
+            application/javascript:
+              schema: { type: string }
+
+  /health:
+    get:
+      operationId: health
+      x-parlay-server: go-only
+      summary: Liveness + store sanity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, messages, agents]
+                properties:
+                  ok: { const: true }
+                  messages: { type: integer }
+                  agents: { type: integer }
+        "405": { description: Non-GET (plain text). }
+
+components:
+  schemas:
+    AppError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+      description: >
+        The {error} body. Carried on HTTP 200 by the app-error-on-200 routes
+        and on non-2xx by the status-error routes.
+
+    OkId:
+      type: object
+      required: [ok, id]
+      properties:
+        ok: { const: true }
+        id: { type: string, description: Server-assigned message id. }
+
+    ChatAction:
+      type: object
+      required: [kind, label]
+      properties:
+        kind: { enum: [navigate, switch_tab] }
+        url: { type: string }
+        channel: { type: string }
+        label: { type: string }
+
+    ChatMessage:
+      type: object
+      required: [id, role, ts, text]
+      properties:
+        id: { type: string }
+        role: { enum: [user, agent] }
+        ts: { type: string, description: ISO 8601. }
+        text: { type: string }
+        channel: { type: string, description: Agent id; absent for global/user messages. }
+        type: { enum: [alert, action_request, system_update] }
+        action: { $ref: "#/components/schemas/ChatAction" }
+        source: { type: string, description: "system_update: emitting hook/system label." }
+        meta: { type: object }
+        images: { type: array, items: { type: string } }
+        from: { type: string, description: User-role sender attribution; absent = the captain. }
+        received: { type: boolean, description: Runtime-only delivery pip; stripped from disk. }
+
+    AgentInfo:
+      type: object
+      required: [id, name, color]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        color: { type: string }
+        nicknames: { type: array, items: { type: string }, description: First entry is the primary display alias. }
+        urls: { type: array, items: { type: string } }
+        path: { type: array, items: { type: string } }
+
+    ParlaySettings:
+      type: object
+      properties:
+        panelSide: { enum: [left, right] }
+        triggerSide: { enum: [left, right] }
+        enabledProjects:
+          oneOf:
+            - { const: all }
+            - { type: array, items: { type: string } }
+        voiceEnabled: { type: boolean }
+        voiceSubmitPhrases: { type: array, items: { type: string } }
+        voiceClearPhrases: { type: array, items: { type: string } }
+        voiceStopPhrase: { type: string }
+        commandPhrases:
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+        hybridVoice: { type: boolean }
+        localOnlyVoice: { type: boolean }
+        textScale: { type: number, description: Clamped 85-160 on TS PUT. }
+        voiceSettleMs: { type: number, description: Clamped 0-3000 on TS PUT. }
+        noKeyboardMode: { type: boolean, description: Go server + client only — absent from the TS server interface. }
+
+    EvalTiming:
+      type: object
+      properties:
+        engineEvalNs: { type: integer }
+        relayMs: { type: integer }
+        serverOwnedFire: { type: boolean }
+
+    CommandInvocation:
+      type: object
+      required: [id, verb, state, startedAt, updatedAt, durationMs]
+      properties:
+        id: { type: string }
+        verb: { type: string }
+        agent: { type: string }
+        flags: { type: array, items: { type: string }, description: Flag names only. }
+        pid: { type: integer }
+        state:
+          enum: [running, exited, failed, dropped]
+          description: '"dropped" is wire-only — computed at read time when heartbeats stopped without a command-end.'
+        startedAt: { type: string }
+        updatedAt: { type: string }
+        endedAt: { type: string }
+        exitCode: { type: integer }
+        outcome: { type: string }
+        durationMs: { type: integer }
