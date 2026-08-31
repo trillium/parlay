@@ -337,7 +337,7 @@ func OriginAllowed(r *http.Request) bool {
 	}
 
 	// Same-origin: the Origin's host:port matches the Host this request
-	// arrived on. Covers localhost:31337, the LAN IP, and any tunnel that
+	// arrived on. Covers localhost:4242, the LAN IP, and any tunnel that
 	// forwards Host.
 	if r.Host != "" && strings.EqualFold(hostport, r.Host) {
 		return true

@@ -16,7 +16,7 @@
  *   or: bun agent-reply.ts "text"
  */
 
-const PULSE   = process.env.PULSE_URL ?? 'http://localhost:31337';
+const PULSE   = process.env.PULSE_URL ?? 'http://localhost:4242';
 // Optional: filter to messages sent to a specific agent channel.
 // Usage: AGENT_CHANNEL=main-agent bun agent-notify.ts  OR  bun agent-notify.ts main-agent
 const CHANNEL = process.env.AGENT_CHANNEL ?? process.argv[2] ?? '';

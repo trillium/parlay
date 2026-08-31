@@ -3,7 +3,7 @@
 #
 # Spins up a fresh, TOP-LEVEL `claude` session inside a detached herdr terminal
 # that auto-enrolls a Parlay monitor on startup, so the agent shows up as a
-# live, reachable tab in the Pulse/Parlay chat panel (http://localhost:31337)
+# live, reachable tab in the Pulse/Parlay chat panel (http://localhost:4242)
 # immediately.
 #
 # Precedent: ~/.local/bin/lavish (auto-claim pattern). This differs: instead of
@@ -28,7 +28,7 @@
 #     "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
 #
 # Env:
-#   PARLAY_SERVER                     Parlay/Pulse base URL (default http://localhost:31337)
+#   PARLAY_SERVER                     Parlay/Pulse base URL (default http://localhost:4242)
 #   PARLAY_SPAWN_DEFAULT_ACCOUNT      ccjuggler account name to use when --account is not given
 #                                     (e.g. acc2). Resolved via the same keychain/file lookup as
 #                                     --account. Set to "" to disable (use the ambient session token).
@@ -37,7 +37,7 @@
 
 set -euo pipefail
 
-PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
+PARLAY="${PARLAY_SERVER:-http://localhost:4242}"
 # Default account — precedence: env var > ~/.parlay/config.toml spawnAccount > empty.
 # Set persistently with: parlay spawn-account set <name>
 _config_toml="${PARLAY_STATE_HOME:-$HOME/.parlay}/config.toml"
@@ -588,7 +588,7 @@ Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   rest still launch, and the batch exits non-zero if any failed.
     parlay-spawn fix-a=~/code/foo add-b=~/code/bar --prompt "Do the thing" --model sonnet
 
-Env: PARLAY_SERVER (default http://localhost:31337)
+Env: PARLAY_SERVER (default http://localhost:4242)
 EOF
   exit 2
 }

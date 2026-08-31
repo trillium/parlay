@@ -13,7 +13,7 @@
  * Defaults to $TMUX_PANE if set, otherwise "yolo:0"
  */
 
-const PULSE       = process.env.PULSE_URL ?? 'http://localhost:31337'
+const PULSE       = process.env.PULSE_URL ?? 'http://localhost:4242'
 const POLL_MS     = 15_000   // check every 15s
 const STALE_MAX   = 4        // 4 unchanged polls (~60s) before stale alert
 const STALE_RESET = 10       // reset stale count after this many active polls

@@ -77,12 +77,12 @@ func TestSpawnAccountClearRemovesAccount(t *testing.T) {
 func TestSpawnAccountClearPreservesOtherKeys(t *testing.T) {
 	testsupport.TempStateHome(t)
 	captureStdout(t, func() { SpawnAccount([]string{"set", "acc2"}) })
-	if err := config.SetPersistedServer("http://mini1:31337"); err != nil {
+	if err := config.SetPersistedServer("http://mini1:4242"); err != nil {
 		t.Fatalf("SetPersistedServer: %v", err)
 	}
 
 	captureStdout(t, func() { SpawnAccount([]string{"clear"}) })
-	if got := config.PersistedServerURL(); got != "http://mini1:31337" {
+	if got := config.PersistedServerURL(); got != "http://mini1:4242" {
 		t.Errorf("PersistedServerURL() after spawn-account clear = %q, want it untouched", got)
 	}
 }

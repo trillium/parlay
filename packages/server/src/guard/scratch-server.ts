@@ -1,8 +1,8 @@
 // Spawns a REAL server process for this folder's integration tests, on a
 // scratch port with HOME, PARLAY_DATA_DIR, PAI_DIR and PARLAY_STATE_HOME
 // redirected into a temp dir — it never touches ~/exchange, ~/.parlay, or the
-// captain's live instance on :31337. Not a .test.ts, so it is never collected
-// as a suite.
+// captain's live instance on :4242 (nor legacy Pulse on :31337). Not a
+// .test.ts, so it is never collected as a suite.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
@@ -74,8 +74,13 @@ async function assertNotListening(url: string): Promise<void> {
  * Starts the server and resolves once it answers AS ITSELF. Each caller gets
  * its own process on its own reserved port with its own data dir, so test
  * files stay independent.
+ *
+ * `extraEnv` adds knobs a suite needs (e.g. PARLAY_ASSETS_DIR for the static
+ * tests). It is spread BEFORE the isolation set, so it structurally cannot
+ * un-redirect HOME/data/state/eval-engine — overriding those would point the
+ * process at the captain's live dirs.
  */
-export async function startScratchServer(): Promise<ScratchServer> {
+export async function startScratchServer(extraEnv: Record<string, string> = {}): Promise<ScratchServer> {
   const port = reservePort()
   const evalPort = reservePort()
   const dir = mkdtempSync(join(tmpdir(), "parlay-guard-"))
@@ -99,6 +104,7 @@ export async function startScratchServer(): Promise<ScratchServer> {
   const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "index.ts")], {
     env: {
       ...process.env,
+      ...extraEnv,
       HOME: dir,
       PARLAY_PORT: String(port),
       PARLAY_DATA_DIR: dataDir,

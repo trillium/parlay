@@ -16,10 +16,10 @@ Requires Go ≥ 1.26. The binary is static (`CGO_ENABLED=0`), stripped (`-s -w`)
 ## Run
 
 ```sh
-./parlay-relay                                   # server=http://localhost:31337, runtime=$TMPDIR/parlay
-./parlay-relay -server http://localhost:31337    # explicit server
+./parlay-relay                                   # server=http://localhost:4242, runtime=$TMPDIR/parlay
+./parlay-relay -server http://localhost:4242    # explicit server
 ./parlay-relay -agents main-agent,resume         # pre-register agents at startup
-PARLAY_SERVER=http://localhost:31337 ./parlay-relay
+PARLAY_SERVER=http://localhost:4242 ./parlay-relay
 ```
 
 The relay runs as a long-lived daemon. `SIGINT`/`SIGTERM` → clean shutdown

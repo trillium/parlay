@@ -1,5 +1,5 @@
 import { build } from "bun"
-import { copyFileSync } from "fs"
+import { copyFileSync, cpSync } from "fs"
 
 // Bun.build() does NOT throw on a compile error — it returns {success:false,
 // logs} and leaves the previous output in place. Unchecked, that silently ships
@@ -56,12 +56,21 @@ await buildOrThrow({
 // shell.html → dist/index.html — the standalone panel page served by the Go server
 copyFileSync("./src/shell.html", "./dist/index.html")
 
+// Pulse-era aliases mirrored into dist, so a server hosting dist/ alone (the
+// Bun server's static.ts, or the Go server) serves /annotate/pulse-agent.js
+// and /annotate/plugins/<id>.js without the ~/pulse-pages symlink. The root
+// copies above stay — Pulse keeps serving them via that symlink until the
+// cutover retires it.
+copyFileSync("./pulse-agent.js", "./dist/pulse-agent.js")
+cpSync("./plugins", "./dist/plugins", { recursive: true })
+
 console.log("dist/parlay-agent.js + index.html + pulse-agent.js + index.js + plugins built")
 
 // Deploy = live upgrade: tell connected panels to reload; each page's SSE
 // reconnect also runs the version handshake, so even missed broadcasts heal.
 // Target: PARLAY_RELOAD_TARGET env var (default http://127.0.0.1:4242, the
-// Go server). Set to http://127.0.0.1:31337 to target the legacy bun server.
+// parlay chat server). Set to http://127.0.0.1:31337 to reach clients still
+// connected through the legacy Pulse front door.
 // Set to "off" (or "0"/"none"/empty) to skip the ping entirely — for builds
 // whose output is copied elsewhere before serving (deploy/install.sh --build),
 // where reloading live panels mid-copy would hand them a half-deployed bundle.

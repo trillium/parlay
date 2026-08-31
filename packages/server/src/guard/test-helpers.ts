@@ -3,8 +3,8 @@
 // dependency-free (no storage/sse imports), so every test built on this runs
 // with zero side effects: no ~/exchange, no port, no timers.
 
-export const HOST = "localhost:31337"
-export const SAME_ORIGIN = "http://localhost:31337"
+export const HOST = "localhost:4242"
+export const SAME_ORIGIN = "http://localhost:4242"
 export const EVIL = "https://evil.example.com"
 
 // A panel reached through a Host-forwarding tunnel or reverse proxy under a
@@ -12,7 +12,7 @@ export const EVIL = "https://evil.example.com"
 // exists for. `panel.tunnel.test` is not loopback, not private-LAN, not
 // .local and not in PARLAY_ALLOWED_ORIGINS, so that comparison is the ONLY
 // thing that can accept TUNNEL_ORIGIN, and only when the request arrives on
-// TUNNEL_HOST. Every other fixture in this folder (localhost:31337,
+// TUNNEL_HOST. Every other fixture in this folder (localhost:4242,
 // 192.168.1.42, 127.0.0.1) is also a local hostname, so it would still be
 // accepted with the comparison deleted; these two are what pin it. Send
 // TUNNEL_ORIGIN on OTHER_HOST instead and it must be refused — without that

@@ -14,7 +14,7 @@ describe("origin policy: who is refused", () => {
   })
 
   test("an attacker origin that merely embeds the host name", () => {
-    const o = "https://localhost:31337.evil.example.com"
+    const o = "https://localhost:4242.evil.example.com"
     expect(originAllowed(req("POST", "/api/chat/send", { origin: o }))).toBe(false)
   })
 
@@ -44,19 +44,19 @@ describe("origin policy: who still gets through", () => {
   })
 
   test("the phone on the LAN — same host, and as a private origin", () => {
-    const lan = "http://192.168.1.42:31337"
-    expect(originAllowed(req("POST", "/api/chat/send", { origin: lan, host: "192.168.1.42:31337" }))).toBe(true)
+    const lan = "http://192.168.1.42:4242"
+    expect(originAllowed(req("POST", "/api/chat/send", { origin: lan, host: "192.168.1.42:4242" }))).toBe(true)
     // Pulse may reverse-proxy to this server under a rewritten Host.
     expect(originAllowed(req("POST", "/api/chat/send", { origin: lan, host: "localhost:4242" }))).toBe(true)
   })
 
   test("a loopback origin on another port (Pulse → standalone proxy)", () => {
-    const r = req("POST", "/api/chat/send", { origin: "http://127.0.0.1:31337", host: "localhost:4242" })
+    const r = req("POST", "/api/chat/send", { origin: "http://127.0.0.1:4242", host: "localhost:4242" })
     expect(originAllowed(r)).toBe(true)
   })
 
   test("a bonjour .local name", () => {
-    const r = req("POST", "/api/chat/send", { origin: "http://captain.local:31337", host: HOST })
+    const r = req("POST", "/api/chat/send", { origin: "http://captain.local:4242", host: HOST })
     expect(originAllowed(r)).toBe(true)
   })
 
