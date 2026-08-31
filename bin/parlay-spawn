@@ -465,8 +465,12 @@ toml_path, default_account, note, quota_file = sys.argv[1], sys.argv[2], sys.arg
 with open(quota_file, "r") as f:
     quota_raw = f.read()
 
-with open(toml_path, "rb") as f:
-    data = tomllib.load(f)
+try:
+    with open(toml_path, "rb") as f:
+        data = tomllib.load(f)
+except tomllib.TOMLDecodeError as e:
+    print(f"parlay-spawn --list: {toml_path} is not valid TOML: {e}", file=sys.stderr)
+    sys.exit(2)
 profiles = data.get("profile", [])
 
 # kind -> quota-axi provider name; kinds with no live quota-axi coverage
