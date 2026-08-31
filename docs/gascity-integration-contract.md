@@ -24,26 +24,32 @@ the claim above.
 ## 1. The pinned Gas City ref
 
 ```
-github.com/gastownhall/gascity @ 7c817e064
-git describe: v1.4.0-504-g7c817e064
+github.com/gastownhall/gascity @ ac6c9c685
+git describe: v1.4.0-681-gac6c9c685   (the tag `edge` also points at this commit)
 ```
 
-**Pin this. Never pin the captain's local checkout.** `~/code/gascity` is on the local branch
+Re-pinned 2026-08-30 by task-4cfpv.18 from `7c817e064` (`v1.4.0-504-g7c817e064`, the P0
+pin), 177 commits behind. The spec change between the two pins was **purely additive** — one
+new event type, `order.suppressed`, with its payload and typed-envelope schemas; the path
+set, operations, and every pre-existing schema are unchanged.
+
+**Never pin the captain's local checkout.** `~/code/gascity` is on the local branch
 `progname/monolith` at `1e5229b6d`, which sits on merge `16f072610` ("take upstream for all
-conflicts"). That branch **does not compile**. `7c817e064` is that merge's own parent and is a
-genuine upstream commit.
+conflicts"). That branch **does not compile** (verified at P0). The pin is always a genuine
+upstream commit.
 
 ### Verification commands, and their recorded results
 
-Both builds were run out of tree. `git archive` reads the source repo and writes only to the
-scratchpad — unlike `git worktree add`, `git fetch`, or `git checkout`, all of which write
-into `~/code/gascity/.git` and would violate the read-only constraint.
+Both builds were run out of tree. **The current pin is NOT in `~/code/gascity`'s object
+store** (its remote-tracking ref is stale — see the drift check below), so P0's
+`git -C ~/code/gascity archive` recipe cannot materialise it; use a scratch clone instead.
+Never `git fetch` into `~/code/gascity` — it is read-only.
 
 ```sh
-# Materialise a ref without writing to the source repo.
+# Materialise the pinned ref without touching ~/code/gascity.
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
-mkdir -p "$SCRATCH/gcbuild"
-git -C ~/code/gascity archive 7c817e064 | tar -x -C "$SCRATCH/gcbuild"
+git clone https://github.com/gastownhall/gascity "$SCRATCH/gcbuild"
+git -C "$SCRATCH/gcbuild" checkout ac6c9c685
 
 cd "$SCRATCH/gcbuild"
 export PKG_CONFIG_PATH=/opt/homebrew/opt/icu4c@77/lib/pkgconfig
@@ -55,7 +61,8 @@ go build ./...
 
 | ref | `go build ./...` | `go build ./cmd/gc` |
 |---|---|---|
-| `7c817e064` (pinned, upstream) | **exit 0 — clean** | clean |
+| `ac6c9c685` (pinned, upstream — verified 2026-08-30) | **exit 0 — clean** | clean |
+| `7c817e064` (prior pin — verified 2026-08-28) | **exit 0 — clean** | clean |
 | `1e5229b6d` (captain's local HEAD) | **exit 1** | **exit 1** |
 
 `1e5229b6d` fails two different ways depending on target:
@@ -87,28 +94,27 @@ Set all four variables above. `CGO_ENABLED=0` is the alternative and also works.
 
 **This is a local environment gap, not a Gas City defect.** Do not file it upstream.
 
-### Upstream has moved past the pin
+### The drift check
 
 ```sh
 git ls-remote https://github.com/gastownhall/gascity refs/heads/main
 ```
 
-As of 2026-08-28 this returns **`eec4a2fb625279ac62f29ff4f6a554168bc77b1a`**. The local
-remote-tracking ref `upstream/main` is **stale** at `7c817e064` (dated 2026-08-20).
+As of 2026-08-30 this returns **`ac6c9c6853fcfc3b7cde4be1847f2431d3f93865`** — the current
+pin IS upstream main's head. The local remote-tracking ref in `~/code/gascity` remains
+**stale** at `7c817e064` (dated 2026-08-20), so never trust it for drift.
 
 `git ls-remote` is the write-free drift check — it queries the remote and writes nothing
 locally, unlike `git fetch`. Use it, not `fetch`, while `~/code/gascity` is read-only.
 
-We pin `7c817e064` anyway, deliberately: it is a genuine upstream commit, it is present in
-the local object store (so every unit can materialise it offline), and it is the only ref
-whose build has actually been verified here. **P4 owns re-pinning.** Moving the pin requires
-re-running the build verification above and re-recording the sha256 in §3.
+Moving the pin requires re-running the build verification above and re-recording the sha256
+in §3 (and the licence hash with it), both in the same PR — see §14.
 
 ---
 
 ## 2. The pinned `gc` version, and the skew
 
-**The contract targets the pinned source at `7c817e064`, built from source. It does not
+**The contract targets the pinned source at `ac6c9c685`, built from source. It does not
 target any `gc` binary currently installed on this machine.** Every one of them is wrong in a
 different way.
 
@@ -117,24 +123,27 @@ different way.
 | `~/.local/bin/gc` → `~/go/bin/gc` (**first on PATH**) | `0.15.1.trillium` | **neither — `gc beads` has only `city` and `health`** |
 | `/opt/homebrew/bin/gc` | `dev` | not probed |
 | `~/code/gascity/gc` (in-tree prebuilt, Jul 20) | `1.1.1` | yes |
-| `7c817e064` built from source (**the pin**) | `dev` (`git describe`: `v1.4.0-504-g7c817e064`) | yes |
+| `ac6c9c685` built from source (**the pin**) | `1.4.1` (`git describe`: `v1.4.0-681-gac6c9c685`) | yes |
+| `7c817e064` built from source (the prior pin) | `dev` (`git describe`: `v1.4.0-504-g7c817e064`) | yes |
 | `1e5229b6d` (captain's local HEAD) | none — does not build (`git describe`: `v1.4.0-511-g1e5229b6d`) | does not build |
 
 `~/.local/bin/gc` is a symlink to `~/go/bin/gc`; they are the same binary, so there are
-**four** distinct artifacts, not five.
+**four** distinct installed-or-buildable artifacts plus the prior-pin row, kept for history.
 
 The version column was verified by running `<path> version` on `~/.local/bin/gc`,
-`/opt/homebrew/bin/gc`, and `~/code/gascity/gc`. The two source-ref rows are not installed
-binaries: their `git describe` strings come from `git describe --tags <ref>`, and `1e5229b6d`
-has no version at all because it does not build. The `city`/`health` entry comes from
-`~/.local/bin/gc beads --help`, whose `Available Commands:` block lists exactly `city` and
-`health`.
+`/opt/homebrew/bin/gc`, `~/code/gascity/gc`, and (for the current pin) the binary built from
+the 2026-08-30 verification clone under a redirected `GC_HOME`. The `7c817e064` and
+`1e5229b6d` rows are not installed binaries: their `git describe` strings come from
+`git describe --tags <ref>`, and `1e5229b6d` has no version at all because it does not build.
+The `city`/`health` entry comes from `~/.local/bin/gc beads --help`, whose
+`Available Commands:` block lists exactly `city` and `health`.
 
-**A from-source build of the pin reports `dev` — which is also exactly what
-`/opt/homebrew/bin/gc` reports.** `gc version` therefore cannot distinguish the pinned build
-from the homebrew binary, and must never be used as a check that the pin is what is running.
-That is the same non-guarantee shape this document already flags for `requires_gc`: an
-identifier that looks like a check but is not one.
+**The current pin's build reports `1.4.1`, so it is no longer string-identical to the
+homebrew binary's `dev`** — the prior pin's build was, and P0 recorded that collision.
+The caution survives the change: `gc version` reports a stamped string, not a provenance
+proof, and must never be used as a check that the pin is what is running. That is the same
+non-guarantee shape this document already flags for `requires_gc`: an identifier that looks
+like a check but is not one.
 
 ### What must be upgraded, and when
 
@@ -178,11 +187,11 @@ are affected, and they are affected badly: an interactive `gc supervisor stop` r
 
 ```
 path:    third_party/gascity/openapi.json
-source:  internal/api/openapi.json @ 7c817e064
-sha256:  cc238449f10adf4434ca447e0edb6a9b5617e1c5b48210ad7df7b0f4938d61ab
-bytes:   1384762   (1.32 MiB)
-licence: MIT — third_party/gascity/LICENSE, copied verbatim from LICENSE @ 7c817e064
-         sha256 6141d15e761ef772bdd45fdd4036dfc1f97488011429e6643e1445afa9d22f4d
+source:  internal/api/openapi.json @ ac6c9c685
+sha256:  81a02774fd620ef382d6ba2fa5ab8a0ce5bedc7601970817edccfeb5cdef97db
+bytes:   1388872   (1.32 MiB)
+licence: MIT — third_party/gascity/LICENSE, copied verbatim from LICENSE @ ac6c9c685
+         sha256 8bab40f7557b5ed6936f146436bb10d07f7688c1b1cb83e009ef0376565e31dc
 ```
 
 Re-check with:
@@ -202,7 +211,10 @@ satisfying a convention — it is **establishing** one, and P4's re-pin inherits
 > must refresh both** — a moved ref that updates `openapi.json`'s hash without re-copying
 > `LICENSE` from the same ref has left the directory internally inconsistent.
 
-Gas City is MIT (`Copyright (c) 2025 Steve Yegge`), whose terms require the copyright and
+Gas City is MIT (`Copyright (c) 2026 Gas City Contributors` at the current pin; the prior
+pin read `Copyright (c) 2025 Steve Yegge` — the licence file itself changed between pins,
+which is exactly why the re-pin rule below refreshes both files together), whose terms
+require the copyright and
 permission notice accompany copies or substantial portions of the work. parlay is itself MIT
 (`LICENSE` at the repo root, plus `packages/input/LICENSE`), so carrying an upstream MIT
 notice alongside a vendored blob is **consistent with the existing posture, not new policy**.
@@ -261,7 +273,8 @@ the hash as a manual checkpoint, not an enforced invariant.
 **Gas City has a `requires_gc` field in its config schema. It is parsed, preserved, and never
 compared against anything.**
 
-Verified by `git grep -nE 'requires_gc|RequiresGC' 7c817e064 -- '*.go'` — **eleven matching
+Verified by `git grep -nE 'requires_gc|RequiresGC' ac6c9c685 -- '*.go'` (re-verified at the
+current pin 2026-08-30; every anchor below is unchanged from the prior pin) — **eleven matching
 lines across four files**, counting both the `requires_gc` and `RequiresGC` spellings, `*.go`
 only, at the pinned ref. The table below carries all eleven anchors (2 + 2 + 2 + 3 + 2), and
 every one is declaration, struct copy, or round-trip test:
@@ -277,7 +290,7 @@ every one is declaration, struct copy, or round-trip test:
 **There is no semver parse, no comparison, and no enforcement anywhere in `cmd/`,
 `internal/`, or the tests.**
 
-Gas City documents this itself. `docs/reference/specs/pack-spec.md:213`:
+Gas City documents this itself. `docs/reference/specs/pack-spec.md:215`:
 
 > | `requires_gc` | string | no | Minimum compatible `gc` version metadata. **Parsed and
 > preserved; not currently enforced during load/import/doctor.** |
@@ -304,7 +317,7 @@ checkout (§1) must fail at the tool boundary, not at spawn time.
 
 **Decision:**
 
-- **CONTROL verbs → shell out, asking for structured output with the flag that verb actually declares at `7c817e064`. The flag is per-verb: there is no persistent `--json` on the `gc` root (`cmd/gc/json_schema.go:43` registers `--json-schema` only).** For `gc session` subcommands the flag is `--json`; every subcommand registered at `cmd/gc/cmd_session.go:55-73` declares it except `attach` (`cmd_session.go:1475`) and `wait` (`cmd_wait.go:102`), which declare no output flag at all. Outside `gc session` the spelling is not uniform, and it is not uniform even within one family: `gc beads list` and `gc beads show` declare `--format` (`text` or `json`) and no `--json` at all (`cmd/gc/cmd_beads.go:73`, `:109`), while their sibling `gc beads health` does declare `--json` (`cmd_beads.go:337`) — and §2 already blocks any step depending on `gc beads list` or `gc beads show` on `task-0k2po`. **The verbs named here are not a closed set.** No sweep of every `gc` command tree has been done, so any seam invoking a verb not named above must confirm that verb's own JSON flag against the pinned ref before relying on it; this document does not enumerate the CONTROL set.
+- **CONTROL verbs → shell out, asking for structured output with the flag that verb actually declares at `ac6c9c685`. The flag is per-verb: there is no persistent `--json` on the `gc` root (`cmd/gc/json_schema.go:43` registers `--json-schema` only).** For `gc session` subcommands the flag is `--json`; every subcommand registered at `cmd/gc/cmd_session.go:55-73` declares it except `attach` (`cmd_session.go:1475`) and `wait` (`cmd_wait.go:109`), which declare no output flag at all. Outside `gc session` the spelling is not uniform, and it is not uniform even within one family: `gc beads list` and `gc beads show` declare `--format` (`text` or `json`) and no `--json` at all (`cmd/gc/cmd_beads.go:73`, `:109`), while their sibling `gc beads health` does declare `--json` (`cmd_beads.go:364`) — and §2 already blocks any step depending on `gc beads list` or `gc beads show` on `task-0k2po`. **The verbs named here are not a closed set.** No sweep of every `gc` command tree has been done, so any seam invoking a verb not named above must confirm that verb's own JSON flag against the pinned ref before relying on it; this document does not enumerate the CONTROL set.
 - **LIVENESS and EVENT STREAMS → the typed `/v0` HTTP + SSE API.**
 
 ### Why, with citations
@@ -354,8 +367,11 @@ Not a preference — a language rule.
 $ ls pkg/
 eventexport                       # exactly one package, at the pinned ref
 $ find internal -name '*.go' ! -name '*_test.go' -exec dirname {} \; | sort -u | wc -l
-160
+164
 ```
+
+(Re-verified at `ac6c9c685`, 2026-08-30: `pkg/` still contains exactly `eventexport`; the
+`internal/` package count grew from 160 to 164. The mode stays CLOSED.)
 
 Go's `internal/` visibility rule blocks any import of `…/gascity/internal/…` from code not
 rooted at `…/gascity/`. **No `replace` directive changes this** — a `replace` changes where
@@ -399,14 +415,15 @@ The egress surface is deliberately narrow (`pkg/eventexport/project.go`):
   `ActorHash` (`:233`), `CityHash` (`:249`), `ProjectEvent` (`:269`), `ValidateEnvelope`
   (`:393`), `Validate` (`:479`), `ValidateBatch` (`:512`), and `IsOpaqueRef` (`:576`).
 
-**Coverage: 22 of Gas City's 92 event types — 70 excluded, over two thirds.** Both numbers
-are exact at the pinned ref `7c817e064`, not estimates. Numerator: the 22 keys of
+**Coverage: 22 of Gas City's 93 event types — 71 excluded, over two thirds.** Both numbers
+are exact at the pinned ref `ac6c9c685`, not estimates. Numerator: the 22 keys of
 `allowedTypes`, `pkg/eventexport/project.go:112-133` (the `var` is at `:111`). Denominator:
-the 92 constants in the single `const` block at `internal/events/events.go:19-329` (first
-`:20`, last `:328`), counted as tab-indented `Identifier = "lowercase.dotted.string"`
-assignments, tracked files at that ref, `_test.go` excluded — and no other non-test file
-under `internal/events/` declares one. The 92 strings are distinct, and all 22 allowlisted
-strings are among them, so the fraction compares like with like. That is the reason this is
+the 93 constants in the single `const` block at `internal/events/events.go:19-336` (first
+`:20`, last `:335`; the pin move from `7c817e064` added exactly one, `order.suppressed`),
+counted as tab-indented `Identifier = "lowercase.dotted.string"` assignments, tracked files
+at that ref, `_test.go` excluded — and no other non-test file under `internal/events/`
+declares one. The 93 strings are distinct, and all 22 allowlisted strings are among them, so
+the fraction compares like with like. That is the reason this is
 an alternative and not the choice — a push feed that structurally cannot carry two thirds of
 the event space cannot be the primary event seam. It remains attractive for a narrow,
 well-defined subset because it removes parlay's polling cost entirely and inverts who must be
@@ -855,6 +872,14 @@ never touches a live service."
 **Re-verify this table whenever the pin moves.** It is two separate code paths; they can
 diverge again.
 
+Re-verified at `ac6c9c685` (2026-08-30): the symmetry holds. Both functions sit at the same
+anchors (`:1841` launchd, `:2113` systemd), both check active, and both print the same
+"active but the control socket is unavailable … retry uninstall" refusal and return 1. One
+asymmetry appeared that does not change the ruling: the launchd path now performs the
+socket-protocol stop whenever a control socket answers (even if launchd reports the service
+inactive), while the systemd path stops only when the unit is active. "Uninstall is not
+passive" is still the operative warning.
+
 ### 9.4 SILENT DATA LOSS — `FileRecorder.Record` drops events and tells no one
 
 `internal/events/recorder.go:236`. Verbatim:
@@ -917,12 +942,12 @@ commands**.
 `internal/git/git.go`:
 
 ```go
-func (g *Git) HasUnpushedCommitsResult() (bool, error) {          // :164  — STRONGER
+func (g *Git) HasUnpushedCommitsResult() (bool, error) {          // :210  — STRONGER
 	out, err := g.run("log", "HEAD", "--oneline", "--not", "--remotes")
 	...
 }
 
-func (g *Git) HasUnreachableCommitsResult() (bool, error) {       // :196  — WEAKER
+func (g *Git) HasUnreachableCommitsResult() (bool, error) {       // :242  — WEAKER
 	out, err := g.run("log", "HEAD", "--oneline", "--not", "--branches", "--remotes", "--tags")
 	...
 }
@@ -948,7 +973,7 @@ The two callers disagree: the bead worktree reaper uses the **weaker** gate
 
 ### Why this is deliberate, and what it actually costs
 
-Gas City's own doc comment (`internal/git/git.go:182-195`) states the reasoning, and it is
+Gas City's own doc comment (`internal/git/git.go:228-241`) states the reasoning, and it is
 sound:
 
 > "…it is **deliberately narrower** than HasUnpushedCommitsResult: `git worktree remove`
@@ -1042,7 +1067,7 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 | `SessionSetup` | the `CLAUDECODE` unset block (`:1226-1239`) | Semantically identical; different insertion point. |
 | `ReadyPromptPrefix` / `ReadyDelayMs` | the `READY_$$` handshake (`:1240-1243` — marker appended at `:1240`, wait at `:1243`; `:1219` is the explanatory comment only) | parlay's bespoke echo trick becomes configuration. The `$`-literal vs `$`-expanded distinction is deliberate — preserve the *intent*, not the mechanism. |
 | `requires_gc` | *(nothing — do not use)* | **Parsed and never compared.** §4. |
-| `[events.export]` | `POST /api/chat/events` | Superficially symmetric, opposite directions. Gas City's is opt-in egress, 22 of 92 types, default-deny (§5). parlay's is ingress with a one-name allowlist that **must not widen** (§8.5). |
+| `[events.export]` | `POST /api/chat/events` | Superficially symmetric, opposite directions. Gas City's is opt-in egress, 22 of 93 types, default-deny (§5). parlay's is ingress with a one-name allowlist that **must not widen** (§8.5). |
 
 ---
 
@@ -1152,11 +1177,11 @@ changing its ruling.
 
 | # | Claim as given | What is actually true | Impact |
 |---|---|---|---|
-| 1 | `7c817e064` **is** `upstream/main` | It **was**. `git ls-remote` returns `eec4a2fb6…` for `refs/heads/main` as of 2026-08-28; the local remote-tracking ref is stale. | **Material.** "Pin upstream/main" is ambiguous now. §1 pins the commit explicitly and names the write-free drift check. |
+| 1 | `7c817e064` **is** `upstream/main` | It **was** — upstream had moved past it by 2026-08-28. (Resolved 2026-08-30: task-4cfpv.18 re-pinned to `ac6c9c685`, upstream main's head at that date. The lesson stands: `~/code/gascity`'s remote-tracking ref is stale and must never be read as "upstream main".) | **Material.** "Pin upstream/main" is ambiguous. §1 pins the commit explicitly and names the write-free drift check. |
 | 2 | keg-only `icu4c` needs `PKG_CONFIG_PATH` and **`CGO_CXXFLAGS`** | **`CGO_CPPFLAGS`** is the load-bearing flag. The cgo preamble in `go-icu-regex`'s `icu.go` is compiled as **C**; `CGO_CXXFLAGS` never reaches it, cgo silently picks up the macOS SDK's own `uregex.h`, and the link fails on unversioned symbols. | **Material.** Following the given recipe fails with a confusing linker error. §1 has the corrected four-variable recipe. |
 | 3 | `uninstall` refuses an active **systemd** unit; the launchd path is separate, so do not assume symmetric safety | They are separate functions, but at `7c817e064` they are **symmetric** — both check active, both refuse with the same message and exit 1. | Reduces a warned-about risk. §9.3. The instruction to verify was correct; re-verify when the pin moves. |
 | 4 | `gascityAlive` is read by the stop path, `parlay sweep`, **and** `parlay status` — "three seams, one function" | **Two production Go callers, both in the same file** (`:202` in the `gascity-ping` verb and `:251` in `gascitySpawn`; the stop path does not call it), plus five in that package's own test. The **symbol-visibility** claim holds exactly: `gascityAlive` is unexported in `package main` of the `tools/parlay-bin` module, so `tools/cli` (`parlay sweep`, `parlay status`) — a *different* module — cannot reference it. `tools/cli` contains **no call, no exec, and no symbol reference that reaches `gascityAlive`**; its three literal `gascity`/`GasCity` occurrences are non-routing (`internal/commands/sweep_test.go:68`, a test-fixture agent id; `internal/commands/doctor.go:382`, a comment; `internal/help/help.go:56`, help text). **But that is symbol visibility only, and exec defeats it as an isolation argument:** any process on the box can run `parlay-bin gascity-spawn` or `parlay-bin gascity-ping` and reach the predicate without linking the symbol, and `bin/parlay-spawn:1365` already does exactly that. | Corrects the stated reason — the reported coupling was described wrongly. But module boundaries do **not** isolate the predicate in practice, so §8.1 keeps the P9/P10 separation on the stronger ground that the predicate **mutates state** and is **already reached across a module boundary by exec today**. |
-| 5 | ~172 `internal/` packages | **160** at the pinned ref `7c817e064`. 172 is the count at the captain's unbuildable local HEAD. | Cosmetic. Recorded so the figure is not re-derived from the wrong tree. §5. |
+| 5 | ~172 `internal/` packages | **164** at the current pin `ac6c9c685` (160 at the prior pin `7c817e064`). 172 is the count at the captain's unbuildable local HEAD. | Cosmetic. Recorded so the figure is not re-derived from the wrong tree. §5. |
 | 6 | `gc version` ≈ **14 ms** | **34.5 ms median** (min 30.6, max 39.0), 15 runs, same in-tree `1.1.1` binary, `GC_HOME` redirected. `/bin/echo` floor measured 2.8 ms, matching the report's 3 ms. | **Strengthens** the §5 decision — shell-out is worse than believed, so the case for HTTP on the hot paths is stronger, not weaker. Hardware and load vary; treat as indicative. |
 | 7 | `HasUnreachableCommitsResult` is a **BLOCKING FINDING**: Gas City's weaker reclaimer "reaps committed-but-never-pushed work on a local branch" | **Overstated.** The divergence is real and deliberate, with a sound documented rationale (`internal/git/git.go:182-195`). **Neither reclaimer deletes a branch ref**, so removal drops a *checkout*, not commits — recoverable via `git worktree add`. The reaper is additionally fail-closed on probe error and gates separately on uncommitted work and stashes. | **Material, in the safe direction.** Lowers the severity but **does not change the ruling** — §9.5 still forbids touching parlay's gates, now on the stronger ground that `isContentLanded`'s tree comparison beats *both* Gas City gates at the problem Gas City is solving. |
 
