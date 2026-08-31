@@ -162,9 +162,10 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
   decide what parlay does about it. That policy is parlay's to define (and currently
   includes the migrate/supersede gap).
 - **parlay seam obligation:** define the migrate/supersede/severity policy; Gas City provides
-  the drift signal, not the decision.
-- **Evidence anchor:** topology scope (Bucket C6 formula/supersede gap); no binding contract
-  ruling yet — this is genuinely open; see register row 4.
+  the drift signal, not the decision. **Met** by `tools/cli/internal/supersession` and
+  [supersession.md](supersession.md) (task-4cfpv.13).
+- **Evidence anchor:** topology scope (Bucket C6 formula/supersede gap) named the gap; the
+  supersession policy unit settled it — see register row 4.
 
 ### 2.4 The security boundary (ingress)
 
@@ -303,18 +304,18 @@ carries the status for each; §3.1 is register row 1, §3.2 rows 3 and 7, §3.3 
 | 1 | liveness oracle source | **joint (open)** | oracle can move to Gas City (P7) but verdict contract stays parlay (§3.1); which `.go` probe is authoritative today is ad hoc | P7 shadow flip closes the oracle question; the verdict contract is already closed (§8.2) |
 | 2 | `crew-state` verdict provenance | **settled** | — | §8.2 BINDING: exit codes + source suffixes frozen, new channels only |
 | 3 | safety-gate split (`hasUnpushed` + `isContentLanded`) | **settled split** | — the ruling is closed; only its *implementation* is pending | §9.5 BINDING already settles it: parlay's `hasUnpushed` + `isContentLanded` pair stays unchanged and unweakened, gate *order* moves to Gas City. P10 implements that ruling; it does not decide it |
-| 4 | supersession / drift severity policy | **open (parlay-owned but unspecified)** | Gas City detects drift, defines no migrate/supersede/severity policy; parlay has no defined policy either (Bucket C6) | the migrate/supersede/severity design (a parlay policy unit); until it lands, `gc formula version-check` is a raw signal, not a policy |
+| 4 | supersession / drift severity policy | **settled (parlay-owned)** | — | landed as `tools/cli/internal/supersession` + [supersession.md](supersession.md) (task-4cfpv.13): SemVer-classified severity, reprocessing requirements, captain visibility; `gc formula version-check` remains the raw signal this policy consumes |
 | 5 | transport territory | **joint (open)** | "transport" means `/v0` (Gas City) to one seam and relay-singleton (parlay) to another (§3.3) | a seam naming *which* transport it means; parlay's relay singleton stays parlay regardless |
 | 6 | capability policy (R7) | **settled split** | — both owners are named | spawn scope R7: refuse to steer on a no-injection-channel provider; report is Gas City's, decision is parlay's |
 | 7 | `--force` bypass matrix under Gas City's posture | **open** | §9.5 rules on the gates and their ordering but not on which refusals `--force` may waive; the contract's only `--force` mention (`:825`) is `gc supervisor install` rollback, and parlay's force paths today waive uncommitted work, unlanded commits, the no-launch-spec hold, and the per-task-spawn proof | P10 must state the matrix explicitly — which refusals `--force` waives and which are unconditional — because no binding ruling does today |
 
-Four of the seven are open (**#1**, **#4**, **#5**, **#7**); rows 3 and 6 are *settled splits*
+Three of the seven are open (**#1**, **#5**, **#7**); rows 3 and 6 are *settled splits*
 — two owners each, but the ownership question itself is closed, so they are not unresolved. Of
-the open four, **#1** and **#5** are *self-limiting* — they resolve to "the oracle is whichever
+the open three, **#1** and **#5** are *self-limiting* — they resolve to "the oracle is whichever
 probe the currently-shadowed P7 flips" (#1) or "the relay stays parlay regardless of which
 transport a future seam means" (#5), so they are permanent unknowns only if nobody files the
-seam; **#4** is open because the supersession policy genuinely does not exist yet on either
-side; and **#7** is open because no binding ruling covers `--force` at all.
+seam; and **#7** is open because no binding ruling covers `--force` at all. Row **#4** closed
+when the supersession policy landed on the parlay side (see the row).
 
 ---
 

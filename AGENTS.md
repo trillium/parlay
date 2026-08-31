@@ -74,6 +74,7 @@ Reach for these instead of the hand-rolled equivalent.
 - **Publishable packages use flat `parlay-<part>` names; the `@parlay` scope is never published.** Only `packages/input` is public. → [notes](docs/agent-notes/publishable-packages-use-flat-unscoped-parlay.md)
 - **Remote debug log + on-screen mobile console** for phone-only triage. → [notes](docs/agent-notes/remote-debug-log-on-screen-mobile.md)
 - **`tools/cli/internal/staleness` is representation-plane RECORD staleness** (#128 §21–§24: Dagster version pairing — derived by comparison, never eagerly cascaded; reads carry nothing; budgeted passes) — a different concept from `parlay stale`/`sweep` agent-worktree staleness; never entangle them. → [docs/staleness-model.md](docs/staleness-model.md)
+- **`tools/cli/internal/supersession` is the supersession policy** (#128 §13–§19: records superseded never mutated, SemVer bump validated against a classified changeset floor, severity mandates a reprocessing requirement; major = staleness source; superseding a captain-acted-on record is never silent). → [docs/supersession.md](docs/supersession.md)
 - **`city/` is parlay's authored Gas City city + pack source, not a live city** — never run city-mutating `gc` verbs against it with the default `GC_HOME`; validate against a copy with `GC_HOME` redirected. → [notes](docs/agent-notes/city-is-the-authored-gas-city-source.md)
 
 ## Port-ticket archaeology
