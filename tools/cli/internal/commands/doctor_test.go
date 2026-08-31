@@ -166,6 +166,8 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_HOME", home)
 	t.Setenv("PARLAY_SERVER", srv.URL)
 	t.Setenv("PARLAY_EVAL_ENGINE_URL", engineSrv.URL)
+	t.Setenv("PARLAY_GC", healthyFakeGC(t))
+	t.Setenv("PARLAY_SPAWN_LAUNCHER", "")
 
 	var exited bool
 	out := captureStdout(t, func() {
@@ -185,6 +187,7 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 		"PASS  identity.md ok",
 		"PASS  scratchpad.md ok",
 		"PASS  eval-engine healthy at " + engineSrv.URL,
+		"PASS  gc ok",
 		"all clear (0 warn)",
 	} {
 		if !strings.Contains(out, want) {

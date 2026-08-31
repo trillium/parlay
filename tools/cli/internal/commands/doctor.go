@@ -384,7 +384,11 @@ func Doctor(argv []string) {
 			evalEngineFix))
 	}
 
-	// 7. Context rotation advisory (informational). Claude Code exposes no context gauge
+	// 7. Gas City `gc` runtime prerequisite (doctor_gc.go) — named error with
+	// an install pointer when missing/too-old/broken, never a silent degrade.
+	verdicts = append(verdicts, checkGC())
+
+	// 8. Context rotation advisory (informational). Claude Code exposes no context gauge
 	// to a CLI, so we read CLAUDE_CONTEXT_PERCENTAGE if the harness set it; otherwise the
 	// percentage is unknown here. Either way, point at the rotation verb — the seam the
 	// supervisor-respawn loop (GasCity) hooks into.
