@@ -86,6 +86,29 @@ const (
 	eventCommandUpdate   = "command_update"
 )
 
+// busEmitEvents is the allowlist of event names Hub.broadcast forwards to
+// the Gas City bus sink when dual-write is enabled (events-lift U1). Same
+// doctrine as events_ingress.go's ingressEvents — an explicit set, grown
+// one real name at a time — and for a sibling reason: the bus's event log
+// is a file other local processes can read AND write, so anything the
+// server ever *consumes back* from the bus (U2) must be observability
+// reporting, never a panel-aiming verb. Keeping panel-aiming and
+// device-scoped names (reload, navigate, device_cmd, input_action,
+// tts_event, pages_patch, cursorless_rpc) out of the dual-write keeps them
+// structurally out of that future consume path too.
+//
+// The connect-only snapshot frames (connected, history, agents,
+// presence_map, commands) never pass through broadcast at all — they are
+// per-connection state, meaningless as bus records — so this list is
+// exactly the live broadcast-path observability names.
+var busEmitEvents = map[string]bool{
+	eventMessage:         true,
+	eventMessageReceived: true,
+	eventAgentRegister:   true,
+	eventCommandUpdate:   true,
+	"tool_event":         true, // arrives via events_ingress.go's allowlist
+}
+
 // sseClientBuffer sizes each connected client's outgoing event channel. A
 // generous multiple of wildcardBuffer: unlike the hub's single bridge
 // reader (which must never block broker.publish), a per-client buffer only
@@ -120,6 +143,23 @@ type sseClient struct {
 type Hub struct {
 	mu      sync.Mutex
 	clients map[chan sseEvent]*sseClient
+	// busSink, when non-nil, receives every busEmitEvents broadcast as a
+	// dual-write onto the Gas City event bus (events-lift U1). Set once at
+	// startup via SetBusSink when the default-off flag is on; nil means
+	// byte-identical behaviour to a build without the sink.
+	busSink func(name string, data any)
+}
+
+// SetBusSink installs the dual-write sink. The sink must never block: it
+// is called on the broadcaster's goroutine (though outside the hub lock).
+// internal/bus.Emitter.Emit satisfies that contract.
+func (h *Hub) SetBusSink(sink func(name string, data any)) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.busSink = sink
+	h.mu.Unlock()
 }
 
 // newHub creates a Hub and starts its one background bridge goroutine,
@@ -170,12 +210,20 @@ func (h *Hub) broadcast(name string, data any) {
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	sink := h.busSink
 	for ch := range h.clients {
 		select {
 		case ch <- sseEvent{name: name, data: data}:
 		default:
 		}
+	}
+	h.mu.Unlock()
+	// Dual-write after (and outside) the SSE delivery loop: the sink is
+	// non-blocking by contract, but even so it must never run under h.mu.
+	// broadcastToDevice deliberately has no sink — device-scoped events are
+	// panel-aiming control pushes, not observability (see busEmitEvents).
+	if sink != nil && busEmitEvents[name] {
+		sink(name, data)
 	}
 }
 

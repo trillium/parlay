@@ -21,12 +21,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"parlay/go-server/internal/bus"
 	"parlay/go-server/internal/guard"
 	"parlay/go-server/internal/handlers"
 	"parlay/go-server/internal/static"
@@ -49,6 +52,13 @@ func main() {
 		dirFlag    = flag.String("state-dir", envOr("PARLAY_STATE_HOME", defaultStateHome()), "directory for persisted state (messages/agents/drafts/settings/uploads)")
 		assetsFlag = flag.String("assets-dir", envOr("PARLAY_ASSETS_DIR", defaultAssetsDir()), "directory containing the built packages/client/dist bundle (serves the panel HTML)")
 		paiDirFlag = flag.String("pai-dir", envOr("PAI_DIR", defaultPAIDir()), "PAI directory for TTS cache and substitutions")
+
+		// events-lift U1: dual-write observability events onto the Gas City
+		// event bus. Default OFF — flag off must be byte-identical to a
+		// build without the sink.
+		busEmitFlag = flag.Bool("bus-emit", envBool("PARLAY_BUS_EMIT"), "dual-write observability SSE events onto the Gas City event bus (default off)")
+		gcBinFlag   = flag.String("gc-bin", envOr("PARLAY_GC", ""), "path to the gc binary; empty resolves from PATH (only used with -bus-emit)")
+		gcCityFlag  = flag.String("gc-city", envOr("PARLAY_GC_CITY", ""), "parlay-owned Gas City city root; empty means <state-dir>/gascity/city (only used with -bus-emit)")
 	)
 	flag.Parse()
 
@@ -65,6 +75,16 @@ func main() {
 	mux := http.NewServeMux()
 	registerHealth(mux, st)
 	hub := handlers.Register(mux, st)
+	if *busEmitFlag {
+		emitter, err := newBusEmitter(*gcBinFlag, *gcCityFlag, *dirFlag)
+		if err != nil {
+			// Loud on purpose: the flag is off by default, so whoever turned
+			// it on deserves a hard error over a silently dead dual-write.
+			log.Fatalf("-bus-emit enabled but unusable: %v", err)
+		}
+		defer emitter.Close()
+		hub.SetBusSink(emitter.Emit)
+	}
 	handlers.RegisterData(mux, st)
 	handlers.RegisterTTS(mux, *paiDirFlag, hub)
 	handlers.RegisterPages(mux, hub)
@@ -147,6 +167,36 @@ func refuseProductionPort(addr string) error {
 		return errors.New("refusing to bind :31337 — that is the captain's live production Pulse server (see this repo's CLAUDE.md)")
 	}
 	return nil
+}
+
+// newBusEmitter resolves the gc binary (flag/$PARLAY_GC, else PATH — the
+// same order doctor's gcResolve uses) and the city root (flag/$PARLAY_GC_CITY,
+// else <state-dir>/gascity/city, where `parlay city-scaffold` materialises
+// parlay's own city), then starts the emitter.
+func newBusEmitter(gcBin, cityPath, stateDir string) (*bus.Emitter, error) {
+	if gcBin == "" {
+		p, err := exec.LookPath("gc")
+		if err != nil {
+			return nil, errors.New("no gc binary: set -gc-bin/$PARLAY_GC or put gc on PATH (build one with tools/gc-build/build-gc.sh)")
+		}
+		gcBin = p
+	}
+	if cityPath == "" {
+		cityPath = filepath.Join(stateDir, "gascity", "city")
+	}
+	e, err := bus.New(bus.Config{GCBin: gcBin, CityPath: cityPath})
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("bus dual-write ON (gc: %s, city: %s)", gcBin, cityPath)
+	return e, nil
+}
+
+// envBool reads a boolean env toggle: "1" or "true" (any case) is on,
+// everything else — including unset — is off.
+func envBool(key string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	return v == "1" || strings.EqualFold(v, "true")
 }
 
 func envOr(key, fallback string) string {
