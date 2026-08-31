@@ -23,16 +23,23 @@ func Agents(argv []string) {
 	r := args.Parse("agents", argv, []string{"--full"}, nil)
 	raw := httpc.GetJSON[json.RawMessage]("/api/chat/agents")
 
+	var agentsList []wire.AgentInfo
+	_ = json.Unmarshal(raw, &agentsList)
+
+	// With nobody registered there is nobody to alert — the useful next
+	// action is enrolling an agent, not messaging an empty registry.
+	next := "parlay alert --agent <id> <text...>"
+	if len(agentsList) == 0 {
+		next = "parlay listen --agent <id>   (enroll an agent; alias: agent-up)"
+	}
+
 	if r.Bool("--full") {
 		var buf bytes.Buffer
 		json.Indent(&buf, raw, "", "  ")
 		fmt.Println(buf.String())
-		fmt.Fprintln(os.Stderr, "\nNext: parlay alert --agent <id> <text...>")
+		fmt.Fprintln(os.Stderr, "\nNext: "+next)
 		return
 	}
-
-	var agentsList []wire.AgentInfo
-	_ = json.Unmarshal(raw, &agentsList)
 
 	if len(agentsList) == 0 {
 		fmt.Println("0 agents registered.")
@@ -42,5 +49,5 @@ func Agents(argv []string) {
 			fmt.Printf("%s %s %s\n", format.PadEnd(a.ID, 20), format.PadEnd(a.Name, 20), a.Color)
 		}
 	}
-	format.NextStep("parlay alert --agent <id> <text...>")
+	format.NextStep(next)
 }
