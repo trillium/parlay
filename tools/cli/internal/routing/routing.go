@@ -113,6 +113,9 @@ type Rule struct {
 // so hardening and un-hardening are both just arithmetic over recorded
 // captain feedback (#128 §35, §90).
 type Evidence struct {
+	// ID addresses this entry for `parlay route rule retire` — learned
+	// entries need tombstoning exactly like authored rules do.
+	ID     string `json:"id,omitempty"`
 	Signal string `json:"signal"`
 	Target string `json:"target"`
 	// Confirms / Corrections: captain-authority events only.
