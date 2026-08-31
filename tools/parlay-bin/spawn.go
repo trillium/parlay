@@ -33,7 +33,7 @@ Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned. A failed pair is reported and skipped, the rest
   still launch, and the batch exits non-zero if any failed.
 
-Env: PARLAY_SERVER (default http://localhost:31337)
+Env: PARLAY_SERVER (default http://localhost:4242)
 `
 
 var kebabRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -49,7 +49,7 @@ func parlayServer() string {
 	if v := os.Getenv("PARLAY_SERVER"); v != "" {
 		return v
 	}
-	return "http://localhost:31337"
+	return "http://localhost:4242"
 }
 
 // SpawnOptions is the fully-resolved set of parameters for one agent spawn,

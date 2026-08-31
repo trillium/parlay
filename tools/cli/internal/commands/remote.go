@@ -44,7 +44,7 @@ func Remote(argv []string) {
 
 	case "set":
 		if url == "" {
-			httpc.Die("parlay remote set: url required, e.g. parlay remote set http://mini1:31337", config.ExitUsage)
+			httpc.Die("parlay remote set: url required, e.g. parlay remote set http://mini1:4242", config.ExitUsage)
 			return
 		}
 		if !validServerURL(url) {

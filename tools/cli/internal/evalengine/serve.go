@@ -86,7 +86,7 @@ func Serve(addrFlag, pushURLFlag string) {
 	}
 	pushURL := pushURLFlag
 	if pushURL == "" {
-		pushURL = envOr("PARLAY_EVAL_PUSH_URL", "http://127.0.0.1:31337/api/chat/eval-push")
+		pushURL = envOr("PARLAY_EVAL_PUSH_URL", "http://127.0.0.1:4242/api/chat/eval-push")
 	}
 
 	push := &PushClient{url: pushURL, http: &http.Client{Timeout: 3 * time.Second}}

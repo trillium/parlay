@@ -25,13 +25,13 @@ func TestRemoteSetPersistsAndReflects(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_SERVER", "")
 
-	out := captureStdout(t, func() { Remote([]string{"set", "http://mini1.tailnet.ts.net:31337"}) })
+	out := captureStdout(t, func() { Remote([]string{"set", "http://mini1.tailnet.ts.net:4242"}) })
 	if !strings.Contains(out, "persisted default server") {
 		t.Errorf("Remote(set) output = %q, want a persisted-server confirmation", out)
 	}
 
 	out = captureStdout(t, func() { Remote(nil) })
-	if !strings.Contains(out, "http://mini1.tailnet.ts.net:31337") || !strings.Contains(out, "source: config") {
+	if !strings.Contains(out, "http://mini1.tailnet.ts.net:4242") || !strings.Contains(out, "source: config") {
 		t.Errorf("Remote(nil) after set = %q, want persisted URL + source: config", out)
 	}
 }
@@ -60,7 +60,7 @@ func TestRemoteClearFallsBackToDefault(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_SERVER", "")
 
-	captureStdout(t, func() { Remote([]string{"set", "http://macbook:31337"}) })
+	captureStdout(t, func() { Remote([]string{"set", "http://macbook:4242"}) })
 	out := captureStdout(t, func() { Remote([]string{"clear"}) })
 	if !strings.Contains(out, "cleared") {
 		t.Errorf("Remote(clear) output = %q, want a cleared confirmation", out)
@@ -76,7 +76,7 @@ func TestRemoteEnvWinsOverPersisted(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_SERVER", "")
 
-	captureStdout(t, func() { Remote([]string{"set", "http://macbook:31337"}) })
+	captureStdout(t, func() { Remote([]string{"set", "http://macbook:4242"}) })
 	t.Setenv("PARLAY_SERVER", "http://env-wins:9999")
 
 	out := captureStdout(t, func() { Remote(nil) })

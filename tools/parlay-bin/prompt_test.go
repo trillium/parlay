@@ -13,7 +13,7 @@ import (
 // `$VAR`, and a `"` broke out of the JS string literal.
 func TestComposeStartupPromptQuotesMonitorCommand(t *testing.T) {
 	hostile := "$( ) and `id` and $HOME and \"quoted\" and it's"
-	out := composeStartupPrompt("http://localhost:31337", "mc-x", hostile, "#f97316", "", "do the thing", "reply when done")
+	out := composeStartupPrompt("http://localhost:4242", "mc-x", hostile, "#f97316", "", "do the thing", "reply when done")
 
 	var line string
 	for _, l := range strings.Split(out, "\n") {
@@ -41,7 +41,7 @@ func TestComposeStartupPromptQuotesMonitorCommand(t *testing.T) {
 	}
 	// The other interpolated values are quoted too, so none of them can split
 	// or expand either.
-	for _, w := range []string{"--agent 'mc-x'", "--color '#f97316'", "PARLAY_SERVER='http://localhost:31337'"} {
+	for _, w := range []string{"--agent 'mc-x'", "--color '#f97316'", "PARLAY_SERVER='http://localhost:4242'"} {
 		if !strings.Contains(unq, w) {
 			t.Errorf("arm-command missing %q; got: %s", w, unq)
 		}
