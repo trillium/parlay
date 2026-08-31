@@ -169,8 +169,14 @@ curl -fsS -m 5 -X PUT -H 'Content-Type: application/json' \
 say "parlay doctor — self-diagnosis for PARLAY_AGENT_ID=helm"
 # Captured so the checks below can assert which lines PASSed. WARNs are expected
 # (no monitor is armed, no eval engine), so a non-zero exit is not a failure here.
+# PARLAY_EVAL_ENGINE_URL is pinned to a port nothing can be listening on
+# (binding :1 needs root): without it doctor probes the hardcoded :4343 and,
+# on a box running a real eval engine there, reports PASS off an engine that
+# has nothing to do with this sandbox. The WARN this forces is the honest
+# answer — the sandbox provides no eval engine.
 env -u PARLAY_SERVER HOME="$SANDBOX" PARLAY_STATE_HOME="$SANDBOX/.parlay" \
   PARLAY_AGENT_HOME="$SANDBOX/.parlay/agents" PARLAY_AGENT_ID=helm \
+  PARLAY_EVAL_ENGINE_URL="http://127.0.0.1:1" \
   "$SANDBOX/bin/parlay" doctor > "$SANDBOX/doctor.log" 2>&1 || true
 cat "$SANDBOX/doctor.log"
 
@@ -210,12 +216,16 @@ identity_body_without_frontmatter() {
 }
 run_check "identity.md read back with frontmatter stripped" identity_body_without_frontmatter
 
+# [ghost] is the truthful state here: both agents are registered but nothing in
+# this sandbox arms a listener (the relay is deliberately out of scope — see
+# "Not verified" in examples/README.md). Liveness is registry ∩ process table
+# since robots-jkwc, so asserting [live] would require the display lie back.
 launch_specs_for_both() {
   local out; out="$(parlay launch)" || return 1
-  printf '%s\n' "$out" | grep -q '^[[:space:]]*helm .*\[live\]' || return 1
-  printf '%s\n' "$out" | grep -q '^[[:space:]]*reviewer .*\[live\]' || return 1
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*helm .*\[ghost\]' || return 1
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*reviewer .*\[ghost\]' || return 1
 }
-run_check "launch spec discovered for both agents, both reported live" launch_specs_for_both
+run_check "launch spec discovered for both agents, both reported ghost (registered, no listener)" launch_specs_for_both
 
 # The four seeded chat-history.jsonl lines are loaded by the server and served
 # back on the channel each one names — two on helm, two on reviewer. `--full`

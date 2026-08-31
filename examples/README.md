@@ -350,11 +350,15 @@ where you name agents; `TEST_NAME_PATTERNS` in
 - `parlay identity --agent helm` reads `identity.md` back with the launch-spec
   frontmatter stripped.
 - `parlay launch` (no args) discovers both agents' launch specs and reports them
-  live.
+  `[ghost]` — registered with no listener process, which is the truthful state
+  for a sandbox that never arms one (liveness is registry ∩ process table).
 - `parlay doctor` with `PARLAY_AGENT_ID=helm` reports PASS on identity, registry
   membership, and server reachability. Its output is captured and those three
   lines are asserted; the WARNs about the monitor and the eval engine are
-  expected and not asserted.
+  expected and not asserted. The script pins `PARLAY_EVAL_ENGINE_URL` to a dead
+  port so that WARN is about the sandbox — without the pin, doctor probes the
+  hardcoded `:4343` and can report PASS off a live engine the sandbox never
+  started.
 
 Every bullet above is one of the script's own PASS/FAIL checks, not something
 observed by eye — if one stops holding, `bootstrap-sandbox.sh` fails.
@@ -376,8 +380,10 @@ observed by eye — if one stops holding, `bootstrap-sandbox.sh` fails.
   and settings shapes, but this example was exercised against `packages/server`.
 - Anything on Linux or Windows. macOS only.
 - `parlay doctor` also probes an eval engine at `http://127.0.0.1:4343`
-  (`PARLAY_EVAL_ENGINE_URL`). Nothing in this example provides one; that check
-  reports on whatever happens to be listening on the machine you run it on.
+  (`PARLAY_EVAL_ENGINE_URL`). Nothing in this example provides one.
+  `bootstrap-sandbox.sh` pins the URL to a dead port so its doctor run WARNs
+  honestly; run doctor by hand without that pin and the check reports on
+  whatever happens to be listening on the machine you run it on.
 
 ## Sanitizing
 
