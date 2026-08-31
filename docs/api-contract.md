@@ -316,6 +316,7 @@ interface SubscribersInfo {
   registered?: { count?: number; agents?: AgentInfo[] }
   presence_broadcasts?: number
   capability_suppressed?: Record<string, number>  // TS server only: gated event → deliveries suppressed by capability declarations; devices[] entries likewise carry surface/accepts when the connection declared ?caps=
+  capability_declarations?: Array<{ surface: { kind: string; instance?: string }; accepts: string[]; content: string[]; interactions: string[]; connectedAt: string; device?: string }>  // TS server only: one entry per declared SSE connection (device-identified or not), all three declaration axes
   presence?: Array<{ channel: string; lastSeen: string | null }>   // read by tab-online.ts
   memory?: Record<string, number>     // read by commands-doctor.ts, optional
   history?: Record<string, number>    // read by commands-doctor.ts, optional

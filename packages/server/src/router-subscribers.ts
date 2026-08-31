@@ -33,6 +33,20 @@ export function handleSubscribersRequest(req: Request, pathname: string): Respon
       // observability half of the delivery gate (docs/interface-capabilities.md).
       ...(c.caps ? { surface: c.caps.surface, accepts: Object.keys(c.caps.accepts).sort() } : {}),
     }))
+  // Every declared connection, device-identified or not — the "declarations"
+  // half of the observability contract (docs/interface-capabilities.md pairs
+  // it with the suppression counters here). content/interactions are the
+  // advisory axes, exposed so producers can consult them before v1 gates them.
+  const capabilityDeclarations = Array.from(sseClients.values())
+    .filter(c => c.caps)
+    .map(c => ({
+      surface:      c.caps!.surface,
+      accepts:      Object.keys(c.caps!.accepts).sort(),
+      content:      c.caps!.content,
+      interactions: c.caps!.interactions,
+      connectedAt:  c.connectedAt,
+      ...(c.device ? { device: c.device } : {}),
+    }))
   const mem = process.memoryUsage()
   const historyBytes = history.reduce((n, m) => n + JSON.stringify(m).length, 0)
   const body = {
@@ -42,6 +56,7 @@ export function handleSubscribersRequest(req: Request, pathname: string): Respon
     presence,
     presence_broadcasts: presenceBroadcasts,
     capability_suppressed: suppressedCounts(),
+    capability_declarations: capabilityDeclarations,
     devices,
     memory: {
       rssMB:          +(mem.rss / 1048576).toFixed(1),
