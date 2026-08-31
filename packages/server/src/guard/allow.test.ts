@@ -92,8 +92,8 @@ describe("D9: the panel and the CLI still work on every newly guarded route", ()
   })
 
   test("the phone on the LAN can still upload and set a draft", () => {
-    const lan = "http://192.168.1.42:31337"
-    expect(guardChatRequest(req("PUT", "/api/chat/draft", { origin: lan, host: "192.168.1.42:31337" }), "/api/chat/draft")).toBeNull()
+    const lan = "http://192.168.1.42:4242"
+    expect(guardChatRequest(req("PUT", "/api/chat/draft", { origin: lan, host: "192.168.1.42:4242" }), "/api/chat/draft")).toBeNull()
     const upload = req("POST", "/api/chat/upload", { origin: lan, host: "localhost:4242", contentType: "multipart/form-data; boundary=x" })
     expect(guardChatRequest(upload, "/api/chat/upload")).toBeNull()
   })

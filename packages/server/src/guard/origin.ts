@@ -3,7 +3,7 @@
 // ./index.ts for how they are applied and ./paths.ts for where.
 
 // Loopback and private-LAN literals. The phone reaches the panel over the LAN
-// (Origin http://192.168.x.x:31337) and Pulse may reverse-proxy /api/chat/* to
+// (Origin http://192.168.x.x:4242) and legacy Pulse may reverse-proxy /api/chat/* to
 // this server under a rewritten Host, so a strict same-host test alone would
 // cut off legitimate local clients. None of these can be an attacker's origin
 // without them already serving pages from inside the captain's network — and
@@ -44,7 +44,7 @@ export function originAllowed(req: Request): boolean {
   if (u.protocol !== "http:" && u.protocol !== "https:") return false
 
   // Same-origin: the Origin's host:port matches the Host this request arrived
-  // on. Covers localhost:31337, the LAN IP, and any tunnel that forwards Host.
+  // on. Covers localhost:4242, the LAN IP, and any tunnel that forwards Host.
   const host = req.headers.get("host") ?? safeUrlHost(req.url)
   if (host && u.host.toLowerCase() === host.toLowerCase()) return true
 

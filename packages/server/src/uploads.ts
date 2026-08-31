@@ -12,7 +12,7 @@ import { CORS } from "./sse"
 //
 // ── AGENT CONTRACT: URL → filesystem mapping (canonical, #17 addendum) ──────
 // Every image URL of the form
-//     /api/chat/uploads/<name>          (or http://<host>:31337/api/chat/uploads/<name>)
+//     /api/chat/uploads/<name>          (or http://<host>:4242/api/chat/uploads/<name>)
 // maps to the on-disk file
 //     ~/exchange/parlay-uploads/<name>
 // Names are content-addressed (sha1-12 + ext) and the location is stable.
