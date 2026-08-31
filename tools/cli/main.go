@@ -87,6 +87,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.StatusVerb(args) // fold §3.6 keyed status verb — distinct from bare `parlay`
 	case "crew-state":
 		commands.CrewState(args)
+	case "status-migrate":
+		commands.StatusMigrate(args)
 	case "supervise":
 		commands.Supervise(args)
 	case "context-check":
