@@ -109,6 +109,9 @@ major; names are `^[a-z][a-z0-9_]{0,63}$`; bounded counts (≤64 accepts,
 ≤32 per token list); bounded total size (8 KiB). An **invalid declaration
 refuses the connection** — falling back to legacy full delivery would
 *widen* what a narrowing surface receives, the exact wrong failure mode.
+On the wire the refusal is **HTTP 400 with a JSON body `{ "error":
+"<reason>" }`** and no stream — a surface author should surface that
+reason, not retry.
 
 ## Negotiation mechanics
 
