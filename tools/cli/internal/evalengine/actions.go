@@ -1,4 +1,4 @@
-package main
+package evalengine
 
 // ── The ACTION PROTOCOL (Go side; mirrors brain-v4vje §1) ──────────────────────
 //
