@@ -802,6 +802,12 @@ broadcasts `{}`); **400** `{"error": "event is required"}` /
 (`Allow: GET, POST`) on other methods.
 
 **The allowlist is one name per real producer** — `tool_event` alone today.
+Since PR #164 it is no longer hand-written: at init it is derived from the
+enrolled source contracts (`contracts/sources/`, embedded via
+`internal/sourcecontracts`) as the union of `emits` across contracts with the
+observability trust posture — widening it means landing a reviewed contract,
+not editing a map. The refusal rosters below stay hard-coded in the handler;
+no enrollment can admit one of those names.
 Anything else is refused, including every name the server produces from its
 own persisted state (`message`, `history`, `agents`, `agent_register`,
 `message_received`, `presence_map`, `commands`, `command_update`), every

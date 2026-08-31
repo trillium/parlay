@@ -1173,9 +1173,12 @@ paths:
       x-parlay-server: go-only
       summary: External-producer ingress into the SSE hub (allowlist)
       description: >
-        One name per real producer — tool_event alone today. Everything else
-        is 400, including server-produced names and panel-aiming names.
-        Contract owned by events_ingress.go's doc comment.
+        One name per real producer — tool_event alone today. The allowlist is
+        derived at init from enrolled source contracts (contracts/sources/,
+        observability trust posture); widening it means landing a reviewed
+        contract. Everything else is 400, including server-produced names and
+        panel-aiming names (those refusal rosters stay hard-coded in the
+        handler). Contract owned by events_ingress.go's doc comment.
       requestBody:
         required: true
         content:
