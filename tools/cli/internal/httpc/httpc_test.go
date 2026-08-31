@@ -216,3 +216,62 @@ func TestClientIsBoundedAndOnlyTheLongPollClientIsNot(t *testing.T) {
 		t.Errorf("UnboundedClient.Timeout = %v, want 0 — the long-poll caller must not be severed", UnboundedClient.Timeout)
 	}
 }
+
+// ── Error bodies travel into Die messages (register-agent 400 fix) ──────────
+// A bare "POST /api/chat/register-agent failed: 400 Bad Request" once cost a
+// multi-hour hunt because the server's explanatory body was discarded. The
+// body is where the actual reason lives; it rides along, bounded and
+// flattened to one line.
+
+func TestPostJSONDieMessageCarriesTheErrorBody(t *testing.T) {
+	withServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"agent id is required"}`, http.StatusBadRequest)
+	})
+
+	oldExit := Exit
+	Exit = testsupport.RecordingExit()
+	defer func() { Exit = oldExit }()
+
+	msg := captureStderr(t, func() {
+		testsupport.Capture(func() {
+			PostJSON[pingResponse]("/api/chat/register-agent", map[string]any{})
+		})
+	})
+	if !strings.Contains(msg, "400 Bad Request") || !strings.Contains(msg, "agent id is required") {
+		t.Errorf("Die message = %q, want the status AND the server's stated reason", msg)
+	}
+}
+
+func TestGetJSONDieMessageCarriesTheErrorBodyBounded(t *testing.T) {
+	flood := strings.Repeat("x", 64*1024)
+	withServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, flood, http.StatusBadGateway)
+	})
+
+	oldExit := Exit
+	Exit = testsupport.RecordingExit()
+	defer func() { Exit = oldExit }()
+
+	msg := captureStderr(t, func() {
+		testsupport.Capture(func() {
+			GetJSON[pingResponse]("/api/ping")
+		})
+	})
+	if !strings.Contains(msg, "502") || !strings.Contains(msg, "xxx") {
+		t.Fatalf("Die message = %q, want the status plus a body excerpt", msg)
+	}
+	if len(msg) > errorBodyLimit+128 {
+		t.Errorf("Die message is %d bytes; a misbehaving server must not flood stderr (cap %d + prefix)", len(msg), errorBodyLimit)
+	}
+}
+
+func TestErrorDetailFlattensAndSkipsEmptyBodies(t *testing.T) {
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader("line one\n\tline two\n"))}
+	if got := errorDetail(resp); got != " — line one line two" {
+		t.Errorf("errorDetail(multi-line) = %q, want one flattened line with the separator prefix", got)
+	}
+	resp = &http.Response{Body: io.NopCloser(strings.NewReader("  \n \t "))}
+	if got := errorDetail(resp); got != "" {
+		t.Errorf("errorDetail(whitespace-only) = %q, want empty — no dangling separator", got)
+	}
+}

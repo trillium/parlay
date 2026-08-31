@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -98,7 +99,62 @@ var unreportedVerbs = map[string]bool{
 
 // client is this package's own transport. Deliberately not httpc.Client:
 // that one has no timeout by design, and every request here must be bounded.
-var client = &http.Client{Timeout: reportTimeout}
+//
+// It also gets its own http.Transport with keep-alives off, rather than
+// sharing http.DefaultTransport's connection pool with the verb's real
+// requests. Telemetry must not be able to poison the command's transport:
+// the register-agent 400 investigation (robots-tjx5) traced legitimate verb
+// requests failing after this package's doomed pre-verb POST to a route the
+// server didn't have, on a shared keep-alive connection. One connection per
+// report is cheap (localhost, ≤1 per heartbeat interval) and keeps the two
+// traffic classes physically separate.
+var client = &http.Client{
+	Timeout:   reportTimeout,
+	Transport: &http.Transport{DisableKeepAlives: true},
+}
+
+// unsupportedCacheTTL bounds how long one "the server has no command
+// registry" answer (an actual 404 from the server, not a network failure)
+// suppresses the pre-verb start report across processes. The in-process
+// `disabled` flag cannot help here — every CLI invocation is a new process,
+// so before this cache each verb against an older server paid the doomed
+// POST (and its failure modes) all over again. An hour keeps the cost of a
+// wrong cache entry at one skipped report window after a server upgrade.
+const unsupportedCacheTTL = time.Hour
+
+// unsupportedMarkerPath is where that answer is remembered. Lives under
+// StateHome next to config.json; content is the server URL the 404 came
+// from, so a marker for one server never silences reporting to another.
+func unsupportedMarkerPath() string {
+	return filepath.Join(config.StateHome(), "command-report-unsupported")
+}
+
+// serverLacksRegistry reports whether a fresh marker says the CURRENT
+// configured server answered 404 to command-start. Best-effort: any doubt
+// (missing, stale, other server, unreadable) means "try the report".
+func serverLacksRegistry() bool {
+	path := unsupportedMarkerPath()
+	fi, err := os.Stat(path)
+	if err != nil || time.Since(fi.ModTime()) > unsupportedCacheTTL {
+		return false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(b)) == config.ServerURL()
+}
+
+// rememberServerLacksRegistry writes the marker. Best-effort and silent,
+// like everything else here — a failed write just means the next process
+// probes again.
+func rememberServerLacksRegistry() {
+	path := unsupportedMarkerPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(config.ServerURL()+"\n"), 0o644)
+}
 
 type reporter struct {
 	id       string
@@ -122,6 +178,11 @@ func Begin(verb string, argv []string) func(exitCode int) {
 	if !enabled(verb) {
 		return func(int) {}
 	}
+	if serverLacksRegistry() {
+		// A recent, real 404 from this exact server: it has no command
+		// registry, so don't pay the doomed pre-verb request per process.
+		return func(int) {}
+	}
 
 	r := &reporter{
 		id:   newID(),
@@ -135,9 +196,15 @@ func Begin(verb string, argv []string) func(exitCode int) {
 		"pid":   os.Getpid(),
 	}
 
-	if !r.post("/api/chat/command-start", r.start) {
+	if ok, status := postJSON("/api/chat/command-start", r.start, nil); !ok {
 		// The server is unreachable, too old to know this route, or refused
-		// it. Give up permanently rather than paying a timeout per report.
+		// it. Give up permanently rather than paying a timeout per report —
+		// and when the server itself SAID the route doesn't exist (a real
+		// 404, not a network failure), remember that across processes so
+		// every subsequent invocation skips the doomed request outright.
+		if status == http.StatusNotFound {
+			rememberServerLacksRegistry()
+		}
 		r.disabled.Store(true)
 		return func(int) {}
 	}
@@ -210,22 +277,31 @@ func (r *reporter) postInto(path string, body any, out any) bool {
 	if r.disabled.Load() {
 		return false
 	}
+	ok, _ := postJSON(path, body, out)
+	return ok
+}
+
+// postJSON is the transport primitive under postInto, additionally exposing
+// the HTTP status (0 when the request never got an answer) so Begin can
+// tell "the server said this route doesn't exist" apart from "the server
+// couldn't be reached".
+func postJSON(path string, body any, out any) (ok bool, status int) {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return false
+		return false, 0
 	}
 	resp, err := client.Post(config.ServerURL()+path, "application/json", bytes.NewReader(payload))
 	if err != nil {
-		return false
+		return false, 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false
+		return false, resp.StatusCode
 	}
 	if out == nil {
-		return true
+		return true, resp.StatusCode
 	}
-	return json.NewDecoder(resp.Body).Decode(out) == nil
+	return json.NewDecoder(resp.Body).Decode(out) == nil, resp.StatusCode
 }
 
 // enabled reports whether this verb should report itself.

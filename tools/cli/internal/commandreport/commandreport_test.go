@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -339,5 +340,76 @@ func TestStartPayloadCarriesNoPositionalsAtAll(t *testing.T) {
 		if strings.Contains(string(raw), leak) {
 			t.Errorf("start payload leaked %q: %s", leak, raw)
 		}
+	}
+}
+
+// ── The 404 negative-capability cache (register-agent 400 fix) ──────────────
+// Production runs a server without the command-registry routes, so every CLI
+// invocation paid a doomed pre-verb POST — and that request was the trigger
+// in the register-agent 400 investigation (robots-tjx5). A real 404 answer
+// is now remembered across processes; anything short of a real 404 is not.
+
+func TestA404IsRememberedAcrossProcesses(t *testing.T) {
+	rc := withRecorder(t)
+	rc.code = http.StatusNotFound
+
+	Begin("send", nil)
+	if got := len(rc.paths()); got != 1 {
+		t.Fatalf("first Begin against a 404 server made %d requests, want 1", got)
+	}
+	if !serverLacksRegistry() {
+		t.Fatal("a real 404 from the configured server must be cached")
+	}
+
+	// A "new process" is just a fresh Begin — the in-process disabled flag
+	// plays no part; only the on-disk marker can suppress this probe.
+	Begin("stats", nil)
+	if got := len(rc.paths()); got != 1 {
+		t.Fatalf("second Begin still probed the server (%d requests total, want 1): the marker did not suppress it", got)
+	}
+}
+
+func TestNetworkFailureIsNotCachedAsUnsupported(t *testing.T) {
+	testsupport.TempStateHome(t)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1") // nothing listens here
+
+	Begin("send", nil)
+	if serverLacksRegistry() {
+		t.Fatal("an unreachable server is not a server that answered 404; nothing may be cached")
+	}
+}
+
+func TestNon404RejectionIsNotCachedAsUnsupported(t *testing.T) {
+	rc := withRecorder(t)
+	rc.code = http.StatusInternalServerError
+
+	Begin("send", nil)
+	if serverLacksRegistry() {
+		t.Fatal("a 500 means the route may well exist; only a real 404 may be cached")
+	}
+}
+
+func TestUnsupportedMarkerIsPerServer(t *testing.T) {
+	rc := withRecorder(t)
+	rememberServerLacksRegistry()
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:65000") // a DIFFERENT server now configured
+	if serverLacksRegistry() {
+		t.Fatal("a marker recorded for one server must not silence reporting to another")
+	}
+	_ = rc
+}
+
+func TestUnsupportedMarkerExpires(t *testing.T) {
+	withRecorder(t)
+	rememberServerLacksRegistry()
+	if !serverLacksRegistry() {
+		t.Fatal("fresh marker for the configured server should hold")
+	}
+	old := time.Now().Add(-unsupportedCacheTTL - time.Minute)
+	if err := os.Chtimes(unsupportedMarkerPath(), old, old); err != nil {
+		t.Fatalf("age the marker: %v", err)
+	}
+	if serverLacksRegistry() {
+		t.Fatal("an expired marker must not suppress the probe — servers get upgraded")
 	}
 }
