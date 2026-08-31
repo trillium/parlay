@@ -20,7 +20,7 @@ func (s *sinkRecorder) record(name string, data any) {
 }
 
 func TestBroadcastForwardsOnlyAllowlistedEventsToBusSink(t *testing.T) {
-	h := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	h := newHubCore()
 	rec := &sinkRecorder{}
 	h.SetBusSink(rec.record)
 
@@ -47,7 +47,7 @@ func TestBroadcastForwardsOnlyAllowlistedEventsToBusSink(t *testing.T) {
 }
 
 func TestBroadcastToDeviceNeverReachesBusSink(t *testing.T) {
-	h := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	h := newHubCore()
 	rec := &sinkRecorder{}
 	h.SetBusSink(rec.record)
 
@@ -62,7 +62,7 @@ func TestBroadcastToDeviceNeverReachesBusSink(t *testing.T) {
 }
 
 func TestBroadcastFromBusEnforcesAllowlistAndNeverReEntersSink(t *testing.T) {
-	h := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	h := newHubCore()
 	rec := &sinkRecorder{}
 	h.SetBusSink(rec.record)
 	ch, cancel := h.subscribe("")
@@ -117,8 +117,8 @@ func TestBusDeliveredEventRendersIdenticalSSEWireBytes(t *testing.T) {
 		send()
 		return <-ch
 	}
-	inProc := &Hub{clients: make(map[chan sseEvent]*sseClient)}
-	viaBus := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	inProc := newHubCore()
+	viaBus := newHubCore()
 	evInProc := receive(inProc, func() { inProc.broadcast(eventMessage, payload) })
 	evViaBus := receive(viaBus, func() { viaBus.BroadcastFromBus(eventMessage, json.RawMessage(raw)) })
 
@@ -151,8 +151,8 @@ func TestBroadcastOutputIdenticalWithAndWithoutSink(t *testing.T) {
 		return got
 	}
 
-	plain := &Hub{clients: make(map[chan sseEvent]*sseClient)}
-	sinked := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	plain := newHubCore()
+	sinked := newHubCore()
 	sinked.SetBusSink((&sinkRecorder{}).record)
 
 	gotPlain := sequence(plain)

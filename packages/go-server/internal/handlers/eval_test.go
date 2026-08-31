@@ -66,7 +66,7 @@ func TestHandleEvalWithDevice(t *testing.T) {
 }
 
 func TestHandleEvalPushMissingStream(t *testing.T) {
-	hub := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	hub := newHubCore()
 	handler := handleEvalPush(hub)
 
 	body := evalPushRequest{
@@ -87,7 +87,7 @@ func TestHandleEvalPushMissingStream(t *testing.T) {
 }
 
 func TestHandleEvalPushUnknownStream(t *testing.T) {
-	hub := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	hub := newHubCore()
 	handler := handleEvalPush(hub)
 
 	body := evalPushRequest{
@@ -119,7 +119,7 @@ func TestHandleEvalPushWithKnownStream(t *testing.T) {
 		streamDeviceMapMu.Unlock()
 	}()
 
-	hub := &Hub{clients: make(map[chan sseEvent]*sseClient)}
+	hub := newHubCore()
 	handler := handleEvalPush(hub)
 
 	body := evalPushRequest{

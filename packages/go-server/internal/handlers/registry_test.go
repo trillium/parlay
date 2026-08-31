@@ -186,7 +186,7 @@ func TestHandleSubscribersReportsPollAndRegisteredAndPresence(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/subscribers", nil)
 	rec := httptest.NewRecorder()
-	handleSubscribers(st)(rec, req)
+	handleSubscribers(st, nil)(rec, req)
 
 	var got subscribersResponse
 	decodeBody(t, rec, &got)
@@ -212,7 +212,7 @@ func TestHandleSubscribersDefaultChannelReportsNullChannel(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/subscribers", nil)
 	rec := httptest.NewRecorder()
-	handleSubscribers(st)(rec, req)
+	handleSubscribers(st, nil)(rec, req)
 
 	var got subscribersResponse
 	decodeBody(t, rec, &got)

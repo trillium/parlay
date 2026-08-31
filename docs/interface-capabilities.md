@@ -217,13 +217,18 @@ declaration decides who *receives*, never who may *send*.
    declares `accepts: navigate, reload, device_cmd, input_action, draft`
    (exactly what its handlers execute today), proving the path end to end
    with zero behavior change.
-4. **Follow-ups, tracked on the epic:** Go-server (`packages/go-server`)
-   parity for the same param/gate/echo before the panel's SSE connection
-   moves there; voice/terminal/widget declarations; promotion of
-   `content`/`interactions` from advisory to gating when their consumers
-   land. On the adopted Q2d wire, this contract becomes the typed
-   handshake riding Gas City's plane — the schema above is what that
-   handshake carries, so nothing here is throwaway.
+4. **Go-server parity** (`packages/go-server`): the same param/gate/echo,
+   landed ahead of the panel's SSE connection moving there. The engine is
+   mirrored as `packages/go-server/internal/capability` (Go `internal/`
+   visibility keeps the tools/cli package unreachable across modules); a
+   sync test pins the mirror byte-identical to the reference engine, so
+   the two cannot drift silently.
+5. **Follow-ups, tracked on the epic:** voice/terminal/widget
+   declarations; promotion of `content`/`interactions` from advisory to
+   gating when their consumers land. On the adopted Q2d wire, this
+   contract becomes the typed handshake riding Gas City's plane — the
+   schema above is what that handshake carries, so nothing here is
+   throwaway.
 
 ## Proposed gap-fills flagged for review
 

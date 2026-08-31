@@ -165,14 +165,18 @@ type subscribersResponse struct {
 		Agents []store.AgentInfo `json:"agents"`
 	} `json:"registered"`
 	Presence []subscribersPresenceEntry `json:"presence"`
+	// The capability observability pair (docs/interface-capabilities.md):
+	// per-event suppression counters and every live ?caps= declaration.
+	CapabilitySuppressed   map[string]int               `json:"capability_suppressed"`
+	CapabilityDeclarations []capabilityDeclarationEntry `json:"capability_declarations"`
 }
 
 // handleSubscribers implements GET /api/chat/subscribers, combining
 // PresenceTracker.Snapshot with RegistryStore.List as store.go's own doc
-// comment on Snapshot anticipates. `memory`, `history`, and
-// `presence_broadcasts` are deliberately omitted — see the package doc
-// comment.
-func handleSubscribers(st *store.Store) http.HandlerFunc {
+// comment on Snapshot anticipates, plus the hub's capability observability
+// fields. `memory`, `history`, and `presence_broadcasts` are deliberately
+// omitted — see the package doc comment.
+func handleSubscribers(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -183,6 +187,8 @@ func handleSubscribers(st *store.Store) http.HandlerFunc {
 
 		var resp subscribersResponse
 		resp.Parlay.Clients = snap.PanelClients
+		resp.CapabilitySuppressed = hub.capabilitySuppressed()
+		resp.CapabilityDeclarations = hub.capabilityDeclarations()
 
 		resp.Poll.Count = snap.PollCount
 		resp.Poll.Channels = make([]subscribersPollChannel, 0, len(snap.PollChannels))

@@ -385,8 +385,8 @@ paths:
       summary: Connection/presence/memory snapshot (guarded)
       description: >
         Go serves a subset — parlay/poll/registered plus thin presence
-        entries {channel, lastSeen}; no memory/history/devices/
-        presence_broadcasts/capability_suppressed (x-parlay-divergence 14).
+        entries {channel, lastSeen} plus both capability fields; no
+        memory/history/devices/presence_broadcasts (x-parlay-divergence 14).
       responses:
         "200":
           content:
@@ -432,7 +432,21 @@ paths:
                   capability_suppressed:
                     type: object
                     additionalProperties: { type: integer }
-                    description: "TS only: gated event name -> suppressed delivery count."
+                    description: "Both servers: gated event name -> suppressed delivery count."
+                  capability_declarations:
+                    type: array
+                    description: >
+                      Both servers: one entry per declared SSE connection,
+                      all three axes, sorted by connectedAt.
+                    items:
+                      type: object
+                      properties:
+                        surface: { type: object }
+                        accepts: { type: array, items: { type: string } }
+                        content: { type: array, items: { type: string } }
+                        interactions: { type: array, items: { type: string } }
+                        connectedAt: { type: string }
+                        device: { type: string }
                   devices:
                     type: array
                     description: TS only.
@@ -1155,7 +1169,7 @@ paths:
           in: query
           schema: { type: string }
           description: >
-            TS only. URL-encoded JSON capability declaration
+            Both servers. URL-encoded JSON capability declaration
             (docs/interface-capabilities.md). Invalid = 400, not legacy
             fallback. Gates delivery of navigate/reload/device_cmd/
             input_action/draft, subtraction-only.
@@ -1166,7 +1180,7 @@ paths:
             text/event-stream:
               schema: { type: string }
         "400":
-          description: Invalid ?caps= declaration (TS).
+          description: Invalid ?caps= declaration.
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
     post:
       operationId: eventsIngress
