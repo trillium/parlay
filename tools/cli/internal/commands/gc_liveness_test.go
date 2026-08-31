@@ -21,19 +21,37 @@ func fastLivenessPoll(t *testing.T) {
 	t.Cleanup(func() { gcLivenessPollInterval = old })
 }
 
-// subscribersServer serves GET /api/chat/subscribers with the given channels.
+// subscribersServer serves GET /api/chat/subscribers in the REAL response
+// shape both servers emit (an object, never a bare array — the original
+// helper here served an array and hid that the production parse could never
+// match). The given channels appear as open poll waiters; each also gets a
+// listening presence row, and a decoy "registered-only" agent proves that
+// registration alone is not treated as liveness.
 func subscribersServer(t *testing.T, channels ...string) *httptest.Server {
 	t.Helper()
-	subs := make([]map[string]string, 0, len(channels))
+	pollChannels := make([]map[string]any, 0, len(channels))
+	presence := make([]map[string]any, 0, len(channels)+1)
 	for _, c := range channels {
-		subs = append(subs, map[string]string{"channel": c})
+		pollChannels = append(pollChannels, map[string]any{"channel": c})
+		presence = append(presence, map[string]any{"channel": c, "listening": true, "status": "listening"})
+	}
+	// The pre-registered-but-never-active decoy: what bin/parlay-spawn's
+	// register-agent POST alone produces (Bun server shape).
+	presence = append(presence, map[string]any{
+		"channel": "registered-only-decoy", "listening": false, "status": "offline", "lastSeen": nil,
+	})
+	body := map[string]any{
+		"parlay":     map[string]any{"clients": 0},
+		"poll":       map[string]any{"count": len(pollChannels), "channels": pollChannels},
+		"registered": map[string]any{"count": len(channels) + 1},
+		"presence":   presence,
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/chat/subscribers" {
 			http.NotFound(w, r)
 			return
 		}
-		json.NewEncoder(w).Encode(subs)
+		json.NewEncoder(w).Encode(body)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -112,6 +130,33 @@ func TestGCLivenessTimeoutOnTmuxDeliversFixedKick(t *testing.T) {
 	}
 }
 
+// TestGCLivenessRegistrationAloneDoesNotConfirm pins the false-positive
+// boundary: bin/parlay-spawn's pre-launch register-agent POST makes the
+// channel appear under `registered` and as an offline presence row before
+// the agent has done anything. That must never read as liveness.
+func TestGCLivenessRegistrationAloneDoesNotConfirm(t *testing.T) {
+	testsupport.TempStateHome(t)
+	fastLivenessPoll(t)
+	setCityProvider(t, "subprocess")
+	bin, _ := writeSpawnFakeGC(t, `{"ok":true}`, 0)
+	t.Setenv("PARLAY_GC", bin)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"poll":       map[string]any{"count": 0, "channels": []map[string]any{}},
+			"registered": map[string]any{"count": 1, "agents": []map[string]any{{"id": "agent-x", "name": "Agent X"}}},
+			"presence": []map[string]any{
+				{"channel": "agent-x", "listening": false, "status": "offline", "lastSeen": nil},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	res := gcLivenessRun("agent-x", "pa-123", srv.URL, 50*time.Millisecond)
+	if res.Confirmed {
+		t.Fatalf("registration alone confirmed liveness — the registered/offline rows are the spawner's writes, not the agent's: %+v", res)
+	}
+}
+
 func TestGCLivenessConfirmSkipsSlowPollTail(t *testing.T) {
 	// The agent enrolls between polls: liveness must confirm on a later poll,
 	// not give up after the first miss.
@@ -120,10 +165,14 @@ func TestGCLivenessConfirmSkipsSlowPollTail(t *testing.T) {
 	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) >= 3 {
-			json.NewEncoder(w).Encode([]map[string]string{{"channel": "agent-x"}})
+			json.NewEncoder(w).Encode(map[string]any{
+				"poll": map[string]any{"count": 1, "channels": []map[string]any{{"channel": "agent-x"}}},
+			})
 			return
 		}
-		json.NewEncoder(w).Encode([]map[string]string{})
+		json.NewEncoder(w).Encode(map[string]any{
+			"poll": map[string]any{"count": 0, "channels": []map[string]any{}},
+		})
 	}))
 	t.Cleanup(srv.Close)
 

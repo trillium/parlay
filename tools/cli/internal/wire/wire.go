@@ -42,7 +42,23 @@ type SubscribersInfo struct {
 		Count  int         `json:"count,omitempty"`
 		Agents []AgentInfo `json:"agents,omitempty"`
 	} `json:"registered,omitempty"`
+	// Presence is per-channel activity. Registration alone also creates an
+	// entry (Bun server: status "offline", lastSeen null), so a bare channel
+	// match here does NOT prove the agent itself ever did anything —
+	// consumers that need the agent's own emitted effect must require
+	// Listening (Bun-only; the Go server omits it) or an open poll waiter
+	// in Poll.Channels.
+	Presence []PresenceEntry `json:"presence,omitempty"`
+
 	PresenceBroadcasts int `json:"presence_broadcasts,omitempty"`
+}
+
+// PresenceEntry is one /api/chat/subscribers presence row.
+type PresenceEntry struct {
+	Channel   string `json:"channel"`
+	Listening bool   `json:"listening,omitempty"`
+	Status    string `json:"status,omitempty"`
+	LastSeen  string `json:"lastSeen,omitempty"` // RFC3339; JSON null decodes to ""
 }
 
 // CommandInvocation is one live-command record from GET /api/chat/commands

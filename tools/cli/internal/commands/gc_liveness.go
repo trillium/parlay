@@ -38,6 +38,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
 // gcLivenessKick is the fixed steering message used when the startup turn
@@ -64,9 +65,17 @@ type gcLivenessResult struct {
 // gcLivenessPollInterval is how often the subscribers endpoint is polled.
 var gcLivenessPollInterval = 1 * time.Second
 
-// gcLivenessObserved asks the parlay server whether agentID's channel is
-// registered. Bounded client per call — never the unbounded one
+// gcLivenessObserved asks the parlay server whether agentID's channel shows
+// the agent's OWN activity. Bounded client per call — never the unbounded one
 // (internal/httpc doctrine: monitor.pollOnce is its only legitimate caller).
+//
+// The signal is deliberately narrow. /api/chat/subscribers also lists the
+// channel under `registered` and (Bun server) as an "offline" presence row
+// as soon as bin/parlay-spawn's pre-launch register-agent POST lands, and
+// the go-server's presence is touched by the spawner's own hello reply —
+// none of which the agent emitted. What only the agent can produce is its
+// poll listener: an open waiter in poll.channels, or (Bun server) a presence
+// row still inside the listening grace window.
 func gcLivenessObserved(server, agentID string) bool {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(strings.TrimSuffix(server, "/") + "/api/chat/subscribers")
@@ -77,14 +86,19 @@ func gcLivenessObserved(server, agentID string) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false
 	}
-	var subs []struct {
-		Channel string `json:"channel"`
-	}
+	var subs wire.SubscribersInfo
 	if err := json.NewDecoder(resp.Body).Decode(&subs); err != nil {
 		return false
 	}
-	for _, s := range subs {
-		if s.Channel == agentID {
+	if subs.Poll != nil {
+		for _, c := range subs.Poll.Channels {
+			if c.Channel == agentID {
+				return true
+			}
+		}
+	}
+	for _, p := range subs.Presence {
+		if p.Channel == agentID && p.Listening {
 			return true
 		}
 	}
