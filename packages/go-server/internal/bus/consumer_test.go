@@ -181,7 +181,7 @@ func TestConsumerDedupesBySeqAndPersistsCursor(t *testing.T) {
 		busLine(2, "parlay.message", "p", `{"n":2}`),
 		busLine(2, "parlay.message", "p", `{"n":2}`), // at-least-once replay
 		busLine(1, "parlay.message", "p", `{"n":1}`), // regression
-		"not json at all",                            // malformed: skipped, stream continues
+		"not json at all", // malformed: skipped, stream continues
 		busLine(3, "parlay.message", "p", `{"n":3}`),
 	)
 	ch := make(chan delivery, 16)
