@@ -43,9 +43,10 @@ concurrency:
 jobs:
   # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/eval-engine,
   #    packages/go-server ───────────────────────────────────────────────────
-  # Five separate modules, no root go.work, so each is entered on its own.
-  # All five are pure standard library (no go.sum, no external requires), which
-  # is why the whole suite runs in seconds.
+  # Separate modules, no root go.work, so each is entered on its own.
+  # Every module except tools/cli is pure standard library; tools/cli requires
+  # the beads library (crew store, docs/status-lift-topology.md) and is the
+  # only module with a go.sum.
   go:
     name: Go (build, vet, test, gofmt)
     runs-on: ubuntu-latest
@@ -65,6 +66,15 @@ jobs:
     # derives the truth from the filesystem instead.
     env:
       GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/eval-engine packages/go-server packages/spawn-profiles
+      # CGO off for the whole job: with CGO on, the beads dependency's embedded-
+      # Dolt path drags in a C++ ICU binding that needs ICU headers installed
+      # (and minutes of cgo compilation). CGO_ENABLED=0 selects the library's
+      # no-cgo build (embedded mode then refuses at runtime; server mode still
+      # works), compiles in seconds, and -race works without cgo on the
+      # platforms CI uses. The store round-trip that DOES need CGO+ICU is the
+      # opt-in TestRealStoreRoundTrip (PARLAY_BEADS_INTEGRATION=1), run
+      # manually on dependency bumps, not here.
+      CGO_ENABLED: 0
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -72,11 +82,11 @@ jobs:
         with:
           # Matches the `go 1.26` directive every module declares.
           go-version: '1.26'
-          # No module has a go.sum (zero external dependencies), so the cache
-          # key is keyed off the go.mod files instead. The value here is the
-          # build cache, not a download cache.
+          # Keyed off each module's go.mod plus the one go.sum that exists
+          # (tools/cli). The value here is the build + module download cache.
           cache-dependency-path: |
             tools/cli/go.mod
+            tools/cli/go.sum
             tools/relay/go.mod
             tools/parlay-bin/go.mod
             packages/eval-engine/go.mod
