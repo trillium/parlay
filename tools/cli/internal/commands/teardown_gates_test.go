@@ -20,6 +20,15 @@ func stubLiveness(t *testing.T, s worktreeliveness.State) {
 	t.Cleanup(func() { collectWorktreeLiveness = prev })
 }
 
+// stubBorrowIndex pins the borrow scan the same way, covering the fail-closed
+// scan-error case without an unreadable filesystem.
+func stubBorrowIndex(t *testing.T, idx map[string][]borrowRef, err error) {
+	t.Helper()
+	prev := collectBorrowIndex
+	collectBorrowIndex = func() (map[string][]borrowRef, error) { return idx, err }
+	t.Cleanup(func() { collectBorrowIndex = prev })
+}
+
 // agedWorktree returns a directory containing a ".git" pointer whose mtime is
 // backdated an hour, so the freshness quarantine sees a comfortably old tree.
 func agedWorktree(t *testing.T) string {
@@ -70,6 +79,7 @@ func TestPreGitGateRefusesLiveWorktreeEvenForced(t *testing.T) {
 
 func TestPreGitGateFreshnessQuarantine(t *testing.T) {
 	stubLiveness(t, worktreeliveness.StateOf()) // scanned, nothing live
+	stubBorrowIndex(t, nil, nil)
 	wt := t.TempDir()
 	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: x\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -89,6 +99,7 @@ func TestPreGitGateFreshnessQuarantine(t *testing.T) {
 
 func TestPreGitGateRefusesUnstatableAge(t *testing.T) {
 	stubLiveness(t, worktreeliveness.StateOf())
+	stubBorrowIndex(t, nil, nil)
 	wt := t.TempDir() // no .git at all — age indeterminate
 	if err := checkWorktreePreGitSafety("parlay teardown", "a1", wt, false, nil); err == nil {
 		t.Fatal("un-stat-able .git must refuse unforced")
@@ -99,6 +110,7 @@ func TestPreGitGateRefusesUnstatableAge(t *testing.T) {
 
 func TestPreGitGatePassesIdleAgedWorktree(t *testing.T) {
 	stubLiveness(t, worktreeliveness.StateOf(worktreeliveness.Record{PID: "1", Cwd: "/somewhere/else"}))
+	stubBorrowIndex(t, nil, nil)
 	if err := checkWorktreePreGitSafety("parlay teardown", "a1", agedWorktree(t), false, nil); err != nil {
 		t.Fatalf("idle aged worktree must pass, got: %v", err)
 	}
@@ -111,14 +123,17 @@ func TestPreGitGateUsesCallerScanWithoutSelfServing(t *testing.T) {
 		return worktreeliveness.State{}
 	}
 	t.Cleanup(func() { collectWorktreeLiveness = prev })
+	stubBorrowIndex(t, nil, nil)
 	live := worktreeliveness.StateOf()
-	if err := checkWorktreePreGitSafety("parlay teardown", "a1", agedWorktree(t), false, &live); err != nil {
+	probes := &teardownProbes{live: &live}
+	if err := checkWorktreePreGitSafety("parlay teardown", "a1", agedWorktree(t), false, probes); err != nil {
 		t.Fatalf("got: %v", err)
 	}
 }
 
 func TestTeardownMinAgeOverride(t *testing.T) {
 	stubLiveness(t, worktreeliveness.StateOf())
+	stubBorrowIndex(t, nil, nil)
 	state := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", state)
 	wt := t.TempDir()
@@ -160,6 +175,7 @@ func TestGitSafetyRunsPreGitGatesFirst(t *testing.T) {
 // still tears down. The lift only ADDS refusals; the happy path survives.
 func TestGitSafetyPassesCleanIdleAgedRepo(t *testing.T) {
 	stubLiveness(t, worktreeliveness.StateOf())
+	stubBorrowIndex(t, nil, nil)
 	repo := newLandedFixture(t)
 	gitOut(t, repo, "checkout", "main") // main is pushed; worktree clean
 	old := time.Now().Add(-time.Hour)

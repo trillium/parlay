@@ -24,7 +24,6 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
-	"github.com/trillium/parlay/tools/cli/internal/worktreeliveness"
 )
 
 // hasUncommitted reports whether repoPath has uncommitted changes.
@@ -127,13 +126,13 @@ func checkWorktreeGitSafety(cmd, agentID, worktree string, force bool) error {
 }
 
 // checkWorktreeGitSafetyLive is checkWorktreeGitSafety with the caller's
-// pre-collected liveness scan threaded in (nil self-serves through the seam
-// in teardown_gates.go). The pre-git gates — process liveness, freshness
-// quarantine — run FIRST: they answer "is anyone still using this tree",
-// which moots the git questions, and liveness is the one gate --force cannot
-// bypass (see teardown_gates.go).
-func checkWorktreeGitSafetyLive(cmd, agentID, worktree string, force bool, live *worktreeliveness.State) error {
-	if err := checkWorktreePreGitSafety(cmd, agentID, worktree, force, live); err != nil {
+// pre-collected probe set threaded in (nil self-serves through the seams in
+// teardown_gates.go). The pre-git gates — treehouse lease, process liveness,
+// borrow-veto, freshness quarantine — run FIRST: they answer "does anyone
+// else have a stake in this tree", which moots the git questions, and all but
+// freshness are gates --force cannot bypass (see teardown_gates.go).
+func checkWorktreeGitSafetyLive(cmd, agentID, worktree string, force bool, probes *teardownProbes) error {
+	if err := checkWorktreePreGitSafety(cmd, agentID, worktree, force, probes); err != nil {
 		return err
 	}
 	// Check for uncommitted changes.
@@ -155,6 +154,25 @@ func checkWorktreeGitSafetyLive(cmd, agentID, worktree string, force bool, live 
 		} else {
 			fmt.Fprintf(os.Stderr, "warn: --force: discarding unpushed commits in %s\n", worktree)
 		}
+	}
+
+	// Check for stashes (liveness lift unit 3; Gas City checks these in its
+	// git-state gate, parlay never did anywhere). Unlike hasUncommitted /
+	// hasUnpushed — whose probe failures fall open for parity with the TS
+	// original — a failed stash probe refuses: `git worktree remove` destroys
+	// stashes as surely as it destroys uncommitted files, and this gate is
+	// new, so it owes no fidelity to a fail-open past. --force bypasses both
+	// cases: stash state is operator-inspectable, same as the other git gates.
+	if st := sh("git", "-C", worktree, "stash", "list"); !st.ok {
+		if !force {
+			return fmt.Errorf("%s: %s stash state unreadable (git stash list failed). Triage by hand or --force.", cmd, agentID) //nolint:staticcheck
+		}
+		fmt.Fprintf(os.Stderr, "warn: --force: stash state unreadable in %s; removing anyway\n", worktree)
+	} else if st.out != "" {
+		if !force {
+			return fmt.Errorf("%s: %s has stashed changes. Apply or drop the stash, or --force to discard.", cmd, agentID) //nolint:staticcheck
+		}
+		fmt.Fprintf(os.Stderr, "warn: --force: discarding stashed changes in %s\n", worktree)
 	}
 	return nil
 }
@@ -210,11 +228,12 @@ func teardownAgent(agentID string, force bool) (string, error) {
 	return teardownAgentLive(agentID, force, nil)
 }
 
-// teardownAgentLive is teardownAgent with the caller's pre-collected liveness
-// scan: a sweep pass pays for ONE process-table probe and shares it across
-// every candidate (the same batching robots-8783 forced on the relay lookup,
-// applied to a heavier probe). nil self-serves per call.
-func teardownAgentLive(agentID string, force bool, live *worktreeliveness.State) (string, error) {
+// teardownAgentLive is teardownAgent with the caller's pre-collected probe
+// set: a sweep pass pays for ONE process-table scan and ONE borrow-index walk
+// and shares them across every candidate (the same batching robots-8783
+// forced on the relay lookup, applied to heavier probes). nil self-serves per
+// call.
+func teardownAgentLive(agentID string, force bool, probes *teardownProbes) (string, error) {
 	idHome := filepath.Join(parlayAgentsDir(), agentID)
 	if _, err := os.Stat(idHome); err != nil {
 		return "", fmt.Errorf("parlay teardown: agent '%s' not found in %s", agentID, idHome)
@@ -238,8 +257,9 @@ func teardownAgentLive(agentID string, force bool, live *worktreeliveness.State)
 		return fmt.Sprintf("agent %s torn down (worktree already gone)%s", agentID, closeHerdrSurface(agentID)), nil
 	}
 
-	// Refuse to destroy a live, quarantined, uncommitted, or unlanded tree.
-	if err := checkWorktreeGitSafetyLive("parlay teardown", agentID, worktree, force, live); err != nil {
+	// Refuse to destroy a leased, live, borrowed, quarantined, uncommitted,
+	// or unlanded tree.
+	if err := checkWorktreeGitSafetyLive("parlay teardown", agentID, worktree, force, probes); err != nil {
 		return "", err
 	}
 
