@@ -99,11 +99,13 @@ guaranteed.)
    pkg-config fallback, and Homebrew's `icu4c` is keg-only, so a default darwin
    `go build ./...` in `tools/cli` dies with *"'unicode/regex.h' file not
    found"* after ~30s of cgo compilation. The adopted posture:
-   - **Default builds and CI: `CGO_ENABLED=0`.** Compiles in ~1s, `-race`
-     still works, all hermetic tests pass. Embedded mode then refuses at
-     runtime with the message above; server mode is unaffected. `bin/parlay`
+   - **Default builds: `CGO_ENABLED=0`.** Compiles in ~1s, all hermetic tests
+     pass, and on darwin `-race` works without cgo. Embedded mode then refuses
+     at runtime with the message above; server mode is unaffected. `bin/parlay`
      (`go build .`) never sees any of this — `parlaybeads` is a leaf until a
-     verb adopts it.
+     verb adopts it. On linux `-race` still requires cgo, so CI's test step
+     alone runs `CGO_ENABLED=1` with `libicu-dev` installed; build/vet/gofmt
+     stay cgo-free.
    - **Exercising embedded mode** (the opt-in `TestRealStoreRoundTrip`,
      `PARLAY_BEADS_INTEGRATION=1`) needs `brew install icu4c` plus
      `CGO_CXXFLAGS`/`CGO_CFLAGS` `-I/opt/homebrew/opt/icu4c/include` and
