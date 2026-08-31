@@ -12,7 +12,7 @@ import (
 )
 
 // Ticket C4: eval relay routes. The Go server relays input evaluation to the
-// compiled eval engine (packages/eval-engine) and broadcasts results over SSE,
+// compiled eval engine (tools/cli/internal/evalengine) and broadcasts results over SSE,
 // plus receives server-owned submit fires from the engine and broadcasts those too.
 //
 // This is a pure relay with zero matching logic — the captain's evaluation runs

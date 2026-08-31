@@ -44,7 +44,7 @@ func engineURL() string {
 // ./parlay-eval-engine binary that nothing on a fresh clone builds — the
 // binary is a gitignored artifact only `go build` (or the installer, which
 // builds it if missing) produces.
-const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd), or: cd packages/eval-engine && go build -o parlay-eval-engine . && nohup ./parlay-eval-engine > engine.log 2>&1 &"
+const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd), or: nohup parlay eval serve > engine.log 2>&1 & (the engine ships inside the parlay binary; cd tools/cli && go build . if you need one)"
 
 // jsonAttempt is the outcome of tryJSON: either decoded data, or a short
 // error string describing why it failed (network error, non-2xx status, or

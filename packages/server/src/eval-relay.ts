@@ -3,7 +3,7 @@ import { broadcastToDevice, CORS } from "./sse"
 // ── Server-side eval relay (feat/server-side-eval) ─────────────────────────────
 //
 // PURE server-side input evaluation. The TS server does NOT evaluate — it is a
-// thin relay between the client and the COMPILED Go engine (packages/eval-engine).
+// thin relay between the client and the COMPILED Go engine (tools/cli/internal/evalengine).
 // This is deliberate: the captain's whole point is that evaluation runs as
 // compiled RE2 in Go, not interpreted JS. Doing the matching here in bun would
 // defeat the purpose. So this file contains ZERO command-matching logic — only

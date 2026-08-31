@@ -64,8 +64,10 @@ Owner is the Go port workstream ticket (see `docs/agent-notes/go-cli-ticket-*.md
 
 `defaults`, `spawn`, `stale`, `sweep`, `claim`, `mechanic`, `merge-gate`,
 `route`, `branch-audit`, `commands`, `landed`, `city-scaffold`, `gc-spawn`,
-`gc-nudge`, `gc-liveness`, `gc-resolve`. These postdate the TS CLI or were
-born Go-side; the retired parity harness tracked them in `GO_ONLY_VERBS`
+`gc-nudge`, `gc-liveness`, `gc-resolve`, `eval` (the former standalone
+`packages/eval-engine` service, merged into this binary as `parlay eval serve`
+— task-0ke9). These postdate the TS CLI or were born Go-side; the retired
+parity harness tracked them in `GO_ONLY_VERBS`
 (see `docs/agent-notes/go-cli-ticket-b10-coverage-parity.md`).
 
 ## How parity was proven

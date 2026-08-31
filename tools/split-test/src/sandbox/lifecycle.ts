@@ -95,10 +95,12 @@ export async function sandboxUp(opts: UpOptions): Promise<SandboxManifest> {
 
   // ── 2. Eval-engine (optional) ───────────────────────────────────────────────
   if (opts.withEngine && evalPort !== null) {
-    const engineBin = buildEngine(branchDir, binDir)
+    const engine = buildEngine(branchDir, binDir)
     const engineLog = logPath(opts.name, "eval-engine")
-    const enginePid = spawnBg(engineBin, [], childEnv, join(branchDir, "packages", "eval-engine"), engineLog)
-    components.push({ kind: "eval-engine", pid: enginePid, port: evalPort, cmd: `${engineBin} (PARLAY_EVAL_ADDR=${env.PARLAY_EVAL_ADDR})`, logFile: engineLog, startedAt: now() })
+    // cwd is the sandbox bin dir: the engine's optional beside-binary
+    // commands.json lookup goes by os.Executable, not cwd, so any dir works.
+    const enginePid = spawnBg(engine.bin, engine.args, childEnv, binDir, engineLog)
+    components.push({ kind: "eval-engine", pid: enginePid, port: evalPort, cmd: `${[engine.bin, ...engine.args].join(" ")} (PARLAY_EVAL_ADDR=${env.PARLAY_EVAL_ADDR})`, logFile: engineLog, startedAt: now() })
     log(`eval-engine pid ${enginePid} → ${env.PARLAY_EVAL_ENGINE_URL}`)
   }
 

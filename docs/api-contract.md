@@ -501,7 +501,7 @@ migrated to `voiceClearPhrases: string[]` at load time on both servers.
 ### `POST /api/chat/eval`
 The client performs NO local evaluation of typed/dictated text — every buffer
 change is POSTed here; the server relays to the compiled eval engine
-(`packages/eval-engine`, `PARLAY_EVAL_ENGINE_URL`, default
+(`tools/cli/internal/evalengine`, run as `parlay eval serve`; `PARLAY_EVAL_ENGINE_URL`, default
 `http://127.0.0.1:4343`) and broadcasts the computed actions to the owning
 device as the `input_action` SSE event (which is the source of truth for
 applying them — the synchronous response is informational).

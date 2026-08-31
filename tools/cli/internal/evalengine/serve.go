@@ -1,4 +1,4 @@
-package main
+package evalengine
 
 import (
 	"bytes"
@@ -9,10 +9,13 @@ import (
 	"time"
 )
 
-// ── parlay-eval-engine: the compiled string-evaluation service ─────────────────
+// ── parlay eval serve: the compiled string-evaluation service ─────────────────
 //
-// A standalone Go HTTP service that owns the ENTIRE input evaluation for Parlay's
-// chat box in the pure server-side model. The TS Pulse server delegates
+// The HTTP service that owns the ENTIRE input evaluation for Parlay's
+// chat box in the pure server-side model. Formerly the standalone
+// packages/eval-engine module (`parlay-eval-engine` binary); merged into the
+// unified parlay binary (task-0ke9) and started via `parlay eval serve`.
+// The TS Pulse server delegates
 // POST /api/chat/eval to this service; this service computes actions with
 // compiled RE2 regexes and returns them. SSE delivery stays in the TS server
 // (this service pushes server-owned submit fires back to it via a callback URL).
@@ -73,9 +76,18 @@ func (p *PushClient) pushSubmit(streamID string, seq, base int64, tail, text, pl
 	log.Printf("[submit-fire] pushed stream=%s seq=%d base=%d tail=%q platform=%s status=%d", streamID, seq, base, tail, platform, resp.StatusCode)
 }
 
-func main() {
-	addr := envOr("PARLAY_EVAL_ADDR", "127.0.0.1:4343")
-	pushURL := envOr("PARLAY_EVAL_PUSH_URL", "http://127.0.0.1:31337/api/chat/eval-push")
+// Serve runs the eval-engine HTTP service until the process exits. Non-empty
+// addr/pushURL override the PARLAY_EVAL_ADDR / PARLAY_EVAL_PUSH_URL env
+// defaults (same resolution the standalone binary had).
+func Serve(addrFlag, pushURLFlag string) {
+	addr := addrFlag
+	if addr == "" {
+		addr = envOr("PARLAY_EVAL_ADDR", "127.0.0.1:4343")
+	}
+	pushURL := pushURLFlag
+	if pushURL == "" {
+		pushURL = envOr("PARLAY_EVAL_PUSH_URL", "http://127.0.0.1:31337/api/chat/eval-push")
+	}
 
 	push := &PushClient{url: pushURL, http: &http.Client{Timeout: 3 * time.Second}}
 	engine := NewEngine()

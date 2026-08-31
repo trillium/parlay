@@ -1,7 +1,7 @@
 # Channel Picker — Event/Action Pipeline Contract
 
 > Frozen wire contract for the voice-driven channel picker. Two sides build
-> against this independently: **backend** (`packages/eval-engine`, Go) owns all
+> against this independently: **backend** (`tools/cli/internal/evalengine`, Go) owns all
 > state + logic and emits **actions**; **frontend** (`packages/client`, TS) fires
 > **events** and renders its own perception of the actions it receives.
 >
@@ -115,7 +115,7 @@ stay stable. (Client sends tabs in the same order both times.)
 
 | Side | Directory | Owns |
 |------|-----------|------|
-| Backend | `packages/eval-engine/` | `mode` routing, `resolveChannelSelection`, nickname matching in `resolveAgent`, the three new action constructors, the `channel-list` → `openChannelPicker` change, Go tests |
+| Backend | `tools/cli/internal/evalengine/` | `mode` routing, `resolveChannelSelection`, nickname matching in `resolveAgent`, the three new action constructors, the `channel-list` → `openChannelPicker` change, Go tests |
 | Frontend | `packages/client/` | `#pa-picker-input` full-screen modal module, rendering `openChannelPicker.channels`, firing `pickerInput` events with `mode:"channel-select"` + a distinct streamId, `nicknames` in the tabs payload, dispatcher handling of the 3 new verbs, CSS, version bump |
 
 Commit after each coherent piece. `git add` only files under your own directory,

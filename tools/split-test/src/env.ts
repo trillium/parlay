@@ -107,7 +107,8 @@ export function assertNotReserved(port: number, what: string): void {
 
 /**
  * The env override contract, one object. Every field maps to a real env var the
- * server/relay/eval-engine read (verified against packages/{server,cli,eval-engine}
+ * server/relay/eval-engine read (verified against packages/server,
+ * tools/cli — which now embeds the eval-engine, internal/evalengine —
  * and tools/relay). Building the env explicitly — rather than mutating
  * process.env — is what lets the boot step assert isolation end to end.
  */

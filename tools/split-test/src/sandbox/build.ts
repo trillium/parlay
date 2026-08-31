@@ -31,11 +31,23 @@ export function buildRelay(branchDir: string, outDir: string): string {
   return out
 }
 
-/** Build the eval-engine from source, same rationale as the relay. */
-export function buildEngine(branchDir: string, outDir: string): string {
-  const src = join(branchDir, "packages", "eval-engine")
+/**
+ * Build the eval-engine from source, same rationale as the relay.
+ *
+ * The engine merged into the unified parlay binary (task-0ke9): on current
+ * checkouts it lives in tools/cli/internal/evalengine and starts via
+ * `parlay eval serve`, so this builds tools/cli and returns the args the
+ * spawned binary needs. Pre-merge checkouts (standalone packages/eval-engine
+ * module, binary takes no args) are still recognized so a split test can pit
+ * a pre-merge branch against a post-merge one.
+ */
+export function buildEngine(branchDir: string, outDir: string): { bin: string; args: string[] } {
+  const unified = join(branchDir, "tools", "cli", "internal", "evalengine")
+  const legacy = join(branchDir, "packages", "eval-engine")
+  const src = existsSync(unified) ? join(branchDir, "tools", "cli") : legacy
+  const args = existsSync(unified) ? ["eval", "serve"] : []
   if (!existsSync(join(src, "main.go"))) {
-    throw new Error(`eval-engine source not found at ${src}`)
+    throw new Error(`eval-engine source not found at ${unified} or ${legacy}`)
   }
   const out = join(outDir, "parlay-eval-engine")
   log(`building eval-engine from ${src} → ${out}`)
@@ -49,7 +61,7 @@ export function buildEngine(branchDir: string, outDir: string): string {
   if (proc.exitCode !== 0) {
     throw new Error(`eval-engine build failed (exit ${proc.exitCode}): ${proc.stderr.toString()}`)
   }
-  return out
+  return { bin: out, args }
 }
 
 // Untracked-but-runtime-required working files, relative to the repo root. These
