@@ -34,8 +34,27 @@
 #                                     --account. Set to "" to disable (use the ambient session token).
 #   PARLAY_SPAWN_NO_WATCHDOG          1 disables the post-launch liveness watchdog (see step 6 below)
 #   PARLAY_SPAWN_LIVENESS_TIMEOUT_MS  watchdog's "did the first turn fire" window (default 60000)
+#   PARLAY_SPAWN_VIA_CLI              REQUIRED (set to 1) — task-qyu8q scope 3: `parlay spawn` is
+#                                     the sole public entry point; it sets this before exec'ing this
+#                                     script. Direct invocation refuses. Test harnesses that exercise
+#                                     this script's internals set it themselves — they ARE the
+#                                     sanctioned caller for their own scope.
 
 set -euo pipefail
+
+if [ "${PARLAY_SPAWN_VIA_CLI:-}" != "1" ]; then
+  cat >&2 <<'EOF'
+parlay-spawn: refusing to run directly — task-qyu8q scope 3: `parlay spawn` is
+the sole public entry point for launching agents. Run:
+
+  parlay spawn <agent-id> <display-name> <hex-color> <initial-prompt> --model MODEL [...]
+
+`parlay spawn` forwards your arguments to this script verbatim after setting
+PARLAY_SPAWN_VIA_CLI=1. If you have a legitimate reason to call this script
+directly (a harness that IS the sanctioned caller), set that variable yourself.
+EOF
+  exit 2
+fi
 
 PARLAY="${PARLAY_SERVER:-http://localhost:4242}"
 # Default account — precedence: env var > ~/.parlay/config.toml spawnAccount > empty.

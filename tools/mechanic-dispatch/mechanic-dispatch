@@ -154,6 +154,9 @@ echo "liveness: $AGENT = $STATUS"
 # prose is duplicated here — it lives on the ticket.
 if [ "$STATUS" = "absent" ]; then
   echo "-> mechanic is dead; launching via parlay-spawn (--claim $BEAD)${WORKTREE_ARG:+ in isolated worktree}"
+  # task-qyu8q scope 3: mechanic-dispatch calls bin/parlay-spawn directly
+  # (not through the `parlay spawn` CLI) — it IS a sanctioned direct caller.
+  export PARLAY_SPAWN_VIA_CLI=1
   exec parlay-spawn "$AGENT" "$NAME" "$COLOR" --claim "$BEAD" --bead "$BEAD" \
     --cwd "$CWD" --model opus \
     $WORKTREE_ARG \

@@ -151,7 +151,7 @@ Launch a background agent that shows up as a live tab (needs a
 [herdr](https://github.com/trillium/herdr) terminal it spawns into):
 
 ```sh
-./bin/parlay-spawn code-reviewer "Code Reviewer" "#c084fc" \
+parlay spawn code-reviewer "Code Reviewer" "#c084fc" \
   "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
 ```
 
