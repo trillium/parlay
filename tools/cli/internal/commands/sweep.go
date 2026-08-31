@@ -75,6 +75,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/worktreeliveness"
 )
 
 // Sweep actions. Hold is the load-bearing one: it means "this agent is NOT
@@ -322,6 +323,11 @@ func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
 	// not one per candidate.
 	reg, regOK := fetchRegisteredAgents()
 
+	// One liveness scan for the whole pass, same batching rule — lsof is a
+	// far heavier probe than the relay lookup. Collected lazily so a dry run
+	// (which never tears down) pays nothing.
+	var live *worktreeliveness.State
+
 	var swept, refused, held, skipped int
 	for _, id := range ids {
 		agent := resolveSweepAgent(id, reg, regOK)
@@ -348,7 +354,11 @@ func sweepPass(explicitID string, apply, verbose bool, opts SweepOpts) {
 				fmt.Printf("would-close %s — %s\n", id, v.Reason)
 				continue
 			}
-			msg, err := teardownAgent(id, false)
+			if live == nil {
+				s := collectWorktreeLiveness()
+				live = &s
+			}
+			msg, err := teardownAgentLive(id, false, live)
 			if err != nil {
 				refused++
 				fmt.Printf("REFUSED  %s — %v\n", id, err)
