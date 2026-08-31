@@ -40,6 +40,12 @@ type LaunchSpec struct {
 	// along as env for the session (the spawn path's account resolution reads
 	// it); synthesis must not resolve tokens itself.
 	Account string
+	// Server is the parlay server base URL the agent should talk to. It rides
+	// along as PARLAY_SERVER env — the gc launcher's equivalent of the
+	// subprocess launcher's `--env PARLAY_SERVER=…`. Never a secret: the
+	// template env is persisted to disk, so credentials (OAuth tokens) must
+	// NEVER travel this way.
+	Server string
 
 	// StartCommand/Args override the claude provider command — the
 	// verification escape hatch (a sandboxed `gc session new` should start
@@ -101,6 +107,12 @@ func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
 	}
 	if spec.Account != "" {
 		env["PARLAY_SPAWN_DEFAULT_ACCOUNT"] = spec.Account
+	}
+	if spec.Server != "" {
+		env["PARLAY_SERVER"] = spec.Server
+	}
+	if spec.Model != "" {
+		env["PARLAY_AGENT_MODEL"] = spec.Model
 	}
 	b.WriteString("\n[env]\n")
 	keys := make([]string, 0, len(env))

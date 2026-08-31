@@ -32,6 +32,16 @@ suspended_on_start = true
 # an enabled API here would be an unobserved surface.
 port = 0
 
+[session]
+# Spawn seam (task-4cfpv.9, unit 5): parlay agents are detached headless
+# processes — no terminal pane to attach to — so the whole city runs the
+# subprocess session provider, never tmux. This is also what makes the spawn
+# path testable without a tmux server. NOTE (scope-spawn-lift R7): the
+# subprocess provider's Nudge is a silent no-op — any seam that steers a
+# session must gate on the provider's declared capabilities, never assume
+# injection works.
+provider = "subprocess"
+
 # ---------------------------------------------------------------------------
 # Deliberately ABSENT sections — each is owned by a specific epic child and
 # must not be pre-decided here:
@@ -47,7 +57,6 @@ port = 0
 #   [events]     — event bus config belongs to the events seam (task-4cfpv.11),
 #                  which owns recorder rotation, SSE contract, and the typed
 #                  event-name registry.
-#   [session]    — session provider backend follows the spawn seam.
 #   [daemon]     — controller/health-patrol tuning follows the liveness seam
 #                  (task-4cfpv.10).
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ var fullSpec = LaunchSpec{
 	Cwd:     "/Users/example/code/foo",
 	Model:   "opus",
 	Account: "acc2",
+	Server:  "http://localhost:14242",
 }
 
 var minimalSpec = LaunchSpec{
