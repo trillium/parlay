@@ -703,16 +703,20 @@ Mobile keystroke-latency telemetry (no devtools on a phone). Guarded (under
 Per-device digest over the last 10 minutes:
 `{ "<device>": { "ua": "…", "samples": N, "cost": { "p50": N, "p95": N, "max": N }, "cadence": { "p50": N, "p95": N } | null } }`.
 
-### `GET /health` (Go only)
+### `GET /health`
 Liveness + store sanity, outside `/api/chat`. Response:
 `{ "ok": true, "messages": N, "agents": N }`. Non-GET: 405 plain text.
 
-### Static assets (Go only)
-The Go server also serves the built panel bundle: `/` (SPA fallback to
-`index.html`) and `/fleet/` (the `packages/webview` fleet dashboard), from
-`-assets-dir`/`PARLAY_ASSETS_DIR`. Registered after all `/api/*` routes so it
-can never shadow them. (In the TS deployment, static serving belongs to
-Pulse, not this server.)
+### Static assets
+Both servers serve the built panel bundle standalone (no Pulse front door):
+`/` (SPA fallback to `index.html`), `/annotate/<path>` (the Pulse symlink
+convention, mapped onto the bundle root), and `/fleet/` (the
+`packages/webview` fleet dashboard), from `PARLAY_ASSETS_DIR` (Go also:
+`-assets-dir`; TS default: the sibling `packages/client/dist`). Dispatched
+after all `/api/*` routes so it can never shadow them — and an unrouted
+`/api/*` path stays a real 404, never the SPA fallback (the CLI's
+`commandreport` caches that 404 to detect unsupported verbs). TS:
+`packages/server/src/static.ts`; Go: `internal/static`.
 
 ---
 
@@ -920,8 +924,8 @@ feature — until then, a portable caller must tolerate both sides.
 | 26 | `tts/validate-splits` | live LLM evaluation | placeholder (`verdict: "unknown"`) |
 | 27 | cursorless `rpc` `device` field | device-scoped; `no client for device X` error | ignored; broadcasts to all |
 | 28 | `GET /api/chat/events` guard | unguarded (accepted residue) | guarded (no-ACAO stream) |
-| 29 | Go-only routes | — | `POST /events`, `POST /message`, `/commands` + 3 report routes, `/health`, static `/` + `/fleet/` |
-| 30 | TS-only routes | `/parlay-ui.js`, `/api/debug/input-timing` | — |
+| 29 | Go-only routes | — | `POST /events`, `POST /message`, `/commands` + 3 report routes |
+| 30 | TS-only routes | `/parlay-ui.js`, `/api/debug/input-timing`, `/api/chat/debug-log` | — |
 
 ---
 
