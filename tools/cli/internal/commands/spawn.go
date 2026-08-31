@@ -34,6 +34,10 @@ func Spawn(argv []string) {
 
 	cmd := exec.Command(bin, spawnArgv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// task-qyu8q scope 3: `parlay spawn` is the sole public entry point.
+	// bin/parlay-spawn refuses to run without this handshake — it proves the
+	// caller went through here rather than being invoked directly.
+	cmd.Env = append(os.Environ(), "PARLAY_SPAWN_VIA_CLI=1")
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			os.Exit(ee.ExitCode())

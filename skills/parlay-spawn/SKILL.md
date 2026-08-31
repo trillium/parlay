@@ -1,18 +1,27 @@
 ---
 name: parlay-spawn
-description: Spawn a new parlay agent using bin/parlay-spawn. Covers the full invocation signature, how account/token injection works, and what each option does.
+description: Spawn a new parlay agent using `parlay spawn`. Covers the full invocation signature, how account/token injection works, and what each option does.
 argument-hint: "What kind of agent do you want to spawn?"
 disable-model-invocation: false
 ---
 
 # How to spawn a parlay agent
 
-Use `bin/parlay-spawn` directly from the `~/code/parlay` working directory, or via `parlay-spawn` if it's on PATH.
+Use `parlay spawn` — the Go CLI's sole public entry point for launching agents (task-qyu8q
+scope 3). It forwards your arguments to `bin/parlay-spawn` after setting the handshake env
+that script requires; calling `bin/parlay-spawn` directly now refuses.
+
+**Caveat:** "sole public entry point" holds only for `bin/parlay-spawn`. `resolveSpawner()`
+prefers `tools/parlay-bin` over `bin/parlay-spawn` whenever both are on PATH (see [Default
+account](#default-account) below) — that binary is a separate Go port with no
+`PARLAY_SPAWN_VIA_CLI` handshake and no mandatory-model gate of its own (task-21d36). If
+`tools/parlay-bin` is installed on PATH, both gates are bypassed regardless of how you invoke
+`parlay spawn`.
 
 ## Signature
 
 ```
-parlay-spawn <id> <name> <color> <task> [options]
+parlay spawn <id> <name> <color> <task> [options]
 ```
 
 | Arg | Description |
@@ -43,7 +52,7 @@ parlay-spawn <id> <name> <color> <task> [options]
 
 ```bash
 # bead carries the full spec; prompt carries the brief
-bin/parlay-spawn <id> "<Display Name>" "#hex" \
+parlay spawn <id> "<Display Name>" "#hex" \
   "<brief: read the bead via '<store> show <id>', conventions, gate command, close-with-evidence>" \
   --bead <store>-xxxx --cwd ~/code/<repo> --mode branch
 ```
@@ -102,17 +111,17 @@ Spawn exits non-zero with a clear error if no token is found. Token is injected 
 
 ```bash
 # Spawn a background research agent on acc2 (from config.toml)
-parlay-spawn gas-city-scope "Gascity Scope" "#f59e0b" \
+parlay spawn gas-city-scope "Gascity Scope" "#f59e0b" \
   "Auto-discover what gascity is … reply when done." \
   --cwd ~/code/parlay
 
 # Explicit account override
-parlay-spawn pr-auditor "PR Auditor" "#f97316" \
+parlay spawn pr-auditor "PR Auditor" "#f97316" \
   "Audit PRs #78 #82 #98 in trillium/parlay …" \
   --cwd ~/code/parlay --account acc1
 
 # Worktree-isolated agent
-parlay-spawn refactor-x "Refactor X" "#6366f1" \
+parlay spawn refactor-x "Refactor X" "#6366f1" \
   "Refactor the auth layer …" \
   --cwd ~/code/myapp --worktree
 ```

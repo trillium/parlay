@@ -14,6 +14,7 @@ set -u
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$SELF_DIR/parlay-spawn"
+export PARLAY_SPAWN_VIA_CLI=1  # task-qyu8q scope 3: this harness IS the sanctioned direct caller
 
 FAILED=0
 fail() { printf 'FAIL: %s\n' "$1" >&2; FAILED=1; }
@@ -93,9 +94,33 @@ test_batch_requires_prompt() {
   pass "batch requires a shared --prompt and rejects before dispatch"
 }
 
+# task-qyu8q scope 3: bin/parlay-spawn refuses to run at all without the
+# PARLAY_SPAWN_VIA_CLI=1 handshake `parlay spawn` sets. This is the refusal
+# half of that gate — every other test in this file covers the
+# already-handshaked path (the export above), so it never exercises this.
+test_via_cli_gate_refuses_without_handshake() {
+  local out status
+  out=$(env -u PARLAY_SPAWN_VIA_CLI PATH="$STUB_DIR:$PATH" PARLAY_SERVER="http://127.0.0.1:1" \
+    "$SPAWN" nope-no-handshake "No Handshake" "#aabbcc" "task" 2>&1)
+  status=$?
+  [ "$status" -eq 2 ] || fail "no PARLAY_SPAWN_VIA_CLI: expected exit 2, got $status; output:"$'\n'"$out"
+  printf '%s\n' "$out" | grep -F 'refusing to run directly' >/dev/null \
+    || fail "no PARLAY_SPAWN_VIA_CLI: refusal message not printed; got:"$'\n'"$out"
+  printf '%s\n' "$out" | grep -F 'parlay spawn' >/dev/null \
+    || fail "no PARLAY_SPAWN_VIA_CLI: refusal message does not point at 'parlay spawn'; got:"$'\n'"$out"
+
+  out=$(env PARLAY_SPAWN_VIA_CLI= PATH="$STUB_DIR:$PATH" PARLAY_SERVER="http://127.0.0.1:1" \
+    "$SPAWN" nope-empty-handshake "No Handshake" "#aabbcc" "task" 2>&1)
+  status=$?
+  [ "$status" -eq 2 ] || fail "empty PARLAY_SPAWN_VIA_CLI: expected exit 2, got $status; output:"$'\n'"$out"
+
+  pass "bin/parlay-spawn refuses to run without PARLAY_SPAWN_VIA_CLI=1"
+}
+
 test_batch_dispatches_every_pair
 test_batch_mode_boundaries
 test_batch_requires_prompt
+test_via_cli_gate_refuses_without_handshake
 
 if [ "$FAILED" -eq 0 ]; then
   echo "ALL PASS"

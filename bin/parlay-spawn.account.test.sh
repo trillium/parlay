@@ -15,6 +15,7 @@ set -u
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$SELF_DIR/parlay-spawn"
+export PARLAY_SPAWN_VIA_CLI=1  # task-qyu8q scope 3: this harness IS the sanctioned direct caller
 
 FAILED=0
 fail() { printf 'FAIL: %s\n' "$1" >&2; FAILED=1; }

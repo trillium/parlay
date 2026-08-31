@@ -151,9 +151,15 @@ Launch a background agent that shows up as a live tab (needs a
 [herdr](https://github.com/trillium/herdr) terminal it spawns into):
 
 ```sh
-./bin/parlay-spawn code-reviewer "Code Reviewer" "#c084fc" \
+parlay spawn code-reviewer "Code Reviewer" "#c084fc" \
   "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
 ```
+
+`parlay spawn` is the sole public entry point for `bin/parlay-spawn` — that script now
+refuses to run without a handshake env only the CLI sets (task-qyu8q scope 3). That claim
+does not extend to `tools/parlay-bin`: the spawner resolution order prefers it over
+`bin/parlay-spawn` when both are on PATH, and it is a separate Go port with neither the
+handshake gate nor the mandatory-model gate (task-21d36).
 
 To reach it from your phone, expose the host — Tailscale, LAN IP, or a private
 tunnel — and export `PARLAY_SERVER` as that address instead of `localhost`.
