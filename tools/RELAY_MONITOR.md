@@ -5,8 +5,8 @@ relay process plus **N** trivial per-agent monitors.
 
 ```
                        ┌──────────────────────────────────────────┐
-   Pulse chat server   │                relay (Go)                │
-   :31337              │  one upstream long-poll loop PER agent    │
+   parlay chat server  │                relay (Go)                │
+   :4242               │  one upstream long-poll loop PER agent    │
         ▲   ▲   ▲      │  agent-id → poll loop  (in-memory registry)│
         │   │   │◄─────┤  appends CHAT_MSG lines to per-agent spool │
    poll(A) poll(B) …   │  control socket: register/unregister/…    │
@@ -36,7 +36,7 @@ GET {server}/api/chat/poll?after=<lastId>&channel=<agent>
 
 Returns at most one message per call; the loop advances `after=<lastId>`. A
 channel-scoped poll auto-registers the agent server-side. Default server is
-`http://localhost:31337` (matches `bin/parlay`).
+`http://localhost:4242` (matches `bin/parlay`).
 
 ### Registry (monitor → relay, Unix control socket)
 
@@ -78,7 +78,7 @@ truncation can't silently cut a long line mid-word. Off by default. See
 ```sh
 # 1. Build + start the ONE relay (footprint-irrelevant, static Go binary)
 tools/relay/build.sh
-tools/relay/parlay-relay &            # server 31337, runtime $TMPDIR/parlay
+tools/relay/parlay-relay &            # server 4242, runtime $TMPDIR/parlay
 
 # 2. Each agent runs its own thin monitor (enroll + tail -F, ~1.2MB)
 parlay monitor --agent main-agent     # via the CLI (default path)

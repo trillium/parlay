@@ -29,7 +29,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MONITOR="${HERE}/parlay-monitor.sh"
 LIB="${HERE}/../relay/deploy/lib.sh"
-DEFAULT_SERVER="http://localhost:31337"
+DEFAULT_SERVER="http://localhost:4242"
 
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1

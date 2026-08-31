@@ -202,7 +202,7 @@ cat > "$STUB/curl" <<'S'
 # /agents reports the server this relay is bound to; /health is always ok.
 for a in "$@"; do
   case "$a" in
-    */agents) echo '{"agents":[],"server":"http://localhost:4242","runtime":"x"}'; exit 0 ;;
+    */agents) echo '{"agents":[],"server":"http://localhost:31337","runtime":"x"}'; exit 0 ;;
   esac
 done
 echo '{"ok":true}'
@@ -213,9 +213,9 @@ if [ "$RC" -ne 3 ]; then
   fail "wrong-server relay: exit $RC, want 3 ($(cat "$ROOT/out"))"
 elif [ -s "$ROOT/launchctl.log" ]; then
   fail "wrong-server relay: it was restarted/kickstarted — $(lc_log)"
-elif ! grep -q "bound to http://localhost:4242" "$ROOT/out"; then
+elif ! grep -q "bound to http://localhost:31337" "$ROOT/out"; then
   fail "wrong-server relay: message does not name the relay's actual server ($(cat "$ROOT/out"))"
-elif ! grep -q -- "install.sh --server http://localhost:31337" "$ROOT/out"; then
+elif ! grep -q -- "install.sh --server http://localhost:4242" "$ROOT/out"; then
   fail "wrong-server relay: message does not give the repair command ($(cat "$ROOT/out"))"
 else
   pass "healthy-but-wrong-server relay exits 3, is left running, and names the repair"
@@ -227,7 +227,7 @@ cat > "$STUB/curl" <<'S'
 #!/usr/bin/env bash
 for a in "$@"; do
   case "$a" in
-    */agents) echo '{"agents":[],"server":"http://localhost:31337/","runtime":"x"}'; exit 0 ;;
+    */agents) echo '{"agents":[],"server":"http://localhost:4242/","runtime":"x"}'; exit 0 ;;
   esac
 done
 echo '{"ok":true}'

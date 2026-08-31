@@ -58,7 +58,7 @@ picked when it starts — so the relay you enroll on, not your `$PARLAY_SERVER`,
 decides whose registry you land in. The rule that keeps that honest:
 
 - **`$TMPDIR/parlay` (the canonical dir) belongs to the default server**
-  `http://localhost:31337` — the LaunchAgent's dir.
+  `http://localhost:4242` — the LaunchAgent's dir.
 - **Any other `$PARLAY_SERVER` gets `<canonical>/srv-<hash>`** and therefore its
   own, unsupervised relay (`parlay_relay_scoped_runtime_dir` in `deploy/lib.sh`).
   A non-default server needs no install at all: `ensure-up.sh` starts a scoped
@@ -73,23 +73,25 @@ binding check below are for — see [`../monitor/NOTES.md`](../monitor/NOTES.md)
 ```sh
 tools/relay/deploy/install.sh            # build if needed, install, load, verify
 tools/relay/deploy/install.sh --rebuild  # force a fresh build first
-tools/relay/deploy/install.sh --server http://localhost:31337   # explicit (= default)
+tools/relay/deploy/install.sh --server http://localhost:4242    # explicit (= default)
 ```
 
 ### install.sh refuses a non-default server (robots-93xu)
 
 `install.sh` used to default `--server` from an ambient `$PARLAY_SERVER`. The
 LaunchAgent it installs is a fixed singleton on the **canonical** dir, so one
-install run from a shell that happened to export `http://localhost:4242` rebound
+install run from a shell that happened to export a non-default server URL
+(`http://localhost:4242`, back when the default was Pulse on `:31337`) rebound
 the captain's production relay — permanently, across reboots. Every agent on the
 default server was then refused enrollment, fleet-wide, and the only symptom was
 agents failing to start.
 
-It now exits 2 on any server other than `http://localhost:31337`, and says so
-louder when the value came from the environment rather than from the flag:
+It now exits 2 on any server other than the default `http://localhost:4242`,
+and says so louder when the value came from the environment rather than from
+the flag:
 
 ```sh
-tools/relay/deploy/install.sh --server http://localhost:4242 \
+tools/relay/deploy/install.sh --server http://mini1:4242 \
   --allow-non-default-server        # deliberate rebind; the only way through
 ```
 

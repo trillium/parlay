@@ -29,8 +29,8 @@
 #   consumers of the stream keep getting complete, unmodified lines.
 #
 # Env:
-#   PARLAY_SERVER          upstream Pulse server to enroll against. Anything other
-#                          than the default (http://localhost:31337) gets its own
+#   PARLAY_SERVER          upstream parlay chat server to enroll against. Anything other
+#                          than the default (http://localhost:4242) gets its own
 #                          server-scoped runtime dir and relay, so a sandbox can
 #                          never enroll into the production registry (robots-buu8).
 #   PARLAY_RELAY_RUNTIME   runtime dir holding relay.sock + <agent>.chan spools
