@@ -228,6 +228,20 @@ func cmdMem(kind MemKind, argv []string) {
 				fm.Set(k, v)
 			}
 		}
+		// Spawn-lift unit 7: the gc session pointer. gc_session is the
+		// session's bead id, gc_city the city dir — identity.md is the
+		// PROJECTION; the bead-backed AddressDirectory (read via `parlay
+		// gc-resolve`) is the source of truth. Dual-write, never a
+		// replacement: teardown's worktree safety still reads this file
+		// (robots-6xq7), so the gc fields land alongside, not instead.
+		for _, p := range []struct{ flag, key string }{
+			{"--gc-session", "gc_session"},
+			{"--gc-city", "gc_city"},
+		} {
+			if v := strings.TrimSpace(optString(res, p.flag)); v != "" {
+				fm.Set(p.key, v)
+			}
+		}
 		WriteFrontmatter(file, fm)
 		// context.json is the panel's reply-attribution record — write it
 		// for EVERY registered id so attribution never depends on a prior

@@ -1,9 +1,11 @@
 package commands
 
-// Gated end-to-end proof for spawn-lift unit 5: the `parlay gc-spawn` core
-// launches a real Gas City session from a synthesised template, against the
-// SUBPROCESS session provider (city/city.toml [session] — the task-4cfpv.9
-// requirement that spawn-path tests run without tmux).
+// Gated end-to-end proof for spawn-lift units 5 and 7: the `parlay gc-spawn`
+// core launches a real Gas City session from a synthesised template, against
+// the SUBPROCESS session provider (city/city.toml [session] — the
+// task-4cfpv.9 requirement that spawn-path tests run without tmux), and a
+// stamped identity then resolves through the bead-backed directory — before
+// and after the session retires, each time from a fresh gc process.
 //
 // Gate and store-bootstrap recipe are the same as unit 4's
 // internal/gctemplate/integration_test.go (its header comment is the full
@@ -217,5 +219,48 @@ func TestGCSpawnRunStartsSubprocessSession(t *testing.T) {
 	}
 	if strings.Contains(env, "\nTMUX=") || strings.HasPrefix(env, "TMUX=") {
 		t.Errorf("probe env contains TMUX — the session ran inside a tmux pane, not on the subprocess provider:\n%s", env)
+	}
+
+	// Unit 7: bead-backed identity resolution against the REAL city. Stamp
+	// the session pointer the way parlay-spawn's register does (identity.md
+	// projection, worktree alongside), then resolve. Every gcResolveRun
+	// spawns a fresh gc process reading the bead store from cold — there is
+	// no long-lived supervisor in this sandbox at all, so each resolution IS
+	// the restart case: nothing but the bead store connects the stamp to the
+	// answer.
+	agentHome := filepath.Join(canon, "agents")
+	if err := os.MkdirAll(filepath.Join(agentHome, "spawn-probe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PARLAY_AGENT_HOME", agentHome)
+	idFile := filepath.Join(agentHome, "spawn-probe", "identity.md")
+	stamp := "---\nid: spawn-probe\nworktree: /tmp/wt/spawn-probe\ngc_session: " + res.SessionID + "\n---\n"
+	if err := os.WriteFile(idFile, []byte(stamp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r1, err := gcResolveRun("spawn-probe")
+	if err != nil {
+		t.Fatalf("gcResolveRun (live): %v", err)
+	}
+	if !r1.OK || r1.SessionID != res.SessionID || r1.Via != "bead-id" {
+		t.Errorf("live resolve = %+v, want session %s via bead-id", r1, res.SessionID)
+	}
+
+	// Retire the session, then resolve again from another fresh gc process:
+	// an id stamped before the session retired must still resolve (the
+	// AddressDirectory's closed-included exact-bead-id rule, the property
+	// identity.md alone cannot provide).
+	if _, cerr, err := runGC(60*time.Second, "session", "close", res.SessionID, "--json"); err != nil {
+		t.Fatalf("session close %s: %v\nstderr:\n%s", res.SessionID, err, cerr)
+	}
+	r2, err := gcResolveRun("spawn-probe")
+	if err != nil {
+		t.Fatalf("gcResolveRun (retired): %v", err)
+	}
+	if !r2.OK || r2.SessionID != res.SessionID || r2.Via != "bead-id" {
+		t.Errorf("retired resolve = %+v, want session %s via bead-id", r2, res.SessionID)
+	}
+	if !r2.Closed {
+		t.Errorf("retired resolve should report closed=true, got %+v", r2)
 	}
 }
