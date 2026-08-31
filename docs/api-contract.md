@@ -680,11 +680,14 @@ includes a full `commands` snapshot.
 
 ## Debug / diagnostics
 
-### `POST /api/chat/debug-log` (documented, NOT WIRED)
-The handler exists (`packages/server/src/debug-log.ts`) but has never been
-registered in `router.ts` on either server — the route 404s, and the client
-treats the 404 as "permanent no-op for the session" (confirmed, working
-degradation). Shapes, for whenever it is wired: request
+### `POST /api/chat/debug-log` (TS only)
+Batched client console errors/warnings + instrumented traces from the panel,
+appended to a log file so a phone (no devtools) can be diagnosed by tailing
+it. Wired in `router.ts` (TS); the Go server does not serve it yet — its
+route 404s there, and the client treats the 404 as "permanent no-op for the
+session" (confirmed, working degradation). Guarded (origin + JSON
+content-type). Disabled entirely with `PARLAY_DEBUG_LOG=0`; log path
+overridable via `PARLAY_DEBUG_LOG_PATH`. Request
 `{ "device", "ua", "url", "entries": [ { "ts", "level": "error"|"warn"|"trace", "source", "message", "detail"? } ] }`;
 responses 204 (disabled/empty/success), 400 (invalid JSON), 500 (persist
 failure to `$PARLAY_STATE_HOME/debug.log`). Fields truncated at 4000 chars,
@@ -878,7 +881,6 @@ No HTTP surface changes either way.
   `index.ts`/`router.ts`: the routes 404**. The `lavish_session` SSE event
   they would feed has a client-side subscriber but no live producer. Dead
   code, documented so nobody "rediscovers" it as a live route.
-- **`POST /api/chat/debug-log`** — handler written, never wired (see Debug).
 
 ---
 

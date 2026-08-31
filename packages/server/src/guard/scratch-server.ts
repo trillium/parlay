@@ -41,6 +41,8 @@ export interface ScratchServer {
   tunnelForeignHost: string
   /** PARLAY_DATA_DIR — every file this instance persists lands here. */
   dataDir: string
+  /** PARLAY_STATE_HOME — where debug.log and other state files land. */
+  stateDir: string
   stop(): void
 }
 
@@ -141,6 +143,7 @@ export async function startScratchServer(): Promise<ScratchServer> {
         tunnelHost: `panel.tunnel.test:${port}`,
         tunnelForeignHost: `other.tunnel.test:${port}`,
         dataDir,
+        stateDir: join(dir, "state"),
         stop,
       }
     } catch (e) {

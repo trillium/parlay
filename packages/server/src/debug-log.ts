@@ -1,29 +1,10 @@
-// ── Remote debug-log endpoint (NOT WIRED — see note below) ──────────────────
+// ── Remote debug-log endpoint: POST /api/chat/debug-log ─────────────────────
 //
 // Client-side counterpart: packages/client/src/debug-log.ts POSTs batched
 // console errors/warnings + instrumented traces here so the captain's phone
 // (no devtools available) can be diagnosed by tailing a log file. Handler is
-// intentionally framework-agnostic (`Request` in, `Response` out) so it can
-// be dropped into whatever request dispatch router.ts uses.
-//
-// WHY THIS FILE ISN'T WIRED IN:
-// Every existing file under packages/server/src/ (index.ts, router.ts,
-// plugins.ts, etc.) is currently an unresolvable symlink loop — each one
-// resolves (via `python3 -c "import os; os.path.realpath(...)"`) to a path
-// that does not exist, confirmed on both this disposable worktree and the
-// primary checkout at ~/code/parlay. This is a pre-existing environment
-// defect, not something introduced by this change, and it can't be fixed
-// from an isolated worktree — the real source lives outside any git
-// worktree, under ~/.claude/PAI/PULSE. Until that loop is fixed, no existing
-// file under packages/server/src/ can be read or edited through normal
-// tooling, including router.ts, which is where this handler needs to be
-// registered next to the other `${CHAT_BASE}` (`/api/chat`) routes.
-//
-// TO WIRE THIS IN once the symlink loop is fixed:
-//   1. Import `handleDebugLog` in router.ts (or wherever POST routes under
-//      /api/chat are dispatched).
-//   2. Route `POST /api/chat/debug-log` to `handleDebugLog(req)` — this
-//      matches the client's `${CHAT_BASE}/debug-log` fetch target.
+// intentionally framework-agnostic (`Request` in, `Response` out); router.ts
+// dispatches it next to the other `${CHAT_BASE}` (`/api/chat`) routes.
 
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'

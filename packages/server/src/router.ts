@@ -14,6 +14,7 @@ import { handleEvalRequest } from "./eval-relay"
 import { handleTTSValidateRequest } from "./tts-validate"
 import { handleTtsEventRequest } from "./router-tts-events"
 import { handleDeviceCmdRequest } from "./router-device-cmd"
+import { handleDebugLog } from "./debug-log"
 import { guardChatRequest, isGuardedChatPath, preflightResponse, withGuardedCors } from "./guard"
 
 // Entry point. Everything security-relevant happens here, at the one boundary
@@ -174,6 +175,9 @@ function dispatchChatRequest(req: Request, pathname: string): Response | Promise
       },
     }), { headers: { "Content-Type": "application/json", ...CORS } })
   }
+
+  // Batched client console errors/traces from the panel (phone diagnosis)
+  if (req.method === "POST" && pathname === "/api/chat/debug-log") return handleDebugLog(req)
 
   // Agent long-poll — router-poll.ts
   const pollResp = handlePollRequest(req, pathname)
