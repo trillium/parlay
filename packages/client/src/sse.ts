@@ -1,4 +1,4 @@
-import { CHAT_BASE } from './config'
+import { CHAT_BASE, panelCapsQuery } from './config'
 import { PA_VERSION } from './version'
 import {
   msgs, open, unread,
@@ -94,7 +94,7 @@ export function connect() {
   const afterQ = lastId ? `&after=${encodeURIComponent(lastId)}` : ''
   // Pass current page URL so the server can give the owning channel deeper history.
   const urlQ   = `&url=${encodeURIComponent(window.location.href)}`
-  const es = new EventSource(`${CHAT_BASE}/events?device=${encodeURIComponent(getDeviceId())}${afterQ}${urlQ}`)
+  const es = new EventSource(`${CHAT_BASE}/events?device=${encodeURIComponent(getDeviceId())}${afterQ}${urlQ}${panelCapsQuery(getDeviceId())}`)
   attachPluginHandlers(es)
   ;(window as any).__paEs = es
   setEs(es)
