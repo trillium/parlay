@@ -74,6 +74,7 @@ Reach for these instead of the hand-rolled equivalent.
 - **Publishable packages use flat `parlay-<part>` names; the `@parlay` scope is never published.** Only `packages/input` is public. → [notes](docs/agent-notes/publishable-packages-use-flat-unscoped-parlay.md)
 - **Remote debug log + on-screen mobile console** for phone-only triage. → [notes](docs/agent-notes/remote-debug-log-on-screen-mobile.md)
 - **`city/` is parlay's authored Gas City city + pack source, not a live city** — never run city-mutating `gc` verbs against it with the default `GC_HOME`; validate against a copy with `GC_HOME` redirected. → [notes](docs/agent-notes/city-is-the-authored-gas-city-source.md)
+- **The pinned gc cannot use the captain's bd fork** — a gc city store needs an upstream `bd` (schema/config skew fails `session new` both directions); sandbox recipe + lifecycle traps in the gated test. → [notes](docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md)
 
 ## Port-ticket archaeology
 
