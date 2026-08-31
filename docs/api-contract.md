@@ -353,6 +353,7 @@ TS response (Go serves a subset — see [Divergences](#divergences-to-fix)):
   "presence":   [ { "channel": "id", /* + AgentInfo fields */, "listening": true, "lastSeen": "iso|null", "status": "listening"|"idle"|"offline" } ],
   "presence_broadcasts": 12,                            // TS only
   "capability_suppressed": { "navigate": 3 },           // TS only — gated event → deliveries suppressed
+  "capability_declarations": [ { "surface": { "kind": "panel", "instance"?: "…" }, "accepts": ["…"], "content": ["…"], "interactions": ["…"], "connectedAt": "iso", "device"?: "uuid" } ],  // TS only — one entry per declared SSE connection (device-identified or not), all three axes
   "devices": [ { "device": "uuid", "ua": "…", "connectedAt": "iso", "surface"?: {...}, "accepts"?: ["…"] } ],  // TS only
   "memory":  { "rssMB": 0, "heapUsedMB": 0, "externalMB": 0, "arrayBuffersMB": 0 },  // TS only
   "history": { "count": 0, "approxBytes": 0, "approxKB": 0, "ssePerConnectKB": 0 }   // TS only
