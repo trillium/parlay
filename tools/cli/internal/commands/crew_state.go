@@ -17,6 +17,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -26,6 +27,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/parlaybeads"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
@@ -224,6 +226,59 @@ func readStatusFor(statusFile string) statusRead {
 	return statusRead{status: p, kind: "ok"}
 }
 
+// crewStatusRead resolves the on-disk half of the reconciliation:
+// bead-backed when the unit-4 read gate is on (PARLAY_CREW_READ_BEADS=1 with
+// PARLAY_CREW_STORE set), the status file otherwise. Fallback doctrine
+// mirrors the "valid status always wins" rule: any condition under which the
+// bead path cannot produce a usable answer — store unreachable, no crew bead
+// yet, an attach-only bead with no status written — falls back to the file,
+// which under dual-write carries the same truth as its projection. A store
+// FAILURE is additionally noted on stderr (never silently absorbed); a
+// merely-absent bead is expected during rollout and falls back quietly.
+func crewStatusRead(agentID string) statusRead {
+	if !crewReadBeads() {
+		return readStatusFor(statusFileForAgent(agentID))
+	}
+	if sr, ok := readStatusFromBeads(agentID); ok {
+		return sr
+	}
+	return readStatusFor(statusFileForAgent(agentID))
+}
+
+// readStatusFromBeads reads agentID's crew bead and folds it into the same
+// statusRead shape the file reader produces, so reconcileCrewState cannot
+// tell the sources apart (that is the point — the wire contract is frozen).
+// ok=false means "use the file"; it is NOT an error verdict.
+func readStatusFromBeads(agentID string) (statusRead, bool) {
+	dir := crewStoreDir()
+	if dir == "" {
+		fmt.Fprintf(os.Stderr, "parlay crew-state: note — PARLAY_CREW_READ_BEADS is set but PARLAY_CREW_STORE is not; reading the status file\n")
+		return statusRead{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), crewStoreTimeout)
+	defer cancel()
+	c, err := crewStoreOpenRead(ctx, dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parlay crew-state: note — crew store unreachable, falling back to the status file: %v\n", err)
+		return statusRead{}, false
+	}
+	defer c.Close()
+	bead, found, err := parlaybeads.FindCrewBead(ctx, c, agentID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parlay crew-state: note — crew store read failed, falling back to the status file: %v\n", err)
+		return statusRead{}, false
+	}
+	if !found {
+		return statusRead{}, false
+	}
+	st := parlaybeads.CrewStatusFromMetadata(bead.Metadata)
+	if st.Verb == "" {
+		// An attach-only bead (created before any status write): no opinion.
+		return statusRead{}, false
+	}
+	return statusRead{kind: "ok", status: parsedStatus{verb: st.Verb, key: st.Key, note: st.Note}}, true
+}
+
 // noteOf renders a parsed status line's note for the detail column.
 func noteOf(p parsedStatus) string {
 	if p.note == "" {
@@ -257,8 +312,18 @@ func CrewStateForAgent(agentID string) CrewStateResult {
 // answered — the seam batch callers (sweep) use to share one registry fetch
 // across a whole pass instead of re-asking the relay per agent (robots-8783).
 func crewStateForAgentEnrolled(agentID string, enrolled enrollment) CrewStateResult {
-	sr := readStatusFor(statusFileForAgent(agentID))
+	return reconcileCrewState(crewStatusRead(agentID), enrolled)
+}
 
+// reconcileCrewState is the pure half: one statusRead × one enrollment →
+// the {state, source, detail, exit} answer. This function IS the frozen wire
+// contract `parlay sweep`/`stale`/firstmate consume (status-lift report
+// §6.3): the exit codes 3/4/5/6, the source suffixes status /
+// status-unenrolled / status-degraded / none, and the precedence rule that a
+// valid status always wins the state. It must not change as the status read
+// migrates from file to bead (unit 4) — TestReconcileCrewStateFrozenTable
+// pins every cell.
+func reconcileCrewState(sr statusRead, enrolled enrollment) CrewStateResult {
 	// Source suffix records HOW much to trust the status line: plain
 	// "status" when the relay confirmed enrollment, qualified when the relay
 	// disagreed or couldn't be reached.

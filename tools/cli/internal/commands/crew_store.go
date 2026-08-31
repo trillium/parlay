@@ -40,6 +40,21 @@ const crewStoreTimeout = 60 * time.Second
 // pipeline is enabled, "" when the write stays file-only.
 func crewStoreDir() string { return strings.TrimSpace(os.Getenv("PARLAY_CREW_STORE")) }
 
+// crewReadBeads reads the SECOND gate (unit 4): PARLAY_CREW_READ_BEADS=1
+// cuts the readers (crew-state, supervise) over to the bead/event pipeline.
+// Two gates on purpose — the rollout's shakedown phase runs dual-WRITE
+// (PARLAY_CREW_STORE set) with the readers still on the legacy file, and
+// only then flips reads.
+func crewReadBeads() bool { return strings.TrimSpace(os.Getenv("PARLAY_CREW_READ_BEADS")) == "1" }
+
+// crewStoreOpenRead is the reader-side store seam: Open, never Init — which
+// verbs may bring a store into existence is the writer's decision, and a
+// reader that happens to run first must not create an empty store the writer
+// then trusts. A var for the same test-substitution reason as crewStoreOpen.
+var crewStoreOpenRead = func(ctx context.Context, dir string) (parlaybeads.Client, error) {
+	return parlaybeads.Open(ctx, parlaybeads.Config{Dir: dir})
+}
+
 // errNoCrewIdentity marks the one structural skip: PARLAY_STATUS_FILE gave
 // the write a file sink but no agent id exists to key the event log or crew
 // bead. Callers report it (stderr note) rather than dying — it is a
