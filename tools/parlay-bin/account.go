@@ -9,21 +9,24 @@ import (
 )
 
 // resolveAccountToken resolves a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler
-// account name: macOS keychain first, then a flat-file fallback. Mirrors
-// bin/parlay-spawn's resolve_account_token() (lines 62–76).
+// account name by delegating to the canonical ccjuggler engine:
+// `python3 ~/code/juggle/ccjuggler.py use <account>`, whose single stdout
+// line is `export CLAUDE_CODE_OAUTH_TOKEN=<token>`. Mirrors
+// packages/ccjuggler's resolveToken.
 func resolveAccountToken(account string) (string, error) {
-	out, err := exec.Command("security", "find-generic-password",
-		"-a", "ccjuggler", "-s", "ccjuggler-"+account, "-w").Output()
-	if err == nil {
-		if token := strings.TrimSpace(string(out)); token != "" {
-			return token, nil
+	ccjuggler := filepath.Join(os.Getenv("HOME"), "code", "juggle", "ccjuggler.py")
+	out, err := exec.Command("python3", ccjuggler, "use", account).Output()
+	if err != nil {
+		return "", fmt.Errorf("--account %q: ccjuggler subprocess failed: %w", account, err)
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		if token, ok := strings.CutPrefix(strings.TrimSpace(line), "export CLAUDE_CODE_OAUTH_TOKEN="); ok {
+			if token != "" {
+				return token, nil
+			}
 		}
 	}
 
-	path := filepath.Join(os.Getenv("HOME"), ".ccjuggler", account, ".oauth-token")
-	if data, readErr := os.ReadFile(path); readErr == nil {
-		return strings.TrimSpace(string(data)), nil
-	}
-
-	return "", fmt.Errorf("--account %q: no token found — tried keychain 'ccjuggler-%s' and %s", account, account, path)
+	return "", fmt.Errorf("--account %q: no token found — python3 %s use %s did not emit a token line", account, ccjuggler, account)
 }
