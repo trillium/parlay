@@ -2,28 +2,29 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+
+	account "github.com/trillium/parlay/tools/parlay-bin/internal/juggle"
 )
 
 // resolveAccountToken resolves a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler
-// account name: macOS keychain first, then a flat-file fallback. Mirrors
-// bin/parlay-spawn's resolve_account_token() (lines 62–76).
-func resolveAccountToken(account string) (string, error) {
-	out, err := exec.Command("security", "find-generic-password",
-		"-a", "ccjuggler", "-s", "ccjuggler-"+account, "-w").Output()
-	if err == nil {
-		if token := strings.TrimSpace(string(out)); token != "" {
-			return token, nil
-		}
+// account name by delegating to the canonical juggle account package (the Go
+// port of ccjuggler.py), which handles both token_format=raw and
+// claude-credentials-json. Mirrors packages/ccjuggler's resolveToken.
+func resolveAccountToken(accountName string) (string, error) {
+	accounts := account.LoadAccounts()
+	if len(accounts) == 0 {
+		return "", fmt.Errorf("--account %q: no ccjuggler accounts found", accountName)
 	}
-
-	path := filepath.Join(os.Getenv("HOME"), ".ccjuggler", account, ".oauth-token")
-	if data, readErr := os.ReadFile(path); readErr == nil {
-		return strings.TrimSpace(string(data)), nil
+	a, ok := account.FindAccount(accounts, accountName)
+	if !ok {
+		return "", fmt.Errorf("--account %q: account not found in accounts.json", accountName)
 	}
-
-	return "", fmt.Errorf("--account %q: no token found — tried keychain 'ccjuggler-%s' and %s", account, account, path)
+	token, err := account.GetToken(a)
+	if err != nil {
+		return "", fmt.Errorf("--account %q: resolving token: %w", accountName, err)
+	}
+	if token == "" {
+		return "", fmt.Errorf("--account %q: resolved empty token", accountName)
+	}
+	return token, nil
 }
