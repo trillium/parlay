@@ -64,6 +64,7 @@ Reach for these instead of the hand-rolled equivalent.
 - **"Not answering /health" ≠ "not running"** — never force-restart a relay. → [notes](docs/agent-notes/not-answering-health-not-running-never-robots-mpr3.md)
 - **`mechanic-dispatch`'s canonical source is `tools/mechanic-dispatch/`**, not the `~/.local/bin` copy. Every launch must name its `--bead`. → [notes](docs/agent-notes/mechanic-dispatch-canonical-source-lives-in.md)
 - **The `subprocess` launcher is a herdr-free escape hatch** in `bin/parlay-spawn`, selected by `--subprocess` / `PARLAY_SPAWN_LAUNCHER` / config (`gascity` is its accepted, deprecated pre-rename spelling). Its stdin charter delivery is an explicitly unverified assumption. → [notes](docs/agent-notes/subprocess-launcher-a-herdr-free-escape.md)
+- **The agent startup-prompt template is single-source**: real files in `tools/parlay-bin/launch-templates/`, repo-root `launch-templates/*` are symlinks to them, and both `bin/parlay-spawn` and `prompt.go` (`go:embed`) read the same bytes. Edit the real file, never the symlink; bash's `load_template` halves backslashes (apostrophe names diverge from Go). → [notes](docs/agent-notes/startup-prompt-template-is-single-source.md)
 
 ## Architecture pointers
 
