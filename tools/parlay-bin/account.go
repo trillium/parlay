@@ -2,31 +2,29 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+
+	"github.com/trillium/juggle/account"
 )
 
 // resolveAccountToken resolves a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler
-// account name by delegating to the canonical ccjuggler engine:
-// `python3 ~/code/juggle/ccjuggler.py use <account>`, whose single stdout
-// line is `export CLAUDE_CODE_OAUTH_TOKEN=<token>`. Mirrors
-// packages/ccjuggler's resolveToken.
-func resolveAccountToken(account string) (string, error) {
-	ccjuggler := filepath.Join(os.Getenv("HOME"), "code", "juggle", "ccjuggler.py")
-	out, err := exec.Command("python3", ccjuggler, "use", account).Output()
+// account name by delegating to the canonical juggle account package (the Go
+// port of ccjuggler.py), which handles both token_format=raw and
+// claude-credentials-json. Mirrors packages/ccjuggler's resolveToken.
+func resolveAccountToken(accountName string) (string, error) {
+	accounts := account.LoadAccounts()
+	if len(accounts) == 0 {
+		return "", fmt.Errorf("--account %q: no ccjuggler accounts found", accountName)
+	}
+	a, ok := account.FindAccount(accounts, accountName)
+	if !ok {
+		return "", fmt.Errorf("--account %q: account not found in accounts.json", accountName)
+	}
+	token, err := account.GetToken(a)
 	if err != nil {
-		return "", fmt.Errorf("--account %q: ccjuggler subprocess failed: %w", account, err)
+		return "", fmt.Errorf("--account %q: resolving token: %w", accountName, err)
 	}
-
-	for _, line := range strings.Split(string(out), "\n") {
-		if token, ok := strings.CutPrefix(strings.TrimSpace(line), "export CLAUDE_CODE_OAUTH_TOKEN="); ok {
-			if token != "" {
-				return token, nil
-			}
-		}
+	if token == "" {
+		return "", fmt.Errorf("--account %q: resolved empty token", accountName)
 	}
-
-	return "", fmt.Errorf("--account %q: no token found — python3 %s use %s did not emit a token line", account, ccjuggler, account)
+	return token, nil
 }
