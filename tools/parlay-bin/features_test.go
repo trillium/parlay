@@ -38,6 +38,9 @@ func (s *agentSpawnFeatureState) cleanup() {
 	if s.stateDir != "" {
 		_ = subprocessStop(s.stateDir)
 	}
+	if s.workdir != "" {
+		_ = os.RemoveAll(s.workdir)
+	}
 }
 
 func (s *agentSpawnFeatureState) aSubprocessAgentIsSpawned(agentID string) error {
