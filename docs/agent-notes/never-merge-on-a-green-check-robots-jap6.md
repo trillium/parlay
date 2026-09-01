@@ -16,7 +16,7 @@ of how many findings it posted. `gh pr view` compounds it with
 both landed completely unreviewed this way.
 
 `parlay merge-gate <pr> [--repo owner/name] [--json]`
-(`tools/cli/internal/commands/merge_gate.go`) is the truthful replacement. It
+(`tools/cli/internal/commands/merge_gate_*.go`) is the truthful replacement. It
 refuses to treat the conclusion as the merge signal: it reads each check's
 *description* for a vacuous pass, requires an actual review (a human review,
 or a CodeRabbit comment carrying `walkthrough_start` rather than the

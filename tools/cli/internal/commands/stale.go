@@ -48,7 +48,7 @@
 // `parlay sweep --apply` (which asks the same question with the same holds),
 // not to a detector something might call in a loop.
 //
-// Go-only, no TS port — same call as merge_gate.go and sweep.go. bin/parlay
+// Go-only, no TS port — same call as merge_gate_cli.go and sweep.go. bin/parlay
 // now execs the Go binary for every verb; the TS CLI and the parity harness
 // that diffed against it were both retired in T-08.
 package commands

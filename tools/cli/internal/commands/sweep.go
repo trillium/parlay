@@ -57,7 +57,7 @@
 // the only thing it reclaimed, and 57 panes had to be closed by hand after a
 // sweep reported them all closed.
 //
-// Go-only, no TS port — same call as merge_gate.go. bin/parlay now execs the
+// Go-only, no TS port — same call as merge_gate_cli.go. bin/parlay now execs the
 // Go binary for every verb; the TS CLI and the parity harness that diffed
 // against it were both retired in T-08.
 package commands
