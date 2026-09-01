@@ -39,9 +39,9 @@ Four things worth knowing before editing it:
 - **`gofmt` in CI is not a duplicate of `TestGofmtClean`.** That test
   (`tools/cli/internal/commands/gofmt_test.go`) resolves its root to the
   tools/cli module, so it guards one module of five; the CI step covers the
-  other four. All five Go modules are pure stdlib — no `go.sum`, no external
-  requires — so the whole Go suite runs in seconds and the cache is a build
-  cache, not a download cache.
+  other four. Three modules have external dependencies and go.sum files
+  (tools/cli, tools/parlay-bin, packages/spawn-profiles); the remaining two
+  (packages/go-server, tools/relay) are pure stdlib.
 - **Every test step redirects `$HOME`, and it is load-bearing, not ceremony.**
   `packages/cli`'s tests resolve `join(homedir(), ".parlay", "agents", …)`
   directly and really do create it; several Go tests write `~/.parlay`,

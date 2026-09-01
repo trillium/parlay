@@ -44,9 +44,10 @@ jobs:
   # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/go-server,
   #    packages/spawn-profiles ──────────────────────────────────────────────
   # Separate modules, no root go.work, so each is entered on its own.
-  # Every module except tools/cli is pure standard library; tools/cli requires
-  # the beads library (crew store, docs/status-lift-topology.md) and is the
-  # only module with a go.sum.
+  # tools/cli requires the beads library (crew store, docs/status-lift-topology.md)
+  # and godog; tools/parlay-bin requires godog; packages/spawn-profiles requires
+  # go-toml — all three have go.sum files. packages/go-server and tools/relay are
+  # pure standard library with no external dependencies.
   go:
     name: Go (build, vet, test, gofmt)
     runs-on: ubuntu-latest
@@ -86,8 +87,8 @@ jobs:
         with:
           # Matches the `go 1.26` directive every module declares.
           go-version: '1.26'
-          # Keyed off each module's go.mod plus the one go.sum that exists
-          # (tools/cli). The value here is the build + module download cache.
+          # Keyed off each module's go.mod plus the go.sum files listed here.
+          # The value here is the build + module download cache.
           cache-dependency-path: |
             tools/cli/go.mod
             tools/cli/go.sum
