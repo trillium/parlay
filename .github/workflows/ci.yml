@@ -94,6 +94,7 @@ jobs:
             tools/cli/go.sum
             tools/relay/go.mod
             tools/parlay-bin/go.mod
+            tools/parlay-bin/go.sum
             packages/go-server/go.mod
             packages/spawn-profiles/go.mod
 
