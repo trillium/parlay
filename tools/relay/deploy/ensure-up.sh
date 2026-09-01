@@ -18,7 +18,7 @@
 #          (dev fallback when nothing is installed).
 #   * Then waits (adaptively bounded) for /health and returns 0/1 accordingly.
 #
-# The relay's own control socket is single-binder (listenControl in main.go
+# The relay's own control socket is single-binder (listenControl in relay_control.go
 # refuses a second live relay), so even a lost lock race cannot produce two live
 # relays — the loser fails to bind and exits.
 #
