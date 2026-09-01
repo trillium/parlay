@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/trillium/juggle/account"
+	account "github.com/trillium/parlay/tools/parlay-bin/internal/juggle"
 )
 
 // resolveAccountToken resolves a CLAUDE_CODE_OAUTH_TOKEN for a ccjuggler
