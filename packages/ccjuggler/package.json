@@ -11,6 +11,10 @@
     "ccjuggler-resolve": "./src/cli.ts"
   },
   "scripts": {
-    "test": "bun test"
+    "test": "bun test",
+    "test:bdd": "bun node_modules/.bin/cucumber-js ../../features/spawn/account-resolution.feature --import src/features/**/*.steps.ts"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^11"
   }
 }
