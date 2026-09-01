@@ -1,0 +1,12 @@
+{
+  "cucumberautocomplete.steps": [
+    "packages/ccjuggler/src/features/*.steps.ts",
+    "tools/parlay-bin/features_test.go",
+    "tools/cli/internal/evalengine/features_test.go"
+  ],
+  "cucumberautocomplete.syncfeatures": "features/**/*.feature",
+  "cucumberautocomplete.strictGherkinCompletion": true,
+  "files.associations": {
+    "*.feature": "gherkin"
+  }
+}

@@ -28,6 +28,7 @@ Each of these has already caused a real incident on the captain's box.
 - **A conflicted PR gets NO Actions runs — missing checks, not red ones.** pull_request runs build the merge ref; on conflict GitHub silently skips them while head-SHA apps (CodeRabbit, GitGuardian) keep reporting. Don't retrigger — resolve the conflict. → [notes](docs/agent-notes/a-conflicting-pr-gets-no-actions.md)
 - **Never assert on elapsed time across a subprocess.** `bun` startup jitter is bigger than most quantities worth testing, so a bound loose enough not to flake cannot fail — assert on emitted output, and test-the-test. → [notes](docs/agent-notes/a-timing-assertion-loose-enough-not.md)
 - **`tools/cli` sweeps need `CGO_ENABLED=0`** — a default-CGO `go build ./...`/`go test ./...` there dies on missing ICU C++ headers (the beads dependency's embedded-Dolt tree); `bin/parlay` (`go build .`) is unaffected. → [docs/status-lift-topology.md](docs/status-lift-topology.md)
+- **`make test-bdd` runs the Gherkin/Cucumber scaffold** (`features/`); there is no `packages/eval-engine` — the real matcher/platform code is `tools/cli/internal/evalengine/`. → [notes](docs/agent-notes/bdd-scaffold-and-eval-engine-path.md)
 
 ## The security boundary
 
