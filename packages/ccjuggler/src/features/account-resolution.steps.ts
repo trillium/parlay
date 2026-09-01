@@ -71,6 +71,17 @@ Given(
 )
 
 Given("no keychain entry exists for ccjuggler account {string}", function (account: string) {
+  try {
+    execFileSync("security", [
+      "delete-generic-password",
+      "-a",
+      "ccjuggler",
+      "-s",
+      keychainServiceName(account),
+    ])
+  } catch {
+    // best-effort: no entry to delete is not a failure
+  }
   world.keychainAccounts = world.keychainAccounts.filter((a) => a !== account)
 })
 
