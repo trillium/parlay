@@ -56,7 +56,7 @@ parlay_relay_rotate_logs() {
 PARLAY_RELAY_SERVER_DEFAULT="http://localhost:4242"
 
 # parlay_relay_runtime_dir prints the canonical per-user runtime dir the relay
-# and every `parlay monitor` agree on. It MUST match relay/main.go's
+# and every `parlay monitor` agree on. It MUST match relay/relay_util.go's
 # defaultRuntimeDir ($TMPDIR/parlay) and monitor/parlay-monitor.sh's RUNTIME.
 #
 # Resolution order (mirrors what the monitor script does so the two never point
