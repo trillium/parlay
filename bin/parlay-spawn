@@ -33,6 +33,15 @@
 
 set -euo pipefail
 
+# DEPRECATED: parlay-spawn (this script) is deprecated.
+# Use `parlay spawn` instead — the Go CLI resolves parlay-bin first and
+# forwards all arguments verbatim.
+#
+# Example: parlay spawn <id> <name> <color> <prompt> [flags]
+echo "parlay-spawn: this script is deprecated. Use 'parlay spawn' instead." >&2
+echo "  See: parlay spawn --help" >&2
+exit 1
+
 PARLAY="${PARLAY_SERVER:-http://localhost:31337}"
 # Default account — precedence: env var > ~/.parlay/config.toml spawnAccount > empty.
 # Set persistently with: parlay spawn-account set <name>
