@@ -28,13 +28,14 @@ service's own two files there — never the shared directory itself.
 
 `parlay-server` also serves every route through its origin guard
 (`internal/guard`; policy in `docs/api-contract.md` § Origin guard), which
-reads `PARLAY_ALLOWED_ORIGINS` to admit extra browser origins. **The installed
-LaunchAgent cannot see it**: the rendered plist passes only `-addr` and
-`-state-dir`, and launchd does not inherit the shell environment, so the
-service always runs with the built-in origin policy (no `Origin` header,
-same-origin, loopback, `.local` and private-LAN are allowed regardless — that
-covers the CLI, hooks and the panel). Setting the variable in a shell affects
-only a server started from that shell, not the launchd one.
+reads `PARLAY_ALLOWED_ORIGINS` to admit extra browser origins (no `Origin`
+header, same-origin, loopback, `.local` and private-LAN are always allowed
+regardless — that covers the CLI, hooks and the panel). Setting the variable
+in a shell only affects a server started from that shell, not the launchd
+one — launchd does not inherit the shell environment. To reach the
+installed, launchd-run server, bake it in at install time with
+`--allowed-origins` (below); the rendered plist's `EnvironmentVariables`
+dict is the only thing launchd actually sees.
 
 ## Install
 
@@ -42,6 +43,7 @@ only a server started from that shell, not the launchd one.
 packages/go-server/deploy/install.sh                    # build if missing, install, load, verify
 packages/go-server/deploy/install.sh --rebuild           # force a fresh `go build` first
 packages/go-server/deploy/install.sh --addr 127.0.0.1:4242 --state-dir ~/.parlay
+packages/go-server/deploy/install.sh --allowed-origins "https://tunnel.example.com,https://other.example.com"
 ```
 
 `install.sh` is macOS-only and idempotent — re-run to update the
@@ -51,6 +53,14 @@ to `127.0.0.1:4242` (matches `main.go`'s own coded default); state dir
 defaults to `~/.parlay`. **Refuses to deploy against `:31337`** — that is
 the captain's live production Pulse server (see this repo's `CLAUDE.md`) —
 both here and, redundantly, in the binary's own `refuseProductionPort`.
+
+`--allowed-origins <comma,separated,origins>` (env `PARLAY_ALLOWED_ORIGINS`)
+bakes `internal/guard`'s origin allow-list into the rendered plist's
+`EnvironmentVariables` — the only way it reaches the installed, launchd-run
+server. Omitting the flag on a re-install **preserves** whatever value is
+already installed (read back out of the current plist,
+`parlay_goserver_installed_allowed_origins` in `lib.sh`) rather than wiping
+it; pass `--allowed-origins ""` to explicitly clear it.
 
 ## Operate
 

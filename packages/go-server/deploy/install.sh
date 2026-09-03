@@ -15,8 +15,20 @@
 #   5. Verifies the server answers GET /health.
 #
 # Usage:  install.sh [--rebuild] [--build] [--addr <host:port>] [--state-dir <path>]
-# Env:    PARLAY_SERVER_ADDR  listen addr (default 127.0.0.1:4242)
-#         PARLAY_STATE_HOME   state dir   (default ~/.parlay)
+#                     [--allowed-origins <comma,separated,origins>]
+# Env:    PARLAY_SERVER_ADDR    listen addr      (default 127.0.0.1:4242)
+#         PARLAY_STATE_HOME     state dir        (default ~/.parlay)
+#         PARLAY_ALLOWED_ORIGINS  origin allow-list (default: preserve, see below)
+#
+# --allowed-origins bakes internal/guard's PARLAY_ALLOWED_ORIGINS allow-list
+# into the rendered plist's EnvironmentVariables (launchd does not inherit
+# the shell environment, so this is the only way the installed, launchd-run
+# server ever sees it). Precedence when re-installing: an explicit
+# --allowed-origins (even "") wins; otherwise PARLAY_ALLOWED_ORIGINS in this
+# script's own environment; otherwise whatever value the currently-installed
+# plist already has (parlay_goserver_installed_allowed_origins in lib.sh) —
+# so a plain re-install (e.g. after --rebuild) never silently drops a
+# previously configured allow-list.
 #
 # Frontend bundles are copied to a stable location so dev builds in the repo
 # never disturb the live server:
@@ -37,16 +49,34 @@ REBUILD=0
 BUILD_FRONTEND=0
 ADDR="${PARLAY_SERVER_ADDR:-${PARLAY_GOSERVER_ADDR_DEFAULT}}"
 STATE_DIR="${PARLAY_STATE_HOME:-${PARLAY_GOSERVER_STATE_DEFAULT}}"
+ALLOWED_ORIGINS=""
+ALLOWED_ORIGINS_ARG_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --rebuild)   REBUILD=1; shift ;;
     --build)     BUILD_FRONTEND=1; shift ;;
     --addr)      ADDR="${2:?--addr needs a host:port}"; shift 2 ;;
     --state-dir) STATE_DIR="${2:?--state-dir needs a path}"; shift 2 ;;
+    --allowed-origins)
+      # Not "${2:?...}": that treats an empty string ("" — the explicit
+      # "clear it" spelling) the same as a missing arg. Only a truly absent
+      # $2 is an error.
+      [ $# -ge 2 ] || { echo "install.sh: --allowed-origins needs a value" >&2; exit 2; }
+      ALLOWED_ORIGINS="$2"; ALLOWED_ORIGINS_ARG_SET=1; shift 2 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "install.sh: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# Resolve --allowed-origins precedence: explicit flag > env var > whatever a
+# prior install already baked into the plist (never silently dropped).
+if [ "${ALLOWED_ORIGINS_ARG_SET}" != 1 ]; then
+  if [ -n "${PARLAY_ALLOWED_ORIGINS:-}" ]; then
+    ALLOWED_ORIGINS="${PARLAY_ALLOWED_ORIGINS}"
+  else
+    ALLOWED_ORIGINS="$(parlay_goserver_installed_allowed_origins)"
+  fi
+fi
 
 case "$(uname -s)" in
   Darwin) : ;;
@@ -118,6 +148,16 @@ echo "==> writing ${PARLAY_GOSERVER_PLIST}" >&2
 TEMPLATE="${HERE}/com.parlay.go-server.plist.template"
 [ -r "${TEMPLATE}" ] || { echo "install.sh: missing template ${TEMPLATE}" >&2; exit 1; }
 mkdir -p "${STATE_DIR}"
+# ALLOWED_ORIGINS is the one templated value that can hold arbitrary
+# user-supplied text (URLs, possibly with "&"), so it needs both XML-entity
+# escaping (it lands inside a plist <string>) and sed-replacement escaping
+# (a literal "&"/"|"/"\" in a sed replacement is special) before substitution.
+allowed_origins_xml="${ALLOWED_ORIGINS//&/&amp;}"
+allowed_origins_xml="${allowed_origins_xml//</&lt;}"
+allowed_origins_xml="${allowed_origins_xml//>/&gt;}"
+allowed_origins_sed="${allowed_origins_xml//\\/\\\\}"
+allowed_origins_sed="${allowed_origins_sed//|/\\|}"
+allowed_origins_sed="${allowed_origins_sed//&/\\&}"
 # sed with a pipe delimiter so paths containing slashes are safe.
 sed \
   -e "s|__LABEL__|${PARLAY_GOSERVER_LABEL}|g" \
@@ -127,6 +167,7 @@ sed \
   -e "s|__ASSETS_DIR__|${PARLAY_GOSERVER_ASSETS_DIR}|g" \
   -e "s|__OUT_LOG__|${PARLAY_GOSERVER_OUT_LOG}|g" \
   -e "s|__ERR_LOG__|${PARLAY_GOSERVER_ERR_LOG}|g" \
+  -e "s|__ALLOWED_ORIGINS__|${allowed_origins_sed}|g" \
   "${TEMPLATE}" > "${PARLAY_GOSERVER_PLIST}.new"
 mv -f "${PARLAY_GOSERVER_PLIST}.new" "${PARLAY_GOSERVER_PLIST}"
 # Validate the rendered plist before asking launchd to load it.
@@ -170,6 +211,7 @@ if [ "${ok}" = 1 ]; then
   echo "    addr   : http://${ADDR}" >&2
   echo "    state  : ${STATE_DIR}" >&2
   echo "    assets : ${PARLAY_GOSERVER_ASSETS_DIR}" >&2
+  echo "    allowed-origins : ${ALLOWED_ORIGINS:-(none)}" >&2
   echo "    logs   : ${PARLAY_GOSERVER_OUT_LOG} / ${PARLAY_GOSERVER_ERR_LOG}" >&2
   launchctl print "${TARGET}" 2>/dev/null | grep -E '^\s*(state|pid|program|last exit) ' || true
 else

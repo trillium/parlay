@@ -24,6 +24,15 @@
   refuses to render this plist with that port, and the binary's own
   refuseProductionPort (cmd/parlay-server/main.go) refuses to bind it even if
   this file were hand-edited to say otherwise.
+
+  launchd does not inherit the shell environment, so PARLAY_ALLOWED_ORIGINS
+  (internal/guard's origin allow-list, see docs/api-contract.md § Origin
+  guard) must be baked into EnvironmentVariables below to reach the
+  installed, launchd-run server. install.sh's --allowed-origins renders this
+  token; omitting the flag on a re-install preserves whatever value is
+  already here (parlay_goserver_installed_allowed_origins in lib.sh) rather
+  than wiping it. Empty is equivalent to unset (guard.AllowedOriginList
+  treats "" as no extra origins).
 -->
 <plist version="1.0">
 <dict>
@@ -40,6 +49,12 @@
     <string>-assets-dir</string>
     <string>__ASSETS_DIR__</string>
   </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PARLAY_ALLOWED_ORIGINS</key>
+    <string>__ALLOWED_ORIGINS__</string>
+  </dict>
 
   <key>RunAtLoad</key>
   <true/>
