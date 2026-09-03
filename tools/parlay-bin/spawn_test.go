@@ -150,7 +150,7 @@ func TestRunBatchSpawnDispatchesEveryPairOnFailure(t *testing.T) {
 
 	out, rc := captureStderr(t, func() int {
 		return runBatchSpawn([]string{
-			"nope-batch-a-z1=/tmp/none-a", "nope-batch-b-z2=/tmp/none-b", "--prompt", "brief",
+			"nope-batch-a-z1=/tmp/none-a", "nope-batch-b-z2=/tmp/none-b", "--prompt", "brief", "--model", "sonnet",
 		})
 	})
 
@@ -206,7 +206,7 @@ func TestRunBatchSpawnRejectsNonPairArg(t *testing.T) {
 
 	out, rc := captureStderr(t, func() int {
 		return runBatchSpawn([]string{
-			"nope-batch-mix-z5=/tmp/none-mix", "bogus-no-equals", "--prompt", "brief",
+			"nope-batch-mix-z5=/tmp/none-mix", "bogus-no-equals", "--prompt", "brief", "--model", "sonnet",
 		})
 	})
 
@@ -235,7 +235,7 @@ func TestRunBatchSpawnExpandsTilde(t *testing.T) {
 
 	home := os.Getenv("HOME")
 	_, rc := captureStderr(t, func() int {
-		return runBatchSpawn([]string{"tilde-agent=~/somewhere", "--prompt", "brief"})
+		return runBatchSpawn([]string{"tilde-agent=~/somewhere", "--prompt", "brief", "--model", "sonnet"})
 	})
 	if rc != 0 {
 		t.Fatalf("expected success, got rc=%d", rc)
@@ -244,4 +244,82 @@ func TestRunBatchSpawnExpandsTilde(t *testing.T) {
 		t.Fatalf("expected tilde-agent to be started, got %v", m.agentStartCalls)
 	}
 	_ = home // cwd itself isn't captured by the mock; AgentStart succeeding confirms the pipeline ran to completion
+}
+
+// task-qyu8q: a model must be chosen deliberately on every spawn, across all
+// three invocation shapes — named, --ephemeral, and batch. These tests
+// assert the refusal fires BEFORE any side effect (registration, mint,
+// launcher call), mirroring bash's "gate before the mint" ordering.
+
+func TestRequireModel(t *testing.T) {
+	if err := requireModel("sonnet"); err != nil {
+		t.Errorf("requireModel(%q) = %v, want nil", "sonnet", err)
+	}
+	if err := requireModel(""); err == nil {
+		t.Error("requireModel(\"\") = nil, want a refusal error")
+	}
+}
+
+func TestRunNamedSpawnRefusesWithoutModel(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	withPARLAYServer(t, deadRegisterServer(t).URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-named-nomodel", "Nope Named", "#c084fc", "brief"})
+	})
+
+	if rc != 2 {
+		t.Errorf("missing --model should exit 2, got %d", rc)
+	}
+	if !strings.Contains(out, "no model was chosen") {
+		t.Errorf("expected model-gate refusal message; output:\n%s", out)
+	}
+	if len(m.agentGetCalls) != 0 {
+		t.Errorf("refusal must happen before any launcher call; agentGetCalls=%v", m.agentGetCalls)
+	}
+}
+
+func TestRunEphemeralSpawnRefusesWithoutModel(t *testing.T) {
+	var mintHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mintHit = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runEphemeralSpawn([]string{"brief"})
+	})
+
+	if rc != 2 {
+		t.Errorf("missing --model should exit 2, got %d", rc)
+	}
+	if !strings.Contains(out, "no model was chosen") {
+		t.Errorf("expected model-gate refusal message; output:\n%s", out)
+	}
+	if mintHit {
+		t.Error("refusal must happen before the mint (gate-before-mint convention) — no identity should be seeded")
+	}
+}
+
+func TestRunBatchSpawnRefusesWithoutModel(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	withPARLAYServer(t, deadRegisterServer(t).URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runBatchSpawn([]string{"nope-batch-nomodel-z8=/tmp/none-nm", "--prompt", "brief"})
+	})
+
+	if rc != 2 {
+		t.Errorf("missing --model should exit 2, got %d", rc)
+	}
+	if !strings.Contains(out, "no model was chosen") {
+		t.Errorf("expected model-gate refusal message; output:\n%s", out)
+	}
+	if len(m.agentGetCalls) != 0 {
+		t.Errorf("refusal must happen before any pair is dispatched; agentGetCalls=%v", m.agentGetCalls)
+	}
 }

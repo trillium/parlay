@@ -22,7 +22,8 @@ const spawnUsage = `Usage: parlay spawn <agent-id> <display-name> <hex-color> <i
   --cwd PATH      working directory for the spawned claude (default: $HOME)
   --focus         focus the new terminal (default: launched --no-focus)
   --model MODEL   pin the claude model (e.g. sonnet, opus, haiku, or a full
-                  model id); default: session default with sonnet fallback
+                  model id). REQUIRED — no implicit default, no silent
+                  sonnet fallback (task-qyu8q).
   --mode MODE     delivery mode: report|branch|pr (default: report).
   --effort LEVEL  effort level forwarded to claude (low|medium|high|xhigh|max)
   --worktree      create an isolated git worktree at <repo>/.worktrees/parlay-<id>
@@ -134,6 +135,25 @@ func usageExit() int {
 	return 2
 }
 
+// requireModel enforces task-qyu8q's mandatory-model gate: a model must be
+// chosen deliberately on every spawn. There is no implicit default — the
+// launching session's model is never inherited, and there is no silent
+// sonnet fallback. Mirrors bin/parlay-spawn's require_model, minus the
+// --profile/--no-pii resolution paths (pii_route_model, resolve_profile)
+// that don't exist in this port yet — those are third deliberate-choice
+// paths in bash, not silent defaults, but this port only has --model.
+func requireModel(model string) error {
+	if model != "" {
+		return nil
+	}
+	return fmt.Errorf(`refusing to spawn — no model was chosen.
+
+A model must be picked deliberately on every spawn. There is no implicit
+default: the launching session's model is never inherited, and there is no
+silent sonnet fallback. Pass --model explicitly (e.g. --model sonnet,
+--model opus, --model haiku, or a full model id).`)
+}
+
 // isBatchPair mirrors bin/parlay-spawn's batch-detection guard (lines
 // 191–199): the first arg contains '=' and the id-part before it contains
 // no '/'.
@@ -174,6 +194,10 @@ func runNamedSpawn(args []string) int {
 		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
 		return 2
 	}
+	if err := requireModel(opts.Model); err != nil {
+		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		return 2
+	}
 	if err := spawnOne(opts); err != nil {
 		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
 		return 1
@@ -192,6 +216,12 @@ func runEphemeralSpawn(args []string) int {
 	if err := parseTailFlags(args[1:], &opts, false); err != nil {
 		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
 		return usageExit()
+	}
+	// Gate before the mint (bash's own convention): a refusal here must
+	// leave no seeded identity behind.
+	if err := requireModel(opts.Model); err != nil {
+		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		return 2
 	}
 
 	id, name, color, err := mintEphemeral(parlayServer(), opts.Cwd, opts.Model)
@@ -288,6 +318,10 @@ func runBatchSpawn(args []string) int {
 
 	if shared.Prompt == "" {
 		fmt.Fprintln(os.Stderr, "parlay-spawn: batch dispatch requires a shared --prompt (the brief handed to every spawned agent)")
+		return 2
+	}
+	if err := requireModel(shared.Model); err != nil {
+		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
 		return 2
 	}
 
