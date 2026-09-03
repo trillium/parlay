@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SMS voice-flow prototype — discussion #240</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: ui-monospace, "SF Mono", Menlo, monospace; max-width: 640px; margin: 2rem auto; padding: 0 1rem; line-height: 1.4; }
+  h1 { font-size: 1rem; opacity: 0.7; font-weight: normal; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+  .live-toggle { border: 1px solid currentColor; border-radius: 6px; padding: 0.3rem 0.6rem; cursor: pointer; user-select: none; }
+  .live-toggle.armed { background: #c0392b; color: white; font-weight: bold; }
+  .screen-title { font-weight: bold; border-bottom: 1px solid currentColor; padding-bottom: 0.3rem; margin-bottom: 0.5rem; }
+  .chat-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px dotted #8888; cursor: default; }
+  .chat-row .standin { opacity: 0.6; font-size: 0.85em; }
+  .chat-row .preview { opacity: 0.6; margin-left: 1rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .message { padding: 0.2rem 0; }
+  .message.me { text-align: right; }
+  .draft-box { border: 1px solid currentColor; border-radius: 8px; padding: 0.6rem; margin: 0.6rem 0; min-height: 2rem; white-space: pre-wrap; }
+  .say-next { border: 1px dashed currentColor; border-radius: 8px; padding: 0.6rem; margin-top: 1rem; opacity: 0.85; font-size: 0.9em; }
+  .say-next .mic { font-size: 1.1em; }
+  .input-row { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
+  .input-row input[type=text] { flex: 1; font-family: inherit; font-size: 1rem; padding: 0.4rem; }
+  button { font-family: inherit; cursor: pointer; }
+  .dry-run { border: 2px dashed #e67e22; border-radius: 8px; padding: 0.6rem; margin-top: 0.6rem; }
+  .dry-run .label { font-weight: bold; color: #e67e22; }
+  .live-result { border: 2px solid #27ae60; border-radius: 8px; padding: 0.6rem; margin-top: 0.6rem; }
+  code { background: #8882; padding: 0.1rem 0.3rem; border-radius: 4px; }
+  .error { color: #c0392b; }
+</style>
+</head>
+<body>
+  <h1>SMS voice-flow prototype — proving out <a href="https://github.com/trillium/parlay/discussions/240">discussion #240</a></h1>
+  <div class="toolbar">
+    <span id="mode-badge"></span>
+    <div id="live-toggle" class="live-toggle" title="Arm real sending. Server also requires --allow-send.">DRY RUN</div>
+  </div>
+
+  <div id="screen"></div>
+
+  <div class="say-next" id="say-next"></div>
+
+  <div class="input-row">
+    <input id="utterance" type="text" placeholder="Type what you would say…" autocomplete="off" />
+    <button id="mic-btn" title="Speak (webkitSpeechRecognition)">🎤</button>
+    <button id="go-btn">Go</button>
+  </div>
+
+  <script type="module">
+    import { applyUtterance, initialState, sayNextBar } from './grammar.js';
+
+    let contacts = [];
+    let chatsMeta = new Map(); // id -> {displayName, standIn, lastMessage, lastActivity}
+    let state = initialState();
+    let historyCache = new Map(); // chatId -> history rows
+    let lastSendResult = null;
+    let liveArmed = false;
+
+    const screenEl = document.getElementById('screen');
+    const sayNextEl = document.getElementById('say-next');
+    const inputEl = document.getElementById('utterance');
+    const liveToggleEl = document.getElementById('live-toggle');
+    const modeBadgeEl = document.getElementById('mode-badge');
+
+    liveToggleEl.addEventListener('click', () => {
+      liveArmed = !liveArmed;
+      liveToggleEl.textContent = liveArmed ? 'LIVE (armed)' : 'DRY RUN';
+      liveToggleEl.classList.toggle('armed', liveArmed);
+    });
+
+    async function loadChats() {
+      const res = await fetch('/api/chats');
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      contacts = data.chats;
+      chatsMeta = new Map(contacts.map((c) => [c.id, c]));
+      modeBadgeEl.textContent = data.demo ? 'demo mode (fake seeded data)' : 'live data (via imsg)';
+    }
+
+    async function loadHistory(chatId) {
+      if (historyCache.has(chatId)) return historyCache.get(chatId);
+      const res = await fetch(`/api/history?chatId=${chatId}`);
+      const data = await res.json();
+      const history = data.history || [];
+      historyCache.set(chatId, history);
+      return history;
+    }
+
+    function relTime(iso) {
+      if (!iso) return '';
+      const ms = Date.now() - new Date(iso).getTime();
+      const mins = Math.round(ms / 60000);
+      if (mins < 1) return 'now';
+      if (mins < 60) return `${mins}m`;
+      const hrs = Math.round(mins / 60);
+      if (hrs < 24) return `${hrs}h`;
+      return `${Math.round(hrs / 24)}d`;
+    }
+
+    function renderList() {
+      const rows = contacts
+        .map((c) => {
+          const meta = chatsMeta.get(c.id);
+          const standin = c.standIn ? ` <span class="standin">(${c.standIn})</span>` : '';
+          const preview = meta?.lastMessage ? `<span class="preview">${escapeHtml(meta.lastMessage)}</span>` : '';
+          const time = meta?.lastActivity ? relTime(meta.lastActivity) : '';
+          return `<div class="chat-row"><span>${escapeHtml(c.displayName)}${standin}</span>${preview}<span>${time}</span></div>`;
+        })
+        .join('');
+      screenEl.innerHTML = `<div class="screen-title">Messages</div>${rows || '<p>No chats.</p>'}`;
+    }
+
+    async function renderCompose() {
+      const meta = chatsMeta.get(state.chatId);
+      const history = await loadHistory(state.chatId);
+      const msgs = history
+        .map((m) => `<div class="message ${m.isFromMe ? 'me' : ''}">${m.isFromMe ? 'You' : escapeHtml(m.sender)}: ${escapeHtml(m.text || '')}</div>`)
+        .join('');
+      screenEl.innerHTML = `
+        <div class="screen-title">${escapeHtml(meta?.displayName ?? state.chatId)}</div>
+        ${msgs}
+        <div class="draft-box">${escapeHtml(state.draft)}<span>&#9612;</span></div>
+      `;
+    }
+
+    async function renderSent() {
+      const meta = chatsMeta.get(state.chatId);
+      const history = await loadHistory(state.chatId);
+      const msgs = history
+        .map((m) => `<div class="message ${m.isFromMe ? 'me' : ''}">${m.isFromMe ? 'You' : escapeHtml(m.sender)}: ${escapeHtml(m.text || '')}</div>`)
+        .join('');
+      let resultHtml = '';
+      if (lastSendResult) {
+        if (lastSendResult.ranLive) {
+          resultHtml = `<div class="live-result"><span class="label">LIVE SEND</span><br/>${lastSendResult.ok ? 'sent.' : `<span class="error">failed: ${escapeHtml(lastSendResult.output || '')}</span>`}<br/><code>${escapeHtml(lastSendResult.command)}</code></div>`;
+        } else {
+          resultHtml = `<div class="dry-run"><span class="label">DRY RUN</span> — would run:<br/><code>${escapeHtml(lastSendResult.command)}</code><br/><small>${escapeHtml(lastSendResult.reason)}</small></div>`;
+        }
+      }
+      screenEl.innerHTML = `
+        <div class="screen-title">${escapeHtml(meta?.displayName ?? state.chatId)}</div>
+        ${msgs}
+        ${resultHtml}
+      `;
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function render() {
+      if (state.screen === 'list') renderList();
+      else if (state.screen === 'compose') await renderCompose();
+      else await renderSent();
+      sayNextEl.innerHTML = `<span class="mic">🎤</span> ` + sayNextBar(state.screen).join('<br/>');
+    }
+
+    async function handleUtterance(text) {
+      if (!text.trim()) return;
+      const result = applyUtterance(state, text, contacts);
+      state = result.state;
+      for (const action of result.actions) {
+        if (action.type === 'submit') {
+          const res = await fetch('/api/send', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ chatId: action.chatId, text: action.text, armed: liveArmed }),
+          });
+          lastSendResult = await res.json();
+          historyCache.delete(action.chatId); // force refetch so a live send shows up
+        } else if (action.type === 'readItBack') {
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.speak(new SpeechSynthesisUtterance(action.text || '(empty draft)'));
+          }
+        }
+      }
+      await render();
+    }
+
+    document.getElementById('go-btn').addEventListener('click', () => {
+      const text = inputEl.value;
+      inputEl.value = '';
+      handleUtterance(text);
+    });
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const text = inputEl.value;
+        inputEl.value = '';
+        handleUtterance(text);
+      }
+    });
+
+    // Optional: webkitSpeechRecognition, when available, behind the mic button.
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const micBtn = document.getElementById('mic-btn');
+    if (SpeechRecognition) {
+      const recognizer = new SpeechRecognition();
+      recognizer.continuous = false;
+      recognizer.interimResults = false;
+      recognizer.onresult = (e) => {
+        const text = e.results[0][0].transcript;
+        handleUtterance(text);
+      };
+      micBtn.addEventListener('click', () => recognizer.start());
+    } else {
+      micBtn.disabled = true;
+      micBtn.title = 'webkitSpeechRecognition not available in this browser';
+    }
+
+    loadChats().then(render).catch((err) => {
+      screenEl.innerHTML = `<p class="error">Failed to load chats: ${escapeHtml(String(err))}</p>`;
+    });
+  </script>
+</body>
+</html>
