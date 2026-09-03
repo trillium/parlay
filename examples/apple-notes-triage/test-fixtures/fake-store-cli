@@ -1,0 +1,32 @@
+#!/usr/bin/env bun
+// fake-store-cli — hermetic stand-in for a federated-store CLI (e.g. `task`),
+// used by bead.spec.ts and orchestrator.spec.ts. Mirrors the real output
+// shape observed from `task create` ("✓ Created issue: task-yf18z — <title>")
+// closely enough to exercise bead.ts's extractBeadId regex for real, without
+// touching any real store.
+//
+// Usage: fake-store-cli <store-name> <title...>
+// Body is read from stdin and appended to NOTES_TRIAGE_FIXTURE_BEAD_LOG (one
+// JSON line per call) if that env var is set.
+// Set NOTES_TRIAGE_FIXTURE_BEAD_FAIL=1 to simulate a failing create command.
+
+const [store, ...titleParts] = process.argv.slice(2);
+const title = titleParts.join(' ');
+
+if (process.env.NOTES_TRIAGE_FIXTURE_BEAD_FAIL === '1') {
+  console.error(`fake-store-cli: simulated failure creating "${title}"`);
+  process.exit(1);
+}
+
+const body = await new Response(Bun.stdin).text();
+const id = `${store}-${Math.random().toString(36).slice(2, 6)}`;
+
+const logPath = process.env.NOTES_TRIAGE_FIXTURE_BEAD_LOG;
+if (logPath) {
+  const file = Bun.file(logPath);
+  const existing = (await file.exists()) ? await file.text() : '';
+  await Bun.write(logPath, `${existing}${JSON.stringify({ store, title, body, id })}\n`);
+}
+
+console.log(`✓ Created issue: ${id} — ${title}`);
+process.exit(0);
