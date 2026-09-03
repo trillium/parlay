@@ -74,9 +74,10 @@ func phraseCore(phrase string) string {
 type MatchMode string
 
 const (
-	ModeTrailing MatchMode = "trailing" // phrase at end of buffer, text before it (submit-style)
-	ModeAnywhere MatchMode = "anywhere" // phrase anywhere in the buffer (clear-style)
-	ModeWhole    MatchMode = "whole"    // the buffer IS the command (tab ops)
+	ModeTrailing       MatchMode = "trailing"        // phrase at end of buffer, text before it (submit-style)
+	ModeAnywhere       MatchMode = "anywhere"        // phrase anywhere in the buffer (clear-style)
+	ModeWhole          MatchMode = "whole"           // the buffer IS the command (tab ops)
+	ModeTrailingCursor MatchMode = "trailing-cursor" // phrase at the CURSOR, not necessarily end of buffer (inline edit commands, discussion #246)
 )
 
 // modeRegex compiles the mode-appropriate anchor around a core (port of
@@ -85,10 +86,18 @@ const (
 func modeRegex(core string, mode MatchMode) *regexp.Regexp {
 	var pat string
 	switch mode {
-	case ModeTrailing:
+	case ModeTrailing, ModeTrailingCursor:
 		// Leading anchor `(?:^|\s+)` so a phrase that IS the whole buffer counts as
 		// trailing too — required by `clear` ("change inside input" alone must
 		// clear). Safe for submit (empty-strip guard) and stop-speech (empty set).
+		//
+		// ModeTrailingCursor shares this EXACT pattern — the only difference is
+		// what substring the caller matches it against (engine.go runPass matches
+		// ModeTrailing against the whole buffer, ModeTrailingCursor against the
+		// buffer truncated at the cursor). Anchoring `$` at the end of a
+		// cursor-truncated prefix means "$" == "at the cursor", giving the inline,
+		// recognized-mid-dictation matching discussion #246 specifies for the
+		// global edit commands (`change inside input` / `change sentence`).
 		pat = `(?i)(?:^|\s+)(` + core + `)[.!?,;]*\s*$`
 	case ModeAnywhere:
 		// RE2 has no lookahead; consume the trailing boundary (see note 1).

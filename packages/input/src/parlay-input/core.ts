@@ -30,6 +30,7 @@ import {
   randomId,
   readCursor,
   readValue,
+  writeCursor,
   writeValue,
 } from './dom'
 import { openOwnedSse } from './sse'
@@ -168,6 +169,18 @@ export function parlayInput(element: Element, options: ParlayInputOptions): Unsu
           return 'applied'
         case 'submitNow':
           return applySubmitNow(a)
+        case 'replaceRange': {
+          // Discussion #246: splice `args.text` into [start, end) and collapse the
+          // cursor to the end of the replacement — for `change sentence` (text: '')
+          // that's exactly `start`, "where the deleted sentence was."
+          const val = readValue(element)
+          const start = Math.max(0, Math.min(val.length, Number(a.args?.start ?? 0)))
+          const end = Math.max(start, Math.min(val.length, Number(a.args?.end ?? start)))
+          const text = String(a.args?.text ?? '')
+          writeValue(element, val.slice(0, start) + text + val.slice(end))
+          writeCursor(element, start + text.length)
+          return 'applied'
+        }
         default:
           // Host-specific / forward-compat verbs: delegate, never wedge.
           onAction?.(a, actionCtx)

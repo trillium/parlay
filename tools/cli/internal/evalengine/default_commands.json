@@ -45,6 +45,41 @@
       }
     },
     {
+      "id": "edit-clear-input",
+      "phrases": ["change inside input", "change inside in input"],
+      "mode": "trailing-cursor",
+      "priority": 9,
+      "description": "Inline, at the cursor: empty the focused input (discussion #246)",
+      "platforms": ["parlay", "herdr"],
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          { "verb": "clear" }
+        ]
+      }
+    },
+    {
+      "id": "edit-delete-sentence",
+      "phrases": ["change sentence"],
+      "mode": "trailing-cursor",
+      "priority": 9,
+      "description": "Inline, at the cursor: delete the sentence immediately before it, backward-only (discussion #246)",
+      "platforms": ["parlay", "herdr"],
+      "emit": {
+        "kind": "sequence",
+        "actions": [
+          {
+            "verb": "replaceRange",
+            "args": {
+              "start": { "resolve": "sentenceDeleteStart", "from": "buffer" },
+              "end": { "resolve": "cursorPos", "from": "buffer" },
+              "text": ""
+            }
+          }
+        ]
+      }
+    },
+    {
       "id": "switch-tab",
       "phrases": ["switch to {agent}", "go to {agent}", "show me {agent}", "channel switch {agent}", "channel {agent}"],
       "mode": "whole",
