@@ -44,8 +44,18 @@ func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 				// the loop so the relay does not keep a dead enrollment alive.
 				// Removal is done inline rather than via r.unregister, which
 				// waits on loop.done — a wait this goroutine could never satisfy.
-				log.Printf("agent %q: server reports the channel is gone (410) — dropping the poll loop", loop.id)
+				//
+				// Tombstoning the spool (not just dropping the in-memory loop)
+				// matters because resumeFromSpools() re-registers every *.chan
+				// file it finds on the next relay restart — without this, a
+				// retired agent's dead spool would keep resurrecting its poll
+				// loop (and its very next request would hit 410 again) on every
+				// restart forever (task-0n80i). Renaming it out of the *.chan
+				// glob makes the prune survive a restart while leaving the
+				// normal /register path untouched — see tombstoneSpool.
+				log.Printf("agent %q: server reports the channel is gone (410) — pruning from the watch list", loop.id)
 				r.dropLoop(loop.id)
+				tombstoneSpool(loop.spool)
 				loop.cancel()
 				return
 			}

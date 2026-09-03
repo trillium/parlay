@@ -497,6 +497,119 @@ func TestUpstream410DoesNotAffectOtherChannels(t *testing.T) {
 	}
 }
 
+// ── Pruning survives a relay restart (task-0n80i) ────────────────────────────
+// A 410 alone only drops the in-memory loop. resumeFromSpools() re-registers
+// every *.chan file it finds at the NEXT relay startup, so without also
+// tombstoning the spool on disk, a retired agent's dead spool would resurrect
+// its poll loop — and immediately hit 410 again — on every restart forever.
+
+// TestUpstream410TombstonesTheSpool: a terminal 410 must rename the agent's
+// spool out of the *.chan glob, not just drop the in-memory loop, so a later
+// resumeFromSpools does not resurrect it.
+func TestUpstream410TombstonesTheSpool(t *testing.T) {
+	up := &goneUpstream{gone: "leaked-fixture-z1", polls: make(map[string]int)}
+	srv := httptest.NewServer(http.HandlerFunc(up.handler))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	spool, err := r.register("leaked-fixture-z1")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	waitForLoopGone(t, r, "leaked-fixture-z1")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(spool + tombstoneSuffix); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("spool %s was never tombstoned after a 410", spool)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := os.Stat(spool); !os.IsNotExist(err) {
+		t.Fatalf("plain spool %s still exists after tombstoning (err=%v)", spool, err)
+	}
+}
+
+// TestResumeFromSpoolsSkipsTombstoned: a relay restart must not resurrect a
+// retired agent whose spool was tombstoned by a prior 410.
+func TestResumeFromSpoolsSkipsTombstoned(t *testing.T) {
+	dir := t.TempDir()
+	live := filepath.Join(dir, "agent-a.chan")
+	retired := filepath.Join(dir, "leaked-fixture-z1.chan"+tombstoneSuffix)
+	for _, p := range []string{live, retired} {
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+	}
+
+	r := &relay{
+		server:     "http://127.0.0.1:1",
+		runtimeDir: dir,
+		client:     &http.Client{},
+		loops:      make(map[string]*agentLoop),
+	}
+	defer r.unregister("agent-a")
+
+	if got := resumeFromSpools(r, dir); got != 1 {
+		t.Fatalf("resumeFromSpools = %d, want 1 (the tombstoned agent must be skipped)", got)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.loops["leaked-fixture-z1"]; ok {
+		t.Fatal("resumeFromSpools resurrected a tombstoned agent")
+	}
+	if _, ok := r.loops["agent-a"]; !ok {
+		t.Fatal("resumeFromSpools did not resume the live agent")
+	}
+}
+
+// TestReregisterAfterTombstoneWorks: pruning must not permanently blacklist an
+// id — an explicit re-registration (the normal path a relaunched agent takes)
+// must succeed on the first try and start polling again, tombstone or not.
+func TestReregisterAfterTombstoneWorks(t *testing.T) {
+	up := &goneUpstream{gone: "leaked-fixture-z1", polls: make(map[string]int)}
+	srv := httptest.NewServer(http.HandlerFunc(up.handler))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	if _, err := r.register("leaked-fixture-z1"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	waitForLoopGone(t, r, "leaked-fixture-z1")
+
+	// The agent comes back for real: the upstream no longer answers 410 for it.
+	up.mu.Lock()
+	up.gone = ""
+	up.mu.Unlock()
+
+	spool, err := r.register("leaked-fixture-z1")
+	if err != nil {
+		t.Fatalf("re-register after tombstone: %v", err)
+	}
+	defer r.unregister("leaked-fixture-z1")
+
+	r.mu.Lock()
+	_, watched := r.loops["leaked-fixture-z1"]
+	r.mu.Unlock()
+	if !watched {
+		t.Fatal("re-registered agent is not back on the watch list")
+	}
+	if _, err := os.Stat(spool + tombstoneSuffix); !os.IsNotExist(err) {
+		t.Fatalf("stale tombstone %s still present after re-registration (err=%v)", spool+tombstoneSuffix, err)
+	}
+
+	// And it must actually be polled again, not just present in the map.
+	before := up.pollCount("leaked-fixture-z1")
+	time.Sleep(300 * time.Millisecond)
+	if after := up.pollCount("leaked-fixture-z1"); after <= before {
+		t.Errorf("re-registered agent was not polled: %d → %d polls", before, after)
+	}
+}
+
 // A 500 is the server being broken, not the channel being gone: the relay must
 // keep retrying, because surviving a server restart is the whole point.
 func TestUpstream500KeepsRetrying(t *testing.T) {

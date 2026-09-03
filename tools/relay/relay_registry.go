@@ -12,6 +12,26 @@ import (
 	"time"
 )
 
+// tombstoneSuffix marks a spool as belonging to a retired agent. A tombstoned
+// spool no longer ends in ".chan", so resumeFromSpools' *.chan glob skips it
+// on the next relay restart — the persistent half of pruning (see pollLoop's
+// errChannelGone handling). It intentionally does NOT block the normal
+// /register path: register() always creates a fresh spool at the plain
+// ".chan" path regardless of a same-named tombstone sitting next to it, so a
+// re-registered agent is watched again on the first try (task-0n80i).
+const tombstoneSuffix = ".retired"
+
+// tombstoneSpool renames a retired agent's spool out of the *.chan glob.
+// Best-effort: a failed rename (e.g. the spool was already removed) is not
+// fatal — worst case the agent's dead spool gets one more pointless resume-
+// and-drop cycle on the next relay restart, which is the pre-fix behavior,
+// not a regression.
+func tombstoneSpool(spool string) {
+	if err := os.Rename(spool, spool+tombstoneSuffix); err != nil && !os.IsNotExist(err) {
+		log.Printf("tombstone spool %s: %v", spool, err)
+	}
+}
+
 // register adds an agent to the registry and starts its poll loop. Idempotent:
 // registering an already-registered agent returns its existing spool path and
 // does not start a second loop. Returns the agent's spool file path.
@@ -34,6 +54,11 @@ func (r *relay) register(agent string) (string, error) {
 	}
 
 	spool := filepath.Join(r.runtimeDir, agent+".chan")
+	// A prior tombstone (task-0n80i) must not block a fresh registration — an
+	// explicit /register (or a startup -agents flag) is a deliberate re-launch
+	// of this id and must work on the first try. Remove it so a future relay
+	// restart's resumeFromSpools sees only the live spool, not a stale marker.
+	_ = os.Remove(spool + tombstoneSuffix)
 	// Ensure the spool file exists so a monitor can `tail -F` it even before the
 	// first message arrives. O_APPEND across relay restarts preserves any queued
 	// lines a still-running monitor has not yet consumed.
