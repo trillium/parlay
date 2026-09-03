@@ -1,9 +1,20 @@
 import { history, historyIndex } from "./storage"
-import { agents, pollWaiters, setAgentPresence, CORS, broadcastToClients, lastPollByChannel, broadcastPresenceMap, persistAgents } from "./sse"
+import { pollWaiters, setAgentPresence, CORS, lastPollByChannel, broadcastPresenceMap } from "./sse"
 import { markReceived } from "./messages"
 import { isTombstoned } from "./prune"
 import type { PollWaiter } from "./types"
 
+// task-1t0m: GET /api/chat/poll must be genuinely read-only, not read-only-
+// by-accident-of-the-origin-guard. It used to auto-register any unrecognized
+// channel (agents.set + persistAgents — a disk write from a plain GET) so a
+// leaked listener could resurrect its own pruned registry row on its very
+// next poll (robots-ycfa's 82-orphan incident). Registration now happens
+// only through the explicit, already-guarded POST /api/chat/register-agent
+// — every real caller (parlay listen, parlay monitor, parlay claim, parlay
+// nickname) already calls it before polling. Presence bookkeeping
+// (lastPollByChannel/broadcastPresenceMap below) stays: it is in-memory only,
+// never persisted, and reflects the read itself rather than mutating any
+// identity/message record.
 export function handlePollRequest(req: Request, pathname: string): Response | null {
   if (req.method !== "GET" || pathname !== "/api/chat/poll") return null
 
@@ -12,10 +23,8 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
   const channel = params.get("channel") ?? undefined
   // A channel that was deliberately removed (prune sweep or explicit
   // unregister) must not be able to re-create itself by polling. Answer 410
-  // Gone — a terminal status the relay treats as "stop polling this channel"
-  // — instead of the auto-register below, which is how leaked test listeners
-  // survived every sweep and accumulated 82 deep (robots-ycfa). Deliberately
-  // BEFORE the lastPoll bookkeeping: a refused poll is not presence.
+  // Gone — a terminal status the relay treats as "stop polling this channel".
+  // Deliberately BEFORE the lastPoll bookkeeping: a refused poll is not presence.
   if (channel && isTombstoned(channel)) {
     return new Response(JSON.stringify({
       error: `channel ${channel} was unregistered; stop polling`,
@@ -24,12 +33,6 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
   }
   if (channel) {
     lastPollByChannel.set(channel, Date.now())
-    if (!agents.has(channel)) {
-      const info = { id: channel, name: channel, color: "#6b7280" }
-      agents.set(channel, info)
-      broadcastToClients("agent_register", info)
-      persistAgents()
-    }
     broadcastPresenceMap()
   }
   const afterIdx = afterId ? (historyIndex.get(afterId) ?? -1) : -1

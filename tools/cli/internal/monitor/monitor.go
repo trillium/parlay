@@ -37,6 +37,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/help"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/identity"
 )
 
 // CmdMonitor is `parlay monitor`'s entry point.
@@ -64,11 +65,35 @@ func CmdMonitor(argv []string) {
 			httpc.Die("parlay monitor: --agent <id> is required (or use --legacy-poll for the global feed)", config.ExitUsage)
 			return
 		}
+		ensureRegistered(agent)
 		runRelayMonitor(agent, notifySafe)
 		return
 	}
 
+	if agent != "" {
+		ensureRegistered(agent)
+	}
 	runLegacyPoll(config.ServerURL(), agent, notifySafe)
+}
+
+// ensureRegistered is CmdMonitor's own explicit-registration step, injectable
+// for the same reason as runMonitor/ensureSingleListener above (tests may not
+// make real network calls). `parlay listen` already registers before handing
+// off to this same monitor loop (step 2 in listen.go); this covers the other
+// entry point — `parlay monitor --agent <id>` run directly, without listen —
+// which used to lean on GET /api/chat/poll auto-registering an unrecognized
+// channel as a side effect. task-1t0m made poll genuinely read-only (that
+// write moved to POST /api/chat/register-agent), so a direct `monitor` call
+// must now perform the registration itself instead of relying on poll to do
+// it implicitly. Best-effort, like the auto-register it replaces: a register
+// failure is logged but does not stop the monitor from polling — a channel
+// that isn't in the registry can still poll and receive, it just won't show
+// up as a tab until registration succeeds (e.g. on the next restart).
+var ensureRegistered = func(agent string) {
+	body := map[string]any{"id": agent, "name": agent, "color": identity.ColorFromID(agent)}
+	if ok, reason := httpc.TryPostJSON("/api/chat/register-agent", body, httpc.DefaultTimeout); !ok {
+		fmt.Fprintf(os.Stderr, "parlay monitor: register-agent failed: %s (continuing — re-run 'parlay monitor' or 'parlay listen --agent %s' to retry registration)\n", reason, agent)
+	}
 }
 
 // Supervision policy for the monitor script (robots-gv6t). A script run that

@@ -375,3 +375,42 @@ func TestPollOnceKeepsRetryingOnAServerError(t *testing.T) {
 		t.Errorf("sleep = %v, want 2s", got.sleep)
 	}
 }
+
+// task-1t0m: GET /api/chat/poll no longer auto-registers an unrecognized
+// channel (that write moved to POST /api/chat/register-agent, called
+// explicitly by every real consumer). CmdMonitor's ensureRegistered is the
+// explicit-registration step for `parlay monitor --agent <id>` run directly
+// (not via `parlay listen`, which already registers on its own). This proves
+// it posts the right shape and tolerates a failing/absent server, matching
+// the best-effort auto-register it replaces.
+func TestEnsureRegisteredPostsRegisterAgent(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	t.Setenv("PARLAY_SERVER", srv.URL)
+
+	ensureRegistered("test-agent")
+
+	if gotPath != "/api/chat/register-agent" {
+		t.Errorf("path = %q, want /api/chat/register-agent", gotPath)
+	}
+	if gotBody["id"] != "test-agent" || gotBody["name"] != "test-agent" {
+		t.Errorf("body = %+v, want id/name = test-agent", gotBody)
+	}
+	if gotBody["color"] == "" || gotBody["color"] == nil {
+		t.Errorf("body = %+v, want a non-empty color", gotBody)
+	}
+}
+
+func TestEnsureRegisteredIsBestEffortOnFailure(t *testing.T) {
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	// Must not panic or die — a register-agent failure degrades gracefully,
+	// exactly like the auto-register-on-poll side effect it replaces.
+	ensureRegistered("test-agent")
+}

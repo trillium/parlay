@@ -152,9 +152,7 @@ describe("live server: the panel and the CLI are unaffected", () => {
   // tools/split-test, pages/chat/agent-notify.ts — are all no-Origin HTTP
   // clients. Guarding /poll must leave them untouched.
   // Queue a message first so each poll below returns immediately instead of
-  // holding its connection open for 30s. The handler registers the channel
-  // before it looks for pending work either way, so this still exercises the
-  // write the guard now sits in front of.
+  // holding its connection open for 30s.
   const queueFor = async (channel: string) => {
     const r = await fetch(`${base}/api/chat/send`, {
       method: "POST",
@@ -164,13 +162,18 @@ describe("live server: the panel and the CLI are unaffected", () => {
     expect((await r.json()).ok).toBe(true)
   }
 
-  test("CLI/relay: no-Origin GET /api/chat/poll reaches the handler and registers", async () => {
+  // task-1t0m: poll no longer registers the channel it's asked for — that
+  // write moved to the explicit, already-guarded POST /api/chat/register-agent
+  // (every real caller calls it before polling). This test now proves the
+  // opposite of what it used to: a no-Origin poll still reaches the handler
+  // and returns pending content, but leaves the agent registry untouched.
+  test("CLI/relay: no-Origin GET /api/chat/poll reaches the handler and stays read-only", async () => {
     await queueFor("cli-poller")
     const r = await fetch(`${base}/api/chat/poll?channel=cli-poller`)
     expect(r.status).toBe(200)
     expect((await r.json()).text).toBe("queued for cli-poller")
     const agents = await (await fetch(`${base}/api/chat/agents`)).json()
-    expect(JSON.stringify(agents)).toContain("cli-poller")
+    expect(JSON.stringify(agents)).not.toContain("cli-poller")
   })
 
   test("panel-origin GET /api/chat/poll is accepted and echoes its own origin, not '*'", async () => {
