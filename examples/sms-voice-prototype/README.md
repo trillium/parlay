@@ -27,6 +27,26 @@ Real (non-`--demo`) mode needs **Full Disk Access** granted to your terminal
 `~/Library/Messages/chat.db` directly. Without it, `/api/chats` and
 `/api/history` will fail.
 
+## Name resolution
+
+`imsg chats --json` only names group chats — a 1:1 chat's `name` field is
+empty, so most of the list would otherwise render as bare phone numbers, and
+an unspeakable name breaks the voice grammar (the leading selector *is* the
+displayed name). Since `imsg` exposes no contact lookup, `contacts.ts`
+resolves bare identifiers itself, reading every
+`~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`
+directly (read-only, via `bun:sqlite`) and matching phone numbers on their
+last 10 digits and emails case-insensitively. The index is built once at
+startup and cached in memory for the process lifetime; it never runs in
+`--demo` mode. A machine with no readable Contacts data — no AddressBook
+databases, or missing the permission below — logs one warning and falls back
+to raw identifiers instead of failing the request. `/api/chats` keeps the raw
+identifier in the payload alongside the resolved `displayName`.
+
+Reading Contacts data this way needs **Full Disk Access** as well (the same
+grant `imsg` needs) — `~/Library/Application Support/AddressBook` is inside
+the same TCC-protected scope as `~/Library/Messages`.
+
 ## The grammar cheat-sheet
 
 One utterance shape, valid in every screen:
@@ -51,8 +71,12 @@ Canonical trace, with a contact "Joe" visible on the list:
 "Baz Baz submit"   → draft = "bar bar Baz Baz", sends
 ```
 
-Duplicate contact names get a rare stand-in word (e.g. `penguin`), shown in
-parens next to the name — say the stand-in to open that specific chat.
+A contact with a unique first name is speakable by first name alone ("Ana"
+opens "Ana Lopez") as well as the full name. A first name shared by more than
+one chat falls back to first+last for all of them; if even the full name
+repeats, later occurrences fall back further to a rare stand-in word (e.g.
+`penguin`), shown in parens next to the name — say the stand-in to open that
+specific chat.
 
 The pure parser lives in `grammar.js` (`parseUtterance`, `applyUtterance`,
 `assignStandIns`) and is unit tested in `grammar.spec.ts` — run

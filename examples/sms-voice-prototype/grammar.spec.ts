@@ -67,6 +67,36 @@ describe('assignStandIns + matchSelector', () => {
     const contacts = contactsFor([{ id: 1, displayName: 'Joe' }]);
     expect(matchSelector('Nobody here', contacts)).toBeNull();
   });
+
+  test('a unique first name registers both the bare first name and the full name', () => {
+    const contacts = contactsFor([{ id: 1, displayName: 'Ana Lopez' }]);
+    expect(contacts[0].standIn).toBeNull();
+    expect(matchSelector('ana bar bar', contacts)?.contact.id).toBe(1);
+    expect(matchSelector('ana lopez bar bar', contacts)?.contact.id).toBe(1);
+  });
+
+  test('duplicate first names fall back to first+last, dropping the bare first-name selector', () => {
+    const contacts = contactsFor([
+      { id: 1, displayName: 'Ana Lopez' },
+      { id: 2, displayName: 'Ana Chen' },
+    ]);
+    expect(contacts[0].standIn).toBeNull();
+    expect(contacts[1].standIn).toBeNull();
+    expect(matchSelector('ana bar bar', contacts)).toBeNull();
+    expect(matchSelector('ana lopez bar bar', contacts)?.contact.id).toBe(1);
+    expect(matchSelector('ana chen bar bar', contacts)?.contact.id).toBe(2);
+  });
+
+  test('same first AND last name falls all the way back to a stand-in word', () => {
+    const contacts = contactsFor([
+      { id: 1, displayName: 'Ana Lopez' },
+      { id: 2, displayName: 'Ana Lopez' },
+    ]);
+    expect(contacts[0].standIn).toBeNull();
+    expect(contacts[1].standIn).toBe('penguin');
+    expect(matchSelector('ana lopez bar bar', contacts)?.contact.id).toBe(1);
+    expect(matchSelector('penguin bar bar', contacts)?.contact.id).toBe(2);
+  });
 });
 
 describe('parseUtterance step-scoping', () => {
