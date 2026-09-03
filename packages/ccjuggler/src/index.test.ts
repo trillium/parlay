@@ -32,4 +32,18 @@ describe("resolveToken (ccjuggler.py subprocess)", () => {
       "no token found"
     )
   })
+
+  test("account name is forwarded verbatim to ccjuggler.py — no aliasing between similarly-named accounts", async () => {
+    const echoArgv = join(scratch, "echo_argv.py")
+    writeFileSync(
+      echoArgv,
+      "#!/usr/bin/env python3\nimport sys\nprint(f'export CLAUDE_CODE_OAUTH_TOKEN=tok-{sys.argv[-1]}')\n"
+    )
+    chmodSync(echoArgv, 0o755)
+    const token2 = await resolveToken("2", { ccjugglerPath: echoArgv })
+    const tokenAcc2 = await resolveToken("acc2", { ccjugglerPath: echoArgv })
+    expect(token2).toBe("tok-2")
+    expect(tokenAcc2).toBe("tok-acc2")
+    expect(token2).not.toBe(tokenAcc2)
+  })
 })
