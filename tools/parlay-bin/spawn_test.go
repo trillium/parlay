@@ -22,6 +22,7 @@ type mockLauncher struct {
 	failStart           bool
 	agentGetCalls       []string
 	agentStartCalls     []string
+	agentStartOpts      []AgentStartOptions
 	tabCreateCalls      []TabCreateOptions
 	paneSendTextCalls   []string
 	paneSendKeysCalls   []string
@@ -44,6 +45,7 @@ func (m *mockLauncher) AgentStart(opts AgentStartOptions) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.agentStartCalls = append(m.agentStartCalls, opts.ID)
+	m.agentStartOpts = append(m.agentStartOpts, opts)
 	if m.failStart {
 		return &mockErr{"agent start failed"}
 	}

@@ -233,6 +233,14 @@ jobs:
           fi
           echo "working tree clean after a full build"
 
+      # docs/scope-go-spawn.md Stage 4: runs the same named-spawn scenarios
+      # through bash's bin/parlay-spawn and the real tools/parlay-bin binary
+      # (built on demand by bin/parlay-bin) and asserts equivalent exit codes
+      # and messages. Needs a real go toolchain to get a genuine A/B build, so
+      # this lives here rather than in the toolchain-less "shell" job below.
+      - name: Spawner parity (bash vs. Go)
+        run: bin/parlay-spawn-parity.test.sh
+
   # ── Bun workspace: packages/input, packages/client, packages/server,
   #    plus tools/gate-tag ───────────────────────────────────────────
   # packages/server has real test files but no "test" script

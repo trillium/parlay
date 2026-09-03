@@ -101,6 +101,49 @@ func TestSpawnOneHerdrPaneInPlaceSkipsTabCreate(t *testing.T) {
 	}
 }
 
+// Parity regression (task-ub2l7, docs/scope-go-spawn.md gap matrix): the
+// herdr launch command and env must carry the same load-bearing flags/vars
+// bash's herdr path sends (bin/parlay-spawn:1628, :1557), even though this
+// Go port never asserted on AgentStart's actual argv before this test
+// existed — mockLauncher only recorded opts.ID. Catches the exact regression
+// this task found and fixed: --strict-mcp-config/--settings silently missing
+// from launchScript, and PARLAY_AGENT_MODEL never set alongside
+// PARLAY_SPAWN_MODEL.
+func TestSpawnOneHerdrLaunchCommandMatchesBashFlagsAndEnv(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-flags-z1", "Nope Flags", "#c084fc", "brief", "--model", "sonnet"})
+	if rc != 0 {
+		t.Fatalf("expected success, got rc=%d", rc)
+	}
+
+	if len(m.agentStartOpts) != 1 {
+		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
+	}
+	cmd := strings.Join(m.agentStartOpts[0].Cmd, " ")
+	for _, flag := range []string{"--dangerously-skip-permissions", "--strict-mcp-config", "--fallback-model sonnet", `--settings '{"enabledPlugins":{"posthog@claude-plugins-official":false}}'`} {
+		if !strings.Contains(cmd, flag) {
+			t.Errorf("herdr launch command missing bash-parity flag %q; got: %s", flag, cmd)
+		}
+	}
+
+	if len(m.tabCreateCalls) != 1 {
+		t.Fatalf("expected exactly one TabCreate call, got %d", len(m.tabCreateCalls))
+	}
+	env := strings.Join(m.tabCreateCalls[0].Env, "\n")
+	for _, want := range []string{"PARLAY_SPAWN_MODEL=sonnet", "PARLAY_AGENT_MODEL=sonnet"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("herdr tab env missing bash-parity var %q; got: %s", want, env)
+		}
+	}
+}
+
 // --workspace, ID form: passed straight through to TabCreate without
 // shelling out to herdr for resolution (workspace.go's resolveWorkspace
 // short-circuits on the `^w[A-Za-z0-9]+$` id pattern).

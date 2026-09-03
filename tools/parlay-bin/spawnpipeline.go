@@ -13,18 +13,21 @@ import (
 // of shelling out to the real herdr binary.
 var launcherFactory = func() (Launcher, error) { return newHerdrLauncher() }
 
-// launchScript is bin/parlay-spawn's LAUNCH_SCRIPT (line 545), copied
-// verbatim. It is a FIXED string, not templated per spawn — $PARLAY_SPAWN_MODEL
-// and $PARLAY_SPAWN_PROMPT are read from the launched process's own
-// environment (set via herdr --env) when this script actually runs, not
-// interpolated by this program. This sidesteps docs/scope-go-spawn.md §5's
-// single highest-risk area (shell escaping across the Go→shell boundary):
-// the prompt text — arbitrarily large, arbitrary characters — never gets
-// embedded into a shell command string at all.
+// launchScript mirrors bin/parlay-spawn's herdr-path $AGENT_START_ARGS
+// (bin/parlay-spawn:1628, the `claude)` case). It is a FIXED string, not
+// templated per spawn — $PARLAY_SPAWN_MODEL and $PARLAY_SPAWN_PROMPT are read
+// from the launched process's own environment (set via herdr --env) when this
+// script actually runs, not interpolated by this program. This sidesteps
+// docs/scope-go-spawn.md §5's single highest-risk area (shell escaping across
+// the Go→shell boundary): the prompt text — arbitrarily large, arbitrary
+// characters — never gets embedded into a shell command string at all.
 //
 // Runs in YOLO mode (skip-permissions + sonnet fallback) so a remotely
 // driven agent never stalls on a permission prompt the absent user can't
-// answer.
+// answer. --strict-mcp-config and --settings (disabling the posthog plugin)
+// are load-bearing flags bash's herdr path always passes; task-ub2l7 found
+// this Go port had silently dropped both since the port was first written —
+// see docs/scope-go-spawn.md's gap matrix.
 //
 // This always execs `claude` regardless of opts.Kind — bash's herdr path is
 // kind-aware (AGENT_START_ARGS varies by $KIND, line ~1610). Extending this
@@ -32,7 +35,7 @@ var launcherFactory = func() (Launcher, error) { return newHerdrLauncher() }
 // docs/scope-go-spawn.md's gap matrix and the PR body for this ticket): the
 // subprocess and gc launcher branches below DO honor opts.Kind, since they
 // build their launch command per spawn rather than sharing one fixed script.
-const launchScript = `unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; exec claude --dangerously-skip-permissions --fallback-model sonnet ${PARLAY_SPAWN_MODEL:+--model "$PARLAY_SPAWN_MODEL"} "$PARLAY_SPAWN_PROMPT"`
+const launchScript = `unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; exec claude --dangerously-skip-permissions --strict-mcp-config --fallback-model sonnet --settings '{"enabledPlugins":{"posthog@claude-plugins-official":false}}' ${PARLAY_SPAWN_MODEL:+--model "$PARLAY_SPAWN_MODEL"} "$PARLAY_SPAWN_PROMPT"`
 
 // subprocessEnvUnset mirrors the herdr path's in-place `_pane_prep` unset
 // list (bin/parlay-spawn line ~968) — new subprocess children inherit this
@@ -213,11 +216,22 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 	// Build env list before TabCreate so it can be injected into the tab's
 	// shell via herdr tab create --env (the valid injection point; herdr
 	// agent start does not accept --env).
+	//
+	// PARLAY_SPAWN_MODEL is launchScript's own read (the --model flag it
+	// builds); PARLAY_AGENT_MODEL is the separate, stable name downstream
+	// consumers actually look for (claim.go's `--claim` model fallback,
+	// gctemplate.go) — bash's herdr path sets both (bin/parlay-spawn:1557).
+	// task-ub2l7 found the Go port only set the first, so a herdr-launched
+	// agent's own `parlay claim` calls could never see its spawn model via
+	// this path even though the subprocess launcher already got this right.
 	envList := []string{
 		"PARLAY_SPAWN_PROMPT=" + startupPrompt,
 		"PARLAY_SPAWN_MODEL=" + opts.Model,
 		"PARLAY_SERVER=" + server,
 		"PARLAY_AGENT_ID=" + opts.AgentID,
+	}
+	if opts.Model != "" {
+		envList = append(envList, "PARLAY_AGENT_MODEL="+opts.Model)
 	}
 	envList = append(envList, accountEnv...)
 	envList = append(envList, projectEnv...)
