@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Wrapper: builds (when stale) and execs the Go spawn port (tools/parlay-bin —
+# docs/scope-go-spawn.md). This is the PATH-activation half of Stage 4:
+# resolveSpawnerChoice (tools/cli/internal/commands/launch.go) looks up a
+# binary literally named `parlay-bin` on PATH, exactly like bin/parlay-spawn
+# already does for the bash spawner — so a host that symlinks this file in
+# (e.g. `ln -s $REPO/bin/parlay-bin ~/.local/bin/parlay-bin`, mirroring the
+# existing ~/.local/bin/parlay-spawn symlink) gets the Go spawner preferred
+# automatically. That symlink step is captain-only machine state and is not
+# done by this script or by anything else in the repo.
+#
+# Resolve this script through any symlinks, then derive the repo root from
+# its own location — never hardcode /Users/<name>, which breaks for any
+# other user/host (robots-su0j: mini3 runs as a different user).
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE" ;; esac
+done
+REPO="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
+
+SPAWN_DIR="$REPO/tools/parlay-bin"
+GO_BIN="$SPAWN_DIR/bin/parlay-bin"
+if [ ! -x "$GO_BIN" ] || [ -n "$(find "$SPAWN_DIR" -name '*.go' -newer "$GO_BIN" -print -quit)" ]; then
+  mkdir -p "$(dirname "$GO_BIN")"
+  (cd "$SPAWN_DIR" && go build -o "$GO_BIN" .) || exit 1
+fi
+exec "$GO_BIN" "$@"
