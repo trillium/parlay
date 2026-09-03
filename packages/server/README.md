@@ -19,15 +19,22 @@ pages watcher, and serves every request through `handleChatRequest`
 
 ## Configuration
 
+The canonical, annotated env-var reference for the whole repo (this server,
+`packages/go-server`, and `tools/cli`) is
+[`examples/env.example`](../../examples/env.example) — copy-pasteable,
+commented, and includes the traps below in full. This table is a quick index
+into that file, not a second source of truth; update `env.example` first and
+let this table follow.
+
 | Env var           | Default          | Purpose                                                        |
 | ----------------- | ---------------- | -------------------------------------------------------------- |
-| `PARLAY_PORT`     | `4242`           | TCP port the server listens on.                                |
-| `PARLAY_DATA_DIR` | *(unset)*        | Redirects every persisted file resolved through `paths.ts` into one directory. Unset ⇒ the production locations below. Does not cover `src/tts.ts` — see Data files. |
-| `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events, and the root `src/tts.ts` writes its pronunciation reports into and creates/evicts its clip cache under. |
+| `PARLAY_PORT`     | `4242`           | TCP port the server listens on. **No bind-address setting and no authentication** — `serve({ port })` has no hostname, so Bun binds `0.0.0.0`. |
+| `PARLAY_DATA_DIR` | *(unset)*        | Redirects every persisted file resolved through `paths.ts` into one directory — the **write** side. Does not change what the server reads from until you also move the existing files there (see Data files); does not cover `src/tts.ts`. |
+| `PAI_DIR`         | `~/.claude/PAI`  | Root the hook/tool tailers watch for firing events, and the root `src/tts.ts` writes its pronunciation reports into and creates/evicts its clip cache under. Resolved with `??`, not `||` — `PAI_DIR=""` is a *value*, not "unset", and turns every `$PAI_DIR/...` path relative to the server's cwd. |
 | `PARLAY_AGENT_ID` | *(unset)*        | Identifies the calling agent for per-agent context lookups.    |
 | `PARLAY_EVAL_ENGINE_URL` | `http://127.0.0.1:4343` | External eval engine for `/api/chat/eval`; returns 502 until running (Go engine deliberately deferred). |
 | `PARLAY_HUB_URL`   | `http://127.0.0.1:4242` | Go SSE hub the hook/tool tailers push into (`src/hub-ingress.ts`) — `POST /api/chat/events` for tool events, `POST /api/chat/message` for hook firings. **Not** derived from `PARLAY_PORT`, which is this server's own listen port; set it explicitly whenever the Go hub is not on the default port. Unreachable ⇒ posts are dropped with a rate-limited warn and tailing continues. |
-| `PARLAY_ALLOWED_ORIGINS` | *(unset)*  | Extra browser origins the guard accepts on guarded routes (comma-separated exact origins; `*` disables the origin check). Same-origin, loopback, `.local` and private-LAN origins are already allowed, and a request with **no** `Origin` — every CLI/curl/hook caller — always is. See `src/guard/` (route set in `src/guard/paths.ts`). |
+| `PARLAY_ALLOWED_ORIGINS` | *(unset)*  | Extra browser origins the guard accepts on guarded routes (comma-separated exact origins; `*` disables the origin check). Same-origin, loopback, `.local` and private-LAN origins are already allowed, and a request with **no** `Origin` — every CLI/curl/hook caller — always is. See `src/guard/` (route set in `src/guard/paths.ts`). Also read by `packages/go-server` with identical semantics. |
 
 ## Data files
 
