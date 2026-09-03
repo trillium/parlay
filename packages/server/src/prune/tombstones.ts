@@ -1,10 +1,12 @@
 // ── Tombstones: make a removal stick against the removed channel's own poller ─
 //
 // Removing a channel from the registry used to mean nothing, because a leaked
-// listener re-created its own row on its next poll (handlePollRequest
-// auto-registers whatever polls). A tombstone is the record that the removal was
-// DELIBERATE, so the poll route can refuse the channel instead of resurrecting
-// it — and answer 410 Gone, which is the signal the listener needs to stop.
+// listener re-created its own row on its next poll (handlePollRequest used to
+// auto-register whatever polled — removed under task-1t0m, registration is
+// now explicit-only via POST /api/chat/register-agent). A tombstone is the
+// record that the removal was DELIBERATE, so the poll route can still refuse
+// the channel outright — answering 410 Gone, the signal the listener needs to
+// stop — and register-agent itself won't silently resurrect a pruned id.
 //
 // See ./index.ts for the full robots-ycfa design note.
 

@@ -71,8 +71,9 @@ at a mutating route — sits behind an origin guard —
 `packages/go-server/internal/guard`. **Within that surface a route is guarded
 by what its handler does, not by its HTTP method:** `GET
 /api/chat/subscribers` and `GET /api/chat/poll` are both guarded, the first
-because it discloses identifiers, the second because polling registers the
-channel. On those routes:
+because it discloses identifiers, the second defense-in-depth (it still
+returns message content and drives presence bookkeeping) even though polling
+no longer registers the channel (task-1t0m). On those routes:
 
 - A request with **no `Origin` header is allowed.** That is every CLI, curl,
   hook and server-to-server caller, and a browser cannot omit `Origin` on a
@@ -275,9 +276,14 @@ of:
 - **410 Gone** `{ "error": "…", "gone": true }` (TS) when the channel is
   tombstoned (unregistered via `agent-down`) — a dead agent must not re-create
   itself by polling. Go answers tombstones the same way at the store level.
-- On the TS server, polling an **unknown, non-tombstoned** channel
-  auto-registers it (name = id, color `#6b7280`), persists it, and broadcasts
-  `agent_register`.
+- Polling an **unknown, non-tombstoned** channel is genuinely read-only on both
+  servers (task-1t0m): it neither creates nor resurrects a registry row.
+  Registration only happens via the explicit, guarded `POST
+  /api/chat/register-agent` — every real poll consumer (`parlay listen`,
+  `parlay monitor`, the relay) calls it before polling. The TS server does
+  still record in-memory, unpersisted presence (`lastPollByChannel` → the
+  `presence_map` "listening"/"idle" state below) for whatever channel it was
+  asked to poll, registered or not.
 - Delivering a queued user message marks it received and broadcasts
   `message_received` (payload `{ "id", "channel"? }` on TS; `{ "id" }` on Go).
 - A poll with no `after` waits for the *next* message only (no replay).
@@ -767,7 +773,7 @@ to the burst. Keepalive comment frame every 25s (TS `: ka`, Go
 | `connected` | TS: `{ "clientId": "uuid", "capabilities"?: { "schema", "recognized": [], "unknown": [] } }` · Go: same minus `clientId` (legacy: `{}`) | Resets client backoff; triggers the `/version` self-upgrade check. `capabilities` echoes the `?caps=` negotiation (which accepts names this server gates on vs. never heard of). |
 | `history` | `ChatMessage[]` | Full, windowed, or delta history depending on `after`/`url`. |
 | `agents` | `AgentInfo[]` | Full registry snapshot. |
-| `agent_register` | `AgentInfo` | Single-agent upsert (registration, auto-register on reply/poll). |
+| `agent_register` | `AgentInfo` | Single-agent upsert (explicit `register-agent`, auto-register on reply). |
 | `agent_unregister` | `{ "id": "string" }` | Agent removed (unregister/DELETE/sweep). |
 | `presence_map` | `Record<string, string>` (channel → status) | TS vocabulary: `"listening"`/`"idle"` (35s window, 10s sweep, broadcast on change only). Go: `"online"`. |
 | `message` | `ChatMessage` | The core new-message event. Deduped client-side by id. |

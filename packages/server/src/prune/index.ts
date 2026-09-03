@@ -26,12 +26,16 @@
 // defeat this module entirely:
 //
 //   1. Freshness proves nothing — see the rule-ordering note in policy.ts.
-//   2. Removal alone does not stick. handlePollRequest auto-registers any
-//      channel that polls, so a pruned leak resurrected its own registry row on
-//      its next poll (< LISTEN_WINDOW_MS later) — which is how 82 orphan
-//      listeners accumulated while an hourly sweep was running. A prune now also
-//      records a TOMBSTONE; the poll route refuses to re-create a tombstoned
-//      channel and answers 410 Gone so the poller can stop for good.
+//   2. Removal alone did not used to stick: handlePollRequest auto-registered
+//      any channel that polled, so a pruned leak resurrected its own registry
+//      row on its next poll (< LISTEN_WINDOW_MS later) — which is how 82
+//      orphan listeners accumulated while an hourly sweep was running. Poll's
+//      implicit registration is gone now (task-1t0m — registration only
+//      happens through the explicit, guarded POST /api/chat/register-agent),
+//      but the TOMBSTONE stays as belt-and-suspenders: a prune records one so
+//      a pruned channel's own re-register (not just its poll) cannot silently
+//      undo the prune before the TTL, and the poll route still answers 410
+//      Gone for a tombstoned channel so a leaked poller learns to stop.
 //
 // A tombstone is a statement about a leak, never about a person: an explicit
 // re-enrollment (POST /api/chat/register-agent) clears it, so re-arming a real

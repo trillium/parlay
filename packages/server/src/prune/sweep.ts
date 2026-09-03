@@ -22,10 +22,13 @@ export interface UnregisterResult {
  * to disk, and broadcast an `agent_unregister` SSE event so open tabs remove the
  * channel without a manual reload.
  *
- * The tombstone is what makes removal mean anything. Without it a still-running
- * listener re-created its own row on its next poll (handlePollRequest
- * auto-registers), so both the sweep AND a hand-run `POST /api/chat/unregister`
- * were undone within seconds and the channel came back (robots-ycfa).
+ * The tombstone is what makes removal mean anything: it stops the id from being
+ * silently re-registered (POST /api/chat/register-agent, or an auto-register on
+ * first /reply) before the TTL, so both the sweep AND a hand-run
+ * `POST /api/chat/unregister` stick. Poll itself no longer registers anything
+ * (task-1t0m), but the historical incident (robots-ycfa) it fixed — a leaked
+ * listener's own poll resurrecting a just-pruned row within seconds — is why
+ * this exists at all.
  */
 export function unregisterAgent(id: string): UnregisterResult {
   const clean = String(id ?? "").trim()

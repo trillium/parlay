@@ -1,16 +1,21 @@
 import { describe, test, expect, beforeEach } from "bun:test"
 import { handlePollRequest } from "./router-poll"
+import { handleMessagesRequest } from "./router-messages"
 import { tombstone, clearTombstone, unregisterAgent } from "./prune"
 import { agents, lastPollByChannel } from "./sse"
 
-// robots-ycfa. The registry auto-registers any channel that polls, which is the
-// right default for a first-time agent and was catastrophic for a leaked one: a
-// pruned test fixture whose listener process was still running re-created its
-// own registry row on its next poll, seconds later. The sweep removed 82
-// channels an hour, every hour, and 82 channels came straight back.
+// robots-ycfa / task-1t0m. The registry used to auto-register any channel that
+// polled — convenient for a first-time agent, but catastrophic for a leaked
+// one: a pruned test fixture whose listener process was still running
+// re-created its own registry row on its next poll, seconds later. The sweep
+// removed 82 channels an hour, every hour, and 82 channels came straight back.
 //
-// These tests pin the contract that closes it: a deliberately removed channel is
-// refused, told 410 Gone so its poller can stop, and NOT re-registered.
+// task-1t0m removed poll's implicit registration entirely (GET /api/chat/poll
+// must be genuinely read-only, not read-only by accident of the origin guard):
+// registration now only happens via the explicit, already-guarded POST
+// /api/chat/register-agent. These tests pin that a poll — tombstoned or not —
+// never creates or resurrects a registry row, while still recording presence
+// (lastPollByChannel) for whatever id it was asked to poll.
 
 const poll = (channel: string) =>
   handlePollRequest(new Request(`http://x/api/chat/poll?after=&channel=${channel}`), "/api/chat/poll")
@@ -51,19 +56,45 @@ describe("handlePollRequest — tombstoned channels", () => {
     expect(agents.has("ghost-z1")).toBe(false)
   })
 
-  test("an untombstoned channel still auto-registers and records presence", () => {
+  test("an untombstoned channel records presence but is NOT registered by polling alone", () => {
     const res = poll("live-agent")
     expect(res).not.toBeNull()
     expect(res!.status).not.toBe(410)
-    expect(agents.has("live-agent")).toBe(true)
+    expect(agents.has("live-agent")).toBe(false)
     expect(lastPollByChannel.has("live-agent")).toBe(true)
   })
 
-  test("clearing the tombstone restores normal polling", () => {
+  test("clearing the tombstone restores normal polling, still without auto-registering", () => {
     tombstone("live-agent")
     expect(poll("live-agent")!.status).toBe(410)
     clearTombstone("live-agent")
     expect(poll("live-agent")!.status).not.toBe(410)
+    expect(agents.has("live-agent")).toBe(false)
+  })
+
+  test("polling the same channel repeatedly never writes the agent registry", () => {
+    poll("live-agent")
+    poll("live-agent")
+    poll("live-agent")
+    expect(agents.has("live-agent")).toBe(false)
+  })
+
+  // The moved mutation: registration now happens ONLY through the explicit,
+  // already-guarded POST /api/chat/register-agent (every real poll consumer —
+  // parlay listen, parlay monitor, the relay — calls this before polling).
+  test("the explicit register-agent path still registers, independent of poll", async () => {
+    const req = new Request("http://x/api/chat/register-agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "live-agent", name: "Live Agent", color: "#123456" }),
+    })
+    const res = await handleMessagesRequest(req, "/api/chat/register-agent")!
+    const body = await res.json() as { ok?: boolean }
+    expect(body.ok).toBe(true)
+    expect(agents.has("live-agent")).toBe(true)
+
+    // and polling that now-registered channel doesn't disturb it
+    poll("live-agent")
     expect(agents.has("live-agent")).toBe(true)
   })
 })
