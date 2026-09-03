@@ -187,6 +187,62 @@ of every module in the repo:
 
 Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …).
 
+## System map
+
+Every load-bearing part of parlay, verified against the current code (2026-09-03), with
+a link to a deeper-dive doc. This is not a diagram of an idealized architecture — it
+shows a real, in-transition system, including the parts that are only half-wired today
+(see [`command-server.md`](docs/command-server.md) and [`monitor.md`](docs/monitor.md)
+for the specifics).
+
+```mermaid
+flowchart LR
+    subgraph client_side["Client side"]
+        input["Input\n(packages/input)"]
+        panel["Panel\n(packages/client)"]
+    end
+
+    subgraph server_side["Command/chat server — :4242"]
+        bun["packages/server (Bun)\ncurrently more complete"]
+        go["packages/go-server (Go)\nSSE hub, live-commands, in progress"]
+    end
+
+    hist["Events / history JSONL\nchat-history.jsonl · messages.jsonl"]
+    registry["Agent registry & presence\nagents.json"]
+    relay["Relay\ntools/relay — per-agent spool fan-out"]
+    monitor["Monitor / listen\ntools/cli/internal/monitor"]
+    launcher["Launcher\nbin/parlay-spawn · tools/parlay-bin"]
+    agent["A spawned agent process\n(herdr terminal)"]
+
+    input -- "POST edits, evaluated by\nthe Go eval engine" --> bun
+    panel -- "SSE + REST" --> bun
+    panel -. "SSE hub moving here" .-> go
+    bun -- "hook/tool tailers POST\n(PARLAY_HUB_URL)" --> go
+    bun --> hist
+    go --> hist
+    bun --> registry
+    go --> registry
+    bun -- "/api/chat/poll" --> relay
+    relay -- "spool file, tail -F" --> monitor
+    monitor --> agent
+    launcher -- "spawns + registers" --> agent
+    launcher -- "register-agent, hello" --> registry
+    agent -- "reply/say" --> bun
+```
+
+| Part | What it does | Deep dive |
+|---|---|---|
+| **Input** | DOM wrapper that turns edits in a composer element into evaluated phrase-engine actions. | [`docs/input.md`](docs/input.md) |
+| **Command/chat server** | Owns `/api/chat/*` — two implementations coexist today (Bun is more complete; Go owns the newer SSE hub and live-command registry), with a real gap between them. | [`docs/command-server.md`](docs/command-server.md) |
+| **Events / history (JSONL)** | Append-only chat history, plus the hook/tool-activity tailers that feed it — two different files depending on which server wrote them. | [`docs/events-history.md`](docs/events-history.md) |
+| **Agent registry & presence** | Who is enrolled as a chat tab, and transient (in-memory-only) connection counts. | [`docs/agent-registry.md`](docs/agent-registry.md) |
+| **Monitor / listen** | How an enrolled agent actually receives messages — relay-backed by default, `--legacy-poll` as a no-relay fallback with a documented dead-tab gap. | [`docs/monitor.md`](docs/monitor.md) |
+| **Launcher (spawn)** | Launches a new background agent into a live chat tab — two implementations, one of which lacks the other's safety gates. | [`docs/launcher.md`](docs/launcher.md) |
+| **Relay** | Single fan-out daemon between the server's long-poll feed and every enrolled agent's monitor; a per-runtime-dir singleton, not built by default. | [`docs/relay.md`](docs/relay.md) |
+| **Live-command registry** | A separate registry from agent enrollment — tracks running `parlay` CLI invocations for `parlay commands` and the panel's live-commands view. | [`docs/live-commands.md`](docs/live-commands.md) |
+| **CLI** | The `parlay` Go command surface and the embedded voice/phrase eval engine. | [`tools/cli`](tools/cli), [`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md) |
+| **Panel** | The browser chat UI — tabs, presence, TTS, annotations. Not shipped with a host; see the Requirements section above. | [`packages/client`](packages/client) |
+
 ## A worked config
 
 [`examples/`](examples/) is a complete two-agent setup — every file a configured
