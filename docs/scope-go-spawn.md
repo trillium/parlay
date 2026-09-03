@@ -265,6 +265,14 @@ matrix in §2.
    on disk but are not wired into any CI job — flagged in PR #238's body as a pre-existing
    gap, not introduced by this doc. §7's "parity green" gate should wire all 8 in, not just
    the 5 already running, or the gate is checking less than it claims to.
+   >
+   > **Resolution (task-ub2l7).** §7's Stage 4 landed a different gate instead: a new,
+   > narrower `bin/parlay-spawn-parity.test.sh` that runs the same inputs through bash and the
+   > real Go binary and diffs the outcome, rather than widening bash's own 8 files' CI
+   > coverage. This item's literal ask — wire `.account`/`.list`/`.model-required` into CI — is
+   > still open; it is bash-only coverage, not a bash/Go parity question, and is unchanged by
+   > this PR. Left here as a real, disclosed leftover rather than closed by the parity work
+   > that solved a different problem.
 
 ---
 
@@ -320,8 +328,8 @@ flowchart TB
     M1["#238: model gate backported to parlay-bin (done)"] --> S["Stage 1: write docs/scope-go-spawn.md for real (done)"]
     S --> R1["Stage 2: gap-by-gap reconciliation (done: #241, #248)<br/>PARLAY_SPAWN_VIA_CLI + launchedBy/startedAt (#241)<br/>profiles / PII / bead / pane / workspace / config defaults / subprocess+gc launcher wiring (#248)"]
     R1 --> R2["Stage 3: PATH activation (done: this PR)<br/>bin/parlay-bin wrapper + resolveSpawnerChoice precedence + PARLAY_SPAWN_IMPL escape hatch"]
-    R2 --> R3["Stage 4: parity suite green (remaining)<br/>all 8 bin/parlay-spawn.*.test.sh files, including the 3 not yet in CI, pass against the Go verb"]
-    R3 --> T["Stage 5: bash tombstone (remaining) — resolveSpawner needs no bash fallback"]
+    R2 --> R3["Stage 4: parity suite (done, narrower than originally scoped — task-ub2l7)<br/>bin/parlay-spawn-parity.test.sh: 6 named-spawn gate-chain scenarios, bash vs. real parlay-bin, wired into CI's go job"]
+    R3 --> T["Stage 5: bash tombstone (done — task-ub2l7)<br/>bin/parlay-spawn header retired + GO_ONLY_VERBS mechanism; resolveSpawner still falls back by design"]
 ```
 
 **Stage 1 — done.** Write this document; fix `tools/parlay-bin`'s dangling citations to
@@ -365,26 +373,62 @@ the operator with no agent; an explicit `PARLAY_SPAWN_IMPL=go` demand never fall
 > captain-only leftover above; the code-side precedence is done and tested regardless of
 > which binary happens to be on a given PATH.
 
-**Stage 4 — parity suite green.** Point all 8 `bin/parlay-spawn.*.test.sh` files at the Go
-verb (not just the 5 currently wired into CI — wire the remaining 3 in as part of this
-stage, per §5 item 6) and get them green. This suite tests the CLI surface behaviorally, not
-the implementation, so it is the actual acceptance gate for "the two implementations behave
-the same," independent of the gap matrix's organ-by-organ bookkeeping. **Done** when all 8
-pass against `parlay-bin` in CI.
+**Stage 4 — parity suite. Done, narrower than originally scoped (task-ub2l7).** The original
+plan above called for pointing all 8 `bin/parlay-spawn.*.test.sh` files at the Go verb
+directly. That turned out to be the wrong shape: those 8 files assert on bash's own internal
+plumbing (template files, `shell_quote`, worktree/treehouse helper functions) that `parlay-bin`
+doesn't share an implementation with — "port the assertions" would mean rewriting most of them
+into Go-native unit tests, which is Stage 2's gap-matrix job, already done, not a parity
+question. What Stage 4 actually needed was a *behavioral* A/B: same inputs into both binaries,
+same observable outcome. That is `bin/parlay-spawn-parity.test.sh`, new in this PR — six named-
+spawn scenarios (invalid VIA_CLI, bad kebab-slug, beads-required-missing, closed-bead,
+no-model, and registration-unreachable as the hermetic stand-in for a real launch) run through
+literal `bin/parlay-spawn` and the real, built `parlay-bin` binary, asserting matching exit
+codes and message substrings. It is wired into the CI `go` job (needs a real toolchain for a
+genuine A/B build) right after the "no build artifact left untracked" step.
 
-**Stage 5 — bash tombstone.** Replace `bin/parlay-spawn`'s body with a two-line hard-error
-pointing at `parlay spawn`, consistent with the one-front-door decision's existing
-hard-error style (the same pattern `PARLAY_SPAWN_VIA_CLI`'s own refusal already uses). Note
-this is orthogonal to `docs/go-cli-parity.md`'s "Go-only verbs" table, which already lists
-`spawn` (line ~65) — that entry is about the `parlay spawn` **CLI verb** having no TS
-counterpart to port, a question the retired TS↔Go parity harness (`GO_ONLY_VERBS`,
-`tools/cli/parity/run.sh`, deleted with `packages/cli` in T-08 per `AGENTS.md`) already
-settled and which this reconciliation does not reopen. What Stage 5 actually retires is the
-**implementation** `parlay spawn` execs — bash today, Go-native after this stage — so its
-only artifact to update is `resolveSpawner()`'s own behavior (or removal, once `bin/
-parlay-spawn` is a pure tombstone `resolveSpawner` never needs to fall back to). **Done**
-when `bin/parlay-spawn` is the tombstone and no code path anywhere still execs the old bash
-body.
+Deliberately out of scope for this suite — each is either a Full/Partial organ already covered
+elsewhere in §2 with its own test coverage, or a disclosed divergence in §5 — and left for
+future widening rather than silently treated as covered: the ephemeral/batch dispatch shapes,
+`--profile`/`--kind`/`--pane`/`--workspace`, the herdr RPC-vs-shell fast path, the launcher-
+gated duplicate-agent guard, the herdr-only watchdog, and identity-registration's missing
+bead/gc fields. The 3 bash-only `bin/parlay-spawn.*.test.sh` files not yet wired into CI
+(`account`, `list`, `model-required`) remain not wired — that gap is orthogonal to this stage
+(it is about bash-only coverage, not bash/Go parity) and is unchanged by this PR.
+
+While building this suite's registration-unreachable scenario, found and fixed a real parity
+bug: `parlay-bin`'s herdr `launchScript` (`spawnpipeline.go`) was missing bash's
+`--strict-mcp-config` and `--settings '{"enabledPlugins":{"posthog@claude-plugins-official":
+false}}'` flags (bash: `bin/parlay-spawn:1653`), and its herdr `tab create --env` never set
+`PARLAY_AGENT_MODEL` alongside `PARLAY_SPAWN_MODEL` (bash: `bin/parlay-spawn:1556,1582`) — a
+herdr-launched Go agent's own `parlay claim` calls could never see its spawn model via this
+path. Both fixed, with a new regression test
+(`TestSpawnOneHerdrLaunchCommandMatchesBashFlagsAndEnv` in `spawnpipeline_test.go`) asserting
+the launch command and env carry the same load-bearing flags/vars bash sends. **Done** when the
+6-scenario suite is green in CI against the real `parlay-bin` binary — met by this PR; widening
+to the deliberately-excluded surfaces above is future work, not a gap in what this stage
+claims.
+
+**Stage 5 — bash tombstone. Done (task-ub2l7).** `bin/parlay-spawn`'s header now carries a
+tombstone block: it is retired as the *default* spawn implementation but is NOT deleted and
+stays fully functional — it is the sanctioned escape hatch for a spawn the Go path can't yet
+handle. **To fall back to bash**, set `PARLAY_SPAWN_IMPL=bash` (env) or `spawnImpl = "bash"`
+(top-level key in `~/.parlay/config.toml`); either forces `resolveSpawnerChoice`
+(`tools/cli/internal/commands/launch.go`) to bash even when `parlay-bin` is on PATH. The
+inverse, `PARLAY_SPAWN_IMPL=go` / `spawnImpl = "go"`, demands the Go binary and never falls
+back to bash even on failure (`execSpawner`, `tools/cli/internal/commands/spawn.go`). This
+stage also adds the `GO_ONLY_VERBS` mechanism to `bin/parlay-spawn` itself: an array, checked
+unconditionally (even under the bash escape hatch) against every positional arg, that refuses
+loudly with exit 2 naming any flag/verb that exists only in the Go spawner with no bash
+counterpart to fall back to. It ships **empty** — as of this PR every §2 organ is a
+bash-superset-or-equal relationship, never bash-missing-a-Go-flag — populate it the day that
+stops being true, rather than letting bash's positional-arg parser silently swallow an
+unrecognized Go-only flag. (This is unrelated to `docs/go-cli-parity.md`'s "Go-only verbs"
+table, which lists `spawn` as a CLI verb with no TS port — a question the retired TS↔Go parity
+harness already settled and which this reconciliation does not reopen.) **Done** means the
+tombstone header + escape hatch + `GO_ONLY_VERBS` mechanism exist and are tested — met by this
+PR. `resolveSpawner()` retaining a bash fallback path at all is the intended end state, not a
+leftover: per the design, bash is permanently the escape hatch, not scheduled for removal.
 
 Each stage ships a coherent, independently green state — per task-04g1's own escape hatch
 ("if the port turns out to be too large to land safely in one task, stop at a coherent green

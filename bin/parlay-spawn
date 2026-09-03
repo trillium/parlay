@@ -1,4 +1,23 @@
 #!/usr/bin/env bash
+# ============================================================================
+# RETIRED as the default spawn implementation — docs/scope-go-spawn.md Stage 5.
+# `parlay spawn` now reaches the Go spawner (tools/parlay-bin, exec'd via
+# bin/parlay-bin) by default; resolveSpawnerChoice in
+# tools/cli/internal/commands/launch.go picks this script only when the Go
+# binary isn't on PATH or fails to even start. This file is NOT deleted and
+# stays fully functional — it is the sanctioned escape hatch for a spawn the
+# Go path can't yet handle. Force it explicitly with either:
+#
+#   PARLAY_SPAWN_IMPL=bash parlay spawn ...
+#   # or persist the choice: spawnImpl = "bash"   (top-level key in
+#   # ~/.parlay/config.toml — see tools/cli/internal/config/config.go)
+#
+# `PARLAY_SPAWN_IMPL=go` (or `spawnImpl = "go"`) demands the Go binary and
+# never falls back here, even on failure — see execSpawner in
+# tools/cli/internal/commands/spawn.go. This script's own hard-refuse-without-
+# PARLAY_SPAWN_VIA_CLI behavior below is unchanged by any of this.
+# ============================================================================
+#
 # parlay-spawn — launch a NEW background Claude Code agent "from Parlay".
 #
 # Spins up a fresh, TOP-LEVEL `claude` session inside a detached herdr terminal
@@ -41,6 +60,31 @@
 #                                     sanctioned caller for their own scope.
 
 set -euo pipefail
+
+# GO_ONLY_VERBS (task-ub2l7, docs/scope-go-spawn.md) — flags/verbs that exist
+# only in the Go spawner (tools/parlay-bin) with no bash counterpart at all,
+# distinct from the retired TS<->Go CLI parity harness's own GO_ONLY_VERBS
+# concept (tools/cli/parity/run.sh, deleted with packages/cli in T-08; see
+# AGENTS.md) — that one was about the `parlay spawn` CLI verb itself having
+# no TS port, a question already settled and not reopened here. This list is
+# checked unconditionally, even under the PARLAY_SPAWN_IMPL=bash escape
+# hatch: a Go-only flag has no bash implementation to fall back to, so
+# silently ignoring or mis-parsing it would be worse than refusing loudly.
+# Empty today — as of this task, every organ in the gap matrix (§2) is a
+# bash-superset-or-equal relationship, never bash-missing-a-Go-flag. Add an
+# entry here the day that stops being true, rather than letting bash's
+# getopt-style parser silently swallow a flag it doesn't recognize as a
+# positional argument instead.
+GO_ONLY_VERBS=()
+for _goonly in "${GO_ONLY_VERBS[@]+"${GO_ONLY_VERBS[@]}"}"; do
+  for _arg in "$@"; do
+    if [ "$_arg" = "$_goonly" ]; then
+      echo "parlay-spawn: '$_goonly' is Go-only — no bash implementation exists, even via the PARLAY_SPAWN_IMPL=bash escape hatch. Use \`parlay spawn\` (tools/parlay-bin) instead." >&2
+      exit 2
+    fi
+  done
+done
+unset _goonly _arg
 
 if [ "${PARLAY_SPAWN_VIA_CLI:-}" != "1" ]; then
   cat >&2 <<'EOF'
