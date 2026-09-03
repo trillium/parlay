@@ -304,6 +304,86 @@ func TestRunEphemeralSpawnRefusesWithoutModel(t *testing.T) {
 	}
 }
 
+// docs/scope-go-spawn.md Finding F1: `parlay spawn` is the sole public entry
+// point (task-qyu8q scope 3) — it sets PARLAY_SPAWN_VIA_CLI=1 before
+// invoking the resolved spawner. Calling this binary's spawn subcommand any
+// other way must be refused, mirroring bin/parlay-spawn's own refusal block
+// (lines 45–57).
+func TestRunSpawnCommandRefusesWithoutViaCLI(t *testing.T) {
+	orig := os.Getenv("PARLAY_SPAWN_VIA_CLI")
+	os.Unsetenv("PARLAY_SPAWN_VIA_CLI")
+	t.Cleanup(func() {
+		if orig != "" {
+			os.Setenv("PARLAY_SPAWN_VIA_CLI", orig)
+		}
+	})
+
+	out, rc := captureStderr(t, func() int {
+		return runSpawnCommand([]string{"nope-viacli-z1", "Nope", "#c084fc", "brief"})
+	})
+	if rc != 2 {
+		t.Errorf("missing PARLAY_SPAWN_VIA_CLI should exit 2, got %d", rc)
+	}
+	if !strings.Contains(out, "refusing to run directly") {
+		t.Errorf("expected VIA_CLI refusal message; output:\n%s", out)
+	}
+}
+
+func TestRunSpawnCommandProceedsWithViaCLI(t *testing.T) {
+	os.Setenv("PARLAY_SPAWN_VIA_CLI", "1")
+	t.Cleanup(func() { os.Unsetenv("PARLAY_SPAWN_VIA_CLI") })
+	withMockLauncher(t, &mockLauncher{})
+	withPARLAYServer(t, deadRegisterServer(t).URL)
+
+	// No --model: should fail on the model gate (proving it got PAST the
+	// VIA_CLI gate), not on the VIA_CLI refusal.
+	out, rc := captureStderr(t, func() int {
+		return runSpawnCommand([]string{"nope-viacli-z2", "Nope", "#c084fc", "brief"})
+	})
+	if rc != 2 {
+		t.Errorf("expected exit 2, got %d", rc)
+	}
+	if strings.Contains(out, "refusing to run directly") {
+		t.Errorf("PARLAY_SPAWN_VIA_CLI=1 should bypass the refusal; output:\n%s", out)
+	}
+	if !strings.Contains(out, "no model was chosen") {
+		t.Errorf("expected the request to reach the model gate; output:\n%s", out)
+	}
+}
+
+// --claim (bin/parlay-spawn lines 1028–1035, 1359–1364): the initial-prompt
+// positional is optional when --claim is given, and either one satisfying
+// is required.
+func TestRunNamedSpawnClaimMakesPromptOptional(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-claim-z1", "Nope Claim", "#c084fc", "--claim", "task-xyz", "--model", "sonnet"})
+	if rc != 0 {
+		t.Fatalf("expected success spawning with --claim and no inline prompt, got rc=%d", rc)
+	}
+	if len(m.agentStartCalls) != 1 || m.agentStartCalls[0] != "nope-claim-z1" {
+		t.Fatalf("expected nope-claim-z1 to be started, got %v", m.agentStartCalls)
+	}
+}
+
+func TestRunNamedSpawnRequiresPromptOrClaim(t *testing.T) {
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-noprompt-z1", "Nope", "#c084fc"})
+	})
+	if rc != 2 {
+		t.Errorf("neither prompt nor --claim should exit 2, got %d", rc)
+	}
+	if !strings.Contains(out, "give the agent work") {
+		t.Errorf("expected the give-the-agent-work refusal; output:\n%s", out)
+	}
+}
+
 func TestRunBatchSpawnRefusesWithoutModel(t *testing.T) {
 	m := &mockLauncher{}
 	withMockLauncher(t, m)

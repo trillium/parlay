@@ -10,6 +10,9 @@ import (
 //go:embed launch-templates/default.txt
 var defaultTemplate string
 
+//go:embed launch-templates/claim.txt
+var claimTemplate string
+
 // composeDoD mirrors bin/parlay-spawn's per-mode Definition of Done (the
 // DOD switch in parlay-spawn at the "Compose the Definition of Done per
 // delivery mode" step).
@@ -81,6 +84,25 @@ func composeStartupPrompt(server, agentID, name, color, setupBlock, prompt, dod 
 	// command substitution strips the template's trailing newline; go:embed
 	// preserves it. Trim the single trailing newline so the Go path emits
 	// byte-identical output to the bash path (robots-hrt2).
+	out = strings.TrimSuffix(out, "\n")
+	return out
+}
+
+// composeClaimPrompt builds the first-turn brief for a --claim spawn:
+// launch-templates/claim.txt (repo-root launch-templates/claim.txt is a
+// symlink to it), substituted the same {{VAR}} way as composeStartupPrompt.
+// Used instead of composeStartupPrompt when the caller gave a ticket to
+// claim rather than an inline prompt (bin/parlay-spawn lines 1359–1364).
+func composeClaimPrompt(agentID, claim, setupBlock string) string {
+	values := map[string]string{
+		"AGENT_ID":    agentID,
+		"CLAIM":       claim,
+		"SETUP_BLOCK": setupBlock,
+	}
+	out := claimTemplate
+	for k, v := range values {
+		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
+	}
 	out = strings.TrimSuffix(out, "\n")
 	return out
 }

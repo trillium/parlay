@@ -71,9 +71,14 @@ func spawnOne(opts SpawnOptions) error {
 		opts.Cwd = worktreePath
 	}
 
-	dod := composeDoD(opts.Mode, opts.AgentID)
 	setupBlock := composeSetupBlock(opts.WantWorktree, worktreePath, projectPath)
-	startupPrompt := composeStartupPrompt(server, opts.AgentID, opts.Name, opts.Color, setupBlock, opts.Prompt, dod)
+	var startupPrompt string
+	if opts.Claim != "" {
+		startupPrompt = composeClaimPrompt(opts.AgentID, opts.Claim, setupBlock)
+	} else {
+		dod := composeDoD(opts.Mode, opts.AgentID)
+		startupPrompt = composeStartupPrompt(server, opts.AgentID, opts.Name, opts.Color, setupBlock, opts.Prompt, dod)
+	}
 
 	pretrustWorkdir(opts.Cwd)
 
