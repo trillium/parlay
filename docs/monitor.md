@@ -37,3 +37,19 @@ listener is a takeover" guard — a second `listen` for the same agent
 supersedes rather than duplicates); `watchdog.go` is the post-spawn liveness
 check the [launcher](launcher.md) uses to confirm a newly spawned agent's
 first turn actually fired.
+
+**`parlay shutdown <id>`** (task-35ww, landed after this doc's initial pass —
+verified 2026-09-03 against `docs/agent-notes/graceful-agent-shutdown-task-35ww.md`)
+is the counterpart to enrollment: explicit, on-demand teardown instead of
+letting a retiring agent's listener/spool/registry row time out or get
+pruned by the hourly sweep. One call does all three: kills any local
+`listen`/`monitor` process for that id (same detect/SIGTERM/grace/SIGKILL
+sequence the singleton guard above already uses), deregisters it server-side
+(`POST /api/chat/unregister`, tombstoning the channel and reporting an
+undelivered-message count rather than discarding it), and immediately
+resolves any long-poll parked on that channel with `{gone: true}` instead of
+waiting out its own timeout. It's idempotent — a 404 on the unregister step
+means the agent was already retired, which counts as success, not error.
+Scope note: this verb only covers `packages/server` (the live production
+server) and `tools/relay`/`tools/cli` — `packages/go-server` was not given
+parity here, matching the precedent of two earlier server-only PRs.
