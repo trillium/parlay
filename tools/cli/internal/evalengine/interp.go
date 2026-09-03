@@ -147,6 +147,7 @@ var verbArgSchema = map[string]map[string]bool{
 	"armTimer":          {"timerId": true, "fireInMs": true},
 	"cancelTimer":       {"timerId": true},
 	"submitNow":         {"text": true, "requireTail": true},
+	"replaceRange":      {"start": true, "end": true, "text": true},
 }
 
 // applyArg places a resolved value into the correct ActionArg field for verb+name.
@@ -215,6 +216,15 @@ func applyArg(verb, name string, val any, arg *ActionArg) error {
 			arg.Text = strp(asString(val))
 		case "requireTail":
 			arg.RequireTail = asString(val)
+		}
+	case "replaceRange":
+		switch name {
+		case "start":
+			arg.Start = intp(asInt(val))
+		case "end":
+			arg.End = intp(asInt(val))
+		case "text":
+			arg.Text = strp(asString(val))
 		}
 	default:
 		return fmt.Errorf("verb %q takes no args", verb)

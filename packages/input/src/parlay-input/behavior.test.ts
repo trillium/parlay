@@ -187,3 +187,42 @@ describe('non-core verbs delegate to onAction', () => {
     h.unsub()
   })
 })
+
+// ── replaceRange (discussion #246: `change sentence` / global edit commands) ──
+// A built-in, applied to the element directly — never delegated to onAction —
+// so every wrapped input gets the inline edit commands with zero embedder work.
+
+describe('replaceRange', () => {
+  test('canonical trace: splices [start,end) with text and collapses the cursor to start', () => {
+    const h = harness()
+    h.el.value = 'foo foo. bar bar. baz baz'
+    const start = 'foo foo. '.length
+    const end = 'foo foo. bar bar'.length
+    h.push({ baseVersion: 0, seq: 0, actions: [{ verb: 'replaceRange', args: { start, end, text: '' } }] })
+    expect(h.el.value).toBe('foo foo. . baz baz')
+    expect(h.el.selectionStart).toBe(start)
+    expect(h.el.selectionEnd).toBe(start)
+    expect(h.applies).toContain('applied')
+    h.unsub()
+  })
+
+  test('a non-empty replacement collapses the cursor to the end of the inserted text', () => {
+    const h = harness()
+    h.el.value = 'hello world'
+    h.push({ baseVersion: 0, seq: 0, actions: [{ verb: 'replaceRange', args: { start: 0, end: 5, text: 'goodbye' } }] })
+    expect(h.el.value).toBe('goodbye world')
+    expect(h.el.selectionStart).toBe('goodbye'.length)
+    h.unsub()
+  })
+
+  test('is treated as mutating — a stale replaceRange is rejected and resyncs', async () => {
+    const h = harness()
+    h.el.value = 'hi'
+    h.el.dispatchEvent(new Event('input')) // version → 1
+    await sleep(25)
+    h.push({ baseVersion: 0, seq: 0, actions: [{ verb: 'replaceRange', args: { start: 0, end: 2, text: '' } }] })
+    expect(h.el.value).toBe('hi')
+    expect(h.applies).toContain('rejected-stale')
+    h.unsub()
+  })
+})

@@ -205,10 +205,10 @@ func validateManifest(man *Manifest) error {
 
 func validateMode(mode string) error {
 	switch MatchMode(mode) {
-	case ModeWhole, ModeTrailing, ModeAnywhere:
+	case ModeWhole, ModeTrailing, ModeAnywhere, ModeTrailingCursor:
 		return nil
 	default:
-		return fmt.Errorf("invalid mode %q (want whole|trailing|anywhere)", mode)
+		return fmt.Errorf("invalid mode %q (want whole|trailing|anywhere|trailing-cursor)", mode)
 	}
 }
 

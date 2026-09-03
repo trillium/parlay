@@ -42,12 +42,13 @@ type platformDef struct {
 // navigation, the channel picker) or the speech verbs. This is a starting set to be
 // refined when Herdr's real interface lands; narrowing it only tightens validation.
 var herdrVerbs = map[string]bool{
-	"clear":     true,
-	"setText":   true,
-	"submitNow": true,
-	"noop":      true,
-	"showHint":  true,
-	"clearHint": true,
+	"clear":        true,
+	"setText":      true,
+	"submitNow":    true,
+	"noop":         true,
+	"showHint":     true,
+	"clearHint":    true,
+	"replaceRange": true,
 }
 
 // platformRegistry is the closed set of known surfaces. "parlay" is the full

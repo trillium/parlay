@@ -24,6 +24,13 @@ export function readCursor(el: Element): { anchor: number; active: number } {
   return { anchor: 0, active: 0 }
 }
 
+/** Collapse the caret to `pos` on elements that support text selection (a
+ * plain `div`/`span` textContent target has none — a harmless no-op there). */
+export function writeCursor(el: Element, pos: number): void {
+  const input = el as HTMLInputElement
+  if (typeof input.setSelectionRange === 'function') input.setSelectionRange(pos, pos)
+}
+
 export function randomId(prefix: string): string {
   const c = (globalThis as { crypto?: Crypto }).crypto
   if (c?.randomUUID) return c.randomUUID()

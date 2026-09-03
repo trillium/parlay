@@ -39,7 +39,7 @@ header.
       "id": "switch-tab",                     // stable unique key
       "phrases": ["switch to {agent}", "go to {agent}",
                   "show me {agent}", "channel switch {agent}"],
-      "mode": "whole",                        // "whole" | "trailing"
+      "mode": "whole",                        // "whole" | "trailing" | "anywhere" | "trailing-cursor"
       "priority": 20,                          // lower wins; first match ends the pass
       "description": "Switch the active agent tab by name",
       "enabled": true,

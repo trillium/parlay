@@ -137,6 +137,11 @@ func (e *Engine) resolveSenderPick(req EvalRequest, out *actionList) {
 // arms the server-owned countdown). The old runAction switch is gone.
 func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 	value := req.Text
+	// cursorValue is the buffer truncated at the cursor — what ModeTrailingCursor
+	// commands match against, so a trigger phrase is recognized where it was
+	// actually dictated (at the cursor) rather than only at the end of the whole
+	// buffer (discussion #246 §Semantics: "recognized inline at the cursor").
+	cursorValue := cursorPrefix(req.Text, req.Cursor.Active)
 	fired := ""
 
 	// Resolve the command set for this pass: a valid per-request override wins,
@@ -153,9 +158,13 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 		}
 		matched := false
 		submitHandler := isSubmitHandler(cc.cmd.Emit)
+		matchValue := value
+		if MatchMode(cc.cmd.Mode) == ModeTrailingCursor {
+			matchValue = cursorValue
+		}
 		if fired == "" {
 			for _, cm := range cc.matchers {
-				m := cm.match(value)
+				m := cm.match(matchValue)
 				if m == nil {
 					continue
 				}
@@ -187,3 +196,15 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 
 // normalize trims a buffer for logging without altering evaluation semantics.
 func normalize(s string) string { return strings.TrimSpace(s) }
+
+// cursorPrefix returns text truncated at cursor, clamped to the buffer's bounds —
+// the substring ModeTrailingCursor commands match against (see runPass).
+func cursorPrefix(text string, cursor int) string {
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(text) {
+		cursor = len(text)
+	}
+	return text[:cursor]
+}

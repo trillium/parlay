@@ -41,12 +41,14 @@ type transform func(input string, ctx *evalCtx) string
 // form (id, cancel, ok) is invoked directly by the channel-select MODE machinery
 // in engine.go (a mode is a named entry-point, not a manifest command).
 var resolverRegistry = map[string]resolver{
-	"agent":            resolveAgentR,
-	"page":             resolvePageR,
-	"number":           resolveNumberR,
-	"channelList":      resolveChannelListR,
-	"channelSelection": resolveChannelSelectionR,
-	"recentSenders":    resolveRecentSendersR,
+	"agent":               resolveAgentR,
+	"page":                resolvePageR,
+	"number":              resolveNumberR,
+	"channelList":         resolveChannelListR,
+	"channelSelection":    resolveChannelSelectionR,
+	"recentSenders":       resolveRecentSendersR,
+	"sentenceDeleteStart": resolveSentenceDeleteStartR,
+	"cursorPos":           resolveCursorPosR,
 }
 
 // transformRegistry is the closed set of named pure string transforms.
@@ -74,7 +76,7 @@ var actionVerbs = map[string]bool{
 	"navigate": true, "stopSpeech": true, "flagSpeech": true,
 	"openChannelPicker": true, "closeChannelPicker": true, "pickerHint": true,
 	"openSenderPicker": true, "closeSenderPicker": true, "senderPickerHint": true,
-	"openSwitcher": true,
+	"openSwitcher": true, "replaceRange": true,
 }
 
 // ── Resolver implementations (extracted from the old runAction switch) ──────────
@@ -129,6 +131,44 @@ func resolveChannelSelectionR(input string, ctx *evalCtx) (any, bool) {
 func resolveRecentSendersR(_ string, ctx *evalCtx) (any, bool) {
 	senders := getRecentSenders(5)
 	return buildPickerSenders(senders), true
+}
+
+// ── Edit-action resolvers (`change sentence`, discussion #246) ─────────────────
+//
+// Both resolvers below rely on a property specific to ModeTrailingCursor matching
+// (engine.go runPass): ctx.buffer IS the buffer truncated at the cursor (not the
+// whole buffer), because that's the substring the command matched against. So
+// len(ctx.buffer) IS the cursor position, and everything at/after it is simply not
+// present here — deletion can never reach past the cursor without extra plumbing.
+
+// resolveSentenceDeleteStartR finds where a `replaceRange` deleting `change
+// sentence` should START: the beginning of the sentence immediately before the
+// trigger phrase. Combined with resolveCursorPosR as `end`, the single
+// replaceRange removes the sentence core AND the trigger phrase itself (plus its
+// auto-inserted leading whitespace) in one shot — see docs/agent-notes for the
+// worked trace. A miss (ok=false) is the empty-input no-op: nothing before the
+// trigger phrase to delete.
+func resolveSentenceDeleteStartR(_ string, ctx *evalCtx) (any, bool) {
+	triggerStart := lastIndexFold(ctx.buffer, ctx.matchedText)
+	if triggerStart < 0 {
+		return 0, false
+	}
+	prefix := strings.TrimRight(ctx.buffer[:triggerStart], " \t\n\r")
+	if prefix == "" {
+		return 0, false
+	}
+	segs := splitSentences(prefix)
+	if len(segs) == 0 {
+		return 0, false
+	}
+	return segs[len(segs)-1].coreStart, true
+}
+
+// resolveCursorPosR resolves to the cursor position. Under ModeTrailingCursor
+// matching, ctx.buffer is exactly the buffer up to the cursor, so its length IS
+// that position — always a hit (a cursor position always exists).
+func resolveCursorPosR(_ string, ctx *evalCtx) (any, bool) {
+	return len(ctx.buffer), true
 }
 
 // ── Transform implementations ───────────────────────────────────────────────────

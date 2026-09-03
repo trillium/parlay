@@ -86,6 +86,18 @@ function applyAction(a: Action): ApplyResult {
         return 'applied'
       case 'submitNow':
         return applySubmitNow(a)
+      case 'replaceRange': {
+        // Discussion #246: splice args.text into [start, end) and collapse the
+        // cursor to the end of the replacement — for `change sentence` (text: '')
+        // that's exactly `start`, "where the deleted sentence was."
+        const val = _ctx.input.value()
+        const start = Math.max(0, Math.min(val.length, a.args?.start ?? 0))
+        const end = Math.max(start, Math.min(val.length, a.args?.end ?? start))
+        const text = a.args?.text ?? ''
+        _ctx.input.setText(val.slice(0, start) + text + val.slice(end))
+        _ctx.input.setSelection(start + text.length, start + text.length)
+        return 'applied'
+      }
       case 'armTimer': {
         // Advisory only: render a local "sending in 1s…" countdown. The
         // AUTHORITATIVE timer is server-side; this NEVER submits on its own.
