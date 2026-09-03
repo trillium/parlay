@@ -21,6 +21,7 @@ func postIngress(t *testing.T, hub *Hub, body string) *httptest.ResponseRecorder
 
 func TestEventsIngressBroadcastsAnAllowedEventToEveryClient(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	a, cancelA := hub.subscribe("")
 	defer cancelA()
 	b, cancelB := hub.subscribe("")
@@ -56,6 +57,7 @@ func TestEventsIngressBroadcastsAnAllowedEventToEveryClient(t *testing.T) {
 
 func TestEventsIngressRejectsUnknownAndServerOwnedEvents(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 
@@ -94,6 +96,7 @@ func TestEventsIngressRejectsUnknownAndServerOwnedEvents(t *testing.T) {
 
 func TestEventsIngressRejectsAMissingEventNameAndABadBody(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 
 	if rec := postIngress(t, hub, `{"data":{}}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("missing event: status = %d, want 400", rec.Code)
@@ -105,6 +108,7 @@ func TestEventsIngressRejectsAMissingEventNameAndABadBody(t *testing.T) {
 
 func TestEventsIngressBroadcastsAnEmptyPayloadForADataLessEvent(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 
@@ -127,6 +131,7 @@ func TestEventsIngressBroadcastsAnEmptyPayloadForADataLessEvent(t *testing.T) {
 func TestEventsRouteDispatchesByMethod(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	route := handleEventsRoute(st, hub)
 
 	rec := httptest.NewRecorder()

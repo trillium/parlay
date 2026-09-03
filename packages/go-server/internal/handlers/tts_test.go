@@ -182,6 +182,7 @@ func TestTTSHandlerHandleTTSReport(t *testing.T) {
 func TestHandleTTSEventRequest(t *testing.T) {
 	b := newBroker()
 	hub := newHub(b)
+	t.Cleanup(hub.Stop)
 
 	body := map[string]interface{}{
 		"type":   "play",

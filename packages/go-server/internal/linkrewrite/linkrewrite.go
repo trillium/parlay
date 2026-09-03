@@ -39,8 +39,14 @@ func defaultGetenv(key string) string { return os.Getenv(key) }
 // digits.
 var localhostLink = regexp.MustCompile(`http://(?:localhost|127\.0\.0\.1):(\d+)`)
 
+// mu guards every var below. resolvePublicHost only does real work (env
+// lookup, tailscale shell-out) once per process, same as the sync.Once this
+// replaced, but a plain sync.Once can't be reset — ResetCacheForTest needs
+// to flip hasResolved back to false, and doing that on an unsynchronized
+// package var raced with resolvePublicHost's reads from any hub bridge
+// goroutine (events.go's newHub) still running from a prior test.
 var (
-	once        sync.Once
+	mu          sync.Mutex
 	cachedHost  string // "" means no rewrite
 	hasResolved bool
 )
@@ -50,7 +56,9 @@ var (
 // tailscale only once per process — env and the tailnet identity are
 // startup-stable for a long-running server.
 func resolvePublicHost() string {
-	once.Do(func() {
+	mu.Lock()
+	defer mu.Unlock()
+	if !hasResolved {
 		raw := strings.TrimSpace(getenv("PARLAY_PUBLIC_HOST"))
 		if raw == "" {
 			cachedHost = ""
@@ -60,12 +68,13 @@ func resolvePublicHost() string {
 			cachedHost = raw
 		}
 		hasResolved = true
-	})
+	}
 	return cachedHost
 }
 
 // getenv is a var (not a direct os.Getenv call) so tests can stub it without
-// mutating real process environment across parallel tests.
+// mutating real process environment across parallel tests. Read/written
+// only under mu.
 var getenv = defaultGetenv
 
 // tailscaleSelf mirrors the fields of `tailscale status --json` this package
@@ -102,6 +111,7 @@ func resolveTailscaleHost() string {
 }
 
 // runTailscaleStatus is a var so tests can stub the subprocess call.
+// Read/written only under mu.
 var runTailscaleStatus = defaultRunTailscaleStatus
 
 func defaultRunTailscaleStatus() ([]byte, error) {
@@ -145,7 +155,8 @@ func Rewrite(text string) string {
 // var (via SetGetenvForTest) and re-resolve. Not part of the runtime serving
 // path.
 func ResetCacheForTest() {
-	once = sync.Once{}
+	mu.Lock()
+	defer mu.Unlock()
 	cachedHost = ""
 	hasResolved = false
 }
@@ -153,15 +164,27 @@ func ResetCacheForTest() {
 // SetGetenvForTest overrides the env lookup used by resolvePublicHost, and
 // returns a restore func. Test-only.
 func SetGetenvForTest(fn func(string) string) (restore func()) {
+	mu.Lock()
 	prev := getenv
 	getenv = fn
-	return func() { getenv = prev }
+	mu.Unlock()
+	return func() {
+		mu.Lock()
+		getenv = prev
+		mu.Unlock()
+	}
 }
 
 // SetTailscaleStatusForTest overrides the tailscale subprocess call used by
 // "auto" mode, and returns a restore func. Test-only.
 func SetTailscaleStatusForTest(fn func() ([]byte, error)) (restore func()) {
+	mu.Lock()
 	prev := runTailscaleStatus
 	runTailscaleStatus = fn
-	return func() { runTailscaleStatus = prev }
+	mu.Unlock()
+	return func() {
+		mu.Lock()
+		runTailscaleStatus = prev
+		mu.Unlock()
+	}
 }
