@@ -68,6 +68,23 @@ type Launcher interface {
 	// TabsForLabel lists every live tab whose label equals id — used by
 	// `parlay reset --reboot` to reconcile down to exactly one tab.
 	TabsForLabel(id string) ([]TabRef, error)
+
+	// PaneSendText types text into paneID's shell without submitting it
+	// (no trailing Enter) — mirrors `herdr pane send-text`. Used by --pane
+	// in-place mode to export env vars into a caller-supplied pane before
+	// AgentStart, since that pane's env was never set via TabCreate's --env.
+	// Best-effort: mirrors bash's `_herdr_pane_send_text` (`|| true`).
+	PaneSendText(paneID, text string) error
+
+	// PaneSendKeys sends a named key (e.g. "enter") to paneID — mirrors
+	// `herdr pane send-keys`. Best-effort, same as PaneSendText.
+	PaneSendKeys(paneID, keys string) error
+
+	// PaneWaitOutput blocks until regex matches paneID's recent output, or
+	// timeoutMs elapses — mirrors `herdr pane wait-output`. Best-effort:
+	// mirrors bash's `_herdr_pane_wait_output` (`|| true` — a timeout here is
+	// not itself treated as fatal by the caller).
+	PaneWaitOutput(paneID, regex string, timeoutMs int) error
 }
 
 // herdrLauncher shells out to the real herdr binary on PATH.
@@ -173,6 +190,21 @@ func (h *herdrLauncher) AgentWait(id, status string, timeoutMs int) error {
 
 func (h *herdrLauncher) AgentSend(id, text string) error {
 	return exec.Command("herdr", "agent", "send", id, text).Run()
+}
+
+func (h *herdrLauncher) PaneSendText(paneID, text string) error {
+	_ = exec.Command("herdr", "pane", "send-text", paneID, text).Run() // best-effort, parity with bash's `|| true`
+	return nil
+}
+
+func (h *herdrLauncher) PaneSendKeys(paneID, keys string) error {
+	_ = exec.Command("herdr", "pane", "send-keys", paneID, keys).Run()
+	return nil
+}
+
+func (h *herdrLauncher) PaneWaitOutput(paneID, regex string, timeoutMs int) error {
+	_ = exec.Command("herdr", "pane", "wait-output", paneID, "--regex", regex, "--timeout", strconv.Itoa(timeoutMs)).Run()
+	return nil
 }
 
 func (h *herdrLauncher) TabsForLabel(id string) ([]TabRef, error) {
