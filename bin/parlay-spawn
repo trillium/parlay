@@ -1202,9 +1202,14 @@ fi
 echo "parlay-spawn: registering agent '$AGENT_ID' with Parlay at $PARLAY ..." >&2
 
 # 1. Register the agent so the tab exists.
+# launchedBy/startedAt (task-4dz9): the launch record the server-side idle
+# reaper (packages/server/src/prune/idle-reap.ts) keys reap-eligibility on —
+# firstmate's own spawn path never sets this, which is what keeps
+# firstmate-spawned agents outside the reaper's reach.
+_spawn_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '')
 curl -s -X POST "$PARLAY/api/chat/register-agent" \
   -H "Content-Type: application/json" \
-  -d "{\"id\":$(json_escape "$AGENT_ID"),\"name\":$(json_escape "$NAME"),\"color\":$(json_escape "$COLOR")}" \
+  -d "{\"id\":$(json_escape "$AGENT_ID"),\"name\":$(json_escape "$NAME"),\"color\":$(json_escape "$COLOR"),\"launchedBy\":\"parlay-spawn\",\"startedAt\":$(json_escape "$_spawn_started_at")}" \
   >/dev/null || { echo "parlay-spawn: register-agent failed — is Pulse running on $PARLAY?" >&2; exit 1; }
 
 # 2. Post a hello reply so the tab goes live immediately.

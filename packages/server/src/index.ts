@@ -9,7 +9,7 @@ import { watchPages } from "./pages"
 import { agents, broadcastToClients } from "./sse"
 import { startHookFiringTailer } from "./hook-tailer"
 import { startToolEventTailer } from "./tool-tailer"
-import { startPruneSweeps } from "./prune"
+import { startPruneSweeps, startIdleReapSweeps } from "./prune"
 import { backfillFromToolActivity } from "./session-channel"
 import { mkdirSync } from "fs"
 
@@ -27,6 +27,7 @@ startHookFiringTailer()
 backfillFromToolActivity()
 startToolEventTailer()
 startPruneSweeps()
+startIdleReapSweeps()
 
 serve({
   port: PORT,

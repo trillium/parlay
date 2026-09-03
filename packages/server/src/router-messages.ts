@@ -162,7 +162,10 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
           const nicknames = explicitClearNicks ? undefined : parseNicknames(body as Record<string, unknown>, existing?.nicknames)
           const urls      = Array.isArray(body.urls)  ? body.urls.map(String).filter((u: string) => u.length > 0)  : existing?.urls
           const path      = Array.isArray(body.path)  ? body.path.map(String).filter((u: string) => u.length > 0)  : existing?.path
-          const info = { id, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}), ...(path?.length ? { path } : {}) }
+          // Launch record (task-4dz9): launchedBy sticky once set; startedAt stamped ONCE (first registration wins).
+          const launchedBy = String(body.launchedBy ?? "").trim() || existing?.launchedBy
+          const startedAt  = existing?.startedAt || (String(body.startedAt ?? "").trim() || undefined)
+          const info = { id, name, color, ...(nicknames?.length ? { nicknames } : {}), ...(urls?.length ? { urls } : {}), ...(path?.length ? { path } : {}), ...(launchedBy ? { launchedBy } : {}), ...(startedAt ? { startedAt } : {}) }
           // An explicit register is a deliberate act, so it lifts any tombstone
           // left by a prior prune/unregister — re-arming a real agent whose id
           // was swept must work on the first try, not after the TTL (robots-ycfa).

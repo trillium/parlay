@@ -88,6 +88,7 @@ Reach for these instead of the hand-rolled equivalent.
 - **`parlay route` hardens by arithmetic, not a flag** — Beta(1,1) posterior over *captain-only* feedback; un-hardening is just a correction; only exit 0 acts. Model: `docs/routing.md`. → [notes](docs/agent-notes/route-hardening-is-arithmetic-over.md)
 - **`city/` is parlay's authored Gas City city + pack source, not a live city** — never run city-mutating `gc` verbs against it with the default `GC_HOME`; validate against a copy with `GC_HOME` redirected. → [notes](docs/agent-notes/city-is-the-authored-gas-city-source.md)
 - **The pinned gc cannot use the captain's bd fork** — a gc city store needs an upstream `bd` (schema/config skew fails `session new` both directions); sandbox recipe + lifecycle traps in the gated test. → [notes](docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md)
+- **Parlay-launched agents (`parlay spawn`/`parlay claim`) get a launch record** (`AgentInfo.launchedBy`/`startedAt`) and are idle-reaped after 2h (`PARLAY_AGENT_IDLE_TIMEOUT_MS`) via the `parlay shutdown` primitive — firstmate-spawned agents carry no `launchedBy` and are never touched. → [notes](docs/agent-notes/idle-reap-parlay-launched-agents-task-4dz9.md)
 
 ## Port-ticket archaeology
 

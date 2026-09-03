@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
@@ -174,10 +175,18 @@ func Claim(argv []string) {
 // entering the poll loop — that stays a harness Monitor concern.
 func claimEnroll(agent, name, color string, task claimTask) {
 	fmt.Fprintf(os.Stderr, "parlay claim: registering '%s' …\n", agent)
+	// launchedBy/startedAt (task-4dz9): the launch record the idle reaper
+	// (packages/server/src/prune/idle-reap.ts) keys on — every Parlay spawn
+	// path stamps this, firstmate's own spawn path never does, which is what
+	// keeps firstmate-spawned agents outside the reaper's reach entirely.
 	reg := httpc.PostJSON[struct {
 		OK    bool   `json:"ok,omitempty"`
 		Error string `json:"error,omitempty"`
-	}]("/api/chat/register-agent", map[string]any{"id": agent, "name": name, "color": color})
+	}]("/api/chat/register-agent", map[string]any{
+		"id": agent, "name": name, "color": color,
+		"launchedBy": "parlay-claim",
+		"startedAt":  time.Now().UTC().Format(time.RFC3339),
+	})
 	if reg.Error != "" {
 		httpc.Die(fmt.Sprintf("parlay claim: register-agent failed: %s", reg.Error), config.ExitRuntime)
 		return
