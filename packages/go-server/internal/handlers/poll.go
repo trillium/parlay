@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"parlay/go-server/internal/linkrewrite"
 	"parlay/go-server/internal/store"
 )
 
@@ -141,7 +142,7 @@ type pollMessage struct {
 }
 
 func toPollMessage(m store.ChatMessage) pollMessage {
-	return pollMessage{ID: m.ID, Role: m.Role, Text: m.Text, From: m.From}
+	return pollMessage{ID: m.ID, Role: m.Role, Text: linkrewrite.Rewrite(m.Text), From: m.From}
 }
 
 // handlePoll implements GET /api/chat/poll?after=<lastId>&channel=<agentId>.
@@ -220,6 +221,17 @@ func handleHistory(st *store.Store) http.HandlerFunc {
 				limit = n
 			}
 		}
-		writeJSON(w, st.Messages.History(limit))
+		writeJSON(w, rewriteHistoryForServe(st.Messages.History(limit)))
 	}
+}
+
+// rewriteHistoryForServe returns a serve-safe copy of msgs with localhost
+// links rewritten in each message's Text — the durable log st.Messages
+// holds is never mutated, since History already returns a fresh slice of
+// value-type ChatMessage.
+func rewriteHistoryForServe(msgs []store.ChatMessage) []store.ChatMessage {
+	for i := range msgs {
+		msgs[i].Text = linkrewrite.Rewrite(msgs[i].Text)
+	}
+	return msgs
 }

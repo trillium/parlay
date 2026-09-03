@@ -3,13 +3,14 @@ import { history, historyIndex } from "./storage"
 import { sseClients, agents, agentActive, CORS, sseEvent, computePresenceMap } from "./sse"
 import { bundleVersion } from "./bundle-version"
 import { parseDeclaration, recognize, type CapabilityDeclaration } from "./capability"
+import { rewriteMessagesForServe } from "./link-rewrite"
 
 export function handleEventsRequest(req: Request, pathname: string): Response | null {
   if (req.method === "GET" && pathname === "/api/chat/history") {
     const rawLimit = new URL(req.url).searchParams.get("limit")
     const parsed   = rawLimit ? parseInt(rawLimit, 10) : NaN
     const limit    = Number.isFinite(parsed) && parsed > 0 ? parsed : 200
-    return new Response(JSON.stringify(history.slice(-limit)), {
+    return new Response(JSON.stringify(rewriteMessagesForServe(history.slice(-limit))), {
       headers: { "Content-Type": "application/json", ...CORS },
     })
   }
@@ -79,7 +80,7 @@ export function handleEventsRequest(req: Request, pathname: string): Response | 
           ? { clientId, capabilities: { schema: caps.schema, ...recognize(caps) } }
           : { clientId }
         controller.enqueue(enc.encode(sseEvent("connected",      connectedPayload)))
-        controller.enqueue(enc.encode(sseEvent("history",        initialHistory)))
+        controller.enqueue(enc.encode(sseEvent("history",        rewriteMessagesForServe(initialHistory))))
         controller.enqueue(enc.encode(sseEvent("agents",         Array.from(agents.values()))))
         controller.enqueue(enc.encode(sseEvent("agent_presence", { active: agentActive })))
         controller.enqueue(enc.encode(sseEvent("presence_map",   computePresenceMap())))
