@@ -10,9 +10,9 @@ docs+comments-only convention.
 This file did not exist before this PR. `tools/parlay-bin`'s own source comments have cited
 it since PR #23 (2026-08-03) — `main.go`, `launcher.go`, `env.go`, `color.go`,
 `identitycli.go`, `spawn.go`, `spawnpipeline.go`, `reset.go`, and their test files all point
-at sections below. Those citations were aspirational until now: `git log --all
---diff-filter=A -- docs/scope-go-spawn.md` returns nothing, the same pattern noted elsewhere
-in `CLAUDE.md` for `docs/scope-go-server.md` and `docs/scope-go-cli.md`.
+at sections below. Those citations were aspirational until now: before this PR, `git log
+--all --diff-filter=A -- docs/scope-go-spawn.md` returned nothing — the same pattern noted
+elsewhere in `CLAUDE.md` for `docs/scope-go-server.md` and `docs/scope-go-cli.md`.
 
 Every claim below was re-verified against the current tree (`bin/parlay-spawn` at 1859
 lines, `tools/parlay-bin/spawn.go` at 366 lines, both post-rebase onto `origin/main`

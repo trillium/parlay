@@ -240,10 +240,11 @@ func runEphemeralSpawn(args []string) int {
 }
 
 // runBatchSpawn ports bin/parlay-spawn's batch loop (lines 176–267) as an
-// in-process loop rather than a self re-exec — the natural Go idiom, and
-// see docs/scope-go-spawn.md §5 item 6 for why bin/parlay-spawn.batch.test.sh
-// (the parity oracle this preserves the per-pair-failure-doesn't-stop-the-batch
-// contract against) is one of the 5 of 8 suite files actually wired into CI.
+// in-process loop rather than a self re-exec — the natural Go idiom.
+// bin/parlay-spawn.batch.test.sh is the parity oracle for the per-pair-
+// failure-doesn't-stop-the-batch contract preserved here; see
+// docs/scope-go-spawn.md §5 item 6 for why it's one of only 5 of the 8
+// suite files actually wired into CI.
 func runBatchSpawn(args []string) int {
 	var pairs []string
 	shared := defaultSpawnOptions()
