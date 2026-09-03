@@ -83,9 +83,13 @@ func isDecade(n int) bool {
 }
 
 // upstreamMessage is one message from the server's poll endpoint. A timeout tick
-// sets Timeout=true and leaves the message fields empty.
+// sets Timeout=true and leaves the message fields empty. Gone=true is the
+// server resolving an in-flight long-poll immediately on explicit unregister
+// (rather than the poller waiting out its own timeout and finding out only on
+// its next request) — handled the same as an HTTP 410 (errChannelGone).
 type upstreamMessage struct {
 	Timeout bool   `json:"timeout"`
+	Gone    bool   `json:"gone"`
 	ID      string `json:"id"`
 	Role    string `json:"role"`
 	Text    string `json:"text"`

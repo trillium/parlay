@@ -200,7 +200,7 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
       if (!id) return json({ error: "id required" }, 400)
       const res = unregisterAgent(id)
       if (!res.ok) return json({ error: res.error }, 404)
-      return json({ ok: true, id: res.id })
+      return json({ ok: true, id: res.id, undelivered: res.undelivered })
     })()
   }
 
@@ -211,7 +211,7 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
     if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers: { "Content-Type": "application/json", ...CORS } })
     const res = unregisterAgent(id)
     if (!res.ok) return new Response(JSON.stringify({ error: res.error }), { status: 404, headers: { "Content-Type": "application/json", ...CORS } })
-    return new Response(JSON.stringify({ ok: true, id: res.id }), { headers: { "Content-Type": "application/json", ...CORS } })
+    return new Response(JSON.stringify({ ok: true, id: res.id, undelivered: res.undelivered }), { headers: { "Content-Type": "application/json", ...CORS } })
   }
 
   // Hooks (and other system components) announce themselves into the chat.

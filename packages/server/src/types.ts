@@ -45,7 +45,7 @@ export type SSEClient = {
 }
 
 export type PollWaiter = {
-  resolve:  (msg: ChatMessage) => void
+  resolve:  (msg: ChatMessage | { gone: true }) => void
   timer:    ReturnType<typeof setTimeout>
   channel?: string   // when set, only receives messages with matching channel
 }

@@ -60,8 +60,8 @@ func (r *relay) controlMux() http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
-		r.unregister(agent)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "agent": agent})
+		found := r.unregister(agent)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "agent": agent, "found": found})
 	})
 
 	return mux

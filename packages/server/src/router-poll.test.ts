@@ -3,6 +3,7 @@ import { handlePollRequest } from "./router-poll"
 import { handleMessagesRequest } from "./router-messages"
 import { tombstone, clearTombstone, unregisterAgent } from "./prune"
 import { agents, lastPollByChannel } from "./sse"
+import { history } from "./storage"
 
 // robots-ycfa / task-1t0m. The registry used to auto-register any channel that
 // polled — convenient for a first-time agent, but catastrophic for a leaked
@@ -96,5 +97,52 @@ describe("handlePollRequest — tombstoned channels", () => {
     // and polling that now-registered channel doesn't disturb it
     poll("live-agent")
     expect(agents.has("live-agent")).toBe(true)
+  })
+})
+
+// task-35ww. `parlay shutdown`'s server half: unregisterAgent() now reports
+// how many user messages addressed to the channel were never polled/received
+// (reported, not flushed — see prune/sweep.ts's UnregisterResult doc comment),
+// and immediately resolves any long-poll already parked on that channel
+// instead of leaving it to find out on its own next timeout.
+describe("unregisterAgent — graceful shutdown (task-35ww)", () => {
+  beforeEach(() => {
+    history.length = 0
+  })
+
+  test("undelivered counts only unreceived user messages on that channel", () => {
+    agents.set("ghost-z1", { id: "ghost-z1", name: "ghost", color: "#000" })
+    history.push(
+      { id: "1", role: "user", ts: "t", text: "hi", channel: "ghost-z1" }, // undelivered
+      { id: "2", role: "user", ts: "t", text: "hi", channel: "ghost-z1", received: true }, // delivered
+      { id: "3", role: "agent", ts: "t", text: "reply", channel: "ghost-z1" }, // not a user msg
+      { id: "4", role: "user", ts: "t", text: "hi", channel: "other-agent" }, // different channel
+    )
+    const res = unregisterAgent("ghost-z1")
+    expect(res.ok).toBe(true)
+    expect(res.undelivered).toBe(1)
+  })
+
+  test("undelivered is 0 when every queued message was already received", () => {
+    agents.set("ghost-z1", { id: "ghost-z1", name: "ghost", color: "#000" })
+    history.push({ id: "1", role: "user", ts: "t", text: "hi", channel: "ghost-z1", received: true })
+    const res = unregisterAgent("ghost-z1")
+    expect(res.ok).toBe(true)
+    expect(res.undelivered).toBe(0)
+  })
+
+  test("a long-poll parked on the channel resolves immediately with gone:true on unregister", async () => {
+    agents.set("ghost-z1", { id: "ghost-z1", name: "ghost", color: "#000" })
+    // handlePollRequest is synchronous and parks its waiter (pollWaiters.push)
+    // during the ReadableStream's start() callback, which runs synchronously
+    // on construction — the waiter is already registered by the time poll()
+    // returns, with nothing to deliver yet on this fresh channel.
+    const pending = poll("ghost-z1")!
+
+    const res = unregisterAgent("ghost-z1")
+    expect(res.ok).toBe(true)
+
+    const body = await pending.json() as { gone?: boolean }
+    expect(body.gone).toBe(true)
   })
 })

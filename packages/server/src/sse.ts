@@ -8,6 +8,24 @@ export const sseClients  = new Map<string, SSEClient>()
 export const pollWaiters: PollWaiter[] = []
 export const agents      = new Map<string, AgentInfo>()
 
+// Resolve and drop every waiter currently parked on `channel` — used by
+// explicit unregister (graceful shutdown) so an in-flight long-poll learns
+// the channel is gone immediately instead of waiting out its up-to-30s
+// timeout and only finding out on its NEXT request (which would then hit the
+// tombstone check in handlePollRequest). `channel` is always a non-empty,
+// already-validated agent id here, so it never matches the unscoped (default
+// tab) waiters, which carry channel === undefined.
+export function resolvePollWaiters(channel: string, payload: { gone: true }): void {
+  for (let i = pollWaiters.length - 1; i >= 0; i--) {
+    const waiter = pollWaiters[i]
+    if (waiter.channel !== channel) continue
+    clearTimeout(waiter.timer)
+    pollWaiters.splice(i, 1)
+    waiter.resolve(payload)
+  }
+  if (pollWaiters.length === 0) setAgentPresence(false)
+}
+
 // ── Agent registry persistence (#18) ────────────────────────────────────────
 // The agents map is identity only — a Pulse restart used to wipe it and every
 // tab vanished until each agent happened to post again. Write-through to disk

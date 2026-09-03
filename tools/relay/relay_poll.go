@@ -78,6 +78,17 @@ func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 			log.Printf("agent %q: polling recovered after %d consecutive errors", loop.id, n)
 		}
 		delay = reconnectDelay
+		if msg != nil && msg.Gone {
+			// The server resolved this exact in-flight poll to say the channel
+			// was just unregistered - the same terminal signal as a fresh
+			// request's HTTP 410 (errChannelGone), just delivered without
+			// waiting for this request to time out first.
+			log.Printf("agent %q: server resolved poll as gone - pruning from the watch list", loop.id)
+			r.dropLoop(loop.id)
+			tombstoneSpool(loop.spool)
+			loop.cancel()
+			return
+		}
 		if msg == nil || msg.Timeout {
 			continue // idle tick — poll again immediately, server holds the connection
 		}
