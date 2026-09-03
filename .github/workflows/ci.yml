@@ -353,7 +353,7 @@ jobs:
         working-directory: packages/webview
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
-  # Only the nine harnesses that were verified to be genuinely side-effect-free
+  # Only the ten harnesses that were verified to be genuinely side-effect-free
   # are here. Seven were trial-run against a redirected HOME with the live
   # ~/.parlay/agents and ~/.treehouse snapshotted before and after, producing
   # zero drift in either. tools/hooks/hooks.test.sh meets the same bar: it
@@ -362,6 +362,9 @@ jobs:
   # ~/.treehouse at all. bin/context-reset.test.sh does the same: it redirects
   # HOME, TMPDIR and PARLAY_AGENT_HOME into one mktemp root, stubs the handoff
   # CLI, and asserts the pid it resolved is its own fixture before any kill.
+  # bin/parlay-bin.test.sh (docs/scope-go-spawn.md Stage 4) copies the wrapper
+  # into its own mktemp scratch repo and stubs `go` on PATH — this job has no
+  # Go toolchain at all, so the harness never attempts a real build.
   # Everything else that runs as a shell script is excluded because it drives
   # live or macOS-only state or stands up a real server fixture — AGENTS.md
   # owns that "not covered" list and its per-entry reasons; do not re-enumerate
@@ -418,6 +421,7 @@ jobs:
           git config --global user.email ci@example.invalid
           git config --global user.name  "parlay ci"
           for t in bin/parlay-pii-lib.test.sh \
+                   bin/parlay-bin.test.sh \
                    bin/parlay-spawn.templates.test.sh \
                    bin/parlay-spawn.integration.test.sh \
                    bin/parlay-spawn.quoting.test.sh \

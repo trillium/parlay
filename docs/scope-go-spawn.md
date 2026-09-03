@@ -278,9 +278,9 @@ task-04g1's escape hatch.
    is the sole public entry point; it sets `PARLAY_SPAWN_VIA_CLI=1` in the child's env
    (`:40`) before exec'ing whichever spawner `resolveSpawner()` picked. `bin/parlay-spawn`
    hard-refuses without it (`:45-57`, exit 2). **`tools/parlay-bin` now enforces this too**,
-   landed by PR #241 — see §8 finding F1's resolution note. This closed before `parlay-bin`
-   is installed on any PATH (§7 stage 3 is still not done), so the second-front-door risk
-   this invariant exists to prevent has not yet had a chance to materialize.
+   landed by PR #241 (Stage 2) — see §8 finding F1's resolution note. Stage 3 (this PR) is what
+   first makes `parlay-bin` reachable on PATH, so the guard this invariant demands was already
+   in place before that second front door ever opened.
 2. **Mandatory `--model` refusal (task-qyu8q).** No spawn may proceed without a deliberately
    chosen model — bash's `require_model` (`:553-614` per the full read) and Go's
    `requireModel` (`spawn.go:138-155`, landed by PR #238) both refuse with exit 2 rather than
@@ -304,21 +304,32 @@ Per discussion #237's 2026-09-03 correction comment, the road ahead is a reconci
 against the existing partial port, not a fresh one-PR port. Five stages; each stage's
 "done" gate is checked before starting the next.
 
+> **Numbering note (task-saon9, this PR).** The firstmate brief that dispatched this PR calls
+> its scope "STAGE 4: activation" and folds this doc's Stage 4 (parity suite) + Stage 5 (bash
+> tombstone) + `GO_ONLY_VERBS` into a single future "stage 5". That is a one-off in the
+> dispatched brief's own numbering, not a renumbering of this doc: the stage labels below are
+> unchanged from when this document was written, and future work should keep citing *these*
+> labels (Stage 2 / Stage 3 / Stage 4 / Stage 5) rather than the brief's. What the brief called
+> "stage 4" is this doc's **Stage 3** (PATH activation + precedence), landed by this PR. This
+> doc's Stage 2 (gap-by-gap reconciliation) was already closed before this PR, by commits
+> `9bb67d33` and `f78fdb48` (profiles, PII, bead, pane, workspace, config.toml defaults,
+> `PARLAY_SPAWN_VIA_CLI`, `launchedBy`/`startedAt`, and launcher wiring — see #238/#241/#248).
+
 ```mermaid
 flowchart TB
     M1["#238: model gate backported to parlay-bin (done)"] --> S["Stage 1: write docs/scope-go-spawn.md for real (done)"]
-    S --> R1["Stage 2: gap-by-gap reconciliation (done)<br/>PARLAY_SPAWN_VIA_CLI + launchedBy/startedAt (#241)<br/>profiles / PII / bead / pane / workspace / config defaults / subprocess+gc launcher wiring (this PR)"]
-    R1 --> R2["Stage 3: PATH activation<br/>install parlay-bin, resolveSpawner prefers it for real"]
-    R2 --> R3["Stage 4: parity suite green<br/>all 8 bin/parlay-spawn.*.test.sh files, including the 3 not yet in CI, pass against the Go verb"]
-    R3 --> T["Stage 5: bash tombstone — resolveSpawner needs no bash fallback"]
+    S --> R1["Stage 2: gap-by-gap reconciliation (done: #241, #248)<br/>PARLAY_SPAWN_VIA_CLI + launchedBy/startedAt (#241)<br/>profiles / PII / bead / pane / workspace / config defaults / subprocess+gc launcher wiring (#248)"]
+    R1 --> R2["Stage 3: PATH activation (done: this PR)<br/>bin/parlay-bin wrapper + resolveSpawnerChoice precedence + PARLAY_SPAWN_IMPL escape hatch"]
+    R2 --> R3["Stage 4: parity suite green (remaining)<br/>all 8 bin/parlay-spawn.*.test.sh files, including the 3 not yet in CI, pass against the Go verb"]
+    R3 --> T["Stage 5: bash tombstone (remaining) — resolveSpawner needs no bash fallback"]
 ```
 
-**Stage 1 — this PR.** Write this document; fix `tools/parlay-bin`'s dangling citations to
+**Stage 1 — done.** Write this document; fix `tools/parlay-bin`'s dangling citations to
 point here. No behavior change.
 
 **Stage 2 — gap-by-gap reconciliation. Done.** Closed in two PRs: #241 landed the two
 one-front-door gaps first (`PARLAY_SPAWN_VIA_CLI` enforcement, `launchedBy`/`startedAt`
-stamping) plus `--claim`; a later PR landed config.toml defaults, then the rest of the flag
+stamping) plus `--claim`; #248 landed config.toml defaults, then the rest of the flag
 surface (`--profile`/`--list`, `--pii`/`--no-pii`, `--bead`/`--force`, `--pane`,
 `--workspace`) and wired the already-implemented `subprocess`/`gc` launchers into the spawn
 pipeline's launcher selection. Every §2 row now reads Full, or — where a row is Partial or
@@ -328,12 +339,31 @@ leftover, the herdr duplicate-guard launcher-gating divergence) rather than an u
 `bin/parlay-spawn` was untouched throughout both PRs — it remains the only spawner anything
 depends on until Stage 3.
 
-**Stage 3 — PATH activation.** Install `parlay-bin` on a real PATH (CI first, then hosts) so
+**Stage 3 — done (this PR).** Install `parlay-bin` on a real PATH (CI first, then hosts) so
 `resolveSpawner()`'s existing preference for it (`launch.go:99-111`) takes effect for real
-instead of always falling through. **Done** when `which parlay-bin` resolves in CI and on the
-captain's box, and `parlay spawn ...` demonstrably launches through the Go verb, not bash —
-verified, not assumed, the same way this doc verified the treehouse-worktree claim in §2
-rather than trusting a prior summary.
+instead of always falling through. This PR adds the `bin/parlay-bin` wrapper (build-if-stale,
+then exec — mirrors `bin/parlay`'s wrapper for `tools/cli`) and `resolveSpawnerChoice`'s
+3-tier precedence: an explicit `PARLAY_SPAWN_IMPL` env var or `spawnImpl` `config.toml` key
+("go" or "bash") wins outright and fails loudly if its named binary is missing; otherwise
+`parlay-bin` is auto-preferred when it resolves on PATH; otherwise `bin/parlay-spawn`. An
+auto-preferred `parlay-bin` that cannot even **start** (corrupt build, wrong arch, a
+permission error — not a normal nonzero exit) falls back to bash loudly rather than leaving
+the operator with no agent; an explicit `PARLAY_SPAWN_IMPL=go` demand never falls back — see
+`execSpawner` in `tools/cli/internal/commands/spawn.go`.
+>
+> **Captain-only leftover.** Actually symlinking `bin/parlay-bin` into `~/.local/bin` (mirroring
+> the existing `~/.local/bin/parlay-spawn` symlink) is machine setup outside this repo — see
+> `docs/CLI_VERBS_AND_EVENTS.md`'s note that these are untracked, hand-created symlinks — and
+> is not done by this PR. Until that symlink exists on a given host, `parlay-bin` never
+> resolves on that host's PATH and `resolveSpawnerChoice` auto-falls-through to
+> `bin/parlay-spawn`, which is safe (existing behavior, not a regression) but means the Go
+> verb is not yet actually preferred anywhere outside a shell that has manually put
+> `<repo>/bin` on PATH. **Done** when `which parlay-bin` resolves in CI and on the
+> captain's box, and `parlay spawn ...` demonstrably launches through the Go verb, not bash —
+> verified, not assumed, the same way this doc verified the treehouse-worktree claim in §2
+> rather than trusting a prior summary. That host-level verification is exactly the
+> captain-only leftover above; the code-side precedence is done and tested regardless of
+> which binary happens to be on a given PATH.
 
 **Stage 4 — parity suite green.** Point all 8 `bin/parlay-spawn.*.test.sh` files at the Go
 verb (not just the 5 currently wired into CI — wire the remaining 3 in as part of this
@@ -362,20 +392,21 @@ milestone"). Nothing later in this plan is blocked on doing all of it in one sit
 
 ---
 
-## 8. Verification findings (not fixed in this PR)
+## 8. Verification findings (from the original Stage 1 doc-only PR)
 
-This PR is documentation and comment-fix only. The following were surfaced while verifying
-every claim above against current code; they are findings for a future reconciliation PR to
-act on, not something fixed here.
+The Stage 1 PR that first wrote this document was documentation and comment-fix only. The
+findings below were surfaced while verifying every claim in this document against current
+code as of that PR; both are now resolved (struck through in place, per the honest-docs rule
+of saying which claim is authoritative and why, rather than deleting the record of what was
+found).
 
 **F1 — `tools/parlay-bin` never checks `PARLAY_SPAWN_VIA_CLI`.** ~~Confirmed by grepping every
 `.go` file in `tools/parlay-bin` for the literal string — zero matches outside this doc's own
 description of the bash behavior.~~ **Resolved by PR #241**, landed before the gap-matrix
-reconciliation task that closed most of §2's other rows began. `spawn.go`'s `runSpawnCommand`
-now refuses with exit 2 (`viaCLIRefusal`) unless `PARLAY_SPAWN_VIA_CLI=1`; see `spawn.go:305-326`
-and `spawn_test.go:344-383`. `parlay-bin` still is not installed on any PATH (§2's opening
-paragraph, Stage 3 still not started), so this closed before the second-front-door risk it
-guards against ever had a live window to occur in.
+reconciliation that closed most of §2's other rows. `spawn.go`'s `runSpawnCommand` now refuses
+with exit 2 (`viaCLIRefusal`) unless `PARLAY_SPAWN_VIA_CLI=1`; see `spawn.go:305-326` and
+`spawn_test.go:344-383`. This closed before Stage 3 (this PR) made `parlay-bin` reachable on
+PATH, so the second-front-door risk it guards against never had a live window to occur in.
 
 **F2 — `tools/parlay-bin`'s `registerAgent` does not stamp `launchedBy`/`startedAt`.**
 ~~Confirmed: `httpclient.go:38-45` posts only `id`/`name`/`color` to
