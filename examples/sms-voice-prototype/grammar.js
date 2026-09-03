@@ -143,25 +143,59 @@ function applyTrailing(next, actions, trailingCommand) {
 }
 
 // chats: [{ id, displayName }] in the order they should be listed (recency).
-// Assigns a rare stand-in word to every duplicate-name occurrence after the
-// first, per discussion #240 ruling 3 ("parlay nickname" mechanism).
+// First names win for speakability: a chat with a unique first name across
+// the list registers BOTH the bare first name and the full name as selector
+// vocabulary ("ana" and "ana lopez" both open the same chat). A duplicate
+// first name falls back to first+last for every contact sharing it; if even
+// the full name repeats, later occurrences of that full name fall back
+// further to a rare stand-in word, per discussion #240 ruling 3 ("parlay
+// nickname" mechanism).
 export function assignStandIns(chats) {
-  const seen = new Map();
+  const firstNameCounts = new Map();
+  const fullNameCounts = new Map();
+  for (const chat of chats) {
+    const tokens = tokenize(chat.displayName);
+    const first = (tokens[0] || '').toLowerCase();
+    const full = chat.displayName.trim().toLowerCase();
+    firstNameCounts.set(first, (firstNameCounts.get(first) || 0) + 1);
+    fullNameCounts.set(full, (fullNameCounts.get(full) || 0) + 1);
+  }
+
+  const seenFullName = new Map();
   let wordIdx = 0;
   return chats.map((chat) => {
-    const key = chat.displayName.trim().toLowerCase();
-    const count = seen.get(key) || 0;
-    seen.set(key, count + 1);
+    const tokens = tokenize(chat.displayName);
+    const firstTokens = tokens.slice(0, 1).map((t) => t.toLowerCase());
+    const fullTokens = tokens.map((t) => t.toLowerCase());
+    const first = firstTokens[0] || '';
+    const full = chat.displayName.trim().toLowerCase();
+
+    const firstNameUnique = firstNameCounts.get(first) === 1;
+    const fullNameUnique = fullNameCounts.get(full) === 1;
 
     let standIn = null;
     const selectors = [];
-    if (count === 0) {
-      selectors.push(tokenize(chat.displayName).map((t) => t.toLowerCase()));
+
+    if (firstNameUnique) {
+      selectors.push(firstTokens);
+      if (fullTokens.length > 1) selectors.push(fullTokens);
+    } else if (fullNameUnique) {
+      // Duplicate first name, but the full name still distinguishes it.
+      selectors.push(fullTokens);
     } else {
-      standIn = STAND_IN_WORDS[wordIdx % STAND_IN_WORDS.length];
-      wordIdx++;
-      selectors.push([standIn]);
+      // Even the full name repeats: first occurrence keeps the full name,
+      // every later occurrence gets a stand-in word instead.
+      const occurrence = seenFullName.get(full) || 0;
+      seenFullName.set(full, occurrence + 1);
+      if (occurrence === 0) {
+        selectors.push(fullTokens);
+      } else {
+        standIn = STAND_IN_WORDS[wordIdx % STAND_IN_WORDS.length];
+        wordIdx++;
+        selectors.push([standIn]);
+      }
     }
+
     return { id: chat.id, displayName: chat.displayName, standIn, selectors };
   });
 }

@@ -16,6 +16,7 @@
 
 import { assignStandIns } from './grammar.js';
 import { DEMO_CHATS, DEMO_HISTORY } from './demo-data.js';
+import { loadContactIndex, resolveName, type ContactIndex } from './contacts.ts';
 
 const argv = process.argv.slice(2);
 const DEMO = argv.includes('--demo');
@@ -58,17 +59,30 @@ function formatCommand(args: string[]): string {
   return ['imsg', ...args].map(quoteArg).join(' ');
 }
 
+// Loaded lazily, once, and only outside --demo mode — demo data already has
+// names, and the resolver must never touch the AddressBook in demo mode.
+let contactIndex: ContactIndex | null = null;
+function getContacts(): ContactIndex {
+  if (!contactIndex) contactIndex = loadContactIndex();
+  return contactIndex;
+}
+
 async function getChats() {
   if (DEMO) {
     const withStandIns = assignStandIns(DEMO_CHATS.map(({ id, displayName }) => ({ id, displayName })));
-    return withStandIns.map((c, i) => ({ ...c, lastMessage: DEMO_CHATS[i].lastMessage, lastActivity: DEMO_CHATS[i].lastMessageAt }));
+    return withStandIns.map((c, i) => ({ ...c, identifier: null, lastMessage: DEMO_CHATS[i].lastMessage, lastActivity: DEMO_CHATS[i].lastMessageAt }));
   }
   const { ok, stdout, stderr } = await runImsg(['chats', '--limit', '15', '--json']);
   if (!ok) throw new Error(`imsg chats failed: ${stderr.slice(0, 500)}`);
   const rows = parseJsonLines(stdout);
-  const bare = rows.map((r) => ({ id: r.id, displayName: r.name?.trim() ? r.name : r.identifier }));
+  const contacts = getContacts();
+  const bare = rows.map((r) => ({
+    id: r.id,
+    displayName: r.name?.trim() ? r.name : resolveName(r.identifier, contacts) ?? r.identifier,
+    identifier: r.identifier,
+  }));
   const withStandIns = assignStandIns(bare);
-  return withStandIns.map((c, i) => ({ ...c, lastMessage: null, lastActivity: rows[i].last_message_at }));
+  return withStandIns.map((c, i) => ({ ...c, identifier: bare[i].identifier, lastMessage: null, lastActivity: rows[i].last_message_at }));
 }
 
 async function getHistory(chatId: number) {
@@ -78,8 +92,14 @@ async function getHistory(chatId: number) {
   const { ok, stdout, stderr } = await runImsg(['history', '--chat-id', String(chatId), '--limit', '20', '--json']);
   if (!ok) throw new Error(`imsg history failed: ${stderr.slice(0, 500)}`);
   const rows = parseJsonLines(stdout);
+  const contacts = getContacts();
   return rows
-    .map((r) => ({ sender: r.is_from_me ? 'me' : r.sender, text: r.text, isFromMe: !!r.is_from_me, createdAt: r.created_at }))
+    .map((r) => ({
+      sender: r.is_from_me ? 'me' : resolveName(r.sender, contacts) ?? r.sender,
+      text: r.text,
+      isFromMe: !!r.is_from_me,
+      createdAt: r.created_at,
+    }))
     .reverse();
 }
 
