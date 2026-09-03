@@ -76,10 +76,16 @@ func (r *relay) register(agent string) (string, error) {
 	return spool, nil
 }
 
-// unregister stops an agent's poll loop and removes it from the registry. The
-// spool file is left on disk so a lagging monitor can drain it; a fresh
-// register reuses it. Idempotent: unregistering an unknown agent is a no-op.
-func (r *relay) unregister(agent string) {
+// unregister stops an agent's poll loop, removes it from the registry, and
+// tombstones its spool. Returns whether the agent was actually registered
+// (false is the idempotent-no-op case: unregistering an unknown or
+// already-unregistered agent). The spool content itself is left on disk — a
+// lagging monitor's `tail -F` can still drain what's already written — but
+// renaming it out of the *.chan glob (same mechanism as pollLoop's 410
+// handling, task-0n80i) stops resumeFromSpools from reviving it on the next
+// relay restart, matching the explicit-shutdown contract: nothing about a
+// retired agent gets polled or resurrected afterward.
+func (r *relay) unregister(agent string) bool {
 	r.mu.Lock()
 	loop, ok := r.loops[agent]
 	if ok {
@@ -87,11 +93,13 @@ func (r *relay) unregister(agent string) {
 	}
 	r.mu.Unlock()
 	if !ok {
-		return
+		return false
 	}
 	loop.cancel()
 	<-loop.done
+	tombstoneSpool(loop.spool)
 	log.Printf("agent %q unregistered", agent)
+	return true
 }
 
 // dropLoop removes an agent from the registry WITHOUT waiting for its goroutine

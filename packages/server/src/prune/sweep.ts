@@ -3,14 +3,20 @@
 // `shouldPrune` (./policy) decides; this file acts on the decision and owns the
 // only two callers: the startup sweep and the hourly periodic sweep.
 
-import { agents, lastPollByChannel, broadcastToClients, persistAgents } from "../sse"
+import { agents, lastPollByChannel, broadcastToClients, persistAgents, resolvePollWaiters } from "../sse"
 import { shouldPrune, type PruneMode } from "./policy"
 import { tombstone } from "./tombstones"
+import { history } from "../storage"
 
 export interface UnregisterResult {
   ok: boolean
   id: string
   error?: string
+  /** User messages addressed to this channel that were never polled/received.
+   *  Reported, not flushed or redelivered — there is no other listener to hand
+   *  them to, and silently discarding chat history is a separate, unrequested
+   *  destructive action. Present only on a successful removal. */
+  undelivered?: number
 }
 
 /**
@@ -34,14 +40,23 @@ export function unregisterAgent(id: string): UnregisterResult {
   const clean = String(id ?? "").trim()
   if (!clean) return { ok: false, id: clean, error: "id required" }
   if (!agents.has(clean)) return { ok: false, id: clean, error: `unknown channel: ${clean}` }
+  // Count before deletion — nothing here reads agents/history after removal.
+  const undelivered = history.filter(m =>
+    m.channel === clean && m.role === "user" && m.received !== true
+  ).length
   agents.delete(clean)
   tombstone(clean)
   // Drop freshness tracking too so a re-registered id starts clean and a
   // just-pruned id can't linger in the presence map.
   lastPollByChannel.delete(clean)
+  // Wake any in-flight long-poll on this channel now, rather than letting it
+  // sit until its own timeout and only discover the channel is gone on its
+  // NEXT request (up to 30s of a relay polling a channel that is already
+  // retired).
+  resolvePollWaiters(clean, { gone: true })
   persistAgents()
   broadcastToClients("agent_unregister", { id: clean })
-  return { ok: true, id: clean }
+  return { ok: true, id: clean, undelivered }
 }
 
 export interface PruneSweepResult {

@@ -534,6 +534,154 @@ func TestUpstream410TombstonesTheSpool(t *testing.T) {
 	}
 }
 
+// ── Terminal Gone: server resolves an in-flight poll on explicit shutdown ────
+// task-35ww. An explicit `parlay shutdown` unregisters server-side while a
+// relay's long-poll may already be parked waiting on that exact channel.
+// Rather than make that poll sit out its own up-to-30s timeout and only learn
+// the channel is gone on its NEXT request's 410, the server resolves it
+// immediately with a 200 body carrying {"gone": true}. This must be handled
+// exactly like a fresh request's 410 (errChannelGone): drop the loop and
+// tombstone the spool, not treated as an ordinary message or idle tick.
+
+// goneBodyUpstream answers 200 {"gone": true} for the named channel — the
+// server resolving an in-flight poll on explicit unregister — and idles for
+// every other one.
+type goneBodyUpstream struct {
+	gone  string
+	mu    sync.Mutex
+	polls map[string]int
+}
+
+func (g *goneBodyUpstream) handler(w http.ResponseWriter, req *http.Request) {
+	channel := req.URL.Query().Get("channel")
+	g.mu.Lock()
+	g.polls[channel]++
+	g.mu.Unlock()
+	if channel == g.gone {
+		writeJSON(w, http.StatusOK, map[string]any{"gone": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"timeout": true})
+}
+
+func (g *goneBodyUpstream) pollCount(channel string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.polls[channel]
+}
+
+func TestUpstreamGoneBodyDropsAndTombstonesTheLoop(t *testing.T) {
+	up := &goneBodyUpstream{gone: "leaked-fixture-z1", polls: make(map[string]int)}
+	srv := httptest.NewServer(http.HandlerFunc(up.handler))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	spool, err := r.register("leaked-fixture-z1")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	waitForLoopGone(t, r, "leaked-fixture-z1")
+
+	before := up.pollCount("leaked-fixture-z1")
+	time.Sleep(300 * time.Millisecond)
+	if after := up.pollCount("leaked-fixture-z1"); after != before {
+		t.Errorf("relay kept polling after an in-body gone:true: %d → %d polls", before, after)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(spool + tombstoneSuffix); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("spool %s was never tombstoned after an in-body gone:true", spool)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := os.Stat(spool); !os.IsNotExist(err) {
+		t.Fatalf("plain spool %s still exists after tombstoning (err=%v)", spool, err)
+	}
+}
+
+func TestUpstreamGoneBodyDoesNotAffectOtherChannels(t *testing.T) {
+	up := &goneBodyUpstream{gone: "leaked-fixture-z1", polls: make(map[string]int)}
+	srv := httptest.NewServer(http.HandlerFunc(up.handler))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	if _, err := r.register("leaked-fixture-z1"); err != nil {
+		t.Fatalf("register leaked: %v", err)
+	}
+	if _, err := r.register("real-agent"); err != nil {
+		t.Fatalf("register real: %v", err)
+	}
+	defer r.unregister("real-agent")
+
+	waitForLoopGone(t, r, "leaked-fixture-z1")
+
+	r.mu.Lock()
+	_, realStillThere := r.loops["real-agent"]
+	r.mu.Unlock()
+	if !realStillThere {
+		t.Fatal("an in-body gone:true on one channel dropped an unrelated channel's loop")
+	}
+}
+
+// task-35ww: r.unregister (the local half of `parlay shutdown`) must tombstone
+// the spool itself — not just drop the in-memory loop — for the same reason a
+// terminal 410 does: resumeFromSpools() would otherwise resurrect the retired
+// agent's poll loop on the relay's next restart. It also reports whether the
+// agent was actually registered, so a caller can tell a real teardown from a
+// no-op on an already-retired (or never-registered) id — the idempotent case.
+func TestUnregisterTombstonesTheSpool(t *testing.T) {
+	up := newFakeUpstream()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		up.handler(w, req)
+	}))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	spool, err := r.register("agent-a")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if found := r.unregister("agent-a"); !found {
+		t.Fatal("unregister(agent-a) = false, want true for a registered agent")
+	}
+
+	if _, err := os.Stat(spool + tombstoneSuffix); err != nil {
+		t.Fatalf("spool %s was not tombstoned by unregister: %v", spool, err)
+	}
+	if _, err := os.Stat(spool); !os.IsNotExist(err) {
+		t.Fatalf("plain spool %s still exists after unregister (err=%v)", spool, err)
+	}
+}
+
+func TestUnregisterIsIdempotent(t *testing.T) {
+	up := newFakeUpstream()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		up.handler(w, req)
+	}))
+	defer srv.Close()
+
+	r := newTestRelay(t, srv.URL)
+	if _, err := r.register("agent-a"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if found := r.unregister("agent-a"); !found {
+		t.Fatal("first unregister(agent-a) = false, want true")
+	}
+	if found := r.unregister("agent-a"); found {
+		t.Fatal("second unregister(agent-a) = true, want false (already retired, not an error)")
+	}
+	if found := r.unregister("never-registered"); found {
+		t.Fatal("unregister(never-registered) = true, want false")
+	}
+}
+
 // TestResumeFromSpoolsSkipsTombstoned: a relay restart must not resurrect a
 // retired agent whose spool was tombstoned by a prior 410.
 func TestResumeFromSpoolsSkipsTombstoned(t *testing.T) {

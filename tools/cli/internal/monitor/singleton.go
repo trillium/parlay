@@ -268,6 +268,37 @@ func reapDuplicateListeners(agent string) {
 	}
 }
 
+// KillLocalListeners ends every live poll-loop process on THIS host for
+// agent's channel — the local half of `parlay shutdown` (task-35ww): a
+// listener still running here must stop, not just fall silent once the
+// server/relay side is torn down. Reuses the same detection and kill
+// sequence as the arming-time singleton guard (reapDuplicateListeners):
+// SIGTERM, a 2s grace period, then SIGKILL any survivor. Returns the pids it
+// found and terminated — nil if none were running here, or if the process
+// table could not be read (never treated as an error: shutdown must still
+// proceed to deregister server-side).
+func KillLocalListeners(agent string) []int {
+	procs, err := listProcesses()
+	if err != nil {
+		return nil
+	}
+	dupes := selectDuplicateListeners(procs, agent, os.Getpid())
+	if len(dupes) == 0 {
+		return nil
+	}
+	for _, pid := range dupes {
+		_ = signalProcess(pid, syscall.SIGTERM)
+	}
+	nowSleep(2 * time.Second)
+	for _, pid := range dupes {
+		if signalProcess(pid, syscall.Signal(0)) != nil {
+			continue // already gone
+		}
+		_ = signalProcess(pid, syscall.SIGKILL)
+	}
+	return dupes
+}
+
 func joinPIDs(pids []int) string {
 	parts := make([]string, len(pids))
 	for i, p := range pids {

@@ -50,6 +50,7 @@ Reach for these instead of the hand-rolled equivalent.
 | re-tasking a registered pane | `parlay stale <agent-id>` | a finished pane still accepts messages and does the new work on the old transcript → [notes](docs/agent-notes/a-finished-pane-still-accepts-messages-robots-9d2w.md) |
 | leaving finished agents running | `parlay sweep [--apply]` | firstmate structurally cannot see parlay agents; four hold-guards, each from a real incident → [notes](docs/agent-notes/finished-agents-are-only-collected-by-robots-6xq7.md) |
 | killing the auto-spawner | `parlay mechanic off` | sentinel file, not launchd; no backlog replay on re-enable → [notes](docs/agent-notes/parlay-mechanic-on-off-status-is.md) |
+| leaving a retiring agent's listener/spool/registry to time out | `parlay shutdown <id>` | idempotent teardown: kills the local listener, unregisters + tombstones server-side, resolves any parked long-poll immediately → [notes](docs/agent-notes/graceful-agent-shutdown-task-35ww.md) |
 
 ## Spawning, worktrees, and the relay
 

@@ -283,6 +283,79 @@ func TestReapDuplicateListenersRespectsTheOptOut(t *testing.T) {
 	}
 }
 
+// ── KillLocalListeners: the local half of `parlay shutdown` (task-35ww) ──────
+
+func TestKillLocalListenersTerminatesEveryMatch(t *testing.T) {
+	stubProcessTable(t, []procEntry{
+		{pid: 801, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent mayor"},
+		{pid: 802, ppid: 1, args: "/usr/local/bin/parlay-cli monitor --agent mayor"},
+		{pid: 803, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent brain-dev"},
+	}, nil)
+	rec := recordSignals(t, map[int]bool{}) // all exit on SIGTERM
+
+	killed := KillLocalListeners("mayor")
+
+	want := map[int]bool{801: true, 802: true}
+	if len(killed) != len(want) {
+		t.Fatalf("killed = %v, want pids %v", killed, want)
+	}
+	for _, pid := range killed {
+		if !want[pid] {
+			t.Errorf("killed unexpected pid %d", pid)
+		}
+		sigs := rec.sigsTo(pid)
+		if len(sigs) == 0 || sigs[0] != syscall.SIGTERM {
+			t.Errorf("pid %d signals = %v, want SIGTERM first", pid, sigs)
+		}
+	}
+	if sigs := rec.sigsTo(803); len(sigs) != 0 {
+		t.Errorf("brain-dev's listener (pid 803) must not be signalled, got %v", sigs)
+	}
+}
+
+func TestKillLocalListenersEscalatesToKillForASurvivor(t *testing.T) {
+	stubProcessTable(t, []procEntry{
+		{pid: 801, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent mayor"},
+	}, nil)
+	rec := recordSignals(t, map[int]bool{801: true})
+
+	killed := KillLocalListeners("mayor")
+
+	if len(killed) != 1 || killed[0] != 801 {
+		t.Fatalf("killed = %v, want [801]", killed)
+	}
+	sigs := rec.sigsTo(801)
+	if len(sigs) < 3 || sigs[0] != syscall.SIGTERM || sigs[1] != syscall.Signal(0) || sigs[2] != syscall.SIGKILL {
+		t.Errorf("signals to 801 = %v, want SIGTERM, probe, SIGKILL", sigs)
+	}
+}
+
+func TestKillLocalListenersReturnsNilWhenNothingIsRunningHere(t *testing.T) {
+	stubProcessTable(t, []procEntry{
+		{pid: 700, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent brain-dev"},
+	}, nil)
+	rec := recordSignals(t, map[int]bool{})
+
+	if killed := KillLocalListeners("mayor"); killed != nil {
+		t.Errorf("KillLocalListeners on a clean channel = %v, want nil", killed)
+	}
+	if len(rec.sent) != 0 {
+		t.Errorf("no signals expected on a clean channel, got %v", rec.sent)
+	}
+}
+
+func TestKillLocalListenersToleratesAFailedProcessProbe(t *testing.T) {
+	stubProcessTable(t, nil, syscall.ENOENT)
+	rec := recordSignals(t, map[int]bool{})
+
+	if killed := KillLocalListeners("mayor"); killed != nil {
+		t.Errorf("KillLocalListeners with an unreadable process table = %v, want nil", killed)
+	}
+	if len(rec.sent) != 0 {
+		t.Errorf("a failed process probe must signal nothing, got %v", rec.sent)
+	}
+}
+
 // ── LiveListenerAgents: ground truth for "who is actually listening" ─────────
 //
 // robots-jkwc: the registry reported 148 mc-robots agents [live] while only 11
