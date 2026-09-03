@@ -146,7 +146,7 @@ all. **Divergent** = implemented differently on purpose (noted as such) or by ac
 | `PARLAY_SPAWN_VIA_CLI` handshake enforcement | ✓ hard refusal, exit 2 (`:45-57`) | ✗ | **Missing** | no match for `PARLAY_SPAWN_VIA_CLI` anywhere in `tools/parlay-bin/*.go` — confirmed by repo-wide grep. This is a one-front-door invariant gap; see §8 finding F1 |
 | Kebab-slug agent-id validation | ✓ | ✓ | **Full** | `spawn.go:41-46` (`validateKebabSlug`) |
 | Duplicate-agent guard | ✓ | ✓ | **Full** | `spawnpipeline.go:52-56` |
-| Registration (`register-agent` POST) | ✓ | ✓ | **Partial — missing `launchedBy`/`startedAt`** | bash: `bin/parlay-spawn:1210-1213` sends `"launchedBy":"parlay-spawn"` + `startedAt`; `parlay-bin`: `httpclient.go:38-45` (`registerAgent`) sends only `id`/`name`/`color`. See §8 finding F2 — this breaks task-4dz9's idle-reap classification for anything spawned through this binary. |
+| Registration (`register-agent` POST) | ✓ | ✓ | **Partial — missing `launchedBy`/`startedAt`** | bash: `bin/parlay-spawn:1210-1213` sends `"launchedBy":"parlay-spawn"` + `startedAt`; `parlay-bin`: `httpclient.go:38-45` (`registerAgent`) sends only `id`/`name`/`color`. See §8 finding F2 — this may break task-4dz9's idle-reap classification for anything spawned through this binary, pending a read of `shouldIdleReap`'s actual predicate. |
 | Hello reply (best-effort) | ✓ | ✓ | **Full** | `httpclient.go:47-54` |
 | `.env` sourcing | ✓ (static parse, no shell exec) | ✓ | **Full**, deliberately bit-identical semantics including the silent-drop-on-bad-key gap | `env.go:16-50` (`sourceDotEnv`) |
 | `.envrc` sourcing via direnv | ✓ | ✓ | **Full** | `env.go:74-103` (`sourceEnvrc`) |
@@ -295,10 +295,12 @@ task-04g1's escape hatch.
    `launchedBy` and are therefore out of the reaper's reach by construction — firstmate has
    its own lifecycle tracking). `bin/parlay-spawn` stamps `"launchedBy":"parlay-spawn"` on
    every registration (`:1210-1213`). **`tools/parlay-bin`'s `registerAgent` does not send
-   either field** — see §8 finding F2. This is a silent idle-reap classification break, not
-   a cosmetic gap: an agent spawned through `parlay-bin` today would register with no
-   `launchedBy`, and `idle-reap`'s predicate must be checked against what it does with a
-   missing field before this organ can be called reconciled.
+   either field** — see §8 finding F2. This is at minimum a missed piece of intended
+   bookkeeping, and plausibly a silent idle-reap misclassification: an agent spawned through
+   `parlay-bin` today would register with no `launchedBy`, and `idle-reap`'s predicate must
+   be checked against what it actually does with a missing field — reap, exempt, or error —
+   before this organ can be called reconciled. That read has not been done in this pass; see
+   §8.
 
 ---
 
@@ -314,7 +316,7 @@ flowchart TB
     S --> R1["Stage 2: gap-by-gap reconciliation<br/>(profiles / PII / bead / claim / pane / workspace / config defaults /<br/>PARLAY_SPAWN_VIA_CLI / launchedBy-startedAt / subprocess+gc launcher wiring)"]
     R1 --> R2["Stage 3: PATH activation<br/>install parlay-bin, resolveSpawner prefers it for real"]
     R2 --> R3["Stage 4: parity suite green<br/>all 8 bin/parlay-spawn.*.test.sh files, including the 3 not yet in CI, pass against the Go verb"]
-    R3 --> T["Stage 5: bash tombstone + spawn joins GO_ONLY_VERBS"]
+    R3 --> T["Stage 5: bash tombstone — resolveSpawner needs no bash fallback"]
 ```
 
 **Stage 1 — this PR.** Write this document; fix `tools/parlay-bin`'s dangling citations to
@@ -348,12 +350,17 @@ pass against `parlay-bin` in CI.
 
 **Stage 5 — bash tombstone.** Replace `bin/parlay-spawn`'s body with a two-line hard-error
 pointing at `parlay spawn`, consistent with the one-front-door decision's existing
-hard-error style (the same pattern `PARLAY_SPAWN_VIA_CLI`'s own refusal already uses). Add
-`spawn` to `GO_ONLY_VERBS`/the successor doc `docs/go-cli-parity.md` (task-4avd, already
-closed as obsolete per PR #238's body — confirm `docs/go-cli-parity.md` reflects `spawn` as
-Go-only before considering this stage done, since that closure predates Stage 5 actually
-landing). **Done** when `bin/parlay-spawn` is the tombstone and no code path anywhere still
-execs the old bash body.
+hard-error style (the same pattern `PARLAY_SPAWN_VIA_CLI`'s own refusal already uses). Note
+this is orthogonal to `docs/go-cli-parity.md`'s "Go-only verbs" table, which already lists
+`spawn` (line ~65) — that entry is about the `parlay spawn` **CLI verb** having no TS
+counterpart to port, a question the retired TS↔Go parity harness (`GO_ONLY_VERBS`,
+`tools/cli/parity/run.sh`, deleted with `packages/cli` in T-08 per `AGENTS.md`) already
+settled and which this reconciliation does not reopen. What Stage 5 actually retires is the
+**implementation** `parlay spawn` execs — bash today, Go-native after this stage — so its
+only artifact to update is `resolveSpawner()`'s own behavior (or removal, once `bin/
+parlay-spawn` is a pure tombstone `resolveSpawner` never needs to fall back to). **Done**
+when `bin/parlay-spawn` is the tombstone and no code path anywhere still execs the old bash
+body.
 
 Each stage ships a coherent, independently green state — per task-04g1's own escape hatch
 ("if the port turns out to be too large to land safely in one task, stop at a coherent green
