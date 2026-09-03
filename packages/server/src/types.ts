@@ -33,6 +33,12 @@ export interface AgentInfo {
   nicknames?: string[] // human-friendly aliases; first entry is the primary display name
   urls?:     string[]  // pulse pages this agent owns or generated
   path?:     string[]  // filesystem paths this agent is responsible for
+  // Launch record (task-4dz9): set once by a Parlay-initiated spawn (parlay-spawn,
+  // ticket auto-claim) so the idle reaper (./prune/idle-reap.ts) can find and act
+  // on exactly the agents Parlay itself launched — never a firstmate-spawned or
+  // hand-registered one, which carries neither field and is therefore untouched.
+  launchedBy?: string // e.g. "parlay-spawn" | "parlay-claim"; absent = not Parlay-launched
+  startedAt?:  string // ISO8601, stamped on first registration only — never overwritten
 }
 
 export type SSEClient = {

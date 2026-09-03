@@ -13,6 +13,11 @@
 //   • startPruneSweeps()      — startup sweep + hourly interval, wired in
 //                               startChat()                        (sweep.ts)
 //
+// A sibling module, idle-reap.ts, reaps Parlay-LAUNCHED agents that sit idle
+// past a threshold (default 2h) — a different concept from the phantom/test
+// channel pruning above (see idle-reap.ts's own header for why they don't
+// share a predicate or a sweep).
+//
 // The proper long-term fix is DEREGISTRATION ON EXIT: whatever spawns a channel
 // (firstmate's crewmate spawn/teardown, a test harness, a probe script) should
 // POST /api/chat/unregister { id } when it finishes, exactly as a task tears
@@ -68,3 +73,14 @@ export {
   type UnregisterResult,
   type PruneSweepResult,
 } from "./sweep"
+
+export {
+  DEFAULT_IDLE_REAP_MS,
+  idleReapThresholdMs,
+  shouldIdleReap,
+  idleReapSweep,
+  startIdleReapSweeps,
+  type IdleReapDecisionInput,
+  type IdleReapDecision,
+  type IdleReapResult,
+} from "./idle-reap"

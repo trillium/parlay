@@ -119,6 +119,14 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 	if reg.body["id"] != "widgeteer" || reg.body["name"] != "Widgeteer" || reg.body["color"] != "#abcdef" {
 		t.Errorf("register body = %v, want id/name/color from env", reg.body)
 	}
+	// Launch record (task-4dz9): the idle reaper keys reap-eligibility on
+	// launchedBy, so a claim-enrolled agent must always send it.
+	if reg.body["launchedBy"] != "parlay-claim" {
+		t.Errorf("register body launchedBy = %v, want %q", reg.body["launchedBy"], "parlay-claim")
+	}
+	if startedAt, _ := reg.body["startedAt"].(string); startedAt == "" {
+		t.Errorf("register body startedAt = %v, want a non-empty RFC3339 timestamp", reg.body["startedAt"])
+	}
 	rep := cs.calls[1]
 	if rep.path != "/api/chat/reply" {
 		t.Errorf("second call path = %q, want reply", rep.path)
