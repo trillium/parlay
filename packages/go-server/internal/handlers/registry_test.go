@@ -73,6 +73,7 @@ func TestHandleUnregisterBroadcastsAgentUnregister(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 
@@ -108,6 +109,7 @@ func TestHandleDeleteAgentRemovesAndEchoesID(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 

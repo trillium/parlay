@@ -202,6 +202,7 @@ func TestCommandThatDiesWithoutReportingIsReaped(t *testing.T) {
 func TestCommandStartBroadcastsCommandUpdate(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 
@@ -217,6 +218,7 @@ func TestCommandStartBroadcastsCommandUpdate(t *testing.T) {
 func TestCommandEndBroadcastsCommandUpdate(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	postCommandJSON(t, handleCommandStart(st, hub), map[string]any{"id": "c-1", "verb": "claim"})
 
 	sub, cancel := hub.subscribe("")
@@ -234,6 +236,7 @@ func TestSweepBroadcastsExpiryThenDrop(t *testing.T) {
 	st := newTestStore(t)
 	clk := withCommandClock(st, 30*time.Second, 10*time.Second)
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	postCommandJSON(t, handleCommandStart(st, hub), map[string]any{"id": "c-1", "verb": "monitor"})
 
 	sub, cancel := hub.subscribe("")
@@ -273,6 +276,7 @@ func TestEvictionBroadcastsADropForEveryRecordItSheds(t *testing.T) {
 	st := newTestStore(t)
 	clk := withCommandCap(st, 2)
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 

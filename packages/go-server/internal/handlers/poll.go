@@ -58,9 +58,16 @@ func (b *broker) subscribeAll() (<-chan store.ChatMessage, func()) {
 	b.wildcard[ch] = struct{}{}
 	b.mu.Unlock()
 
+	// cancel closes ch (not just unsubscribes) so a `for range` reader — the
+	// SSE hub's bridge goroutine — actually terminates instead of leaking
+	// for the rest of the process/test binary. Safe against a racing
+	// publish(): both close and every wildcard send happen under b.mu, so a
+	// publish either completes its send before delete+close run, or never
+	// sees ch in the map at all.
 	cancel := func() {
 		b.mu.Lock()
 		delete(b.wildcard, ch)
+		close(ch)
 		b.mu.Unlock()
 	}
 	return ch, cancel

@@ -104,6 +104,7 @@ func TestHandleEventsLegacyConnectedFrameUnchanged(t *testing.T) {
 
 func TestBroadcastGatesPresentationCommands(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	declared, cancelD, err := hub.subscribeDeclared("", mustDeclaration(t,
 		`{"schema": "1.0.0", "surface": {"kind": "panel"}, "accepts": {"navigate": {}}}`))
 	if err != nil {
@@ -141,6 +142,7 @@ func TestBroadcastGatesPresentationCommands(t *testing.T) {
 
 func TestBroadcastToDeviceCountExcludesSuppressed(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	_, cancel, err := hub.subscribeDeclared("dev-1", mustDeclaration(t,
 		`{"schema": "1.0.0", "surface": {"kind": "panel", "instance": "dev-1"}, "accepts": {"navigate": {}}}`))
 	if err != nil {
@@ -164,6 +166,7 @@ func TestBroadcastToDeviceCountExcludesSuppressed(t *testing.T) {
 func TestHandleSubscribersReportsCapabilityFields(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	_, cancel, err := hub.subscribeDeclared("dev-9", mustDeclaration(t,
 		`{"schema": "1.0.0", "surface": {"kind": "panel", "instance": "dev-9"}, "accepts": {"reload": {}, "draft": {}}}`))
 	if err != nil {

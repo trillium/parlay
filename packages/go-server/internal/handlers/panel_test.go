@@ -19,8 +19,10 @@ func newPanelMux(t *testing.T) (*http.ServeMux, *store.Store) {
 	t.Helper()
 	st := newTestStore(t)
 	b := newBroker()
+	hub := newHub(b)
+	t.Cleanup(hub.Stop)
 	mux := http.NewServeMux()
-	registerPanel(mux, st, b, newHub(b))
+	registerPanel(mux, st, b, hub)
 	return mux, st
 }
 

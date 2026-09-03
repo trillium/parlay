@@ -95,6 +95,7 @@ func TestHandleEventsDeliversMessageViaBrokerBridge(t *testing.T) {
 	st := newTestStore(t)
 	b := newBroker()
 	hub := newHub(b)
+	t.Cleanup(hub.Stop)
 
 	rec, stop := runEvents(t, st, hub)
 	time.Sleep(50 * time.Millisecond) // let the client register with hub before we publish
@@ -152,6 +153,7 @@ func TestHandlePollBroadcastsMessageReceivedOnBacklogDelivery(t *testing.T) {
 	st := newTestStore(t)
 	b := newBroker()
 	hub := newHub(b)
+	t.Cleanup(hub.Stop)
 	first, _, err := appendAndPublish(st, b, store.ChatMessage{Role: "user", Text: "first", Channel: "c0"})
 	if err != nil {
 		t.Fatalf("appendAndPublish 1: %v", err)
@@ -180,6 +182,7 @@ func TestHandlePollBroadcastsMessageReceivedOnWakeup(t *testing.T) {
 	st := newTestStore(t)
 	b := newBroker()
 	hub := newHub(b)
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 
@@ -214,6 +217,7 @@ func TestHandlePollBroadcastsMessageReceivedOnWakeup(t *testing.T) {
 func TestHandleRegisterAgentBroadcastsAgentRegister(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 

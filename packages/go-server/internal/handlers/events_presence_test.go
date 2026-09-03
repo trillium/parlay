@@ -34,6 +34,7 @@ func TestConnectBurstAgentPresenceOrderAndValue(t *testing.T) {
 
 func TestConnectBurstAgentPresenceTrueWhileWaiterParked(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	hub.pollWaiterParked()
 	defer hub.pollWaiterDeparted()
 
@@ -50,6 +51,7 @@ func TestPollParkAndTimeoutBroadcastPresenceFlips(t *testing.T) {
 	st := newTestStore(t)
 	b := newBroker()
 	hub := newHub(b)
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 
@@ -75,6 +77,7 @@ func TestPollParkAndTimeoutBroadcastPresenceFlips(t *testing.T) {
 
 func TestAgentPresenceFlipsOnlyOnZeroOneTransitions(t *testing.T) {
 	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
 	sub, cancel := hub.subscribe("")
 	defer cancel()
 
@@ -108,6 +111,7 @@ func TestBacklogServedPollDoesNotTouchPresence(t *testing.T) {
 	st := newTestStore(t)
 	b := newBroker()
 	hub := newHub(b)
+	t.Cleanup(hub.Stop)
 	first, _, err := appendAndPublish(st, b, store.ChatMessage{Role: "user", Text: "first", Channel: "c0"})
 	if err != nil {
 		t.Fatalf("appendAndPublish 1: %v", err)

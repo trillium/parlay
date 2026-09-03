@@ -181,6 +181,25 @@ type Hub struct {
 	// presence, which is why handlePoll drives this explicitly around its
 	// blocking select rather than broker.subscribe counting implicitly.
 	pollWaiters int
+	// stopBridge ends the broker.subscribeAll bridge goroutine started by
+	// newHub, if any (nil for hubs built via newHubCore directly). Never
+	// called in production — the real server's hub is meant to live exactly
+	// as long as the process — but tests need a way to end it, or a bridge
+	// goroutine from one test can still be calling linkrewrite.Rewrite while
+	// a later test mutates linkrewrite's test-only cache (robots: the race
+	// this field exists to let tests avoid).
+	stopBridge func()
+	stopOnce   sync.Once
+}
+
+// Stop ends this Hub's broker bridge goroutine, if it has one. Idempotent.
+// Test-only: production hubs (handlers.go, commands.go) never call this —
+// the bridge is meant to live exactly as long as the process.
+func (h *Hub) Stop() {
+	if h == nil || h.stopBridge == nil {
+		return
+	}
+	h.stopOnce.Do(h.stopBridge)
 }
 
 // SetBusSink installs the dual-write sink. The sink must never block: it
@@ -204,7 +223,11 @@ func (h *Hub) SetBusSink(sink func(name string, data any)) {
 // client.
 func newHub(b *broker) *Hub {
 	h := newHubCore()
-	msgs, _ := b.subscribeAll() // never cancelled: lives exactly as long as the process, like b itself
+	// In production this cancel is never called — the hub and its bridge
+	// live exactly as long as the process, like b itself. h.stopBridge just
+	// hands tests a way to end it early (see Hub.Stop).
+	msgs, cancel := b.subscribeAll()
+	h.stopBridge = cancel
 	go func() {
 		for m := range msgs {
 			// m is a value copy from the channel — rewriting Text here never
