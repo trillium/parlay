@@ -143,35 +143,35 @@ all. **Divergent** = implemented differently on purpose (noted as such) or by ac
 | Named/ephemeral/batch dispatch shapes | ✓ | ✓ | **Full** | `spawn.go:153-161` (`runSpawnCommand`), `runNamedSpawn`/`runEphemeralSpawn`/`runBatchSpawn` |
 | `--cwd`/`--focus`/`--model`/`--mode`/`--effort`/`--worktree`/`--account` | ✓ | ✓ | **Full** | `spawn.go:83-130` (`parseTailFlags`) |
 | Mandatory `--model` refusal (task-qyu8q) | ✓ (`require_model`) | ✓ | **Full** — landed 2026-09-03 by PR #238, four weeks after the port's prior feature work; see §8 for the state before that PR | `spawn.go:138-155` (`requireModel`), called from all three shapes at `:197,222,323` |
-| `PARLAY_SPAWN_VIA_CLI` handshake enforcement | ✓ hard refusal, exit 2 (`:45-57`) | ✗ | **Missing** | no match for `PARLAY_SPAWN_VIA_CLI` anywhere in `tools/parlay-bin/*.go` — confirmed by repo-wide grep. This is a one-front-door invariant gap; see §8 finding F1 |
+| `PARLAY_SPAWN_VIA_CLI` handshake enforcement | ✓ hard refusal, exit 2 (`:45-57`) | ✓ | **Full** — landed by PR #241, before this task's scope began | `spawn.go:305-326` (`viaCLIRefusal`, `runSpawnCommand` refuses with exit 2 unless the env var is `"1"`), `spawn_test.go:344-383`. §8 finding F1 is resolved — see the correction note appended there. |
 | Kebab-slug agent-id validation | ✓ | ✓ | **Full** | `spawn.go:41-46` (`validateKebabSlug`) |
-| Duplicate-agent guard | ✓ | ✓ | **Full** | `spawnpipeline.go:52-56` |
-| Registration (`register-agent` POST) | ✓ | ✓ | **Partial — missing `launchedBy`/`startedAt`** | bash: `bin/parlay-spawn:1210-1213` sends `"launchedBy":"parlay-spawn"` + `startedAt`; `parlay-bin`: `httpclient.go:38-45` (`registerAgent`) sends only `id`/`name`/`color`. See §8 finding F2 — this may break task-4dz9's idle-reap classification for anything spawned through this binary, pending a read of `shouldIdleReap`'s actual predicate. |
+| Duplicate-agent guard | ✓ (whenever `herdr` happens to be on PATH, regardless of `$LAUNCHER`) | ✓ (only when `effectiveLauncher == "herdr"`) | **Divergent (flagged, not deliberate on bash's side)** | `spawnpipeline.go:52-56` guards the check behind the resolved launcher; bash's equivalent check has no such gate and runs whenever `command -v herdr` succeeds even if `$LAUNCHER` selects `subprocess`/`gc` — this Go behavior is arguably the more correct one, but it is a real divergence and is called out here rather than silently narrowed |
+| Registration (`register-agent` POST) | ✓ | ✓ | **Full** — landed by PR #241, before this task's scope began | bash: `bin/parlay-spawn:1210-1213` sends `"launchedBy":"parlay-spawn"` + `startedAt`; `parlay-bin`: `httpclient.go:38-58` (`registerAgent`) now sends both fields (`spawnLaunchedByValue = "parlay-spawn"`, `startedAt` formatted RFC3339). §8 finding F2 is resolved — see the correction note appended there. |
 | Hello reply (best-effort) | ✓ | ✓ | **Full** | `httpclient.go:47-54` |
 | `.env` sourcing | ✓ (static parse, no shell exec) | ✓ | **Full**, deliberately bit-identical semantics including the silent-drop-on-bad-key gap | `env.go:16-50` (`sourceDotEnv`) |
 | `.envrc` sourcing via direnv | ✓ | ✓ | **Full** | `env.go:74-103` (`sourceEnvrc`) |
 | Worktree creation, treehouse-first + plain-git fallback | ✓ | ✓ | **Full** — including the robots-d04t repo-identity guard and the wrong-repo-worktree rejection | `worktree.go:98-180` (`setupWorktree`). **Correction to PR #238's own body**, which described this as "git-toplevel only" — that undersold it; the treehouse lease path, `guardTreehousePool`, and both post-condition checks are present and match bash's `:364-409` block clause for clause. |
 | herdr tab creation + AgentStart + rollback-on-failure | ✓ | ✓ (deliberately reordered, see below) | **Full**, with one improvement | `launcher.go:76-88`, `spawnpipeline.go:47-56` — `newHerdrLauncher()` fails fast **before** any registration/hello/context-write side effect, unlike bash which calls herdr unconditionally at the actual launch step with no `command -v herdr` guard, so a missing herdr under `set -e` aborts bash *after* those side effects already ran |
 | herdr RPC-socket fast path | ✓ (prefers RPC when the daemon socket exists) | ✗ (always shells to the `herdr` binary) | **Divergent (correctness-neutral, latency-only)** | `launcher.go:90-99` (`runHerdrJSON` always uses `exec.Command`); bash's RPC path is at `:202-334` per the full earlier read |
-| `agent_pane_busy` retry loop | ✓ (up to 60 attempts, tunable) | ✗ | **Missing** | no retry loop found in `launcher.go`'s `AgentStart` or `spawnpipeline.go` |
+| `agent_pane_busy` retry loop | ✓ (up to 60 attempts, tunable) | ✗ | **Missing — disclosed leftover, not in this task's scope** | no retry loop found in `launcher.go`'s `AgentStart` or `spawnpipeline.go`. Deliberately left out of the profiles/PII/bead/pane/workspace/config/launcher-selection reconciliation task that closed the other rows in this table: bash's fuller herdr launch flow (this retry loop, a separate `agent prompt` delivery step, and RPC-vs-non-RPC branching) was scoped out in favor of preserving this port's existing simpler design (prompt delivered via the `PARLAY_SPAWN_PROMPT` env var, no retry) |
 | Identity registration (`identity --register`) | ✓ | ✓ | **Partial — missing bead/GC fields** | `identitycli.go:44-87` (`registerIdentityOptions`/`registerIdentity`) has no `BeadID`, `GCSession`, or `GCCity` fields; bash's call at `:594-603` (per earlier read) forwards those when set |
 | Ephemeral minting (`identity --mint-ephemeral`) | ✓ | ✓ | **Full** | `identitycli.go:22-42` (`mintEphemeral`) |
 | Startup-prompt composition (single-sourced template) | ✓ | ✓ | **Full** — same `launch-templates/default.txt`, byte-identical trailing-newline handling (robots-hrt2) | `prompt.go:10-86` |
 | Pre-trust workdir (`~/.claude.json`) | ✓ (jq, best-effort) | ✓ (atomic write: temp+fsync+rename, stricter than bash) | **Full, with a hardening improvement** | `env.go` companion `pretrustWorkdir` — actually `prompt.go`'s neighbor; see the file read directly: pretrust lives in its own file and does atomic temp-write+`Sync`+`Close`-checked+rename, unlike bash's plain `jq` overwrite |
 | ccjuggler account token resolution | ✓ | ✓ | **Full** — delegates to the same `juggle` Go package bash's own account resolution was ported to | `account.go:9-30` |
-| Post-launch liveness watchdog | ✓ (3 variants, one per launcher) | ✓ (herdr-only) | **Partial** — consistent today only because `parlay-bin` has no subprocess/gc launcher branch in the spawn pipeline yet (see next row); once those are wired, their watchdog variants are still missing | `watchdog.go:14-69` (`armWatchdog`) hardcodes an `AgentWait`/`AgentSend` pair against the `Launcher` interface, which only `herdrLauncher` implements |
-| `--subprocess`/`--gascity` launcher selection *inside the spawn pipeline* | ✓ (`LAUNCHER=subprocess` branch, `:1646-1708` per earlier read) | ✗ | **Missing** — `subprocess-spawn`/`-stop`/`-ping` exist as **separate top-level `parlay-bin` subcommands** (`subprocess_spawn.go`), fully implemented in isolation, but `spawn.go`'s `parseTailFlags` has no `--subprocess` case and `spawnpipeline.go`'s `launcherFactory` always constructs a `herdrLauncher` | `spawn.go:83-130` (no `--subprocess` case); `spawnpipeline.go:10` (`launcherFactory` hardcoded to `newHerdrLauncher`) |
-| `gc` launcher selection | ✓ (`:1452-1483`) | ✗ | **Missing** | no `gc`/`PARLAY_SPAWN_LAUNCHER` handling anywhere in `tools/parlay-bin` |
+| Post-launch liveness watchdog | ✓ (3 variants, one per launcher) | ✓ (herdr-only) | **Partial — disclosed leftover** | `watchdog.go:14-69` (`armWatchdog`) hardcodes an `AgentWait`/`AgentSend` pair against the `Launcher` interface, which only `herdrLauncher` implements. As of the launcher-selection work below, `subprocess` and `gc` are now real, reachable launcher choices in the spawn pipeline — so this row's watchdog gap is no longer hypothetical ("once those are wired"): a spawn routed through `--subprocess` or the `gc` launcher today gets no post-launch watchdog at all. Recording this as a real, disclosed leftover rather than fixing it, since bash's subprocess-watchdog (`/api/chat/subscribers` polling) and gc-watchdog (`parlay gc-liveness` delegation) are each their own organ and were out of this task's scope |
+| `--subprocess`/`--gascity` launcher selection *inside the spawn pipeline* | ✓ (`LAUNCHER=subprocess` branch, `:1646-1708` per earlier read) | ✓ | **Full** | `spawnpipeline.go` (`launcherFactory`/`effectiveLauncher` now branch on the resolved launcher, including `gascity`→`subprocess` normalization via `config.go`'s `resolveLauncher`), `spawnpipeline_test.go`. The previously-standalone `subprocess-spawn`/`-stop`/`-ping` top-level subcommands (`subprocess_spawn.go`) are unchanged and still exist independently. One disclosed narrowing: herdr's `launchScript` const stays hardcoded to `exec claude ...` regardless of `opts.Kind` — the subprocess and gc launcher paths *do* honor `opts.Kind`, but non-claude `--kind` dispatch through the herdr path specifically was left out of scope (see the `--kind` row below) |
+| `gc` launcher selection | ✓ (`:1452-1483`, opt-in, claude-kind only) | ✓ (opt-in via env/config, claude-kind only, matching bash's own scoping) | **Full** | `spawnpipeline.go`, `config.go` (`resolveLauncher`), `spawnpipeline_test.go`. The resolved OAuth account token is deliberately withheld from the `gc` launcher branch — only the account *name* is forwarded — mirroring bash's own stated rationale that the gc template's `[env]` block persists to disk |
 | Color algorithm (`color_from_id`/FNV-1a) | ✓ | ✓ | **Full, bit-identical by contract** | `color.go:5-25` — explicitly documents the three-way parity obligation against `packages/cli/src/identity-ephemeral.ts` and bash's own `color_from_id()` |
-| `--profile`/`--list` (profiles.toml + quota-axi headroom) | ✓ | ✗ | **Missing entirely** | no `profile`/`quota` reference anywhere in `tools/parlay-bin/*.go` |
-| `--kind` (opencode etc.) | ✓ | ✗ | **Missing** | `SpawnOptions` (`spawn.go:57-70`) has no `Kind` field; `AgentStart` in `spawnpipeline.go:130-135` is hardcoded `Kind: "claude"` |
-| `--pii`/`--no-pii` routing | ✓ (`bin/parlay-pii-lib.sh`) | ✗ | **Missing entirely** | no PII-related identifier anywhere in `tools/parlay-bin` |
-| `--bead`/beads-required gating, `--force` | ✓ | ✗ | **Missing entirely** | `SpawnOptions` has no `BeadID`/`Force` field; no beads-required check anywhere |
-| `--claim` | ✓ | ✗ | **Missing** | no `Claim` field, no `parlay claim` shell-out |
-| `--pane` (in-place mode) | ✓ | ✗ | **Missing** | `TabCreateOptions`/`AgentStartOptions` have no way to skip tab creation and target an existing pane |
-| `--workspace` resolution | ✓ (`resolve_workspace`, ID-or-label with auto-create) | ✗ | **Missing** | `TabCreateOptions.WorkspaceID` (`launcher.go:21`) is passed straight to `--workspace` with no label-lookup/auto-create logic; only `$HERDR_WORKSPACE_ID` passthrough exists (`spawnpipeline.go:124`) |
-| `~/.parlay/config.toml` defaults (`spawnAccount`, `[spawn] launcher`, `[spawn] beads_required`) | ✓ | ✗ | **Missing entirely** | no TOML parsing anywhere in `tools/parlay-bin` |
-| `PARLAY_SPAWN_DEFAULT_ACCOUNT` | ✓ | ✗ | **Missing** — `--account` itself works, but nothing resolves a default when it's absent | `defaultSpawnOptions()` (`spawn.go:72-77`) leaves `Account` empty with no env fallback |
+| `--profile`/`--list` (profiles.toml + quota-axi headroom) | ✓ (bash's flag is `--list`, not `--list-profiles`; headroom is display-only in `--list`, never auto-selects a profile) | ✓ | **Full** | `profiles.go` (`resolveProfile`, `listProfiles`, `headroomLine`, `fetchQuotaReport`, `findUpward`), `profiles_test.go`. Ported as display-only to match bash's actual behavior, not the brief's initial "quota-headroom-aware profile selection" phrasing — bash never auto-selects on headroom, it only shows it in the `--list` table |
+| `--kind` (opencode etc.) | ✓ | ✓ for `subprocess`/`gc` launchers; herdr path unchanged | **Partial — deliberate, disclosed narrowing** | `spawnpipeline.go` passes `opts.Kind` through for the `subprocess`/`gc` launcher branches; herdr's fixed `launchScript` const (`spawnpipeline.go:24`) still always execs `claude`, so `--kind opencode` combined with the default herdr launcher does not change what actually launches. Templating `--kind` into `launchScript` was explicitly avoided — see §5 item 1's shell-escaping-boundary rationale, which still applies |
+| `--pii`/`--no-pii` routing | ✓ (`bin/parlay-pii-lib.sh`) | ✓ | **Full**, with one disclosed ordering divergence | `pii.go` (`enforcePII`, `routePIIModel`, `applyBeadPIILabel`, `checkBeadPIILabel`, `liveFreeOpencodeModels`), `pii_test.go`. Named-spawn gate order is `bead_gate` → all four PII functions → `require_model`, matching bash. Ephemeral-spawn path diverges from a naive reading: `require_model`/`bead_gate` run *before* the identity mint, but PII routing runs *only after* the mint — this mirrors bash's own actual ordering, not an invented one, but is called out since it is easy to get backwards |
+| `--bead`/beads-required gating, `--force` | ✓ | ✓ | **Full** | `bead.go` (`beadGate`, `resolveBeadStatus`, `extractBeadStatus`, `beadGateError` with distinct exit codes: 2 for "required but missing", 1 for "named but bad"), `bead_test.go` |
+| `--claim` | ✓ | ✓ | **Full** — landed by PR #241, before this task's scope began | `spawn.go:94` (`Claim` field), `spawn.go:194,359` |
+| `--pane` (in-place mode) | ✓ | ✓ | **Full** | env injected into an existing pane via send-text/send-keys/wait-output with a `READY_<pid>` marker, `spawn_test.go`'s `TestSpawnOneHerdrPaneInPlaceSkipsTabCreate` |
+| `--workspace` resolution | ✓ (`resolve_workspace`, ID-or-label with auto-create) | ✓ | **Full** | `workspace.go` (`resolveWorkspace`, ID-or-label with auto-create, shells directly to `herdr` bypassing the `Launcher` interface), `workspace_test.go` |
+| `~/.parlay/config.toml` defaults (`spawnAccount`, `[spawn] launcher`, `[spawn] beads_required`) | ✓ | ✓ | **Full** | `config.go` (`spawnConfig`, `loadSpawnConfig`, `resolveDefaultAccount`, `resolveLauncher` including `gascity`→`subprocess` normalization, `resolveBeadsRequired`), `config_test.go` |
+| `PARLAY_SPAWN_DEFAULT_ACCOUNT` | ✓ | ✓ | **Full** | `config.go`'s `resolveDefaultAccount` — env wins over config.toml's `spawnAccount`, matching bash's precedence; `config_test.go`'s `TestResolveDefaultAccount` |
 | herdr tab/pane **creation** as a from-scratch Go capability | n/a (bash always had this) | ✓, but this was a from-scratch write, not a port | **Note, not a gap** | `commands/herdr.go` (in `tools/cli`, separate module) only covers teardown/close; `tools/parlay-bin/launcher.go` is the only Go code anywhere in the repo that creates herdr tabs/panes |
 
 ---
@@ -277,11 +277,10 @@ task-04g1's escape hatch.
 1. **`PARLAY_SPAWN_VIA_CLI` handshake.** `parlay spawn` (`tools/cli/internal/commands/spawn.go:24-47`)
    is the sole public entry point; it sets `PARLAY_SPAWN_VIA_CLI=1` in the child's env
    (`:40`) before exec'ing whichever spawner `resolveSpawner()` picked. `bin/parlay-spawn`
-   hard-refuses without it (`:45-57`, exit 2). **`tools/parlay-bin` does not enforce this at
-   all today** — see §8 finding F1. Whatever organ reconciliation adds this check must land
-   before `parlay-bin` is ever installed on PATH (§7 stage 3), or a direct
-   `parlay-bin spawn ...` invocation becomes a second, unguarded front door the moment the
-   binary exists anywhere reachable.
+   hard-refuses without it (`:45-57`, exit 2). **`tools/parlay-bin` now enforces this too**,
+   landed by PR #241 — see §8 finding F1's resolution note. This closed before `parlay-bin`
+   is installed on any PATH (§7 stage 3 is still not done), so the second-front-door risk
+   this invariant exists to prevent has not yet had a chance to materialize.
 2. **Mandatory `--model` refusal (task-qyu8q).** No spawn may proceed without a deliberately
    chosen model — bash's `require_model` (`:553-614` per the full read) and Go's
    `requireModel` (`spawn.go:138-155`, landed by PR #238) both refuse with exit 2 rather than
@@ -294,13 +293,8 @@ task-04g1's escape hatch.
    agents (subject to idle reaping) from firstmate-spawned ones (which never set
    `launchedBy` and are therefore out of the reaper's reach by construction — firstmate has
    its own lifecycle tracking). `bin/parlay-spawn` stamps `"launchedBy":"parlay-spawn"` on
-   every registration (`:1210-1213`). **`tools/parlay-bin`'s `registerAgent` does not send
-   either field** — see §8 finding F2. This is at minimum a missed piece of intended
-   bookkeeping, and plausibly a silent idle-reap misclassification: an agent spawned through
-   `parlay-bin` today would register with no `launchedBy`, and `idle-reap`'s predicate must
-   be checked against what it actually does with a missing field — reap, exempt, or error —
-   before this organ can be called reconciled. That read has not been done in this pass; see
-   §8.
+   every registration (`:1210-1213`). **`tools/parlay-bin`'s `registerAgent` now sends both
+   fields**, landed by PR #241 — see §8 finding F2's resolution note.
 
 ---
 
@@ -312,8 +306,8 @@ against the existing partial port, not a fresh one-PR port. Five stages; each st
 
 ```mermaid
 flowchart TB
-    M1["#238: model gate backported to parlay-bin (done)"] --> S["Stage 1: write docs/scope-go-spawn.md for real (this PR)"]
-    S --> R1["Stage 2: gap-by-gap reconciliation<br/>(profiles / PII / bead / claim / pane / workspace / config defaults /<br/>PARLAY_SPAWN_VIA_CLI / launchedBy-startedAt / subprocess+gc launcher wiring)"]
+    M1["#238: model gate backported to parlay-bin (done)"] --> S["Stage 1: write docs/scope-go-spawn.md for real (done)"]
+    S --> R1["Stage 2: gap-by-gap reconciliation (done)<br/>PARLAY_SPAWN_VIA_CLI + launchedBy/startedAt (#241)<br/>profiles / PII / bead / pane / workspace / config defaults / subprocess+gc launcher wiring (this PR)"]
     R1 --> R2["Stage 3: PATH activation<br/>install parlay-bin, resolveSpawner prefers it for real"]
     R2 --> R3["Stage 4: parity suite green<br/>all 8 bin/parlay-spawn.*.test.sh files, including the 3 not yet in CI, pass against the Go verb"]
     R3 --> T["Stage 5: bash tombstone — resolveSpawner needs no bash fallback"]
@@ -322,17 +316,17 @@ flowchart TB
 **Stage 1 — this PR.** Write this document; fix `tools/parlay-bin`'s dangling citations to
 point here. No behavior change.
 
-**Stage 2 — gap-by-gap reconciliation.** Close every row marked Missing or Partial in §2, in
-whatever order minimizes risk per organ (a natural order: the two one-front-door gaps first —
-`PARLAY_SPAWN_VIA_CLI` enforcement and `launchedBy`/`startedAt` stamping — since those are
-correctness-critical and small; then config.toml defaults, since several flag-resolution
-gaps depend on it; then the flag surface itself: `--profile`/`--list`, `--pii`/`--no-pii`,
-`--bead`/`--force`, `--claim`, `--pane`, `--workspace`; then wiring the already-implemented
-`subprocess`/`gc` launchers into the spawn pipeline's launcher selection). **Done** when
-every §2 row reads Full, or a Divergent row's divergence is a deliberate, documented
-improvement (like the herdr-availability-ordering fix in §3) rather than an unnoticed gap.
-Each landed organ is its own PR against `tools/parlay-bin`; `bin/parlay-spawn` is untouched
-throughout — it remains the only spawner anything depends on until Stage 3.
+**Stage 2 — gap-by-gap reconciliation. Done.** Closed in two PRs: #241 landed the two
+one-front-door gaps first (`PARLAY_SPAWN_VIA_CLI` enforcement, `launchedBy`/`startedAt`
+stamping) plus `--claim`; a later PR landed config.toml defaults, then the rest of the flag
+surface (`--profile`/`--list`, `--pii`/`--no-pii`, `--bead`/`--force`, `--pane`,
+`--workspace`) and wired the already-implemented `subprocess`/`gc` launchers into the spawn
+pipeline's launcher selection. Every §2 row now reads Full, or — where a row is Partial or
+Divergent — that status reflects a deliberate, disclosed scope decision (the herdr-path
+`--kind` gap, the non-ported `agent_pane_busy` retry loop, the subprocess/gc watchdog
+leftover, the herdr duplicate-guard launcher-gating divergence) rather than an unnoticed gap.
+`bin/parlay-spawn` was untouched throughout both PRs — it remains the only spawner anything
+depends on until Stage 3.
 
 **Stage 3 — PATH activation.** Install `parlay-bin` on a real PATH (CI first, then hosts) so
 `resolveSpawner()`'s existing preference for it (`launch.go:99-111`) takes effect for real
@@ -374,25 +368,24 @@ This PR is documentation and comment-fix only. The following were surfaced while
 every claim above against current code; they are findings for a future reconciliation PR to
 act on, not something fixed here.
 
-**F1 — `tools/parlay-bin` never checks `PARLAY_SPAWN_VIA_CLI`.** Confirmed by grepping every
+**F1 — `tools/parlay-bin` never checks `PARLAY_SPAWN_VIA_CLI`.** ~~Confirmed by grepping every
 `.go` file in `tools/parlay-bin` for the literal string — zero matches outside this doc's own
-description of the bash behavior. Today this is inert only because nothing installs
-`parlay-bin` on PATH (§2's opening paragraph); the moment Stage 3 (§7) makes it reachable,
-this becomes a real second front door unless closed first. Recommend closing this as the
-first item of Stage 2, before any other gap-matrix row, since every other gap is a missing
-*feature* while this one is a missing *guard*.
+description of the bash behavior.~~ **Resolved by PR #241**, landed before the gap-matrix
+reconciliation task that closed most of §2's other rows began. `spawn.go`'s `runSpawnCommand`
+now refuses with exit 2 (`viaCLIRefusal`) unless `PARLAY_SPAWN_VIA_CLI=1`; see `spawn.go:305-326`
+and `spawn_test.go:344-383`. `parlay-bin` still is not installed on any PATH (§2's opening
+paragraph, Stage 3 still not started), so this closed before the second-front-door risk it
+guards against ever had a live window to occur in.
 
 **F2 — `tools/parlay-bin`'s `registerAgent` does not stamp `launchedBy`/`startedAt`.**
-Confirmed: `httpclient.go:38-45` posts only `id`/`name`/`color` to `/api/chat/register-agent`,
-where bash's equivalent call (`bin/parlay-spawn:1210-1213`) also sends
-`"launchedBy":"parlay-spawn"` and a `startedAt` timestamp. Per §6 invariant 3, this means an
-agent spawned through the (currently dead-on-PATH) Go verb would register with a missing
-`launchedBy`, and `idle-reap`'s classification of such an agent has not been independently
-checked against `shouldIdleReap`'s actual predicate (`packages/server/src/prune/idle-reap.ts`)
-in this pass — that predicate's handling of a missing `launchedBy` should be read before
-deciding whether this is merely "misses the intended new-lifecycle bookkeeping" or "actively
-misclassifies as firstmate-owned and never reaps." Recommend checking that predicate and
-closing this alongside F1.
+~~Confirmed: `httpclient.go:38-45` posts only `id`/`name`/`color` to
+`/api/chat/register-agent`...~~ **Resolved by PR #241**, same landing as F1. `httpclient.go`'s
+`registerAgent` now sends `"launchedBy":"parlay-spawn"` (the `spawnLaunchedByValue` constant,
+matching bash's literal exactly, since `idle-reap.ts`'s `shouldIdleReap` keys its reap
+eligibility on the `"parlay"` prefix) and a `startedAt` RFC3339 timestamp — see
+`httpclient.go:14-17,38-58`. No independent read of `shouldIdleReap`'s predicate was needed to
+close this: the fix is to send the same literal bash sends, not to reason about what a missing
+field would have done.
 
 **Correction to PR #238's own body (not a `parlay-bin` defect):** PR #238 described
 `tools/parlay-bin`'s worktree support as "git-toplevel only." Direct re-verification of

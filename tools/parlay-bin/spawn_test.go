@@ -17,11 +17,15 @@ import (
 // batch-dispatch and pipeline-ordering behavior can be verified without a
 // live herdr daemon.
 type mockLauncher struct {
-	mu              sync.Mutex
-	existing        map[string]string // agent id -> existing name, for duplicate-guard tests
-	failStart       bool
-	agentGetCalls   []string
-	agentStartCalls []string
+	mu                  sync.Mutex
+	existing            map[string]string // agent id -> existing name, for duplicate-guard tests
+	failStart           bool
+	agentGetCalls       []string
+	agentStartCalls     []string
+	tabCreateCalls      []TabCreateOptions
+	paneSendTextCalls   []string
+	paneSendKeysCalls   []string
+	paneWaitOutputCalls []string
 }
 
 func (m *mockLauncher) AgentGet(id string) (string, error) {
@@ -31,6 +35,9 @@ func (m *mockLauncher) AgentGet(id string) (string, error) {
 	return m.existing[id], nil
 }
 func (m *mockLauncher) TabCreate(opts TabCreateOptions) (string, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tabCreateCalls = append(m.tabCreateCalls, opts)
 	return "tab-" + opts.Label, "pane-" + opts.Label, nil
 }
 func (m *mockLauncher) AgentStart(opts AgentStartOptions) error {
@@ -47,6 +54,24 @@ func (m *mockLauncher) PaneClose(paneID string) error                    { retur
 func (m *mockLauncher) AgentWait(id, status string, timeoutMs int) error { return nil }
 func (m *mockLauncher) AgentSend(id, text string) error                  { return nil }
 func (m *mockLauncher) TabsForLabel(id string) ([]TabRef, error)         { return nil, nil }
+func (m *mockLauncher) PaneSendText(paneID, text string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.paneSendTextCalls = append(m.paneSendTextCalls, text)
+	return nil
+}
+func (m *mockLauncher) PaneSendKeys(paneID, keys string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.paneSendKeysCalls = append(m.paneSendKeysCalls, keys)
+	return nil
+}
+func (m *mockLauncher) PaneWaitOutput(paneID, regex string, timeoutMs int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.paneWaitOutputCalls = append(m.paneWaitOutputCalls, regex)
+	return nil
+}
 
 type mockErr struct{ msg string }
 
@@ -108,14 +133,25 @@ func withPARLAYServer(t *testing.T, url string) {
 	origServer := os.Getenv("PARLAY_SERVER")
 	origHome := os.Getenv("PARLAY_AGENT_HOME")
 	origClaudeJSON := os.Getenv("PARLAY_CLAUDE_JSON")
+	origStateHome := os.Getenv("PARLAY_STATE_HOME")
+	origBeadsRequired := os.Getenv("PARLAY_SPAWN_BEADS_REQUIRED")
 	os.Setenv("PARLAY_SERVER", url)
 	os.Setenv("PARLAY_AGENT_HOME", t.TempDir())
 	os.Setenv("PARLAY_CLAUDE_JSON", filepath.Join(t.TempDir(), ".claude.json"))
 	os.Setenv("PARLAY_SPAWN_NO_WATCHDOG", "1")
+	// Isolate config.toml lookups (loadSpawnConfig reads PARLAY_STATE_HOME/
+	// config.toml, falling back to ~/.parlay/config.toml) so a test never
+	// inherits the developer's real spawnAccount/launcher/beads_required —
+	// point it at an empty tmp dir with no config.toml, and force the
+	// beads-required gate off unless a test explicitly wants it on.
+	os.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	os.Setenv("PARLAY_SPAWN_BEADS_REQUIRED", "0")
 	t.Cleanup(func() {
 		os.Setenv("PARLAY_SERVER", origServer)
 		os.Setenv("PARLAY_AGENT_HOME", origHome)
 		os.Setenv("PARLAY_CLAUDE_JSON", origClaudeJSON)
+		os.Setenv("PARLAY_STATE_HOME", origStateHome)
+		os.Setenv("PARLAY_SPAWN_BEADS_REQUIRED", origBeadsRequired)
 		os.Unsetenv("PARLAY_SPAWN_NO_WATCHDOG")
 	})
 }

@@ -79,7 +79,7 @@ func TestSetupWorktreeRunsTreehouseInProjectDir(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	got, err := setupWorktree(target, "d04t", "report")
+	got, _, err := setupWorktree(target, "d04t", "report")
 	if err != nil {
 		t.Fatalf("setupWorktree: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestSetupWorktreeRejectsWrongRepoTreehousePath(t *testing.T) {
 	// Stub ignores cwd entirely and always returns the wrong repo's worktree.
 	stubTreehouse(t, `echo "`+wrong+`"`)
 
-	got, err := setupWorktree(target, "d04t", "report")
+	got, _, err := setupWorktree(target, "d04t", "report")
 	if err != nil {
 		t.Fatalf("setupWorktree: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestSetupWorktreeGuardsPoolBeforeLeasing(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	if _, err := setupWorktree(target, "n8d9", "report"); err != nil {
+	if _, _, err := setupWorktree(target, "n8d9", "report"); err != nil {
 		t.Fatalf("setupWorktree: %v", err)
 	}
 

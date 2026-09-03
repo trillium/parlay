@@ -96,10 +96,14 @@ func guardTreehousePool(projectPath string) {
 // branch/pr mode creates a named branch `parlay/<id>`; report mode detaches.
 // Hard isolation check at the end: the resolved worktree must not equal the
 // resolved project root.
-func setupWorktree(projectPath, agentID, mode string) (string, error) {
+// The bool return reports whether treehouse actually leased the worktree
+// (bash's local $TREEHOUSE_LEASED_PATH, set only in that branch — lines
+// 1271, 1693): the subprocess launcher passes --worktree-path only when this
+// is true, never for a plain git-worktree fallback.
+func setupWorktree(projectPath, agentID, mode string) (string, bool, error) {
 	worktreePath := filepath.Join(projectPath, ".worktrees", "parlay-"+agentID)
 	if err := os.MkdirAll(filepath.Join(projectPath, ".worktrees"), 0o755); err != nil {
-		return "", fmt.Errorf("mkdir .worktrees: %w", err)
+		return "", false, fmt.Errorf("mkdir .worktrees: %w", err)
 	}
 
 	// robots-d04t: treehouse has no --repo flag — it picks its pool from the
@@ -151,7 +155,7 @@ func setupWorktree(projectPath, agentID, mode string) (string, error) {
 				addErr = exec.Command("git", "-C", projectPath, "worktree", "add", "--detach", worktreePath).Run()
 			}
 			if addErr != nil {
-				return "", fmt.Errorf("git worktree add failed for %s: %w", worktreePath, addErr)
+				return "", false, fmt.Errorf("git worktree add failed for %s: %w", worktreePath, addErr)
 			}
 			fmt.Fprintf(os.Stderr, "parlay-spawn: worktree created at %s (project: %s)\n", worktreePath, projectPath)
 		}
@@ -160,7 +164,7 @@ func setupWorktree(projectPath, agentID, mode string) (string, error) {
 	wtReal, err1 := realpath(worktreePath)
 	projReal, err2 := realpath(projectPath)
 	if err1 == nil && err2 == nil && wtReal == projReal {
-		return "", fmt.Errorf("ISOLATION FAILURE — worktree resolved to primary checkout (%s); aborting", projectPath)
+		return "", false, fmt.Errorf("ISOLATION FAILURE — worktree resolved to primary checkout (%s); aborting", projectPath)
 	}
 
 	// IDENTITY (robots-d04t): hard post-condition — the worktree we are about to
@@ -169,12 +173,12 @@ func setupWorktree(projectPath, agentID, mode string) (string, error) {
 	// unrelated repo, possibly leaving commits/branches there), so refuse loudly.
 	wtRepo, wtRepoErr := repoIdentity(worktreePath)
 	if wtRepoErr != nil || projRepoErr != nil || wtRepo != projRepo {
-		return "", fmt.Errorf("REPO MISMATCH — refusing to launch in the wrong repository.\n"+
+		return "", false, fmt.Errorf("REPO MISMATCH — refusing to launch in the wrong repository.\n"+
 			"  --cwd resolved to project: %s (git dir: %s)\n"+
 			"  worktree resolved to:      %s (git dir: %s)\n"+
 			"  These are different repos. Aborting instead of burning an agent run in the wrong one.",
 			projectPath, projRepo, worktreePath, wtRepo)
 	}
 
-	return worktreePath, nil
+	return worktreePath, created, nil
 }

@@ -54,6 +54,9 @@ type registerIdentityOptions struct {
 	Effort       string
 	WorktreePath string
 	ProjectPath  string
+	BeadID       string
+	GCSession    string
+	GCCity       string
 }
 
 // registerIdentity is best-effort — a failure here does not fail the spawn,
@@ -82,6 +85,28 @@ func registerIdentity(opts registerIdentityOptions) {
 	if opts.ProjectPath != "" {
 		args = append(args, "--project", opts.ProjectPath)
 	}
+	if opts.BeadID != "" {
+		args = append(args, "--bead", opts.BeadID)
+	}
+	if opts.GCSession != "" {
+		args = append(args, "--gc-session", opts.GCSession)
+	}
+	if opts.GCCity != "" {
+		args = append(args, "--gc-city", opts.GCCity)
+	}
 	cmd := exec.Command("parlay", args...)
 	_ = cmd.Run()
+}
+
+// registerEphemeralBead mirrors bash's ephemeral re-register (lines ~180):
+// the ephemeral mint path never calls the full registerIdentity above (that
+// would strip the `ephemeral: true` marker the mint itself just wrote), but
+// when --bead was given it still needs one narrow re-register so the bead
+// binding survives. Best-effort: a failure here warns but never fails the
+// spawn, matching bash's `|| true`.
+func registerEphemeralBead(agentID, beadID string) {
+	cmd := exec.Command("parlay", "identity", "--register", "--agent", agentID, "--ephemeral", "--bead", beadID)
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "parlay-spawn: WARNING — could not bind bead %s to ephemeral agent %s: %v\n", beadID, agentID, err)
+	}
 }
