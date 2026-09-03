@@ -299,6 +299,26 @@ with `skipped` counting the older retained messages left outside that window.
 The reset frame carries the oldest message of that window, so the caller's
 next `after` resolves normally. A resolvable cursor never sets either field.
 
+### Localhost link rewriting (`PARLAY_PUBLIC_HOST`, both servers)
+`ChatMessage.text` may contain `http://localhost:<port>` / `http://127.0.0.1:<port>`
+links (server URLs, panel links, agent endpoints) that are dead once the
+captain reads Parlay off-home. Setting `PARLAY_PUBLIC_HOST` rewrites just the
+host of those links, at serve time only — history (`GET /api/chat/history`),
+poll (`GET /api/chat/poll`), and the SSE `history`/`message` events all
+rewrite through the same helper (TS: `packages/server/src/link-rewrite.ts`;
+Go: `packages/go-server/internal/linkrewrite`). The stored/retained message
+text itself is never mutated — a client reading the durable log directly
+still sees the original `localhost` link.
+
+- Unset (default) ⇒ no rewrite, byte-identical to legacy behavior.
+- `"auto"` ⇒ resolved once per process from `tailscale status --json`'s
+  `Self.DNSName` (short node name, e.g. `macbook`); fails open to no-rewrite
+  if `tailscale` is unavailable or errors.
+- Any other value ⇒ used as the host literally (bare hostname, FQDN, or IP);
+  only the host swaps, port/path/query/hash are preserved.
+- Fail-open is absolute: any resolution or rewrite error returns the
+  original text unchanged.
+
 ---
 
 ## Agent registry / presence

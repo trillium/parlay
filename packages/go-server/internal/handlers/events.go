@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"parlay/go-server/internal/capability"
+	"parlay/go-server/internal/linkrewrite"
 	"parlay/go-server/internal/store"
 )
 
@@ -206,6 +207,9 @@ func newHub(b *broker) *Hub {
 	msgs, _ := b.subscribeAll() // never cancelled: lives exactly as long as the process, like b itself
 	go func() {
 		for m := range msgs {
+			// m is a value copy from the channel — rewriting Text here never
+			// touches the durable log appendAndPublish already wrote.
+			m.Text = linkrewrite.Rewrite(m.Text)
 			h.broadcast(eventMessage, m)
 		}
 	}()
@@ -587,7 +591,7 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 		} else {
 			writeSSE(w, eventConnected, struct{}{})
 		}
-		writeSSE(w, eventHistory, st.Messages.HistorySince(after))
+		writeSSE(w, eventHistory, rewriteHistoryForServe(st.Messages.HistorySince(after)))
 		writeSSE(w, eventAgents, st.Registry.List())
 		writeSSE(w, eventAgentPresence, agentPresencePayload{Active: hub.agentActive()})
 		writeSSE(w, eventPresenceMap, presenceMapPayload(st))

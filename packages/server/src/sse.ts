@@ -1,5 +1,6 @@
 import type { SSEClient, PollWaiter, AgentInfo, ChatMessage } from "./types"
 import { shouldDeliver, countSuppressed } from "./capability"
+import { rewriteMessageForServe } from "./link-rewrite"
 
 // ── SSE state ───────────────────────────────────────────────────────────────
 
@@ -104,7 +105,10 @@ export function sseEvent(event: string, data: unknown): string {
 // Returns how many clients the event was delivered to — a suppressed client
 // does not count, so callers report delivery truth, not addressing truth.
 export function broadcastToClients(event: string, data: unknown): number {
-  const payload = sseEvent(event, data)
+  // "message" carries a ChatMessage whose text may hold localhost links —
+  // rewrite the served view only, never the stored object (see link-rewrite.ts).
+  const servedData = event === "message" ? rewriteMessageForServe(data as ChatMessage) : data
+  const payload = sseEvent(event, servedData)
   let delivered = 0
   for (const client of sseClients.values()) {
     if (!shouldDeliver(client.caps, event)) { countSuppressed(event); continue }

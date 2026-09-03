@@ -2,6 +2,7 @@ import { history, historyIndex } from "./storage"
 import { pollWaiters, setAgentPresence, CORS, lastPollByChannel, broadcastPresenceMap } from "./sse"
 import { markReceived } from "./messages"
 import { isTombstoned } from "./prune"
+import { rewriteMessageForServe } from "./link-rewrite"
 import type { PollWaiter } from "./types"
 
 // task-1t0m: GET /api/chat/poll must be genuinely read-only, not read-only-
@@ -41,7 +42,7 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
   )
   if (pending.length > 0) {
     markReceived(pending[0])
-    return new Response(JSON.stringify(pending[0]), {
+    return new Response(JSON.stringify(rewriteMessageForServe(pending[0])), {
       headers: { "Content-Type": "application/json", ...CORS },
     })
   }
@@ -62,7 +63,7 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
       }, 30_000)
       waiter = {
         resolve(msg) {
-          try { controller.enqueue(enc.encode(JSON.stringify(msg))); controller.close() } catch { /* client gone */ }
+          try { controller.enqueue(enc.encode(JSON.stringify(rewriteMessageForServe(msg)))); controller.close() } catch { /* client gone */ }
         },
         timer,
         channel,
