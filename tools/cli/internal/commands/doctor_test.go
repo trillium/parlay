@@ -162,6 +162,27 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 	engineSrv := httptest.NewServer(engineMux)
 	t.Cleanup(engineSrv.Close)
 
+	// Fake HOME with accounts.json and a fake ccjuggler-resolve on PATH so the
+	// spawn-credentials check (check #7) passes deterministically.
+	fakeHome := t.TempDir()
+	juggleDir := filepath.Join(fakeHome, "code", "juggle")
+	if err := os.MkdirAll(juggleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary"},{"name":"acc2"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fakeBin := filepath.Join(fakeHome, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeResolve := filepath.Join(fakeBin, "ccjuggler-resolve")
+	if err := os.WriteFile(fakeResolve, []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("PATH", fakeBin)
 	t.Setenv("PARLAY_AGENT_ID", "doc-agent")
 	t.Setenv("PARLAY_AGENT_HOME", home)
 	t.Setenv("PARLAY_SERVER", srv.URL)
@@ -187,6 +208,9 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 		"PASS  identity.md ok",
 		"PASS  scratchpad.md ok",
 		"PASS  eval-engine healthy at " + engineSrv.URL,
+		"PASS  ccjuggler-resolve found",
+		"PASS  ccjuggler-resolve primary — token found",
+		"PASS  ccjuggler-resolve acc2 — token found",
 		"PASS  gc ok",
 		"all clear (0 warn)",
 	} {

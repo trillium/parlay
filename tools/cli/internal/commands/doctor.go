@@ -10,11 +10,13 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -234,6 +236,76 @@ type doctorSubscribersInfo struct {
 	Presence []doctorPresence `json:"presence,omitempty"`
 }
 
+// checkSpawnCreds checks for the ccjuggler-resolve binary on PATH and, if
+// accounts.json exists, verifies each account's token is resolvable.
+func checkSpawnCreds() verdict {
+	// 7a. Binary presence.
+	resolvePath, err := exec.LookPath("ccjuggler-resolve")
+	if err != nil {
+		return report(vFail, "ccjuggler-resolve not on PATH",
+			"ln -sf ~/code/parlay/packages/ccjuggler/src/cli.ts ~/.local/bin/ccjuggler-resolve")
+	}
+	verdicts := []verdict{report(vPass, fmt.Sprintf("ccjuggler-resolve found at %s", resolvePath), "")}
+
+	// 7b. Accounts file.
+	accountsFile := filepath.Join(os.Getenv("HOME"), "code", "juggle", "accounts.json")
+	data, err := os.ReadFile(accountsFile)
+	if err != nil {
+		verdicts = append(verdicts, report(vWarn,
+			fmt.Sprintf("accounts.json not found at %s", accountsFile),
+			"cp <MacBook>:~/code/juggle/accounts.json ~/code/juggle/accounts.json"))
+		return worstVerdict(verdicts)
+	}
+
+	var acctFile struct {
+		Accounts []struct {
+			Name string `json:"name"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(data, &acctFile); err != nil {
+		verdicts = append(verdicts, report(vWarn,
+			fmt.Sprintf("accounts.json parse error: %s", err), ""))
+		return worstVerdict(verdicts)
+	}
+
+	// 7c. Per-account token resolve.
+	for _, acct := range acctFile.Accounts {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(ctx, resolvePath, acct.Name)
+		out, err := cmd.Output()
+		cancel()
+		stdout := strings.TrimSpace(string(out))
+		if err == nil && stdout != "" {
+			verdicts = append(verdicts, report(vPass,
+				fmt.Sprintf("ccjuggler-resolve %s — token found", acct.Name), ""))
+		} else {
+			fix := fmt.Sprintf("see ~/.ccjuggler/%s/.oauth-token or run keychain setup", acct.Name)
+			if err != nil {
+				fix = fmt.Sprintf("ccjuggler-resolve %s failed: %s — %s", acct.Name, err, fix)
+			}
+			verdicts = append(verdicts, report(vFail,
+				fmt.Sprintf("ccjuggler-resolve %s — no token", acct.Name), fix))
+		}
+	}
+
+	return worstVerdict(verdicts)
+}
+
+// worstVerdict returns the most severe verdict from a slice (FAIL > WARN > PASS).
+func worstVerdict(vs []verdict) verdict {
+	for _, v := range vs {
+		if v == vFail {
+			return vFail
+		}
+	}
+	for _, v := range vs {
+		if v == vWarn {
+			return vWarn
+		}
+	}
+	return vPass
+}
+
 // doctorFrontmatterRe/doctorIDRe are the ad hoc detection regexes
 // commands-doctor.ts uses for its identity.md check — deliberately distinct
 // from internal/identity's ReadFrontmatter (which requires a trailing
@@ -384,11 +456,14 @@ func Doctor(argv []string) {
 			evalEngineFix))
 	}
 
-	// 7. Gas City `gc` runtime prerequisite (doctor_gc.go) — named error with
+	// 7. Spawn credentials — ccjuggler-resolve binary + per-account token presence.
+	verdicts = append(verdicts, checkSpawnCreds())
+
+	// 8. Gas City `gc` runtime prerequisite (doctor_gc.go) — named error with
 	// an install pointer when missing/too-old/broken, never a silent degrade.
 	verdicts = append(verdicts, checkGC())
 
-	// 8. Context rotation advisory (informational). Claude Code exposes no context gauge
+	// 9. Context rotation advisory (informational). Claude Code exposes no context gauge
 	// to a CLI, so we read CLAUDE_CONTEXT_PERCENTAGE if the harness set it; otherwise the
 	// percentage is unknown here. Either way, point at the rotation verb — the seam the
 	// supervisor-respawn loop (GasCity) hooks into.
