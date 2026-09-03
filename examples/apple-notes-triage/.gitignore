@@ -1,0 +1,6 @@
+# Personal store registry — generated locally, see README.md. Never commit
+# real store names/commands; config.example.json (fake stores) is what ships.
+config.json
+
+# watch.ts's persisted watermark, so re-running doesn't re-scan history.
+state/

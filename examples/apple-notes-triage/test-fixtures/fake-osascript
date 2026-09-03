@@ -1,0 +1,80 @@
+#!/usr/bin/env bun
+// fake-osascript — hermetic stand-in for the real `osascript` binary, used
+// only by notes-io.spec.ts (via NOTES_TRIAGE_OSASCRIPT_BIN). Never touches
+// real Apple Notes. Driven entirely by env vars so each test controls its
+// own fixture data without files colliding across parallel test runs.
+//
+// Recognizes notes-io.ts's three script shapes by a distinctive substring
+// and fakes the matching behavior:
+//   - "Notes.notes.id()"       -> list-changed (JXA, bulk)
+//   - "plaintext of note id"   -> read one note (classic AppleScript)
+//   - "set body of note id"    -> write one note (classic AppleScript)
+//
+// Env vars:
+//   NOTES_TRIAGE_FIXTURE_NOTES       JSON [{id, modificationDate}] — the full
+//                                    "changed at some point" set; list-changed
+//                                    filters it by the watermark embedded in
+//                                    the script, same as the real JXA does.
+//   NOTES_TRIAGE_FIXTURE_BODIES      JSON {id: plaintext} — read returns this.
+//   NOTES_TRIAGE_FIXTURE_READ_FAIL   comma-separated ids that fail the read.
+//   NOTES_TRIAGE_FIXTURE_HANG_IDS    comma-separated ids whose read/write
+//                                    never returns (sleeps past any sane
+//                                    test timeout) — used to exercise the
+//                                    AbortSignal.timeout path.
+//   NOTES_TRIAGE_FIXTURE_WRITE_LOG   path to append one JSON line per write:
+//                                    {id, body}.
+//   NOTES_TRIAGE_FIXTURE_WRITE_FAIL  comma-separated ids that fail the write.
+
+const argv = process.argv.slice(2);
+const eFlagIndex = argv.indexOf('-e');
+const script = eFlagIndex === -1 ? '' : argv[eFlagIndex + 1];
+const trailingArgs = eFlagIndex === -1 ? [] : argv.slice(eFlagIndex + 2);
+
+function csv(name: string): string[] {
+  const raw = process.env[name];
+  return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+async function hangForever(): Promise<never> {
+  await new Promise(() => {});
+  throw new Error('unreachable');
+}
+
+if (script.includes('Notes.notes.id()')) {
+  const notes = JSON.parse(process.env.NOTES_TRIAGE_FIXTURE_NOTES ?? '[]') as { id: string; modificationDate: string }[];
+  const m = /new Date\((.*?)\)/.exec(script);
+  const watermarkIso = m ? (JSON.parse(m[1]) as string) : new Date(0).toISOString();
+  const watermark = new Date(watermarkIso).getTime();
+  const out = notes.filter((n) => new Date(n.modificationDate).getTime() > watermark);
+  console.log(JSON.stringify(out));
+  process.exit(0);
+} else if (script.includes('plaintext of note id')) {
+  const id = trailingArgs[0];
+  if (csv('NOTES_TRIAGE_FIXTURE_HANG_IDS').includes(id)) await hangForever();
+  if (csv('NOTES_TRIAGE_FIXTURE_READ_FAIL').includes(id)) {
+    console.error(`fake-osascript: no note with id "${id}"`);
+    process.exit(1);
+  }
+  const bodies = JSON.parse(process.env.NOTES_TRIAGE_FIXTURE_BODIES ?? '{}') as Record<string, string>;
+  console.log(bodies[id] ?? '');
+  process.exit(0);
+} else if (script.includes('set body of note id')) {
+  const id = trailingArgs[0];
+  const body = trailingArgs[1] ?? '';
+  if (csv('NOTES_TRIAGE_FIXTURE_HANG_IDS').includes(id)) await hangForever();
+  if (csv('NOTES_TRIAGE_FIXTURE_WRITE_FAIL').includes(id)) {
+    console.error(`fake-osascript: could not write note with id "${id}"`);
+    process.exit(1);
+  }
+  const logPath = process.env.NOTES_TRIAGE_FIXTURE_WRITE_LOG;
+  if (logPath) {
+    const file = Bun.file(logPath);
+    const existing = (await file.exists()) ? await file.text() : '';
+    await Bun.write(logPath, `${existing}${JSON.stringify({ id, body })}\n`);
+  }
+  console.log('ok');
+  process.exit(0);
+} else {
+  console.error(`fake-osascript: unrecognized script:\n${script}`);
+  process.exit(1);
+}

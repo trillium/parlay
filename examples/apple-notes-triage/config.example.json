@@ -1,0 +1,14 @@
+{
+  "task": {
+    "purpose": "Actionable work items — concrete things to do",
+    "createCommand": "echo 'fake-task-store: would create \"{title}\"'"
+  },
+  "ideas": {
+    "purpose": "Enhancements and possibilities not yet committed",
+    "createCommand": "echo 'fake-ideas-store: would create \"{title}\"'"
+  },
+  "questions": {
+    "purpose": "Open questions awaiting an answer",
+    "createCommand": "echo 'fake-questions-store: would create \"{title}\"'"
+  }
+}
