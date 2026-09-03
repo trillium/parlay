@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// spawnLaunchedByValue is the exact literal packages/server/src/types.ts
+// documents for this launcher ("parlay-spawn" | "parlay-claim") and
+// idle-reap.ts's shouldIdleReap keys its "parlay"-prefix reap eligibility
+// test on. bin/parlay-spawn sends this same literal (line 1209).
+const spawnLaunchedByValue = "parlay-spawn"
+
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 func postJSON(url string, body map[string]any) error {
@@ -34,10 +40,18 @@ func postJSON(url string, body map[string]any) error {
 }
 
 // registerAgent posts the new agent's identity so its tab exists.
-// bin/parlay-spawn step 1 (lines 338–341).
+// bin/parlay-spawn step 1 (lines 338–341, 1202–1213). launchedBy/startedAt
+// (docs/scope-go-spawn.md Finding F2, #236) mark this registration as
+// Parlay-launched: packages/server/src/prune/idle-reap.ts's shouldIdleReap
+// exempts any agent whose launchedBy does not start with "parlay" from idle
+// reaping, so omitting these fields silently makes a Go-spawned agent
+// unreapable — treated the same as a firstmate-spawned one.
 func registerAgent(server, id, name, color string) error {
+	startedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	if err := postJSON(server+"/api/chat/register-agent", map[string]any{
 		"id": id, "name": name, "color": color,
+		"launchedBy": spawnLaunchedByValue,
+		"startedAt":  startedAt,
 	}); err != nil {
 		return fmt.Errorf("register-agent failed — is Pulse running on %s? %w", server, err)
 	}

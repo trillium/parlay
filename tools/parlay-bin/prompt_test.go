@@ -149,3 +149,24 @@ func TestComposeStartupPromptQuotesMonitorCommand(t *testing.T) {
 		}
 	}
 }
+
+// TestComposeClaimPromptSubstitutes proves composeClaimPrompt renders
+// launch-templates/claim.txt with the same {{VAR}} substitution and
+// trailing-newline-trim behavior as composeStartupPrompt (robots-hrt2),
+// against the already-existing claim.txt template (bin/parlay-spawn lines
+// 1359–1364's --claim branch of prompt composition).
+func TestComposeClaimPromptSubstitutes(t *testing.T) {
+	out := composeClaimPrompt("mc-x", "task-abc123", "\n## Setup\n\nisolated worktree\n")
+
+	for _, want := range []string{"parlay claim task-abc123", "mc-x", "## Setup"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("claim prompt missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "{{") {
+		t.Errorf("claim prompt has an unsubstituted {{VAR}} placeholder:\n%s", out)
+	}
+	if strings.HasSuffix(out, "\n") {
+		t.Errorf("claim prompt should have its trailing newline trimmed (robots-hrt2)")
+	}
+}

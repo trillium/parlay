@@ -29,6 +29,8 @@ const spawnUsage = `Usage: parlay spawn <agent-id> <display-name> <hex-color> <i
   --worktree      create an isolated git worktree at <repo>/.worktrees/parlay-<id>
                   and run the agent there instead of --cwd directly.
   --account NAME  spawn the agent under a ccjuggler account.
+  --claim TASKID  give the agent a ticket to claim instead of an inline
+                  prompt; the initial-prompt positional becomes optional.
 
 Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned. A failed pair is reported and skipped, the rest
@@ -68,6 +70,7 @@ type SpawnOptions struct {
 	WantWorktree bool
 	Account      string
 	Ephemeral    bool
+	Claim        string
 }
 
 func defaultSpawnOptions() SpawnOptions {
@@ -121,6 +124,12 @@ func parseTailFlags(args []string, opts *SpawnOptions, rejectCwd bool) error {
 			}
 			opts.Account = args[i+1]
 			i++
+		case "--claim":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--claim requires a value")
+			}
+			opts.Claim = args[i+1]
+			i++
 		case "--ephemeral":
 			return fmt.Errorf("--ephemeral must be the first argument (cannot combine with an explicit agent-id)")
 		default:
@@ -168,9 +177,28 @@ func isBatchPair(first string) bool {
 	return !strings.Contains(first[:idx], "/")
 }
 
+// viaCLIRefusal mirrors bin/parlay-spawn's PARLAY_SPAWN_VIA_CLI refusal
+// block (lines 45–57, docs/scope-go-spawn.md Finding F1): `parlay spawn` is
+// the sole public entry point (task-qyu8q scope 3), and sets this var
+// itself before invoking the resolved spawner. Calling this binary's spawn
+// subcommand any other way is refused.
+const viaCLIRefusal = `parlay-bin: refusing to run directly — task-qyu8q scope 3: ` + "`parlay spawn`" + ` is
+the sole public entry point for launching agents. Run:
+
+  parlay spawn <agent-id> <display-name> <hex-color> <initial-prompt> --model MODEL [...]
+
+` + "`parlay spawn`" + ` forwards your arguments to this program verbatim after setting
+PARLAY_SPAWN_VIA_CLI=1. If you have a legitimate reason to call this binary
+directly (a harness that IS the sanctioned caller), set that variable yourself.
+`
+
 // runSpawnCommand dispatches to the named / ephemeral / batch invocation
 // shape, mirroring bin/parlay-spawn's own argv-shape dispatch.
 func runSpawnCommand(args []string) int {
+	if os.Getenv("PARLAY_SPAWN_VIA_CLI") != "1" {
+		fmt.Fprint(os.Stderr, viaCLIRefusal)
+		return 2
+	}
 	if len(args) > 0 && args[0] == "--ephemeral" {
 		return runEphemeralSpawn(args[1:])
 	}
@@ -181,18 +209,31 @@ func runSpawnCommand(args []string) int {
 }
 
 func runNamedSpawn(args []string) int {
-	if len(args) < 4 {
+	if len(args) < 3 {
 		return usageExit()
 	}
 	opts := defaultSpawnOptions()
-	opts.AgentID, opts.Name, opts.Color, opts.Prompt = args[0], args[1], args[2], args[3]
-	if err := parseTailFlags(args[4:], &opts, false); err != nil {
+	opts.AgentID, opts.Name, opts.Color = args[0], args[1], args[2]
+	rest := args[3:]
+	// The 4th positional is the initial-prompt, OPTIONAL when --claim is used
+	// (bin/parlay-spawn lines 1028–1035): a 4th arg starting with '-' (or its
+	// absence) means there is no inline prompt — the task lives on the ticket
+	// --claim names instead.
+	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		opts.Prompt = rest[0]
+		rest = rest[1:]
+	}
+	if err := parseTailFlags(rest, &opts, false); err != nil {
 		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
 		return usageExit()
 	}
 	if err := validateKebabSlug(opts.AgentID); err != nil {
 		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
 		return 2
+	}
+	if opts.Prompt == "" && opts.Claim == "" {
+		fmt.Fprintln(os.Stderr, "parlay-spawn: give the agent work — an initial-prompt positional or --claim <task-id>")
+		return usageExit()
 	}
 	if err := requireModel(opts.Model); err != nil {
 		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
