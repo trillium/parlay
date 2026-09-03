@@ -180,6 +180,56 @@ else
   pass "unknown flag exits 2"
 fi
 
+PLIST="$HOMEDIR/Library/LaunchAgents/com.parlay.go-server.plist"
+
+# ── 6. Default (no --allowed-origins): plist ships an empty allow-list ────────
+fresh_repo client webview
+run
+if grep -A2 'PARLAY_ALLOWED_ORIGINS' "$PLIST" | grep -qE '<string></string>|<string/>'; then
+  pass "no --allowed-origins renders an empty allow-list"
+else
+  fail "expected empty PARLAY_ALLOWED_ORIGINS by default" "$(grep -A2 PARLAY_ALLOWED_ORIGINS "$PLIST" 2>&1)"
+fi
+
+# ── 7. --allowed-origins is baked into EnvironmentVariables, XML-escaped ─────
+fresh_repo client webview
+run --allowed-origins 'https://a.example.com?x=1&y=2,https://b.example.com'
+if grep -qF 'https://a.example.com?x=1&amp;y=2,https://b.example.com' "$PLIST"; then
+  pass "--allowed-origins value lands in the plist, XML-escaped"
+else
+  fail "--allowed-origins value missing/unescaped in plist" "$(grep -A2 PARLAY_ALLOWED_ORIGINS "$PLIST" 2>&1)"
+fi
+
+# ── 8. Re-install WITHOUT --allowed-origins preserves the prior value ────────
+run
+if grep -qF 'https://a.example.com?x=1&amp;y=2,https://b.example.com' "$PLIST"; then
+  pass "re-install without --allowed-origins preserves the previously configured value"
+else
+  fail "re-install without --allowed-origins wiped the prior value" "$(grep -A2 PARLAY_ALLOWED_ORIGINS "$PLIST" 2>&1)"
+fi
+
+# ── 9. PARLAY_ALLOWED_ORIGINS env var is honored when no flag is given ───────
+fresh_repo client webview
+RC=0
+env -i PATH="$STUB:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$HOMEDIR" STUB_LOG="$LOGDIR" \
+  PARLAY_ALLOWED_ORIGINS="https://env.example.com" \
+  /bin/bash "$REPO/packages/go-server/deploy/install.sh" >"$ROOT/out" 2>&1 || RC=$?
+if [ "$RC" -eq 0 ] && grep -qF 'https://env.example.com' "$PLIST"; then
+  pass "PARLAY_ALLOWED_ORIGINS env var is used when --allowed-origins is omitted"
+else
+  fail "PARLAY_ALLOWED_ORIGINS env var not honored" "$(cat "$ROOT/out")"
+fi
+
+# ── 10. Explicit --allowed-origins "" clears a previously configured value ───
+fresh_repo client webview
+run --allowed-origins 'https://c.example.com'
+run --allowed-origins ''
+if grep -A2 'PARLAY_ALLOWED_ORIGINS' "$PLIST" | grep -qE '<string></string>|<string/>'; then
+  pass "--allowed-origins '' explicitly clears a previously configured value"
+else
+  fail "--allowed-origins '' did not clear the prior value" "$(grep -A2 PARLAY_ALLOWED_ORIGINS "$PLIST" 2>&1)"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "install.test.sh: FAILED" >&2
   exit 1

@@ -44,6 +44,8 @@ PARLAY_GOSERVER_ERR_LOG="${PARLAY_GOSERVER_LOG_DIR}/go-server.err.log"
 PARLAY_GOSERVER_ADDR_DEFAULT="127.0.0.1:4242"
 # main.go's defaultStateHome().
 PARLAY_GOSERVER_STATE_DEFAULT="${HOME}/.parlay"
+# Unset/empty is guard.AllowedOriginList()'s own "no extra origins" default.
+PARLAY_GOSERVER_ALLOWED_ORIGINS_DEFAULT=""
 
 # parlay_goserver_refuse_31337 exits non-zero if addr targets port 31337, in
 # any host:port/[::1]:port/bare-port form. Belt-and-suspenders: the binary
@@ -99,6 +101,29 @@ EOF
     fi
   fi
   printf '%s\n' "${PARLAY_STATE_HOME:-${PARLAY_GOSERVER_STATE_DEFAULT}}"
+}
+
+# parlay_goserver_installed_allowed_origins prints the PARLAY_ALLOWED_ORIGINS
+# value actually baked into the installed plist's EnvironmentVariables dict —
+# i.e. what a prior install.sh --allowed-origins really used — by reading it
+# back out of ${PARLAY_GOSERVER_PLIST}. This is the persistence mechanism: a
+# re-install run WITHOUT --allowed-origins calls this to carry the existing
+# value forward instead of silently wiping it (mirrors
+# parlay_goserver_installed_state_dir above).
+#
+# Falls back to the coded default (empty — no extra origins) if the plist is
+# missing, has no EnvironmentVariables entry yet (a plist from before this
+# key existed), or is unparseable.
+parlay_goserver_installed_allowed_origins() {
+  if [ -r "${PARLAY_GOSERVER_PLIST}" ] && [ -x /usr/libexec/PlistBuddy ]; then
+    local value
+    value="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PARLAY_ALLOWED_ORIGINS' "${PARLAY_GOSERVER_PLIST}" 2>/dev/null || true)"
+    if [ -n "${value}" ]; then
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  fi
+  printf '%s\n' "${PARLAY_GOSERVER_ALLOWED_ORIGINS_DEFAULT}"
 }
 
 # parlay_goserver_trash_put moves PATH to a recoverable trash location instead

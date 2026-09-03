@@ -364,6 +364,16 @@ func subprocessStop(stateDir string) error {
 
 	if pidAlive(pid) {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		// SIGKILL is asynchronous: the kernel needs a moment to actually
+		// terminate and reap the process. Poll for it rather than returning
+		// immediately, or a caller that checks liveness right after this
+		// call returns can still observe the process as alive — a race
+		// invisible on an idle machine but real under load (e.g. CI's
+		// go test -race).
+		killDeadline := time.Now().Add(2 * time.Second)
+		for pidAlive(pid) && time.Now().Before(killDeadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
 	cleanupSubprocessState(stateDir)
 	return nil
