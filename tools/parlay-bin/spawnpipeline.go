@@ -107,8 +107,9 @@ func spawnOne(opts SpawnOptions) error {
 	}
 	fmt.Fprintf(os.Stderr, "parlay-spawn: launching detached claude via herdr (cwd=%s, %s) ...\n", opts.Cwd, focusWord)
 
-	tabID, rootPane, _ := launcher.TabCreate(opts.AgentID, os.Getenv("HERDR_WORKSPACE_ID"))
-
+	// Build env list before TabCreate so it can be injected into the tab's
+	// shell via herdr tab create --env (the valid injection point; herdr agent
+	// start does not accept --env).
 	envList := []string{
 		"PARLAY_SPAWN_PROMPT=" + startupPrompt,
 		"PARLAY_SPAWN_MODEL=" + opts.Model,
@@ -118,13 +119,19 @@ func spawnOne(opts SpawnOptions) error {
 	envList = append(envList, accountEnv...)
 	envList = append(envList, projectEnv...)
 
+	tabID, rootPane, _ := launcher.TabCreate(TabCreateOptions{
+		Label:       opts.AgentID,
+		WorkspaceID: os.Getenv("HERDR_WORKSPACE_ID"),
+		Cwd:         opts.Cwd,
+		Focus:       opts.Focus,
+		Env:         envList,
+	})
+
 	startErr := launcher.AgentStart(AgentStartOptions{
-		ID:    opts.AgentID,
-		Cwd:   opts.Cwd,
-		Focus: opts.Focus,
-		TabID: tabID,
-		Env:   envList,
-		Cmd:   []string{"bash", "-lc", launchScript},
+		ID:     opts.AgentID,
+		Kind:   "claude",
+		PaneID: rootPane,
+		Cmd:    []string{"bash", "-lc", launchScript},
 	})
 	if startErr != nil {
 		fmt.Fprintln(os.Stderr, "parlay-spawn: herdr agent start failed — rolling back the tab to avoid a ghost tab.")
@@ -133,10 +140,7 @@ func spawnOne(opts SpawnOptions) error {
 		}
 		return fmt.Errorf("herdr agent start failed: %w", startErr)
 	}
-
-	if rootPane != "" {
-		_ = launcher.PaneClose(rootPane)
-	}
+	// rootPane is now the agent pane — do not close it.
 
 	if !opts.Ephemeral {
 		registerIdentity(registerIdentityOptions{

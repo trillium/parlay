@@ -30,8 +30,8 @@ func (m *mockLauncher) AgentGet(id string) (string, error) {
 	m.agentGetCalls = append(m.agentGetCalls, id)
 	return m.existing[id], nil
 }
-func (m *mockLauncher) TabCreate(label, workspaceID string) (string, string, error) {
-	return "tab-" + label, "pane-" + label, nil
+func (m *mockLauncher) TabCreate(opts TabCreateOptions) (string, string, error) {
+	return "tab-" + opts.Label, "pane-" + opts.Label, nil
 }
 func (m *mockLauncher) AgentStart(opts AgentStartOptions) error {
 	m.mu.Lock()

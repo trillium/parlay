@@ -14,15 +14,23 @@ type TabRef struct {
 	Number int
 }
 
-// AgentStartOptions mirrors the flags bin/parlay-spawn passes to
-// `herdr agent start`.
+// TabCreateOptions holds the parameters for opening a new herdr tab.
+// --env, --cwd, and --focus belong here (herdr tab create), not on AgentStart.
+type TabCreateOptions struct {
+	Label       string
+	WorkspaceID string
+	Cwd         string
+	Focus       bool
+	Env         []string // "KEY=VALUE" pairs, one --env per entry
+}
+
+// AgentStartOptions mirrors the flags for `herdr agent start`.
+// Verified API: herdr agent start <NAME> --kind <KIND> --pane <ID> [-- [AGENT_ARG]...]
 type AgentStartOptions struct {
-	ID    string
-	Cwd   string
-	Focus bool
-	TabID string   // empty = no --tab flag
-	Env   []string // "KEY=VALUE" pairs, one --env per entry
-	Cmd   []string // argv after `--`, e.g. ["bash", "-lc", script]
+	ID     string
+	Kind   string   // agent kind (e.g. "claude"); defaults to "claude" if empty
+	PaneID string   // pane to start the agent in; empty = no --pane flag
+	Cmd    []string // AGENT_ARGS after `--`
 }
 
 // Launcher wraps every herdr call the spawn/reset pipelines make, per
@@ -37,13 +45,13 @@ type Launcher interface {
 	// duplicate-name guard, not a correctness-critical read.
 	AgentGet(id string) (name string, err error)
 
-	// TabCreate opens a new, unfocused herdr tab labeled id and returns its
-	// tab id and the id of its default root shell pane (closed later once
-	// the agent pane exists).
-	TabCreate(label, workspaceID string) (tabID, rootPaneID string, err error)
+	// TabCreate opens a new herdr tab with the given options and returns its
+	// tab id and the id of its root shell pane. The agent runs directly in
+	// the root pane, so the caller must NOT close it after AgentStart.
+	TabCreate(opts TabCreateOptions) (tabID, rootPaneID string, err error)
 
-	// AgentStart launches the agent process in the given tab (or a fresh
-	// tab if TabID is empty).
+	// AgentStart launches the agent process in the pane identified by
+	// opts.PaneID.
 	AgentStart(opts AgentStartOptions) error
 
 	TabClose(tabID string) error
@@ -112,10 +120,21 @@ func (h *herdrLauncher) AgentGet(id string) (string, error) {
 	return digString(v, "result", "agent", "name"), nil
 }
 
-func (h *herdrLauncher) TabCreate(label, workspaceID string) (string, string, error) {
-	args := []string{"tab", "create", "--no-focus", "--label", label}
-	if workspaceID != "" {
-		args = append(args, "--workspace", workspaceID)
+func (h *herdrLauncher) TabCreate(opts TabCreateOptions) (string, string, error) {
+	args := []string{"tab", "create", "--label", opts.Label}
+	if opts.Focus {
+		args = append(args, "--focus")
+	} else {
+		args = append(args, "--no-focus")
+	}
+	if opts.WorkspaceID != "" {
+		args = append(args, "--workspace", opts.WorkspaceID)
+	}
+	if opts.Cwd != "" {
+		args = append(args, "--cwd", opts.Cwd)
+	}
+	for _, kv := range opts.Env {
+		args = append(args, "--env", kv)
 	}
 	v, err := runHerdrJSON(args...)
 	if err != nil {
@@ -125,22 +144,19 @@ func (h *herdrLauncher) TabCreate(label, workspaceID string) (string, string, er
 }
 
 func (h *herdrLauncher) AgentStart(opts AgentStartOptions) error {
-	args := []string{"agent", "start", opts.ID, "--cwd", opts.Cwd}
-	if opts.Focus {
-		args = append(args, "--focus")
-	} else {
-		args = append(args, "--no-focus")
+	kind := opts.Kind
+	if kind == "" {
+		kind = "claude"
 	}
-	if opts.TabID != "" {
-		args = append(args, "--tab", opts.TabID)
+	args := []string{"agent", "start", opts.ID, "--kind", kind}
+	if opts.PaneID != "" {
+		args = append(args, "--pane", opts.PaneID)
 	}
-	for _, kv := range opts.Env {
-		args = append(args, "--env", kv)
+	if len(opts.Cmd) > 0 {
+		args = append(args, "--")
+		args = append(args, opts.Cmd...)
 	}
-	args = append(args, "--")
-	args = append(args, opts.Cmd...)
-	cmd := exec.Command("herdr", args...)
-	return cmd.Run()
+	return exec.Command("herdr", args...).Run()
 }
 
 func (h *herdrLauncher) TabClose(tabID string) error {
