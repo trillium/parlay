@@ -183,6 +183,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.GCLiveness(args)
 	case "gc-resolve":
 		commands.GCResolve(args)
+	case "gc-teardown":
+		commands.GCTeardown(args)
 	default:
 		fmt.Fprintf(os.Stderr, "parlay: unknown command or flag %q — run 'parlay help' for usage\n", cmd)
 		finish(config.ExitUsage)
