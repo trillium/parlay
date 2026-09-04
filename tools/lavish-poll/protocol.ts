@@ -15,6 +15,15 @@ export interface ParlayMsg {
   id?: string
   role?: string
   text?: string
+  /**
+   * Synthesized locally, never sent by Parlay: the request did not produce a
+   * usable answer (connection refused, reset, non-JSON body). It is reported
+   * alongside `timeout` because the loop treats both as "nothing to deliver",
+   * but only this one means the upstream is dead — and a dead upstream fails in
+   * microseconds rather than long-polling, which is what turns the retry into a
+   * hot spin. See guards.ts.
+   */
+  failed?: boolean
 }
 
 export type Prompt = NonNullable<NativeResult["prompts"]>[number]

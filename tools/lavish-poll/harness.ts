@@ -27,10 +27,17 @@ export async function runBridge(opts: {
   parlayUrl?: string
   nativeUrl?: string
   runtime?: string
+  /** Extra env, for shrinking a guard budget so a test need not wait it out. */
+  env?: Record<string, string>
 }): Promise<RunResult> {
   const runtime = opts.runtime ?? mkdtempSync(join(tmpdir(), "lavish-poll-test-"))
   const proc = Bun.spawn(["bun", BRIDGE, "agent-test", opts.parlayUrl ?? DEAD, ...opts.args], {
-    env: { ...process.env, LAVISH_URL: opts.nativeUrl ?? DEAD, PARLAY_RELAY_RUNTIME: runtime },
+    env: {
+      ...process.env,
+      LAVISH_URL: opts.nativeUrl ?? DEAD,
+      PARLAY_RELAY_RUNTIME: runtime,
+      ...opts.env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   })
