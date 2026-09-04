@@ -51,9 +51,9 @@ Four things worth knowing before editing it:
   derives `GOCACHE`/`GOMODCACHE` from `$HOME`, the go job pins those to explicit
   paths *before* the redirect; drop that step and the cache silently evaporates.
 - **Deliberately not in CI**, because they drive live or macOS-only state:
-  `tools/monitor/parlay-monitor.test.sh` (enrols over a relay control socket),
   `tools/relay/deploy/{ensure-up,install}.test.sh` (launchctl/PlistBuddy),
-  `tools/cli/parity/run.sh` (stands up a real go-server fixture),
+  `tools/cli/parity/run.sh` (stands up a real go-server fixture; the parity
+  harness was retired with `packages/cli` in T-08, so this entry is archaeology),
   `examples/bootstrap-sandbox.sh` (same class as the previous entry — it stands
   up a real `packages/server` fixture; it has also not been trial-run to the
   bar stated at the end of this bullet), and
