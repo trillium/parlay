@@ -24,7 +24,7 @@ the claim above.
 ## 1. The pinned Gas City ref
 
 ```
-github.com/gastownhall/gascity @ ac6c9c685
+github.com/gastownhall/gascity @ ac6c9c6853fcfc3b7cde4be1847f2431d3f93865
 git describe: v1.4.0-681-gac6c9c685   (the tag `edge` also points at this commit)
 ```
 
