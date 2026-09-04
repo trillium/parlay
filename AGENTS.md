@@ -32,6 +32,7 @@ Each of these has already caused a real incident on the captain's box.
 - **`tools/cli` sweeps need `CGO_ENABLED=0`** — a default-CGO `go build ./...`/`go test ./...` there dies on missing ICU C++ headers (the beads dependency's embedded-Dolt tree); `bin/parlay` (`go build .`) is unaffected. → [docs/status-lift-topology.md](docs/status-lift-topology.md)
 - **A resettable `sync.Once` and a never-stopped test goroutine are both data-race magnets.** A test-only cache-reset hook needs a real mutex, not `once = sync.Once{}`; a `newHub`-style bridge goroutine outlives its test unless something calls a `Stop()` — wire it via `t.Cleanup`. → [notes](docs/agent-notes/linkrewrite-cache-race-hub-goroutine-leak.md)
 - **`make test-bdd` runs the Gherkin/Cucumber scaffold** (`features/`); there is no `packages/eval-engine` — the real matcher/platform code is `tools/cli/internal/evalengine/`. → [notes](docs/agent-notes/bdd-scaffold-and-eval-engine-path.md)
+- **On modern macOS, `ps eww` hides env vars for sealed platform binaries** (`/bin/sleep`, `/bin/zsh`) even as root — a real fixture for testing an env-matching process scanner needs a self-re-exec'd test binary, not `/bin/sleep &`. → [notes](docs/agent-notes/macos-ps-env-hides-platform-binaries.md)
 
 ## The security boundary
 
