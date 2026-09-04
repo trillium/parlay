@@ -602,6 +602,10 @@ func renderDoctorText(results []CheckResult, fails, warns int) {
 // Doctor ports cmdDoctor, now driven by the check registry (doctor_check.go)
 // so text and --json render the same results.
 func Doctor(argv []string) {
+	if len(argv) > 0 && argv[0] == "deploy" {
+		DoctorDeploy(argv[1:])
+		return
+	}
 	if helpWanted("doctor", argv) {
 		return
 	}

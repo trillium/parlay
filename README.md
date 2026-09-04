@@ -119,6 +119,7 @@ the coded default but loses to the env var).
 ./bin/parlay history 5                     # read it back
 ./bin/parlay doctor                        # self-diagnosis: server reachable? identity set?
 ./bin/parlay doctor --json                 # same checks as one JSON document (schema parlay.doctor/v1), for scripts/LLMs
+./bin/parlay doctor deploy                 # deployment-level sweep: launchd, ports, logs, pins
 ```
 
 `send` normally refuses a target that isn't in the live agent registry; `--force`
