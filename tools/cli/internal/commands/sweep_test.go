@@ -169,8 +169,9 @@ func TestReadSweepKeepMissingFileIsEmpty(t *testing.T) {
 func TestSweepPassFetchesRegistryOnce(t *testing.T) {
 	noRetrySleep(t)
 	home := t.TempDir()
+	agentsRoot := filepath.Join(home, ".parlay", "agents")
 	t.Setenv("HOME", home)
-	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_AGENT_HOME", agentsRoot)
 	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
 
 	subscriberCalls := 0
@@ -185,7 +186,7 @@ func TestSweepPassFetchesRegistryOnce(t *testing.T) {
 	t.Setenv("PARLAY_SERVER", srv.URL)
 
 	for _, id := range []string{"agent-a", "agent-b", "agent-c", "agent-d"} {
-		if err := os.MkdirAll(filepath.Join(home, ".parlay", "agents", id), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(agentsRoot, id), 0o755); err != nil {
 			t.Fatalf("mkdir agent home: %v", err)
 		}
 	}
@@ -194,6 +195,62 @@ func TestSweepPassFetchesRegistryOnce(t *testing.T) {
 
 	if subscriberCalls != 1 {
 		t.Fatalf("sweep pass over 4 candidates hit /api/chat/subscribers %d times, want exactly 1", subscriberCalls)
+	}
+}
+
+// #204: sweepCandidates() (enumeration) and resolveSweepAgent()
+// (classification, via crewStateForAgentEnrolled -> statusFileForAgent ->
+// identity.AgentsRoot()) must walk the SAME root. Before the fix,
+// sweepCandidates() read parlayAgentsDir() (hardcoded $HOME/.parlay/agents)
+// while classification honored $PARLAY_AGENT_HOME — so with a non-default
+// agent home, enumeration found nothing (or the wrong agent's store) while
+// classification read a different one entirely.
+func TestSweepCandidatesAndClassificationShareAgentHomeRoot(t *testing.T) {
+	noRetrySleep(t)
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1") // nothing listening — relay fetch fails closed
+
+	// $HOME points somewhere else entirely, with a decoy agent under the OLD
+	// hardcoded enumeration root ($HOME/.parlay/agents). It must never be
+	// enumerated once PARLAY_AGENT_HOME is set.
+	decoyHome := t.TempDir()
+	t.Setenv("HOME", decoyHome)
+	if err := os.MkdirAll(filepath.Join(decoyHome, ".parlay", "agents", "decoy-agent"), 0o755); err != nil {
+		t.Fatalf("mkdir decoy agent home: %v", err)
+	}
+
+	// The real fixture: PARLAY_AGENT_HOME, holding one agent.
+	fixture := t.TempDir()
+	t.Setenv("PARLAY_AGENT_HOME", fixture)
+	agentDir := filepath.Join(fixture, "fixture-agent")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatalf("mkdir fixture agent home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\ntask: \"robots-204\"\n---\n"), 0o644); err != nil {
+		t.Fatalf("write identity.md: %v", err)
+	}
+	writeStatus(t, fixture, "fixture-agent", "done: PR merged\n")
+
+	ids := sweepCandidates()
+	if len(ids) != 1 || ids[0] != "fixture-agent" {
+		t.Fatalf("sweepCandidates() = %v, want [fixture-agent] enumerated from PARLAY_AGENT_HOME, not the $HOME decoy root", ids)
+	}
+
+	reg, regOK := fetchRegisteredAgents()
+	agent := resolveSweepAgent("fixture-agent", reg, regOK)
+	if agent.NotFound {
+		t.Fatalf("resolveSweepAgent(%q) reported NotFound — classification did not resolve the same PARLAY_AGENT_HOME root enumeration used", "fixture-agent")
+	}
+	if agent.State != "done" {
+		t.Fatalf("resolveSweepAgent state = %q, want %q classified from the PARLAY_AGENT_HOME fixture", agent.State, "done")
+	}
+	if !agent.HasFrontmatter || agent.Task != "robots-204" {
+		t.Fatalf("resolveSweepAgent frontmatter = %+v, want task=robots-204 read from the PARLAY_AGENT_HOME fixture", agent)
+	}
+
+	v := ClassifySweep(agent, SweepOpts{})
+	if v.Action != SweepTeardown {
+		t.Fatalf("ClassifySweep(%+v) = %s (%s), want teardown — enumeration and classification must agree on one root", agent, v.Action, v.Reason)
 	}
 }
 
