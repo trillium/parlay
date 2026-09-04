@@ -47,7 +47,12 @@ func healthyFakeGC(t *testing.T) string {
 func runCheckGC(t *testing.T) (verdict, string) {
 	t.Helper()
 	var v verdict
-	out := captureStdout(t, func() { v = checkGC() })
+	out := captureStdout(t, func() {
+		cr, _ := checkGCCheck(&doctorState{})
+		v = cr.Verdict
+		fails, warns := tallyVerdicts([]CheckResult{cr})
+		renderDoctorText([]CheckResult{cr}, fails, warns)
+	})
 	return v, out
 }
 

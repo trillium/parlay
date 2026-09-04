@@ -2,9 +2,13 @@
 //
 // `health` is the SERVER'S vitals (relay, subscribers, memory, eval-engine) —
 // same view for every caller. `doctor` is THIS AGENT'S self-diagnosis: each
-// check prints PASS/WARN/FAIL with the fix command for anything broken, keeps
-// going past failures (a dead server must not hide a corrupt identity file),
-// and exits 1 if anything FAILed so scripts can gate on it.
+// named check (doctor_check.go's registry) reports PASS/WARN/FAIL/UNKNOWN
+// with the fix for anything broken, keeps going past failures (a dead server
+// must not hide a corrupt identity file), and exits 1 if anything FAILed so
+// scripts can gate on it. The registry is the single source of truth text
+// output renders from — a structured `--json` mode over the same registry
+// lands in a follow-up stacked PR — see
+// https://github.com/trillium/parlay/discussions/256 §1.
 //
 // Ported from packages/cli/src/commands-doctor.ts.
 package commands
@@ -212,18 +216,11 @@ func formatNumber(f float64) string {
 type verdict string
 
 const (
-	vPass verdict = "PASS"
-	vWarn verdict = "WARN"
-	vFail verdict = "FAIL"
+	vPass    verdict = "PASS"
+	vWarn    verdict = "WARN"
+	vFail    verdict = "FAIL"
+	vUnknown verdict = "UNKNOWN"
 )
-
-func report(v verdict, what, fix string) verdict {
-	fmt.Printf("%-5s %s\n", string(v), what)
-	if fix != "" && v != vPass {
-		fmt.Printf("      fix: %s\n", fix)
-	}
-	return v
-}
 
 type doctorPresence struct {
 	Channel  string  `json:"channel"`
@@ -236,59 +233,9 @@ type doctorSubscribersInfo struct {
 	Presence []doctorPresence `json:"presence,omitempty"`
 }
 
-// checkSpawnCreds checks for the ccjuggler-resolve binary on PATH and, if
-// accounts.json exists, verifies each account's token is resolvable.
-func checkSpawnCreds() verdict {
-	// 7a. Binary presence.
-	resolvePath, err := exec.LookPath("ccjuggler-resolve")
-	if err != nil {
-		return report(vFail, "ccjuggler-resolve not on PATH",
-			"ln -sf ~/code/parlay/packages/ccjuggler/src/cli.ts ~/.local/bin/ccjuggler-resolve")
-	}
-	verdicts := []verdict{report(vPass, fmt.Sprintf("ccjuggler-resolve found at %s", resolvePath), "")}
-
-	// 7b. Accounts file.
-	accountsFile := filepath.Join(os.Getenv("HOME"), "code", "juggle", "accounts.json")
-	data, err := os.ReadFile(accountsFile)
-	if err != nil {
-		verdicts = append(verdicts, report(vWarn,
-			fmt.Sprintf("accounts.json not found at %s", accountsFile),
-			"cp <MacBook>:~/code/juggle/accounts.json ~/code/juggle/accounts.json"))
-		return worstVerdict(verdicts)
-	}
-
-	var acctFile struct {
-		Accounts []struct {
-			Name string `json:"name"`
-		} `json:"accounts"`
-	}
-	if err := json.Unmarshal(data, &acctFile); err != nil {
-		verdicts = append(verdicts, report(vWarn,
-			fmt.Sprintf("accounts.json parse error: %s", err), ""))
-		return worstVerdict(verdicts)
-	}
-
-	// 7c. Per-account token resolve.
-	for _, acct := range acctFile.Accounts {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		cmd := exec.CommandContext(ctx, resolvePath, acct.Name)
-		out, err := cmd.Output()
-		cancel()
-		stdout := strings.TrimSpace(string(out))
-		if err == nil && stdout != "" {
-			verdicts = append(verdicts, report(vPass,
-				fmt.Sprintf("ccjuggler-resolve %s — token found", acct.Name), ""))
-		} else {
-			fix := fmt.Sprintf("see ~/.ccjuggler/%s/.oauth-token or run keychain setup", acct.Name)
-			if err != nil {
-				fix = fmt.Sprintf("ccjuggler-resolve %s failed: %s — %s", acct.Name, err, fix)
-			}
-			verdicts = append(verdicts, report(vFail,
-				fmt.Sprintf("ccjuggler-resolve %s — no token", acct.Name), fix))
-		}
-	}
-
-	return worstVerdict(verdicts)
+// doctorAgentID reads PARLAY_AGENT_ID once — everything else keys off it.
+func doctorAgentID() string {
+	return strings.TrimSpace(os.Getenv("PARLAY_AGENT_ID"))
 }
 
 // worstVerdict returns the most severe verdict from a slice (FAIL > WARN > PASS).
@@ -317,170 +264,332 @@ var (
 	doctorHandoffRe     = regexp.MustCompile(`📎 Handoff:\s*(\S+)`)
 )
 
-// Doctor ports cmdDoctor.
-func Doctor(argv []string) {
-	if helpWanted("doctor", argv) {
-		return
+// checkIdentityEnv is check 1: PARLAY_AGENT_ID — everything else keys off it.
+func checkIdentityEnv(st *doctorState) (CheckResult, bool) {
+	if st.agent != "" {
+		return singleLine("identity-env", vPass, fmt.Sprintf("PARLAY_AGENT_ID = %s", st.agent), "",
+			map[string]any{"agent_id": st.agent}), true
 	}
-	if rejectExtraArgs("doctor", argv) {
-		return
+	return singleLine("identity-env", vFail, "PARLAY_AGENT_ID is not set",
+		"run inside a parlay-spawn'd agent, or: export PARLAY_AGENT_ID=<id>", nil), true
+}
+
+// checkServerURLSource is the informational "-- server URL source" line,
+// promoted to a real (always PASS) check per design §1.
+func checkServerURLSource(st *doctorState) (CheckResult, bool) {
+	text := fmt.Sprintf("server URL source: %s (%s)", st.src.Source, st.server)
+	return informationalLine("server-url-source", vPass, text,
+		map[string]any{"source": string(st.src.Source), "server_url": st.server}), true
+}
+
+// checkServerReachable is check 2: is the server up, and which source
+// resolved it (env/config/default) — the first thing to check when a
+// cross-machine connection points the wrong place.
+func checkServerReachable(st *doctorState) (CheckResult, bool) {
+	if st.subs.ok {
+		return singleLine("server-reachable", vPass, fmt.Sprintf("server reachable at %s", st.server), "",
+			map[string]any{"server_url": st.server, "url_source": string(st.src.Source)}), true
 	}
-	var verdicts []verdict
-	agent := strings.TrimSpace(os.Getenv("PARLAY_AGENT_ID"))
-
-	// 1. Identity env — everything else keys off it.
-	if agent != "" {
-		verdicts = append(verdicts, report(vPass, fmt.Sprintf("PARLAY_AGENT_ID = %s", agent), ""))
-	} else {
-		verdicts = append(verdicts, report(vFail, "PARLAY_AGENT_ID is not set",
-			"run inside a parlay-spawn'd agent, or: export PARLAY_AGENT_ID=<id>"))
+	fix := "check Pulse/relay is up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
+	if st.src.Source != config.SourceDefault {
+		fix = fmt.Sprintf("check Pulse/relay is up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
 	}
+	text := fmt.Sprintf("server unreachable at %s — %s", st.server, st.subs.err)
+	return singleLine("server-reachable", vFail, text, fix,
+		map[string]any{"server_url": st.server, "url_source": string(st.src.Source), "error": st.subs.err}), true
+}
 
-	// 2. Server reachable + which source resolved it (env/config/default) — the
-	// first thing to check when a cross-machine connection points the wrong place.
-	src := config.ServerSource()
-	server := src.URL
-	fmt.Printf("--    server URL source: %s (%s)\n", src.Source, server)
-	subs := tryJSON[doctorSubscribersInfo](server, "/api/chat/subscribers")
-	if subs.ok {
-		verdicts = append(verdicts, report(vPass, fmt.Sprintf("server reachable at %s", server), ""))
-	} else {
-		fix := "check Pulse/relay is up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
-		if src.Source != config.SourceDefault {
-			fix = fmt.Sprintf("check Pulse/relay is up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", src.Source)
-		}
-		verdicts = append(verdicts, report(vFail, fmt.Sprintf("server unreachable at %s — %s", server, subs.err), fix))
+// checkAgentRegistered is check 3: does the relay's agent registry know this
+// agent — needs agent + a reachable server.
+func checkAgentRegistered(st *doctorState) (CheckResult, bool) {
+	if st.agent == "" || !st.subs.ok {
+		return CheckResult{}, false
 	}
-
-	// 3. Registration + 4. listening presence (need agent + server).
-	if agent != "" && subs.ok {
-		agentsRes := tryJSON[[]wire.AgentInfo](server, "/api/chat/agents")
-		registered := false
-		if agentsRes.ok {
-			for _, a := range agentsRes.data {
-				if a.ID == agent {
-					registered = true
-					break
-				}
-			}
-		}
-		if registered {
-			verdicts = append(verdicts, report(vPass, fmt.Sprintf("registered as %q on the relay", agent), ""))
-		} else {
-			verdicts = append(verdicts, report(vWarn, fmt.Sprintf("%q not in the agent registry", agent),
-				fmt.Sprintf("first poll auto-registers: parlay monitor --agent %s (via Monitor{})", agent)))
-		}
-
-		var pres *doctorPresence
-		for i := range subs.data.Presence {
-			if subs.data.Presence[i].Channel == agent {
-				pres = &subs.data.Presence[i]
+	agentsRes := tryJSON[[]wire.AgentInfo](st.server, "/api/chat/agents")
+	registered := false
+	if agentsRes.ok {
+		for _, a := range agentsRes.data {
+			if a.ID == st.agent {
+				registered = true
 				break
 			}
 		}
-		if pres != nil && pres.Status == "listening" {
-			lastSeen := "?"
-			if pres.LastSeen != nil {
-				lastSeen = *pres.LastSeen
-			}
-			verdicts = append(verdicts, report(vPass, fmt.Sprintf("monitor listening (last poll %s)", lastSeen), ""))
-		} else {
-			// pres.Status ends up "" (Go's zero value) both when pres is nil
-			// and when the server's presence entry simply has no "status"
-			// key (packages/go-server's subscribersPresenceEntry never sends
-			// one — see registry.go) — the latter unmarshals to an empty
-			// string, not a distinguishable "absent". Treat both as unknown
-			// to match commands-doctor.ts's `pres?.status ?? "unknown"`,
-			// where a missing JS property is `undefined` and `??` catches it.
-			status := "unknown"
-			if pres != nil && pres.Status != "" {
-				status = pres.Status
-			}
-			verdicts = append(verdicts, report(vWarn,
-				fmt.Sprintf("monitor not listening (presence: %s) — captain messages will queue, not stream", status),
-				fmt.Sprintf(`arm it: Monitor({ command: "parlay monitor --agent %s", persistent: true })`, agent)))
+	}
+	if registered {
+		return singleLine("agent-registered", vPass, fmt.Sprintf("registered as %q on the relay", st.agent), "",
+			map[string]any{"agent_id": st.agent}), true
+	}
+	fixText := fmt.Sprintf("first poll auto-registers: parlay monitor --agent %s (via Monitor{})", st.agent)
+	return singleLine("agent-registered", vWarn, fmt.Sprintf("%q not in the agent registry", st.agent), fixText,
+		map[string]any{"agent_id": st.agent},
+		Fix{
+			Summary:    fixText,
+			Argv:       []string{"parlay", "monitor", "--agent", st.agent},
+			Reversible: true,
+			Idempotent: true,
+		}), true
+}
+
+// checkMonitorListening is check 4: is a live poll loop armed for this
+// agent's channel — needs agent + a reachable server, same as check 3.
+func checkMonitorListening(st *doctorState) (CheckResult, bool) {
+	if st.agent == "" || !st.subs.ok {
+		return CheckResult{}, false
+	}
+	var pres *doctorPresence
+	for i := range st.subs.data.Presence {
+		if st.subs.data.Presence[i].Channel == st.agent {
+			pres = &st.subs.data.Presence[i]
+			break
 		}
 	}
+	if pres != nil && pres.Status == "listening" {
+		lastSeen := "?"
+		if pres.LastSeen != nil {
+			lastSeen = *pres.LastSeen
+		}
+		return singleLine("monitor-listening", vPass, fmt.Sprintf("monitor listening (last poll %s)", lastSeen), "",
+			map[string]any{"agent_id": st.agent, "last_seen": lastSeen}), true
+	}
+	// pres.Status ends up "" (Go's zero value) both when pres is nil and when
+	// the server's presence entry simply has no "status" key
+	// (packages/go-server's subscribersPresenceEntry never sends one — see
+	// registry.go) — the latter unmarshals to an empty string, not a
+	// distinguishable "absent". Treat both as unknown to match
+	// commands-doctor.ts's `pres?.status ?? "unknown"`, where a missing JS
+	// property is `undefined` and `??` catches it.
+	status := "unknown"
+	if pres != nil && pres.Status != "" {
+		status = pres.Status
+	}
+	fixText := fmt.Sprintf(`arm it: Monitor({ command: "parlay monitor --agent %s", persistent: true })`, st.agent)
+	return singleLine("monitor-listening", vWarn,
+		fmt.Sprintf("monitor not listening (presence: %s) — captain messages will queue, not stream", status), fixText,
+		map[string]any{"agent_id": st.agent, "presence_status": status}), true
+}
 
-	// 5. Memory surfaces on disk.
-	if agent != "" {
-		dir := filepath.Join(identity.AgentsRoot(), agent)
-		for _, kind := range []string{"identity", "scratchpad"} {
-			file := filepath.Join(dir, kind+".md")
-			data, err := os.ReadFile(file)
-			if err != nil {
-				fix := "first write creates it: scratchpad '<note>'"
-				if kind == "identity" {
-					fix = "seed it: identity --register --name <name> --color <hex>"
-				}
-				verdicts = append(verdicts, report(vWarn, fmt.Sprintf("%s.md missing (%s)", kind, file), fix))
-				continue
-			}
-			txt := string(data)
-			if kind == "identity" {
-				fmMatch := doctorFrontmatterRe.FindStringSubmatch(txt)
-				var id string
-				if fmMatch != nil {
-					if idm := doctorIDRe.FindStringSubmatch(fmMatch[1]); idm != nil {
-						id = idm[1]
-					}
-				}
-				switch {
-				case fmMatch == nil:
-					verdicts = append(verdicts, report(vWarn, "identity.md has no frontmatter launch spec",
-						"re-seed: identity --register (parlay-spawn does this at spawn)"))
-				case id != "" && id != agent:
-					verdicts = append(verdicts, report(vFail,
-						fmt.Sprintf("identity.md frontmatter id %q != PARLAY_AGENT_ID %q", id, agent),
-						"identity --register overwrites the spec with the current id"))
-				default:
-					verdicts = append(verdicts, report(vPass,
-						fmt.Sprintf("identity.md ok (%d bytes, launch spec present)", utf16Len(txt)), ""))
-				}
-				if hm := doctorHandoffRe.FindStringSubmatch(txt); hm != nil {
-					fmt.Printf("      note: handoff pointer → %s (run: handoff show %s)\n", hm[1], hm[1])
-				}
-			} else {
-				verdicts = append(verdicts, report(vPass, fmt.Sprintf("scratchpad.md ok (%d bytes)", utf16Len(txt)), ""))
-			}
+// checkIdentityMD is check 5a: identity.md exists, its frontmatter parses,
+// and its id matches PARLAY_AGENT_ID — needs agent set. The handoff pointer
+// (if present) is appended as a "note" line/evidence regardless of verdict.
+func checkIdentityMD(st *doctorState) (CheckResult, bool) {
+	if st.agent == "" {
+		return CheckResult{}, false
+	}
+	dir := filepath.Join(identity.AgentsRoot(), st.agent)
+	file := filepath.Join(dir, "identity.md")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return singleLine("identity-md", vWarn, fmt.Sprintf("identity.md missing (%s)", file),
+			"seed it: identity --register --name <name> --color <hex>",
+			map[string]any{"path": file}), true
+	}
+	txt := string(data)
+
+	var cr CheckResult
+	fmMatch := doctorFrontmatterRe.FindStringSubmatch(txt)
+	var id string
+	if fmMatch != nil {
+		if idm := doctorIDRe.FindStringSubmatch(fmMatch[1]); idm != nil {
+			id = idm[1]
 		}
 	}
+	switch {
+	case fmMatch == nil:
+		cr = singleLine("identity-md", vWarn, "identity.md has no frontmatter launch spec",
+			"re-seed: identity --register (parlay-spawn does this at spawn)",
+			map[string]any{"path": file, "bytes": utf16Len(txt)})
+	case id != "" && id != st.agent:
+		cr = singleLine("identity-md", vFail,
+			fmt.Sprintf("identity.md frontmatter id %q != PARLAY_AGENT_ID %q", id, st.agent),
+			"identity --register overwrites the spec with the current id",
+			map[string]any{"path": file, "bytes": utf16Len(txt), "frontmatter_id": id})
+	default:
+		cr = singleLine("identity-md", vPass,
+			fmt.Sprintf("identity.md ok (%d bytes, launch spec present)", utf16Len(txt)), "",
+			map[string]any{"path": file, "bytes": utf16Len(txt)})
+	}
 
-	// 6. Eval-engine (informational — agents don't need it to talk).
+	if hm := doctorHandoffRe.FindStringSubmatch(txt); hm != nil {
+		note := fmt.Sprintf("handoff pointer → %s (run: handoff show %s)", hm[1], hm[1])
+		cr.Lines = append(cr.Lines, textLine{kind: "note", text: note})
+		cr.Evidence["handoff"] = hm[1]
+	}
+	return cr, true
+}
+
+// checkScratchpadMD is check 5b: scratchpad.md exists — needs agent set.
+func checkScratchpadMD(st *doctorState) (CheckResult, bool) {
+	if st.agent == "" {
+		return CheckResult{}, false
+	}
+	dir := filepath.Join(identity.AgentsRoot(), st.agent)
+	file := filepath.Join(dir, "scratchpad.md")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return singleLine("scratchpad-md", vWarn, fmt.Sprintf("scratchpad.md missing (%s)", file),
+			"first write creates it: scratchpad '<note>'", map[string]any{"path": file}), true
+	}
+	txt := string(data)
+	return singleLine("scratchpad-md", vPass, fmt.Sprintf("scratchpad.md ok (%d bytes)", utf16Len(txt)), "",
+		map[string]any{"path": file, "bytes": utf16Len(txt)}), true
+}
+
+// checkEvalEngineEnv is check 6: eval-engine reachability — informational
+// (agents don't need it to talk), so a miss is WARN, never FAIL.
+func checkEvalEngineEnv(st *doctorState) (CheckResult, bool) {
 	engine := engineURL()
 	engineRes := tryJSON[engineHealthInfo](engine, "/health")
 	if engineRes.ok && engineRes.data.OK != nil && *engineRes.data.OK {
-		verdicts = append(verdicts, report(vPass, fmt.Sprintf("eval-engine healthy at %s", engine), ""))
-	} else {
-		verdicts = append(verdicts, report(vWarn, fmt.Sprintf("eval-engine unreachable at %s — panel voice commands degraded", engine),
-			evalEngineFix))
+		return singleLine("eval-engine", vPass, fmt.Sprintf("eval-engine healthy at %s", engine), "",
+			map[string]any{"engine_url": engine}), true
+	}
+	return singleLine("eval-engine", vWarn, fmt.Sprintf("eval-engine unreachable at %s — panel voice commands degraded", engine),
+		evalEngineFix, map[string]any{"engine_url": engine}), true
+}
+
+// spawnCredsSummary picks the text of the first line whose label matches the
+// aggregate verdict, so the JSON summary points at the most relevant line
+// rather than a synthesized restatement.
+func spawnCredsSummary(v verdict, lines []textLine) string {
+	for _, l := range lines {
+		if l.label == string(v) {
+			return l.text
+		}
+	}
+	return "spawn credentials ok"
+}
+
+// checkSpawnCreds is check 7: the ccjuggler-resolve binary on PATH and, if
+// accounts.json exists, each account's token resolvability. Multiple text
+// lines, one aggregate CheckResult (verdict = worst line), matching today's
+// worstVerdict() aggregation into a single tally slot.
+func checkSpawnCreds(st *doctorState) (CheckResult, bool) {
+	// 7a. Binary presence.
+	resolvePath, err := exec.LookPath("ccjuggler-resolve")
+	if err != nil {
+		fixText := "ln -sf ~/code/parlay/packages/ccjuggler/src/cli.ts ~/.local/bin/ccjuggler-resolve"
+		return CheckResult{
+			ID:      "spawn-creds",
+			Verdict: vFail,
+			Summary: "ccjuggler-resolve not on PATH",
+			Fixes: []Fix{{
+				Summary:    fixText,
+				Argv:       []string{"ln", "-sf", "~/code/parlay/packages/ccjuggler/src/cli.ts", "~/.local/bin/ccjuggler-resolve"},
+				Reversible: true,
+				Idempotent: true,
+			}},
+			Lines: []textLine{{kind: "verdict", label: string(vFail), text: "ccjuggler-resolve not on PATH", fix: fixText}},
+		}, true
+	}
+	lines := []textLine{{kind: "verdict", label: string(vPass), text: fmt.Sprintf("ccjuggler-resolve found at %s", resolvePath)}}
+	verdicts := []verdict{vPass}
+	evidence := map[string]any{"resolve_path": resolvePath}
+
+	// 7b. Accounts file.
+	accountsFile := filepath.Join(os.Getenv("HOME"), "code", "juggle", "accounts.json")
+	evidence["accounts_file"] = accountsFile
+	data, err := os.ReadFile(accountsFile)
+	if err != nil {
+		fixText := "cp <MacBook>:~/code/juggle/accounts.json ~/code/juggle/accounts.json"
+		lines = append(lines, textLine{kind: "verdict", label: string(vWarn), text: fmt.Sprintf("accounts.json not found at %s", accountsFile), fix: fixText})
+		verdicts = append(verdicts, vWarn)
+		v := worstVerdict(verdicts)
+		return CheckResult{
+			ID: "spawn-creds", Verdict: v, Summary: spawnCredsSummary(v, lines), Evidence: evidence,
+			Fixes: []Fix{{Summary: fixText}}, Lines: lines,
+		}, true
 	}
 
-	// 7. Spawn credentials — ccjuggler-resolve binary + per-account token presence.
-	verdicts = append(verdicts, checkSpawnCreds())
+	var acctFile struct {
+		Accounts []struct {
+			Name string `json:"name"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(data, &acctFile); err != nil {
+		lines = append(lines, textLine{kind: "verdict", label: string(vWarn), text: fmt.Sprintf("accounts.json parse error: %s", err)})
+		verdicts = append(verdicts, vWarn)
+		v := worstVerdict(verdicts)
+		return CheckResult{ID: "spawn-creds", Verdict: v, Summary: spawnCredsSummary(v, lines), Evidence: evidence, Lines: lines}, true
+	}
 
-	// 8. Gas City `gc` runtime prerequisite (doctor_gc.go) — named error with
-	// an install pointer when missing/too-old/broken, never a silent degrade.
-	verdicts = append(verdicts, checkGC())
+	// 7c. Per-account token resolve.
+	var fixes []Fix
+	var accts []map[string]any
+	for _, acct := range acctFile.Accounts {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(ctx, resolvePath, acct.Name)
+		out, err := cmd.Output()
+		cancel()
+		stdout := strings.TrimSpace(string(out))
+		if err == nil && stdout != "" {
+			lines = append(lines, textLine{kind: "verdict", label: string(vPass), text: fmt.Sprintf("ccjuggler-resolve %s — token found", acct.Name)})
+			verdicts = append(verdicts, vPass)
+			accts = append(accts, map[string]any{"name": acct.Name, "ok": true})
+		} else {
+			fixText := fmt.Sprintf("see ~/.ccjuggler/%s/.oauth-token or run keychain setup", acct.Name)
+			if err != nil {
+				fixText = fmt.Sprintf("ccjuggler-resolve %s failed: %s — %s", acct.Name, err, fixText)
+			}
+			lines = append(lines, textLine{kind: "verdict", label: string(vFail), text: fmt.Sprintf("ccjuggler-resolve %s — no token", acct.Name), fix: fixText})
+			verdicts = append(verdicts, vFail)
+			fixes = append(fixes, Fix{Summary: fixText})
+			accts = append(accts, map[string]any{"name": acct.Name, "ok": false})
+		}
+	}
+	evidence["accounts"] = accts
+	v := worstVerdict(verdicts)
+	return CheckResult{ID: "spawn-creds", Verdict: v, Summary: spawnCredsSummary(v, lines), Evidence: evidence, Fixes: fixes, Lines: lines}, true
+}
 
-	// 9. Context rotation advisory (informational). Claude Code exposes no context gauge
-	// to a CLI, so we read CLAUDE_CONTEXT_PERCENTAGE if the harness set it; otherwise the
-	// percentage is unknown here. Either way, point at the rotation verb — the seam the
-	// supervisor-respawn loop (GasCity) hooks into.
+// checkContextRotation is check 9: the informational context-window
+// advisory, promoted to a real check per design §1 — UNKNOWN when the
+// harness hasn't set CLAUDE_CONTEXT_PERCENTAGE (a second legitimate use of
+// UNKNOWN, distinct from a timed-out probe), PASS otherwise.
+func checkContextRotation(st *doctorState) (CheckResult, bool) {
 	ctxRaw := strings.TrimSpace(os.Getenv("CLAUDE_CONTEXT_PERCENTAGE"))
 	ctx := "unknown"
+	v := vUnknown
+	evidence := map[string]any{}
 	if ctxRaw != "" {
 		ctx = strings.TrimSuffix(ctxRaw, "%") + "%"
+		v = vPass
+		evidence["context_percentage"] = ctx
 	}
-	fmt.Printf("--    context: %s — rotate at ~85%% (run: parlay context-check <pct>; on ROTATE, handoff + identity --submit)\n", ctx)
+	text := fmt.Sprintf("context: %s — rotate at ~85%% (run: parlay context-check <pct>; on ROTATE, handoff + identity --submit)", ctx)
+	return informationalLine("context-rotation", v, text, evidence), true
+}
 
-	fails, warns := 0, 0
-	for _, v := range verdicts {
-		switch v {
-		case vFail:
-			fails++
-		case vWarn:
-			warns++
+// doctorChecks is the check registry in today's execution order — the
+// single source of truth both `parlay doctor` and `parlay doctor --json`
+// iterate (design §1).
+var doctorChecks = []Check{
+	{ID: "identity-env", Run: checkIdentityEnv},
+	{ID: "server-url-source", Run: checkServerURLSource},
+	{ID: "server-reachable", Run: checkServerReachable},
+	{ID: "agent-registered", Run: checkAgentRegistered},
+	{ID: "monitor-listening", Run: checkMonitorListening},
+	{ID: "identity-md", Run: checkIdentityMD},
+	{ID: "scratchpad-md", Run: checkScratchpadMD},
+	{ID: "eval-engine", Run: checkEvalEngineEnv},
+	{ID: "spawn-creds", Run: checkSpawnCreds},
+	{ID: "gc-prereq", Run: checkGCCheck},
+	{ID: "context-rotation", Run: checkContextRotation},
+}
+
+// renderDoctorText prints exactly what today's Doctor() printed: each
+// check's lines in registry order, then the same summary/tally line.
+func renderDoctorText(results []CheckResult, fails, warns int) {
+	for _, r := range results {
+		for _, l := range r.Lines {
+			switch l.kind {
+			case "verdict":
+				fmt.Printf("%-5s %s\n", l.label, l.text)
+				if l.fix != "" {
+					fmt.Printf("      fix: %s\n", l.fix)
+				}
+			case "note":
+				fmt.Printf("      note: %s\n", l.text)
+			}
 		}
 	}
 	if fails > 0 {
@@ -488,6 +597,24 @@ func Doctor(argv []string) {
 	} else {
 		fmt.Printf("\nall clear (%d warn)\n", warns)
 	}
+}
+
+// Doctor ports cmdDoctor, now driven by the check registry (doctor_check.go)
+// — text output stays byte-identical to the pre-registry inline-checks
+// version for the same underlying system state; a --json mode sharing the
+// same registry lands in a follow-up stacked PR (design §1).
+func Doctor(argv []string) {
+	if helpWanted("doctor", argv) {
+		return
+	}
+	if rejectExtraArgs("doctor", argv) {
+		return
+	}
+
+	results := runDoctorChecks()
+	fails, warns := tallyVerdicts(results)
+	renderDoctorText(results, fails, warns)
+
 	if fails > 0 {
 		httpc.Exit(config.ExitRuntime)
 	}

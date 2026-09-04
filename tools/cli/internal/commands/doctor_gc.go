@@ -116,42 +116,45 @@ func gcVersionTooOld(version string) bool {
 	return false
 }
 
-// checkGC runs the whole prerequisite check and prints exactly one
-// PASS/WARN/FAIL line (plus fix), returning the verdict for doctor's tally.
-func checkGC() verdict {
+// checkGCCheck runs the whole prerequisite check and returns exactly one
+// PASS/WARN/FAIL CheckResult (id "gc-prereq") — every branch, message, and
+// gcSeverity() call point preserved from checkGC, just building a
+// CheckResult via singleLine instead of printing via report().
+func checkGCCheck(st *doctorState) (CheckResult, bool) {
 	bin, source := gcResolve()
 	if bin == "" {
-		return report(gcSeverity(), "gc not found (PARLAY_GC unset, none on PATH) — Gas City runtime prerequisite", gcInstallFix)
+		return singleLine("gc-prereq", gcSeverity(), "gc not found (PARLAY_GC unset, none on PATH) — Gas City runtime prerequisite", gcInstallFix, nil), true
 	}
 
 	home, err := os.MkdirTemp("", "parlay-doctor-gc-")
 	if err != nil {
-		return report(vWarn, fmt.Sprintf("gc check skipped — cannot create scratch GC_HOME: %v", err), "")
+		return singleLine("gc-prereq", vWarn, fmt.Sprintf("gc check skipped — cannot create scratch GC_HOME: %v", err), "", nil), true
 	}
 	defer os.RemoveAll(home)
 	// Point the supervisor port away from the shared :8372 (contract §9.1).
 	if err := os.WriteFile(filepath.Join(home, "supervisor.toml"), []byte("[supervisor]\nport = 18372\n"), 0o600); err != nil {
-		return report(vWarn, fmt.Sprintf("gc check skipped — cannot seed scratch supervisor.toml: %v", err), "")
+		return singleLine("gc-prereq", vWarn, fmt.Sprintf("gc check skipped — cannot seed scratch supervisor.toml: %v", err), "", nil), true
 	}
 
 	verOut, verErr := gcRun(bin, home, "version")
 	if verErr != nil {
-		return report(gcSeverity(), fmt.Sprintf("gc at %s (%s) does not run — %v", bin, source, verErr), gcInstallFix)
+		return singleLine("gc-prereq", gcSeverity(), fmt.Sprintf("gc at %s (%s) does not run — %v", bin, source, verErr), gcInstallFix, nil), true
 	}
 	version := strings.TrimSpace(string(verOut))
 	if gcVersionTooOld(version) {
-		return report(gcSeverity(), fmt.Sprintf("gc %s at %s (%s) is below the version floor %s", version, bin, source, gcVersionFloor), gcInstallFix)
+		return singleLine("gc-prereq", gcSeverity(), fmt.Sprintf("gc %s at %s (%s) is below the version floor %s", version, bin, source, gcVersionFloor), gcInstallFix, nil), true
 	}
 
 	// Working probe: judge stdout, ignore the (expected) non-zero exit.
 	probeOut, _ := gcRun(bin, home, "config", "show", "--json")
 	var typed map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(string(probeOut))), &typed); err != nil {
-		return report(gcSeverity(), fmt.Sprintf("gc %s at %s (%s) does not speak the typed --json contract (no JSON on stdout)", version, bin, source), gcInstallFix)
+		return singleLine("gc-prereq", gcSeverity(), fmt.Sprintf("gc %s at %s (%s) does not speak the typed --json contract (no JSON on stdout)", version, bin, source), gcInstallFix, nil), true
 	}
 	if _, ok := typed["schema_version"]; !ok {
-		return report(gcSeverity(), fmt.Sprintf("gc %s at %s (%s) does not speak the typed --json contract (no schema_version)", version, bin, source), gcInstallFix)
+		return singleLine("gc-prereq", gcSeverity(), fmt.Sprintf("gc %s at %s (%s) does not speak the typed --json contract (no schema_version)", version, bin, source), gcInstallFix, nil), true
 	}
 
-	return report(vPass, fmt.Sprintf("gc ok at %s (%s, version %s)", bin, source, version), "")
+	return singleLine("gc-prereq", vPass, fmt.Sprintf("gc ok at %s (%s, version %s)", bin, source, version), "",
+		map[string]any{"gc_path": bin, "gc_source": source, "gc_version": version}), true
 }
