@@ -26,9 +26,10 @@
 //     (source-of-truth file, doc path, claimed-value extractor) triples
 //     checked generically; starts with third_party/gascity/PIN vs the shas
 //     docs/gascity-integration-contract.md §1 cites.
-//
-// Design §2's fifth check (registry-vs-runtime reconciliation) is DEFERRED to
-// a separate follow-up — noted in the PR body, not implemented here.
+//  5. registry-reconcile — reconcile the durable agent-registry records
+//     against the live runtime service inventory in both directions,
+//     reporting stale records and unrecorded sessions (the deferred check from
+//     the original deploy PR; see checkReconcile).
 //
 // Strictly read-only reporting: nothing here changes launchd state, restarts
 // a service, or writes anything beyond stdout. There are no heal verbs (that
@@ -49,12 +50,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
 // ── deploy launchd inventory ────────────────────────────────────────────────
@@ -846,6 +849,141 @@ func checkPinConsistency(st *doctorDeployState) (CheckResult, bool) {
 		Evidence: evidence, Lines: lines}, true
 }
 
+// ── registry-vs-runtime reconciliation (check 5) ────────────────────────────
+
+// deployRegistryLookupTimeout bounds the two server reads check 5 makes
+// (registry and live-runtime inventory). A package var so tests shrink it;
+// deliberately bounded like every one-shot server read (robots-gxlb).
+var deployRegistryLookupTimeout = 10 * time.Second
+
+// deployAgentRegistry reads parlay's durable agent-registry records — the set
+// of managed-agent identities parlay tracks (the registry from the
+// managed-agent-lifecycle work). The real read walks GET /api/chat/agents;
+// tests override this seam so the check never touches the network here.
+//
+// An error means the durable records could not be read at all — the check
+// must report UNKNOWN, never a guessed verdict.
+var deployAgentRegistry = func() (map[string]bool, error) {
+	agents, ok := httpc.TryGetJSON[[]wire.AgentInfo]("/api/chat/agents", deployRegistryLookupTimeout)
+	if !ok {
+		return nil, fmt.Errorf("agent registry could not be fetched from the parlay server")
+	}
+	reg := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		if a.ID != "" {
+			reg[a.ID] = true
+		}
+	}
+	return reg, nil
+}
+
+// deployRuntimeInventory reads the live runtime service inventory — the set
+// of runtime sessions currently carrying parlay's identity markers. The real
+// read is the relay's liveness signal (a channel with an open poll listener,
+// or a presence row still inside the listening window), the same definition
+// gc-liveness uses. Tests override this seam.
+//
+// An error means the inventory could not be enumerated — the check reports
+// UNKNOWN, never a guessed verdict.
+var deployRuntimeInventory = func() (map[string]bool, error) {
+	subs, ok := httpc.TryGetJSON[wire.SubscribersInfo]("/api/chat/subscribers", deployRegistryLookupTimeout)
+	if !ok {
+		return nil, fmt.Errorf("runtime service inventory could not be fetched from the parlay server")
+	}
+	live := map[string]bool{}
+	if subs.Poll != nil {
+		for _, c := range subs.Poll.Channels {
+			if c.Channel != "" {
+				live[c.Channel] = true
+			}
+		}
+	}
+	// The Bun server reports liveness through presence rather than an open
+	// poll waiter; a row still inside the listening window counts as live.
+	for _, p := range subs.Presence {
+		if p.Channel != "" && p.Listening {
+			live[p.Channel] = true
+		}
+	}
+	return live, nil
+}
+
+// checkReconcile is check 5 (design §2's deferred item): the registry-vs-
+// runtime reconciliation. It reconciles the durable agent-registry records
+// against the live runtime service inventory in both directions:
+//
+//   - a registry record whose live runtime session is no longer present is a
+//     STALE RECORD — WARN, carrying the record identity;
+//   - a live runtime session with no matching registry record is an
+//     UNRECORDED SERVICE — WARN, carrying the session identity.
+//
+// A clean match in both directions is PASS. An unreadable source side (either
+// the registry or the inventory) is UNKNOWN, never FAIL. Diagnosis only:
+// reaping a stale session is `parlay sweep`'s job, so there are no fixes and
+// the verdict ceiling is WARN — this check never drives a sweep on its own.
+func checkReconcile(st *doctorDeployState) (CheckResult, bool) {
+	registry, rerr := deployAgentRegistry()
+	if rerr != nil {
+		return singleLine("deploy-registry-reconcile", vUnknown,
+			"agent registry unreadable — cannot reconcile records against runtime: "+rerr.Error(),
+			"", map[string]any{"error": rerr.Error()}), true
+	}
+	runtime, terr := deployRuntimeInventory()
+	if terr != nil {
+		return singleLine("deploy-registry-reconcile", vUnknown,
+			"runtime service inventory unreadable — cannot reconcile records against runtime: "+terr.Error(),
+			"", map[string]any{"error": terr.Error()}), true
+	}
+
+	// Direction 1: records whose live runtime session is no longer present.
+	var stale []string
+	for id := range registry {
+		if !runtime[id] {
+			stale = append(stale, id)
+		}
+	}
+	sort.Strings(stale)
+
+	// Direction 2: live runtime sessions carrying parlay markers with no
+	// matching registry record.
+	var unrecorded []string
+	for id := range runtime {
+		if !registry[id] {
+			unrecorded = append(unrecorded, id)
+		}
+	}
+	sort.Strings(unrecorded)
+
+	lines := make([]textLine, 0, len(stale)+len(unrecorded))
+	maxSev := vPass
+	for _, id := range stale {
+		maxSev = worst(maxSev, vWarn)
+		lines = append(lines, textLine{kind: "verdict", label: string(vWarn),
+			text: fmt.Sprintf("stale record: %s — registered agent has no live runtime session (report only; killing stays parlay sweep's job)", id), fix: ""})
+	}
+	for _, id := range unrecorded {
+		maxSev = worst(maxSev, vWarn)
+		lines = append(lines, textLine{kind: "verdict", label: string(vWarn),
+			text: fmt.Sprintf("unrecorded service: %s — live runtime session has no registry record", id), fix: ""})
+	}
+
+	evidence := map[string]any{
+		"registry_count":      len(registry),
+		"runtime_count":       len(runtime),
+		"stale_records":       stale,
+		"unrecorded_services": unrecorded,
+	}
+	summary := ""
+	switch maxSev {
+	case vWarn:
+		summary = fmt.Sprintf("%d stale record(s), %d unrecorded runtime service(s)", len(stale), len(unrecorded))
+	default:
+		summary = "agent registry and runtime service inventory agree in both directions"
+	}
+	return CheckResult{ID: "deploy-registry-reconcile", Verdict: maxSev, Summary: summary,
+		Evidence: evidence, Lines: lines}, true
+}
+
 // doctorDeployState threads the read-once launchd inventory between checks so
 // the health probe can reuse check 1's loaded-process evidence (the same
 // read-once threading doctorState does for the subscribers fetch).
@@ -859,6 +997,7 @@ var doctorDeployChecks = []deployCheck{
 	{ID: "deploy-service-health", Run: checkServiceHealth},
 	{ID: "deploy-log-freshness", Run: checkLogFreshness},
 	{ID: "deploy-pin-consistency", Run: checkPinConsistency},
+	{ID: "deploy-registry-reconcile", Run: checkReconcile},
 }
 
 // runDoctorDeployChecks runs every deploy check in registry order, threading

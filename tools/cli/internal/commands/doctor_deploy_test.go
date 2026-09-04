@@ -321,6 +321,147 @@ func TestDeployPinSourceUnreadableIsUnknown(t *testing.T) {
 	}
 }
 
+// ── registry-vs-runtime reconciliation (check 5) ─────────────────────────────
+
+// setReconcileSeams installs fake registry + runtime inventory readers for
+// the duration of the test, so the check never dials the network here.
+func setReconcileSeams(t *testing.T, reg func() (map[string]bool, error), rt func() (map[string]bool, error)) {
+	t.Helper()
+	oreg, ort := deployAgentRegistry, deployRuntimeInventory
+	deployAgentRegistry = reg
+	deployRuntimeInventory = rt
+	t.Cleanup(func() {
+		deployAgentRegistry = oreg
+		deployRuntimeInventory = ort
+	})
+}
+
+func TestReconcileCleanMatchIsPass(t *testing.T) {
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true, "agent-b": true}, nil },
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true, "agent-b": true}, nil },
+	)
+	st := &doctorDeployState{}
+	cr, ran := checkReconcile(st)
+	if !ran {
+		t.Fatal("check did not run")
+	}
+	if cr.Verdict != vPass {
+		t.Errorf("verdict = %s, want PASS on a clean bidirectional match", cr.Verdict)
+	}
+	if cr.ID != "deploy-registry-reconcile" {
+		t.Errorf("id = %q, want deploy-registry-reconcile", cr.ID)
+	}
+}
+
+func TestReconcileStaleRecordIsWarn(t *testing.T) {
+	// agent-b is registered but has no live runtime session — a stale record.
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true, "agent-b": true}, nil },
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+	)
+	st := &doctorDeployState{}
+	cr, _ := checkReconcile(st)
+	if cr.Verdict != vWarn {
+		t.Errorf("verdict = %s, want WARN for a stale record", cr.Verdict)
+	}
+	if _, ok := cr.Evidence["stale_records"].([]string); !ok {
+		t.Fatalf("evidence lacks a stale_records list: %#v", cr.Evidence)
+	}
+	found := false
+	for _, l := range cr.Lines {
+		if strings.Contains(l.text, "agent-b") && strings.Contains(l.text, "stale record") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no text line names the stale record agent-b: %#v", cr.Lines)
+	}
+	if cr.Verdict == vFail {
+		t.Errorf("stale-record reconciliation must never FAIL; got %s", cr.Verdict)
+	}
+}
+
+func TestReconcileUnrecordedServiceIsWarn(t *testing.T) {
+	// session-ghost is live at runtime but has no registry record — an
+	// unrecorded service.
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true, "session-ghost": true}, nil },
+	)
+	st := &doctorDeployState{}
+	cr, _ := checkReconcile(st)
+	if cr.Verdict != vWarn {
+		t.Errorf("verdict = %s, want WARN for an unrecorded runtime service", cr.Verdict)
+	}
+	found := false
+	for _, l := range cr.Lines {
+		if strings.Contains(l.text, "session-ghost") && strings.Contains(l.text, "unrecorded service") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no text line names the unrecorded service session-ghost: %#v", cr.Lines)
+	}
+	if cr.Verdict == vFail {
+		t.Errorf("unrecorded-service reconciliation must never FAIL; got %s", cr.Verdict)
+	}
+}
+
+func TestReconcileBothDirectionsIsWarn(t *testing.T) {
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true, "agent-b": true}, nil },
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true, "ghost": true}, nil },
+	)
+	st := &doctorDeployState{}
+	cr, _ := checkReconcile(st)
+	if cr.Verdict != vWarn {
+		t.Errorf("verdict = %s, want WARN when both directions disagree", cr.Verdict)
+	}
+	sawStale, sawUnrecorded := false, false
+	for _, l := range cr.Lines {
+		if strings.Contains(l.text, "agent-b") && strings.Contains(l.text, "stale record") {
+			sawStale = true
+		}
+		if strings.Contains(l.text, "ghost") && strings.Contains(l.text, "unrecorded service") {
+			sawUnrecorded = true
+		}
+	}
+	if !sawStale || !sawUnrecorded {
+		t.Errorf("both directions must be reported; stale=%v unrecorded=%v lines=%#v", sawStale, sawUnrecorded, cr.Lines)
+	}
+}
+
+func TestReconcileRegistryUnreadableIsUnknown(t *testing.T) {
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return nil, errors.New("registry server down") },
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+	)
+	st := &doctorDeployState{}
+	cr, _ := checkReconcile(st)
+	if cr.Verdict != vUnknown {
+		t.Errorf("verdict = %s, want UNKNOWN when the registry is unreadable", cr.Verdict)
+	}
+	if cr.Verdict == vFail {
+		t.Errorf("an unreadable registry must never FAIL; got %s", cr.Verdict)
+	}
+}
+
+func TestReconcileRuntimeUnreadableIsUnknown(t *testing.T) {
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+		func() (map[string]bool, error) { return nil, errors.New("subscribers server down") },
+	)
+	st := &doctorDeployState{}
+	cr, _ := checkReconcile(st)
+	if cr.Verdict != vUnknown {
+		t.Errorf("verdict = %s, want UNKNOWN when the runtime inventory is unreadable", cr.Verdict)
+	}
+	if cr.Verdict == vFail {
+		t.Errorf("an unreadable runtime inventory must never FAIL; got %s", cr.Verdict)
+	}
+}
+
 // ── DoctorDeploy entry + exit codes + JSON shape ────────────────────────────
 
 func TestDoctorDeployHelpDoesNotPanic(t *testing.T) {
@@ -345,6 +486,12 @@ func TestDoctorDeployJSONSchemaShape(t *testing.T) {
 			Bin: "/nonexistent/bin/parlay-server", Port: 4242, Loaded: true,
 		}}, nil
 	})
+	// Check 5 must stay hermetic too: an injected clean match so it never
+	// dials the network and contributes no drift to the schema shape.
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+	)
 
 	out := captureStdout(t, func() {
 		withExitTrap(t, func() { DoctorDeploy([]string{"--json"}) })
@@ -377,7 +524,7 @@ func TestDoctorDeployJSONSchemaShape(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"deploy-launchd", "deploy-service-health", "deploy-log-freshness", "deploy-pin-consistency"} {
+	for _, want := range []string{"deploy-launchd", "deploy-service-health", "deploy-log-freshness", "deploy-pin-consistency", "deploy-registry-reconcile"} {
 		if !ids[want] {
 			t.Errorf("--json output missing check %q (have %v)", want, ids)
 		}
@@ -396,6 +543,10 @@ func TestDoctorDeployExitsRuntimeOnFail(t *testing.T) {
 			Bin: "/x/bin/parlay-server", Port: 4242, Loaded: true,
 		}}, nil
 	})
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{}, nil },
+		func() (map[string]bool, error) { return map[string]bool{}, nil },
+	)
 
 	var code int
 	var exited bool
@@ -419,6 +570,10 @@ func TestDoctorDeployDoesNotExitWhenAllClear(t *testing.T) {
 			Bin: bin, Port: 4242, Loaded: true,
 		}}, nil
 	})
+	setReconcileSeams(t,
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+		func() (map[string]bool, error) { return map[string]bool{"agent-a": true}, nil },
+	)
 
 	var exited bool
 	out := captureStdout(t, func() {
