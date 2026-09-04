@@ -75,6 +75,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/identity"
 )
 
 // Sweep actions. Hold is the load-bearing one: it means "this agent is NOT
@@ -218,10 +219,24 @@ func readSweepKeep() map[string]bool {
 	return keep
 }
 
-// sweepCandidates lists every agent store under ~/.parlay/agents, sorted, so
-// a sweep pass is deterministic and reproducible from its own log.
+// sweepCandidates lists every agent store under identity.AgentsRoot()
+// (${PARLAY_AGENT_HOME:-~/.parlay/agents}), sorted, so a sweep pass is
+// deterministic and reproducible from its own log.
+//
+// Deliberately identity.AgentsRoot(), not parlayAgentsDir(): the
+// classification this feeds (resolveSweepAgent -> crewStateForAgentEnrolled
+// -> statusFileForAgent) already resolves through identity.AgentsRoot(), so
+// enumerating from parlayAgentsDir()'s HOME-hardcoded root let one sweep pass
+// enumerate an agent from one root and read its status from another —
+// worst case classifying (and with --apply, tearing down) the HOME-root
+// agent using a different agent's status (#204). teardownAgentLive's actual
+// delete still walks parlayAgentsDir() (guard.go), which is deliberately out
+// of scope here: unifying that root is a wider, safety-critical change
+// (guard/teardown/variant/launch all hardcode it, per CLAUDE.md's
+// four-redirect sandbox rule) — a mismatch there fails closed ("not found")
+// rather than silently teardown-ing the wrong store.
 func sweepCandidates() []string {
-	entries, err := os.ReadDir(parlayAgentsDir())
+	entries, err := os.ReadDir(identity.AgentsRoot())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sweep: cannot read agents dir: %v\n", err)
 		return nil
@@ -241,7 +256,7 @@ func sweepCandidates() []string {
 // once per pass by the caller and shared — per-agent relay probes made a
 // dead-relay sweep cost ~9.5s × fleet size (robots-8783).
 func resolveSweepAgent(id string, reg map[string]bool, regOK bool) SweepAgent {
-	dir := filepath.Join(parlayAgentsDir(), id)
+	dir := filepath.Join(identity.AgentsRoot(), id)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return SweepAgent{ID: id, NotFound: true}
 	}
