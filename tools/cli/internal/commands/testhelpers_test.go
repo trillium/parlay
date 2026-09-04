@@ -5,11 +5,24 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
+
+// gcTeardownTestChildEnv, when "1" in this test binary's own environment,
+// makes TestMain park forever instead of running the suite. gc_teardown_test.go
+// re-execs the compiled test binary itself under this gate to get a trivial,
+// real, long-running process whose environment `ps` can actually see: on
+// modern macOS a platform binary's environment (/bin/sleep, /bin/zsh) is
+// invisible to `ps eww` even as root, which would make the darwin
+// procscan.ByEnv path untestable against the obvious fixture choice for
+// reasons that have nothing to do with gc-teardown's own correctness. See
+// internal/procscan's identical TestMain gate for the fuller rationale — this
+// mirrors it because a package can only have one TestMain.
+const gcTeardownTestChildEnv = "GCTEARDOWN_TEST_CHILD"
 
 // TestMain neutralizes the ambient inputs a per-test HOME redirect does NOT
 // cover. Redirecting HOME already isolates config.StateHome() (and so the
@@ -21,6 +34,10 @@ import (
 // future test in this package by construction rather than each one
 // remembering.
 func TestMain(m *testing.M) {
+	if os.Getenv(gcTeardownTestChildEnv) == "1" {
+		time.Sleep(24 * time.Hour) // parked until the parent test kills us
+		return
+	}
 	_ = os.Setenv(config.SpawnAccountEnv, "")
 	_ = os.Setenv(config.SpawnImplEnv, "")
 	os.Exit(m.Run())
