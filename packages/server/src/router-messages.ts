@@ -77,8 +77,9 @@ export function handleMessagesRequest(req: Request, pathname: string): Response 
         try {
           const body    = await req.json()
           const text    = String(body.text  ?? "").trim()
-          // Try body.agent first; fall back to env var + context.json
-          const agentLookup = loadAgentContext(body.agent ? String(body.agent).trim() : undefined)
+          // Try body.agent first; fall back to the server's agent registry,
+          // on-disk context.json, and the server's own designated id.
+          const agentLookup = loadAgentContext(agents, body.agent ? String(body.agent).trim() : undefined)
           const agentId = agentLookup?.id
           // Optional action payload → message becomes an inline suggestion card
           let action: ChatAction | undefined
