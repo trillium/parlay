@@ -1,8 +1,11 @@
 // `parlay listen` (alias `parlay agent-up`) — one-call agent
 // self-enrollment. Ported from packages/cli/src/listen.ts.
 //
-// Collapses three previously separate agent-driven steps into one atomic,
-// idempotent call:
+// Collapses previously separate agent-driven steps into one atomic, idempotent
+// call:
+//  0. Relay preflight (issue #173): run parlay-monitor.sh --preflight FIRST so a
+//     missing relay is diagnosed before anything is registered — a fresh-clone
+//     user (no relay binary) must never end up registered-but-deaf.
 //  1. add-self-to-agent-registry: POST /api/chat/register-agent (identity +
 //     optional --caps), so the tab/registry entry exists under this id.
 //  2. Announce "listening" on the agent's own channel via /api/chat/reply.
@@ -42,6 +45,13 @@ var ensureSingleListener = reapDuplicateListeners
 // real one writes the operator's ~/.parlay/config.toml, which no unit test
 // may touch.
 var setSpawnAccount = config.SetSpawnAccount
+
+// preflightRelay is the issue-#173 relay-preflight hook, injectable for the
+// same reason as runMonitor/ensureSingleListener/setSpawnAccount: the real one
+// shells out to parlay-monitor.sh --preflight, which runs the live process
+// table and the actual relay — nothing a unit test may run. Tests stub it to
+// simulate a ready (0) or missing (non-zero) relay.
+var preflightRelay = PreflightRelay
 
 type registerAgentResponse struct {
 	OK    bool   `json:"ok,omitempty"`
@@ -110,13 +120,30 @@ func CmdListen(argv []string) {
 		fmt.Fprintf(os.Stderr, "parlay listen: persisted default spawn account: %s\n", acc)
 	}
 
-	// 1. Singleton guard (robots-fgyz). Arming is a takeover, not an addition:
+	// 1. Relay preflight (issue #173). Verify the relay can actually stream this
+	// agent BEFORE registering or announcing anything, so a fresh-clone user (no
+	// relay binary) fails with the diagnosis NOW — not after the agent is
+	// registered-but-deaf. Reuses parlay-monitor.sh's exact setup guards via
+	// --preflight: runtime-dir scoping, ensure-up, the socket guard, and the
+	// cross-server enroll refusal. A non-zero exit means the monitor that would
+	// follow this enroll cannot start — so we Die before enroll, leaving nothing
+	// registered. Runs after --account (which only persists config) but before
+	// the singleton guard signals anything and before any network call.
+	if code := preflightRelay(agent); code != 0 {
+		httpc.Die(fmt.Sprintf(
+			"parlay listen: relay cannot stream '%s' (preflight exit %d) — NOT registered, so nothing is deaf. Fix the relay condition above and re-run.\n"+
+				"parlay listen:   install the relay with tools/relay/deploy/install.sh, or start it manually.",
+			agent, code), config.ExitRuntime)
+		return
+	}
+
+	// 2. Singleton guard (robots-fgyz). Arming is a takeover, not an addition:
 	// any other live poll loop on this agent's channel is ended first, so the
 	// channel keeps exactly one reader. Runs before register/announce so a
 	// duplicate is never left alive by a later failure on the HTTP path.
 	ensureSingleListener(agent)
 
-	// 2. add-self-to-agent-registry — identity + capabilities.
+	// 3. add-self-to-agent-registry — identity + capabilities.
 	fmt.Fprintf(os.Stderr, "parlay listen: registering '%s' …\n", agent)
 	reg := httpc.PostJSON[registerAgentResponse]("/api/chat/register-agent", body)
 	if reg.Error != "" {
@@ -124,7 +151,7 @@ func CmdListen(argv []string) {
 		return
 	}
 
-	// 3. Announce presence on the agent's own channel.
+	// 4. Announce presence on the agent's own channel.
 	reply := httpc.PostJSON[listenReplyResponse]("/api/chat/reply", map[string]string{
 		"text": "listening — monitor armed, ready for messages.", "agent": agent,
 	})
@@ -134,7 +161,7 @@ func CmdListen(argv []string) {
 	}
 	fmt.Fprintf(os.Stderr, "parlay listen: announced — arming monitor …\n")
 
-	// 4. Hand off into the poll loop. Reuses runMonitor verbatim — same
+	// 5. Hand off into the poll loop. Reuses runMonitor verbatim — same
 	// mechanism as `parlay monitor --agent <id>`, so a harness Monitor{}
 	// wakes on CHAT_MSG lines. Never returns on the real path (runRelayMonitor
 	// calls os.Exit / runLegacyPoll loops forever).

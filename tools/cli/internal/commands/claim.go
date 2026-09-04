@@ -49,6 +49,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/help"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
+	"github.com/trillium/parlay/tools/cli/internal/monitor"
 )
 
 // claimTask is a resolved beads/robots ticket — the subset of `<store> show
@@ -65,6 +66,13 @@ type claimTask struct {
 // resolveClaimTask is the task-id → ticket resolver. A package var so tests can
 // stub the store shell-out with a fixture (mirrors monitor.runMonitor's pattern).
 var resolveClaimTask = resolveClaimTaskViaStore
+
+// claimPreflight is the issue-#173 relay-preflight hook, injectable for the
+// same reason as resolveClaimTask: the default shells out to
+// parlay-monitor.sh --preflight, which drives the live relay and process table
+// — nothing a unit test may run. Tests stub it to 0 so enrollment (and the
+// assert on /register) proceeds hermetically.
+var claimPreflight = monitor.PreflightRelay
 
 // Claim implements `parlay claim <task-id>`. See the package-file doc comment.
 func Claim(argv []string) {
@@ -156,6 +164,18 @@ func Claim(argv []string) {
 	// register-agent upsert and the announce are safe to re-run, and the
 	// `parlay listen` the agent arms next re-registers with no side effects.
 	if !res.Bool("--no-register") {
+		// Relay preflight (issue #173): the same probe `parlay listen` runs, done
+		// HERE so a missing relay is diagnosed before the agent is registered. A
+		// fresh-clone user whose box can't run the relay would otherwise get a
+		// registered tab that the arm-command's preflight then refuses — the
+		// registered-but-deaf trap, via claim instead of listen.
+		if code := claimPreflight(agent); code != 0 {
+			httpc.Die(fmt.Sprintf(
+				"parlay claim: relay cannot stream '%s' (preflight exit %d) — NOT registered, so nothing is deaf. Fix the relay condition above and re-run.\n"+
+					"parlay claim:   install the relay with tools/relay/deploy/install.sh, or start it manually.",
+				agent, code), config.ExitRuntime)
+			return
+		}
 		claimEnroll(agent, name, color, task)
 	}
 

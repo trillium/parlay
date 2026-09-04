@@ -53,6 +53,11 @@ func startListenHarness(t *testing.T) *listenHarness {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_SERVER", srv.URL)
 
+	// The relay preflight (issue #173) shells out to the live relay + process
+	// table, which no test may touch. Every listen test gets a stub that
+	// reports the relay ready so register/announce proceed.
+	stubPreflight(t, 0)
+
 	// The real singleton guard reads the live process table and sends real
 	// signals; every listen test gets a recording fake instead.
 	origReap := ensureSingleListener
@@ -76,6 +81,17 @@ func stubMonitor(t *testing.T) *[][]string {
 	runMonitor = func(args []string) { *calls = append(*calls, args) }
 	t.Cleanup(func() { runMonitor = orig })
 	return calls
+}
+
+// stubPreflight swaps preflightRelay for a fake returning a fixed exit code
+// and restores the real one on cleanup. The real preflight shells out to
+// parlay-monitor.sh and touches the live relay/process table, so every listen
+// test gets a stub — the happy path returns 0 (relay ready).
+func stubPreflight(t *testing.T, code int) {
+	t.Helper()
+	orig := preflightRelay
+	preflightRelay = func(agent string) int { return code }
+	t.Cleanup(func() { preflightRelay = orig })
 }
 
 // stubSetSpawnAccount swaps the --account persistence hook for a recording
@@ -383,6 +399,34 @@ func TestCmdListenReapsExistingListenersBeforeRegistering(t *testing.T) {
 	}
 	if h.callsAtReap[0] != 0 {
 		t.Errorf("guard ran after %d HTTP call(s); it must run before register/announce", h.callsAtReap[0])
+	}
+}
+
+func TestCmdListenPreflightFailureDiesBeforeRegistering(t *testing.T) {
+	// issue #173 regression: a missing relay (fresh clone) used to register +
+	// announce, then fail only when the monitor script's ensure-up found no
+	// relay binary — leaving a permanently enrolled, deaf agent. The preflight
+	// now runs FIRST, so a relay that cannot stream must abort listen with NO
+	// register-agent call ever made — nothing is registered, so nothing is deaf.
+	h := startListenHarness(t)
+	monitorCalls := stubMonitor(t)
+	trapExit(t)
+	stubPreflight(t, config.ExitRuntime) // relay cannot start
+
+	code, ok := testsupport.Capture(func() {
+		CmdListen([]string{"--agent", "dogfood-user"})
+	})
+	if !ok {
+		t.Fatal("expected Die when the relay preflight fails")
+	}
+	if code == 0 {
+		t.Errorf("exit code = %d, want a non-zero preflight failure", code)
+	}
+	if len(h.calls) != 0 {
+		t.Errorf("expected NO register/announce before a failing preflight, got %d HTTP calls: %+v", len(h.calls), h.calls)
+	}
+	if len(*monitorCalls) != 0 {
+		t.Errorf("monitor should not be invoked when the preflight fails, got %v", *monitorCalls)
 	}
 }
 

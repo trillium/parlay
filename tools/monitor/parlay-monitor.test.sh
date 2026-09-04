@@ -17,6 +17,10 @@
 #      a silent death before streaming (robots-dcag).
 #   D. lifetime   — a reader never outlives its launcher, a channel keeps exactly
 #      one reader, and --reap cleans up what already leaked (robots-3pvi).
+#   E. preflight  — --preflight verifies the relay is up and correctly scoped
+#      WITHOUT registering or announcing, so `parlay listen`/`parlay claim` can
+#      probe BEFORE enrollment and never leave a fresh-clone user registered-but-
+#      deaf (issue #173).
 #
 # No production state is touched: every case runs against a stub relay on a unix
 # socket in its own temp dir, with $HOME and the runtime dir redirected there.
@@ -578,6 +582,79 @@ esac
 
 kill -9 "${d3_live_launcher}" 2>/dev/null
 for p in $(readers_of_spool "${d3_runtime}/healthy.chan"); do kill -9 "${p}" 2>/dev/null; done
+
+# ══ E. --preflight verifies the relay WITHOUT registering (issue #173) ═════════
+# The defect: `parlay listen` posted register-agent + the "listening" announce,
+# then shelled out to parlay-monitor.sh whose ensure-up failed ("no relay
+# binary") — a fresh-clone user ends up with a permanently enrolled, deaf agent.
+# --preflight is the probe `parlay listen`/`parlay claim` run BEFORE that
+# enrollment: it must walk the same guards as a real stream — runtime-dir
+# scoping, ensure-up, the socket guard, the cross-server refusal — then exit
+# cleanly at the pre-enroll point. It may never touch /register or create a spool.
+echo "E. --preflight verifies the relay without registering (issue #173)"
+
+# run_preflight <runtime> <sock> <server> <agent> → CODE/ERR globals, no stream.
+# Preflight exits (it never reaches `tail`), so unlike run_monitor this can be a
+# plain foreground command — no backgrounded process, no bounded wait.
+run_preflight() {
+  local runtime="$1" sock="$2" server="$3" agent="$4"
+  local out="${ROOT}/pre.out" err="${ROOT}/pre.err"
+  : >"${out}"; : >"${err}"
+  (
+    export HOME="${ROOT}/home"
+    export PARLAY_RELAY_RUNTIME="${runtime}"
+    export PARLAY_RELAY_SOCK="${sock}"
+    [ -n "${server}" ] && export PARLAY_SERVER="${server}"
+    exec "${MONITOR}" --preflight --agent "${agent}"
+  ) >"${out}" 2>"${err}"
+  CODE=$?
+  ERR="$(cat "${err}")"
+  note "exit=${CODE} stderr: ${ERR}"
+}
+
+# E1. A relay that serves the requested server verifies ready: exit 0, and — the
+#     point — /register is never reached and no spool is created.
+e1_runtime="${ROOT}/e1-relay"
+start_stub "${e1_runtime}" "http://127.0.0.1:45004" || exit 1
+run_preflight "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45004" "preflight-agent"
+[ "${CODE}" = 0 ] \
+  && ok "preflight exits 0 when the relay serves the requested server" \
+  || bad "preflight should exit 0 on a matching relay" "exit=${CODE}: ${ERR}"
+if grep -q "/register" "${STUB_LOG}"; then
+  bad "preflight sent /register (verify-only)"
+else
+  ok "preflight sent no /register (verify-only)"
+fi
+case "${ERR}" in
+  *"preflight OK"*) ok "preflight announces readiness on stderr" ;;
+  *) bad "preflight did not announce readiness" "${ERR}" ;;
+esac
+if [ -e "${STUB_RUNTIME}/preflight-agent.chan" ]; then
+  bad "preflight created a spool"
+else
+  ok "preflight created no spool"
+fi
+
+# E2. A relay bound to a DIFFERENT upstream server fails the cross-server guard
+#     (robots-buu8) — and, being --preflight, reports that nothing was registered
+#     rather than the registered-but-deaf consequence.
+e2_runtime="${ROOT}/e2-relay"
+start_stub "${e2_runtime}" "http://127.0.0.1:45006" || exit 1
+run_preflight "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45005" "preflight-agent"
+if [ "${CODE}" != 0 ]; then
+  ok "preflight exits non-zero on a cross-server relay"
+else
+  bad "preflight should refuse a cross-server relay" "exit=${CODE}"
+fi
+if grep -q "/register" "${STUB_LOG}"; then
+  bad "preflight sent /register on the cross-server refusal"
+else
+  ok "preflight never sent /register on the cross-server refusal"
+fi
+case "${ERR}" in
+  *"never registered"*) ok "preflight diagnosis says nothing was registered (not deaf)" ;;
+  *) bad "preflight did not say nothing was registered" "${ERR}" ;;
+esac
 
 echo
 echo "parlay-monitor.test: ${pass} passed, ${fail} failed"
