@@ -5,9 +5,8 @@
 // named check (doctor_check.go's registry) reports PASS/WARN/FAIL/UNKNOWN
 // with the fix for anything broken, keeps going past failures (a dead server
 // must not hide a corrupt identity file), and exits 1 if anything FAILed so
-// scripts can gate on it. The registry is the single source of truth text
-// output renders from — a structured `--json` mode over the same registry
-// lands in a follow-up stacked PR — see
+// scripts can gate on it. `--json` renders the same registry as a single
+// structured document (schema "parlay.doctor/v1") instead of text — see
 // https://github.com/trillium/parlay/discussions/256 §1.
 //
 // Ported from packages/cli/src/commands-doctor.ts.
@@ -28,6 +27,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
@@ -600,20 +600,26 @@ func renderDoctorText(results []CheckResult, fails, warns int) {
 }
 
 // Doctor ports cmdDoctor, now driven by the check registry (doctor_check.go)
-// — text output stays byte-identical to the pre-registry inline-checks
-// version for the same underlying system state; a --json mode sharing the
-// same registry lands in a follow-up stacked PR (design §1).
+// so text and --json render the same results.
 func Doctor(argv []string) {
 	if helpWanted("doctor", argv) {
 		return
 	}
-	if rejectExtraArgs("doctor", argv) {
+	r := args.Parse("doctor", argv, []string{"--json"}, nil)
+	if len(r.Positionals) > 0 {
+		httpc.Die(fmt.Sprintf("parlay doctor: unexpected argument %q — this verb takes only --json", r.Positionals[0]), config.ExitUsage)
 		return
 	}
+	asJSON := r.Bool("--json")
 
 	results := runDoctorChecks()
 	fails, warns := tallyVerdicts(results)
-	renderDoctorText(results, fails, warns)
+
+	if asJSON {
+		renderDoctorJSON(results, fails, warns)
+	} else {
+		renderDoctorText(results, fails, warns)
+	}
 
 	if fails > 0 {
 		httpc.Exit(config.ExitRuntime)
