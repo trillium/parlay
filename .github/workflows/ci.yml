@@ -361,7 +361,7 @@ jobs:
         working-directory: packages/webview
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
-  # Only the ten harnesses that were verified to be genuinely side-effect-free
+  # Only the eleven harnesses that were verified to be genuinely side-effect-free
   # are here. Seven were trial-run against a redirected HOME with the live
   # ~/.parlay/agents and ~/.treehouse snapshotted before and after, producing
   # zero drift in either. tools/hooks/hooks.test.sh meets the same bar: it
@@ -376,10 +376,16 @@ jobs:
   # Everything else that runs as a shell script is excluded because it drives
   # live or macOS-only state or stands up a real server fixture — AGENTS.md
   # owns that "not covered" list and its per-entry reasons; do not re-enumerate
-  # it here. The three nearest misses, for context:
+  # it here. tools/monitor/parlay-monitor.test.sh used to be in that category
+  # ("enrols over a relay control socket and spawns relay processes; touches
+  # live relay state") but that reason was stale: it has always run against a
+  # STUB relay on a unix socket in its own mktemp dir with HOME + the relay
+  # runtime dir redirected there, so it never touches a live relay or the
+  # fleet. Its former B/C/D flakiness in a developer env was traced to PATH
+  # shims (a `sleep` guard) leaking into test subprocesses, and the harness now
+  # self-isolates against that — so it is hermetic and runs below. The remaining
+  # exclusions, for context:
   #
-  #   tools/monitor/parlay-monitor.test.sh   — enrols over a relay control
-  #       socket and spawns relay processes; touches live relay state.
   #   tools/relay/deploy/ensure-up.test.sh   — drives launchctl (macOS launchd).
   #   tools/relay/deploy/install.test.sh     — launchctl + plist/PlistBuddy.
   #
@@ -392,6 +398,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # tools/monitor/parlay-monitor.test.sh drives a Bun stub relay over a unix
+      # socket, so this job now needs bun (the only non-system tool of the
+      # eleven). Pin the same version as the bun job so a toolchain mismatch can
+      # never make the stub relay behave differently from every other test.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.11'
 
       # HOME is set on this step rather than on the job, so that the checkout
       # above still runs with a real home directory.
@@ -412,8 +426,10 @@ jobs:
           # missing binary before any harness runs.
           # ubuntu-latest is a rolling image, so assert the dependencies rather
           # than assume them — a missing one must fail loudly, not silently pass.
+          # bun comes from the setup-bun step above (the monitor stub relay runs
+          # on it), not from the base image.
           missing=""
-          for b in git jq curl python3; do
+          for b in git jq curl python3 bun; do
             command -v "$b" >/dev/null 2>&1 || missing="$missing $b"
           done
           if [ -n "$missing" ]; then
@@ -438,7 +454,8 @@ jobs:
                    bin/parlay-treehouse-guard.test.sh \
                    bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
-                   tools/hooks/hooks.test.sh; do
+                   tools/hooks/hooks.test.sh \
+                   tools/monitor/parlay-monitor.test.sh; do
             echo "::group::$t"
             bash "$t"
             echo "::endgroup::"

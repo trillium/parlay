@@ -26,6 +26,57 @@
 # Usage: tools/monitor/parlay-monitor.test.sh [-v]
 set -uo pipefail
 
+# ── Self-isolation: run under a scrubbed, allowlisted environment ────────────
+# A developer's PATH can shadow real system binaries with interactive shims —
+# the 5 B/C/D failures reproduced 2026-09-04 were all caused by a `sleep` guard
+# on PATH (`~/.local/bin`, `~/bin`, etc.) that prints "sleep is not a wait
+# strategy" and exits 1. Because the harness runs the monitor and its readers as
+# test subprocesses that inherit that PATH, every `sleep 0.1` polling loop in
+# sections B/C/D aborted and the suite went red for reasons unrelated to the
+# product. This preamble makes the harness self-isolate in-place: it puts the
+# system dirs (whose `sleep`/`curl`/`tail` are the real binaries) FIRST on PATH
+# so a user shim can never win, and neutralizes the shell-startup hook env vars
+# that could otherwise inject functions into every subprocess. Fixed once here
+# instead of patching the 5 tests — there is exactly one entry point to harden.
+__parlay_sys="/usr/bin:/bin:/usr/sbin:/sbin"
+# System dirs are prepended unconditionally: PATH lookup is ORDER-sensitive, so
+# the real system `sleep`/`curl`/`tail` (e.g. /bin/sleep on macOS) must sit
+# ahead of any user shim directory regardless of whether those dirs also appear
+# later in the inherited PATH. Duplicate entries are harmless.
+export PATH="${__parlay_sys}:${PATH}"
+unset __parlay_sys
+# Neutralize shell-startup hook carriers and any exported-function leak from an
+# interactive parent so test subprocesses start fresh instead of inheriting them.
+unset BASH_ENV ENV PROMPT_COMMAND 2>/dev/null || true
+# Scrub the ambient PARLAY_* knobs the harness manages itself. A caller that
+# sets PARLAY_SERVER (CI points it at a closed port so stray spawns fail fast)
+# or pins a relay runtime would otherwise leak into every test subprocess and
+# skew the server-scoping and "unset PARLAY_SERVER" cases. Each run_monitor/
+# launch_monitor subshell re-exports exactly the knob it needs, so clearing the
+# inherited values here is the only way to make the scenarios deterministic.
+unset PARLAY_SERVER PARLAY_RELAY_RUNTIME PARLAY_RELAY_SOCK \
+      PARLAY_RELAY_PROBE_TIMEOUT PARLAY_MONITOR_WATCH_INTERVAL \
+      PARLAY_MONITOR_NO_ORPHAN_EXIT PARLAY_NOTIFY_BUDGET 2>/dev/null || true
+# `${!BASH_FUNC_*}` names every exported-function env entry (e.g.
+# `BASH_FUNC_sleep%%`); unsetting them drops a function a developer shell might
+# have `export -f`'d. Works in the harness's bash 3.2 (macOS) and 5.x (CI).
+for __parlay_f in ${!BASH_FUNC_*}; do
+  unset "$__parlay_f" 2>/dev/null || true
+done
+
+# ── Regression self-check: the isolation must hold in test SUBPROCESSES, not
+# just this shell. Spawn a fresh shell (the way section B/C/D spawn children)
+# and assert a poisoned `sleep` no longer survives. On the unhardened baseline
+# this resolves `sleep` to the user shim and `sleep 0` fails, so the harness
+# refuses to run a red test instead of printing 5 opaque B/C/D failures.
+if ! /bin/sh -c 'sleep 0' 2>/dev/null; then
+  echo "parlay-monitor.test: self-isolation failed — bare 'sleep' is intercepted" >&2
+  echo "   on PATH (resolves to $(command -v sleep 2>/dev/null || echo '<none>'))." >&2
+  echo "   A sleep-guard hook would abort the polling loops in sections B/C/D." >&2
+  echo "   Refusing to run a red test; fix the PATH shim or the preamble pin." >&2
+  exit 2
+fi
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MONITOR="${HERE}/parlay-monitor.sh"
 LIB="${HERE}/../relay/deploy/lib.sh"
@@ -499,8 +550,19 @@ if wait_for_reader "${d2_spool}"; then
   else
     bad "two readers now share one channel — every directive lands twice" "first=${d2_first}"
   fi
-  sleep 0.5
-  d2_count="$(readers_of_spool "${d2_spool}" | wc -l | tr -d ' ')"
+  # The old reader dying (waited for above) and the new monitor's reader being
+  # born are separated by the eviction's own sleep + tail spawn, so a blind
+  # fixed timer here counts too early under load and reads 0 readers. Poll until
+  # the channel stabilizes at exactly one — this makes the assertion
+  # deterministic without weakening it: a failed eviction leaves two readers and
+  # never reaches one, and a spawn failure leaves zero, both still reported.
+  d2_count="0"
+  for _ in $(seq 1 100); do
+    d2_count="$(readers_of_spool "${d2_spool}" | wc -l | tr -d ' ')"
+    [ "${d2_count}" = 1 ] && break
+    [ "${d2_count}" != 0 ] && break   # >1 is a real eviction failure; stop early
+    /bin/sleep 0.1
+  done
   [ "${d2_count}" = 1 ] \
     && ok "exactly one reader remains on the channel" \
     || bad "channel has ${d2_count} readers after eviction" "expected 1"
