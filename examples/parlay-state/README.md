@@ -104,15 +104,16 @@ The reply-attribution record, and the one place in this directory where whose
 (`packages/server/src/agent-context.ts`, called on every `POST /api/chat/reply`)
 resolves `~/.parlay/agents/<id>/context.json` against the **server process's**
 own `$HOME` — not `PARLAY_AGENT_HOME`, and not the home of the CLI that sent the
-message. The id in the request is what routes; this file is one of two
-independent ways the server will accept it, the other being a non-empty
-`PARLAY_AGENT_ID` in the server's own environment — any value, it is a presence
-check rather than a match, so a server started in some other agent's shell still
-routes `say --agent helm` to helm. With neither, the reply still succeeds and the
-CLI still prints `said as helm`, but the server drops the channel and files the
-message on the global thread. The fix that does not depend on the server's
-environment is to run it under the same `$HOME` as the agent store — not to copy
-this directory into a live `~/.parlay`.
+message. The id in the request is what routes; the server accepts it three ways,
+in order: this context file; the server's own agent registry (`parlay-agents.json`
+/ the in-memory map, written by `parlay listen` / `POST
+/api/chat/register-agent`); and the server's designated `PARLAY_AGENT_ID` — but
+only for that exact id, not as a blanket "any value accepts any id" presence
+check. With none of these the reply still succeeds and the CLI still prints
+`said as helm`, but the server drops the channel and files the message on the
+global thread. The fixes that do not depend on the server's environment are to
+run it under the same `$HOME` as the agent store, or to enroll the agent over
+HTTP — not to copy this directory into a live `~/.parlay`.
 
 ### `status`
 

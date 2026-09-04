@@ -59,12 +59,20 @@ exception worth knowing before you split the two apart. The reply path resolves
 agent context from the **server process's** own `$HOME`, at
 `~/.parlay/agents/<id>/context.json` (`loadAgentContext` in
 `packages/server/src/agent-context.ts`, called on every `POST /api/chat/reply`).
-The id in the request is what routes; that file is one of two independent ways
-the server will accept it, the other being a non-empty `PARLAY_AGENT_ID` in the
-server's own environment — any value, it is a presence check rather than a match.
-With neither, the id is dropped: `parlay say --agent helm` still succeeds and
-still prints `said as helm`, but the message is filed on the global thread
-instead of the helm tab. Give the server the same `$HOME` as the agent store and
+The id in the request is what routes; the server accepts it via three mechanisms,
+checked in order:
+1. an on-disk `~/.parlay/agents/<id>/context.json` under the server's own `$HOME`;
+2. the server's own agent registry (`parlay-agents.json` / the in-memory agent
+   map) — an id that `parlay listen` or `POST /api/chat/register-agent` enrolled
+   is routable, even with no context file and a different `$HOME`;
+3. the server's own designated id — `PARLAY_AGENT_ID` — but only when the
+   request actually matches that exact id, never as a blanket "any value accepts
+   every id" presence check.
+
+With none of these, the id is dropped: `parlay say --agent helm` still succeeds
+and still prints `said as helm`, but the message is filed on the global thread
+instead of the helm tab. Give the server the same `$HOME` as the agent store
+(so mechanism 1 applies) or enroll the agent over HTTP (mechanism 2), and
 `--agent` routing works regardless of what else is in its environment.
 
 Each directory has its own README with a per-file table:
@@ -159,14 +167,15 @@ That is the exception from [The layout](#the-layout) showing up in this recipe:
 `"$PARLAY_EXAMPLE/bin/parlay" say --agent helm "…"` posts to
 `/api/chat/reply`, and the server looks for `~/.parlay/agents/helm/context.json`
 under *your* home rather than the scratch copy. Whether it accepts the id anyway
-depends on the shell you opened for step 4: with a non-empty `PARLAY_AGENT_ID`
-exported — which every parlay-spawned agent's shell has, at whatever value — the
-server accepts it and routes to the helm tab; with that variable unset or empty,
-and no helm store under its home, it drops the channel and files the message on
-the global thread, printing `said as helm` either way. To exercise `--agent`
-routing without leaning on an ambient variable, give the server the same home as
-the agent store by adding `HOME="$PARLAY_EXAMPLE"` to step 4's command, which is
-the redirection `bootstrap-sandbox.sh` does. Copying the example into your real `~/.parlay` is
+depends on the agent registry and the server env: an id enrolled over HTTP (a
+`parlay listen --agent helm`) is routable via the server's own
+`parlay-agents.json`, and the server's designated `PARLAY_AGENT_ID` routes only
+for that exact id. With no context file, no registry row, and no matching env id,
+it drops the channel and files the message on the global thread, printing
+`said as helm` either way. To exercise `--agent` routing without leaning on those,
+give the server the same home as the agent store by adding `HOME="$PARLAY_EXAMPLE"`
+to step 4's command, which is the redirection `bootstrap-sandbox.sh` does.
+Copying the example into your real `~/.parlay` is
 not the remedy; that path overwrites live state and has its own section below.
 `send` is unaffected — `/api/chat/send` takes its channel from the flag.
 

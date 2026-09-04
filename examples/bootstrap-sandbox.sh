@@ -275,11 +275,13 @@ cat <<'EOF'
 
   UNCOVERED  The --agent reply path. Every message above is sent with `parlay
              send` (POST /api/chat/send); POST /api/chat/reply is never called,
-             and no check here says anything about it. That path resolves
-             ~/.parlay/agents/<id>/context.json from the SERVER process's own
-             $HOME, so `parlay say --agent <id>` can succeed while the message
-             is filed on the global thread instead of that agent's tab. See
-             "The layout" in examples/README.md.
+             and no check here says anything about it. That path routes an id
+             via context.json under the SERVER process's own $HOME, the server's
+             agent registry (parlay-agents.json — what `parlay listen` /
+             register-agent writes), or the server's exact PARLAY_AGENT_ID, so
+             `parlay say --agent <id>` can succeed while the message is filed on
+             the global thread instead of that agent's tab. See "The layout" in
+             examples/README.md.
 
   EXPOSED    While the server above was up it was bound to every interface with
              no authentication, so anyone who could reach that port could read
