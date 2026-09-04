@@ -248,8 +248,15 @@ if grep -q "/register" "${STUB_LOG}"; then
 else
   ok "never sent /register to the production relay"
 fi
+# Whichever guard fires first must name the relay's actual bound server. When the
+# runtime dir is pinned to a wrong-server relay, ensure-up exits 3 (robots-93xu)
+# before the monitor's own pre-enroll guard runs — and ensure-up already prints
+# the mismatch, naming the bound server, so accept either form. The monitor must
+# NOT add its generic "install the relay" advice on top (a relay is what is wrong).
 case "${ERR}" in
-  *"refusing to enroll"*"${DEFAULT_SERVER}"*) ok "error names the relay's actual bound server" ;;
+  *"refusing to enroll"*"bound to ${DEFAULT_SERVER}"*) ok "error names the relay's actual bound server (monitor guard)" ;;
+  *"bound to ${DEFAULT_SERVER}"*) ok "error names the relay's actual bound server (ensure-up exit 3)" ;;
+  *"install the relay"*) bad "error was masked by generic 'install the relay' advice" "${ERR}" ;;
   *) bad "error message does not explain the mismatch" "${ERR}" ;;
 esac
 [ ! -e "${STUB_RUNTIME}/verify-agent.chan" ] \

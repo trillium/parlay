@@ -342,7 +342,18 @@ fi
 # respects PARLAY_RELAY_RUNTIME/SOCK via the same lib resolution, and honors
 # PARLAY_SERVER for the started relay.
 if [ -x "$ENSURE_UP" ]; then
-  if ! "$ENSURE_UP"; then
+  ENSURE_RC=0
+  "$ENSURE_UP" || ENSURE_RC=$?
+  if [ "$ENSURE_RC" = 3 ]; then
+    # A relay IS up, bound to the wrong upstream server (robots-93xu). ensure-up
+    # already printed the mismatch and the repair; adding "install the relay"
+    # below would contradict it — a relay is precisely what is already running.
+    # The monitor's own pre-enroll guard is never reached: an exit-3 relay is a
+    # hard, fully-diagnosed mismatch between what the caller wants and what the
+    # relay serves, so nothing more to say. Exit 1 (not 3) because from the
+    # monitor's contract a relay is not up-and-bound and enrollment cannot happen.
+    exit 1
+  elif [ "$ENSURE_RC" != 0 ]; then
     echo "parlay-monitor: relay is not up and could not be started" >&2
     echo "parlay-monitor: install the relay (tools/relay/deploy/install.sh) or start it manually" >&2
     exit 1
