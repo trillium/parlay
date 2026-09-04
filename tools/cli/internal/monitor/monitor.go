@@ -308,6 +308,46 @@ func runScript(scriptArgs []string) {
 	httpc.Exit(0)
 }
 
+// PreflightRelay verifies the relay can actually stream <agent> BEFORE any
+// enrollment, WITHOUT registering or announcing (issue #173).
+//
+// A fresh-clone user (no relay binary resolvable under $HOME) previously hit
+// this order: `parlay listen` posted register-agent + the "listening" announce,
+// then shelled out to parlay-monitor.sh whose ensure-up failed with "no relay
+// binary found" — leaving a permanently enrolled, deaf agent. PreflightRelay
+// runs parlay-monitor.sh --preflight, which walks the SAME setup guards a real
+// stream does — runtime-dir scoping (robots-buu8), ensure-up, the socket guard,
+// and the cross-server enroll refusal — but exits cleanly at the pre-enroll
+// point instead of registering. Call it BEFORE posting register-agent so a
+// missing relay is diagnosed before the agent is ever listed.
+//
+// It returns the child's exit code (0 = relay ready to stream <agent>). Exit
+// status is the only thing the caller needs — the script writes the diagnosis
+// to stderr itself. stdio is inherited so the diagnosis lands on the same
+// stream as the rest of the listen/claim narration.
+//
+// Exported (not just internal to listen) because `parlay claim` shares the same
+// register-first trap and must run the identical probe before claimEnroll.
+func PreflightRelay(agent string) int {
+	script, err := scriptPath()
+	if err != nil {
+		httpc.Die(fmt.Sprintf("parlay preflight: %v", err), config.ExitRuntime)
+		return config.ExitRuntime
+	}
+	cmd := exec.Command("bash", script, "--preflight", "--agent", agent)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = append(os.Environ(), "PARLAY_SERVER="+config.ServerURL())
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		httpc.Die(fmt.Sprintf("parlay preflight: failed to run %s — %v", script, err), config.ExitRuntime)
+		return config.ExitRuntime
+	}
+	return 0
+}
+
 // scriptPath resolves tools/monitor/parlay-monitor.sh. It prefers the name
 // on PATH — same precedence as identity.ContextResetCmd, so a future ticket
 // that installs it into bin/ is picked up automatically and tests can stub

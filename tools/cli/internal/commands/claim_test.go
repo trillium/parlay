@@ -29,6 +29,17 @@ func stubTask(t *testing.T, task claimTask, err error) {
 	t.Cleanup(func() { resolveClaimTask = orig })
 }
 
+// stubClaimPreflight swaps claimPreflight for a fake returning a fixed exit
+// code and restores the real one on cleanup. The real preflight shells out to
+// parlay-monitor.sh and touches the live relay/process table; every claim test
+// gets the happy-path stub so register/announce proceed hermetically.
+func stubClaimPreflight(t *testing.T, code int) {
+	t.Helper()
+	orig := claimPreflight
+	claimPreflight = func(agent string) int { return code }
+	t.Cleanup(func() { claimPreflight = orig })
+}
+
 type claimServer struct {
 	mu    sync.Mutex
 	calls []struct {
@@ -64,6 +75,9 @@ func newClaimServer(t *testing.T) *claimServer {
 	// scratchpad into the brief reads/writes there, never the live ~/.parlay.
 	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
 	t.Setenv("PARLAY_SERVER", srv.URL)
+	// The relay preflight (issue #173) shells out to the live relay, which no
+	// unit test may touch. Every claim test reports the relay ready.
+	stubClaimPreflight(t, 0)
 	return cs
 }
 
@@ -171,6 +185,29 @@ func TestClaimEnrollsAndPrintsBrief(t *testing.T) {
 	// recovery is now folded in, leaving one startup command (arm the monitor).
 	if strings.Contains(out, "recover your memory") {
 		t.Errorf("brief should no longer tell the agent to run identity + scratchpad; got:\n%s", out)
+	}
+}
+
+func TestClaimPreflightFailureDiesBeforeRegistering(t *testing.T) {
+	// issue #173 regression, via claim: a missing relay used to register +
+	// announce a claim, and only the arm-command's later `parlay listen` would
+	// discover the relay cannot stream — leaving a registered-but-deaf agent.
+	// The preflight now runs BEFORE claimEnroll, so a relay that cannot stream
+	// must abort the claim with NO register-agent call ever made.
+	cs := newClaimServer(t)
+	stubTask(t, claimTask{ID: "task-173", Title: "Ship it"}, nil)
+	t.Setenv("PARLAY_AGENT_ID", "dogfood-user")
+	stubClaimPreflight(t, config.ExitRuntime) // relay cannot start
+
+	code, exited := withExitTrap(t, func() { Claim([]string{"task-173"}) })
+	if !exited {
+		t.Fatal("expected Die when the relay preflight fails")
+	}
+	if len(cs.calls) != 0 {
+		t.Errorf("expected NO register/announce before a failing preflight, got %d HTTP calls: %+v", len(cs.calls), cs.calls)
+	}
+	if code == 0 {
+		t.Errorf("exit code = %d, want a non-zero preflight failure", code)
 	}
 }
 

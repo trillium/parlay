@@ -48,11 +48,19 @@ set -euo pipefail
 usage() {
   cat >&2 <<EOF
 Usage: parlay-monitor.sh --agent <id> [--notify-safe]
+       parlay-monitor.sh --agent <id> --preflight
        parlay-monitor.sh --reap [--apply]
 
 Registers <id> with the parlay relay, then streams its channel's CHAT_MSG lines
 to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
 
+  --preflight     verify the relay is reachable and correctly scoped for <id>
+                  WITHOUT registering or streaming, then exit 0. This is the
+                  pre-enrollment probe 'parlay listen'/'parlay claim' run so a
+                  fresh-clone user (no relay binary) fails BEFORE the agent is
+                  registered-but-deaf (issue #173). Reuses the exact same setup
+                  guards as a real stream — runtime-dir scoping (robots-buu8),
+                  ensure-up, the socket guard, and the cross-server refusal.
   --notify-safe   cap each emitted line to a notification-safe budget and append
                   a "fetch full text" pointer (harness Monitor tools truncate long
                   lines mid-word; this makes that recoverable). Default off.
@@ -78,12 +86,14 @@ AGENT=""
 NOTIFY_SAFE=0
 REAP=0
 APPLY=0
+PREFLIGHT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent) AGENT="${2:-}"; shift 2 ;;
     --notify-safe) NOTIFY_SAFE=1; shift ;;
     --reap) REAP=1; shift ;;
     --apply) APPLY=1; shift ;;
+    --preflight) PREFLIGHT=1; shift ;;
     -h|--help) usage ;;
     *) echo "parlay-monitor: unknown arg: $1" >&2; usage ;;
   esac
@@ -259,11 +269,24 @@ fi
 # -e` deaths land here too, which is exactly the case that went unreported.
 # Cleared once `tail` is reached, since a stream ending later is a different
 # (and visible) event.
+#
+# In --preflight mode NOTHING has been registered yet — this is the probe
+# `parlay listen` runs BEFORE enrolling (issue #173) — so a setup failure there
+# is a clean pre-enrollment diagnosis, not the registered-but-deaf trap. The
+# consequence line is worded accordingly.
 STREAMING=0
 on_setup_exit() {
   local code=$?
   [ "$code" = 0 ] && return 0
   [ "$STREAMING" = 1 ] && return 0
+  if [ "$PREFLIGHT" = 1 ]; then
+    echo "parlay-monitor: FAILED during setup (exit $code) — '$AGENT' not reachable by the relay." >&2
+    echo "parlay-monitor:   This ran BEFORE enrollment (--preflight): '$AGENT' was" >&2
+    echo "parlay-monitor:   never registered, so it is not left deaf. Fix the relay" >&2
+    echo "parlay-monitor:   condition above and re-run — nothing was registered." >&2
+    echo "parlay-monitor:   (install the relay: tools/relay/deploy/install.sh)" >&2
+    return 0
+  fi
   echo "parlay-monitor: FAILED during setup (exit $code) — '$AGENT' is NOT streaming." >&2
   echo "parlay-monitor:   If 'parlay listen' already registered it, this agent is now" >&2
   echo "parlay-monitor:   registered-but-deaf: visible in the panel, receiving nothing." >&2
@@ -433,6 +456,20 @@ if [ -n "${PARLAY_SERVER:-}" ]; then
     echo "parlay-monitor:   runtime dir whose relay serves $WANT_SERVER." >&2
     exit 1
   fi
+fi
+
+# ── Preflight: exit before enroll, the relay is verified ready (issue #173) ──
+# At this point every guard above has passed: the runtime dir is scoped, the
+# relay is up (or was started by ensure-up), the socket exists, and a
+# cross-server enroll is impossible. `parlay listen`/`parlay claim` run this as a
+# PRE-enrollment probe so a fresh-clone user (no relay binary, so ensure-up
+# failed above) exits with the diagnosis BEFORE the agent is registered — the
+# register+announce then discovering a dead relay is the registered-but-deaf
+# trap this closes. The stream path falls straight through to enroll below; only
+# --preflight stops here.
+if [ "$PREFLIGHT" = 1 ]; then
+  echo "parlay-monitor: preflight OK — relay is up and correctly scoped for '$AGENT'" >&2
+  exit 0
 fi
 
 # 1. Enroll: POST /register {"agent":"<id>"} to the relay over its Unix socket.
