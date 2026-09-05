@@ -14,13 +14,19 @@ import "strings"
 // identityAccount is the identity's `account:` frontmatter value, and it is
 // the ONLY source consulted here. The config-level default
 // (PARLAY_SPAWN_DEFAULT_ACCOUNT env, else config.toml's spawnAccount) is
-// deliberately NOT synthesized into the argv: the spawn pipeline
-// (internal/spawn) resolves that default itself on every launch, so an
-// unpinned agent still lands on it, and it stays a live default rather than
-// something a relaunch freezes. Since task-0d6mi the pipeline also PERSISTS
-// an explicitly-passed --account back into identity.md, so a synthesized
-// default would pin itself on the first relaunch and outrank every later
-// `parlay defaults set account` rotation.
+// deliberately NOT synthesized into the argv, because since task-0d6mi the Go
+// pipeline PERSISTS an explicitly-passed --account back into identity.md: a
+// synthesized default would pin itself on the first relaunch and outrank
+// every later `parlay defaults set account` rotation.
+//
+// Resolving that default is the DOWNSTREAM spawner's job, and the two callers
+// named above reach different ones. `parlay launch` goes in-process
+// (commands/launch.go's runSpawnArgv -> spawn.RunSpawn), where
+// resolveDefaultAccount reads env-then-config. `identity --launch`
+// (lifecycle.go) execs whatever `parlay-spawn` PATH resolves to, so the
+// default is entirely that binary's responsibility there. Either way an
+// unpinned agent still lands on the default, and it stays live rather than
+// being frozen into the identity.
 //
 // The identity's own account must still be passed explicitly: the pipeline
 // knows nothing of identity frontmatter, so without this a relaunched agent

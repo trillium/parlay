@@ -98,15 +98,15 @@ type SpawnOptions struct {
 	// account` rotation still reaches agents that never named one.
 	AccountFromFlag bool
 	Ephemeral       bool
-	Claim        string
-	Profile      string
-	Kind         string
-	KindFromFlag bool
-	PII          piiState
-	BeadID       string
-	Force        bool
-	Pane         string
-	Workspace    string
+	Claim           string
+	Profile         string
+	Kind            string
+	KindFromFlag    bool
+	PII             piiState
+	BeadID          string
+	Force           bool
+	Pane            string
+	Workspace       string
 	// Launcher is the explicit --subprocess/--gascity override. Empty means
 	// "resolve from PARLAY_SPAWN_LAUNCHER / config.toml [spawn] launcher",
 	// mirroring bash's $LAUNCHER starting from config and only reassigned by
