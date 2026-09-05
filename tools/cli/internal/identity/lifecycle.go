@@ -115,19 +115,23 @@ func HandleLaunch(kind MemKind, opts args.Result) bool {
 	}
 	spawnArgs = append(spawnArgs, SpawnAccountArgs(fm.Get("account"))...)
 	if opts.Bool("--dry") {
-		fmt.Printf("identity --launch %s [dry] → parlay-spawn %s\n", id, quoteArgs(spawnArgs))
+		fmt.Printf("identity --launch %s [dry] → parlay spawn %s\n", id, quoteArgs(spawnArgs))
 		return true
 	}
-	if err := runInherit("parlay-spawn", spawnArgs...); err != nil {
-		httpc.Die(fmt.Sprintf("identity --launch: parlay-spawn failed — %v", err), config.ExitRuntime)
+	// `parlay spawn`, not the retired standalone parlay-spawn script: the
+	// spawn pipeline lives in this binary now (task-42qot), so re-exec self
+	// rather than hunting a second binary on PATH.
+	cmd := launchSpawnCommand()
+	if err := runInherit(cmd[0], append(append([]string{}, cmd[1:]...), spawnArgs...)...); err != nil {
+		httpc.Die(fmt.Sprintf("identity --launch: parlay spawn failed — %v", err), config.ExitRuntime)
 	}
 	return true
 }
 
 // HandleMintEphemeral implements identity --mint-ephemeral: generate a hash
 // identity, seed its store (context.json + identity.md with ephemeral: true
-// after cwd), print a TAB-separated "<id>\t<name>\t<color>" line for
-// parlay-spawn (name contains a space).
+// after cwd), print a TAB-separated "<id>\t<name>\t<color>" line for the
+// spawn pipeline to read back (name contains a space).
 func HandleMintEphemeral(kind MemKind, opts args.Result) bool {
 	if !opts.Bool("--mint-ephemeral") {
 		return false
@@ -372,4 +376,21 @@ func HandleReapEphemeral(kind MemKind, opts args.Result) bool {
 	}
 	fmt.Printf("identity --reap-ephemeral: %d ephemeral%s %s (older than %sh)\n", reaped, plural, verb, strconv.FormatFloat(hours, 'g', -1, 64))
 	return true
+}
+
+// launchSpawnCommand is the argv prefix `identity --launch` executes to
+// reach the spawn pipeline. A package var so tests can point it at a
+// recording stub: the default re-execs THIS binary, and under `go test`
+// that binary is the test suite itself.
+var launchSpawnCommand = func() []string { return []string{parlaySelf(), "spawn"} }
+
+// parlaySelf resolves this binary's own path so a subcommand can be re-exec'd
+// without depending on `parlay` resolving on PATH. Falls back to the bare
+// name when the executable path is unavailable (a platform quirk, not an
+// error worth failing a launch over).
+func parlaySelf() string {
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		return exe
+	}
+	return "parlay"
 }

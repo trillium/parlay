@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
 // agentsServer stands up a one-route httptest server answering
@@ -309,56 +307,6 @@ func TestLaunchUnknownTargetDies(t *testing.T) {
 	}
 }
 
-// The PARLAY_SPAWN_IMPL=bash escape hatch demands bin/parlay-spawn on PATH;
-// with none there it must die loudly, never silently no-op (robots-v81b's
-// lesson: a swallowed exec failure is indistinguishable from a launch).
-func TestLaunchBashHatchDiesWhenNoSpawnerOnPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "")
-	t.Setenv(config.SpawnImplEnv, "bash")
-	t.Setenv("PATH", "")
-
-	var code int
-	var exited bool
-	out := captureStderr(t, func() { code, exited = withExitTrap(t, func() { Launch([]string{"agent-a"}) }) })
-	if !exited || code != 1 {
-		t.Errorf("Launch([agent-a]) exited=%v code=%d, want exit 1", exited, code)
-	}
-	if !strings.Contains(out, "demands parlay-spawn, but it is not on PATH") {
-		t.Errorf("Launch([agent-a]) stderr = %q, want a loud unresolvable-spawner error", out)
-	}
-}
-
-// The bash escape hatch execs bin/parlay-spawn with the positional contract
-// and NO `spawn` subcommand word.
-func TestLaunchBashHatchExecsParlaySpawnWithoutSubcommand(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "opus")
-	t.Setenv(config.SpawnImplEnv, "bash")
-	bin := t.TempDir()
-	record := fakeSpawner(t, bin, "parlay-spawn", 0)
-	t.Setenv("PATH", bin)
-
-	out := captureStderr(t, func() { Launch([]string{"agent-a"}) })
-	if !strings.Contains(out, "spawning agent-a via parlay spawn") {
-		t.Errorf("Launch([agent-a]) stderr = %q, want the spawning announcement", out)
-	}
-	got, err := os.ReadFile(record)
-	if err != nil {
-		t.Fatalf("spawner was never executed: %v", err)
-	}
-	argv := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
-	if argv[0] != "agent-a" || argv[1] != "Agent A" || argv[2] != "#ff0000" {
-		t.Errorf("spawner argv = %q, want id/name/color first", argv)
-	}
-	joined := strings.Join(argv, "\x00")
-	if !strings.Contains(joined, "--cwd\x00/work/a") || !strings.Contains(joined, "--model\x00opus") {
-		t.Errorf("spawner argv = %q, want --cwd and --model passed through", argv)
-	}
-}
-
 // task-42qot: with no override, launch runs the spawn pipeline IN-PROCESS —
 // no spawner binary on PATH at all, and the request still reaches the
 // pipeline's model gate (the fixture pins no model, so the gate refuses
@@ -382,87 +330,78 @@ func TestLaunchDefaultRunsSpawnPipelineInProcess(t *testing.T) {
 	}
 }
 
-// A spawner that runs but fails is also a failed launch — and since
-// task-42qot the spawner's real exit code propagates verbatim instead of
-// being flattened to 1.
-func TestLaunchPropagatesSpawnerExitCode(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "")
-	t.Setenv(config.SpawnImplEnv, "bash")
-	bin := t.TempDir()
-	fakeSpawner(t, bin, "parlay-spawn", 7)
-	t.Setenv("PATH", bin)
-
-	var code int
-	var exited bool
-	captureStderr(t, func() { code, exited = withExitTrap(t, func() { Launch([]string{"agent-a"}) }) })
-	if !exited || code != 7 {
-		t.Errorf("Launch([agent-a]) exited=%v code=%d, want the spawner's exit 7 propagated", exited, code)
-	}
+// withRecordedSpawn swaps the in-process spawn dispatch for a recorder, so a
+// test can assert the argv `parlay launch` builds without the spawn pipeline
+// actually running. Before the bash spawner was deleted these assertions
+// watched an exec'd stub from outside the process; the argv under test is
+// the same one either way.
+func withRecordedSpawn(t *testing.T) *[]string {
+	t.Helper()
+	var seen []string
+	orig := runSpawnArgv
+	runSpawnArgv = func(argv []string) { seen = argv }
+	t.Cleanup(func() { runSpawnArgv = orig })
+	return &seen
 }
 
-// spawnerArgv reads back the argv a fakeSpawner recorded, NUL-joined so a
-// flag and its value can be asserted as an adjacent pair (a "--account" and
-// an "acc2" that are both present but not adjacent is a different command).
-func spawnerArgv(t *testing.T, record string) string {
+// spawnArgvString NUL-joins the recorded argv so a flag and its value can be
+// asserted as an adjacent pair (an "--account" and an "acc2" that are both
+// present but not adjacent is a different command).
+func spawnArgvString(t *testing.T, seen *[]string) string {
 	t.Helper()
-	got, err := os.ReadFile(record)
-	if err != nil {
-		t.Fatalf("spawner was never executed: %v", err)
+	if len(*seen) == 0 {
+		t.Fatal("the spawn pipeline was never dispatched")
 	}
-	return strings.Join(strings.Split(strings.TrimRight(string(got), "\n"), "\n"), "\x00")
+	return strings.Join(*seen, "\x00")
 }
 
 // launchAccountFixture isolates HOME and the state home the config.toml is
 // read from, so no real ~/.parlay/config.toml can decide the outcome. The
 // ambient PARLAY_SPAWN_DEFAULT_ACCOUNT is already cleared package-wide by
 // TestMain.
-func launchAccountFixture(t *testing.T, identityAccount, configTOML string) string {
+func launchAccountFixture(t *testing.T, identityAccount, configTOML string) *[]string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PARLAY_STATE_HOME", filepath.Join(home, ".parlay"))
-	// These tests observe the spawner argv from outside the process, so they
-	// route through the bash escape hatch's exec seam — argv construction is
-	// identical for the in-process default.
-	t.Setenv(config.SpawnImplEnv, "bash")
 	writeIdentityFixtureWithAccount(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "", identityAccount)
 	if configTOML != "" {
 		if err := os.WriteFile(filepath.Join(home, ".parlay", "config.toml"), []byte(configTOML), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	bin := t.TempDir()
-	record := fakeSpawner(t, bin, "parlay-spawn", 0)
-	t.Setenv("PATH", bin)
-	return record
+	return withRecordedSpawn(t)
 }
 
 // An identity that pins an `account:` must respawn under that ccjuggler
 // account — otherwise the agent comes back on whatever token the launching
 // shell happened to hold.
 func TestLaunchPassesIdentityAccountToSpawner(t *testing.T) {
-	record := launchAccountFixture(t, "acc2", "")
+	seen := launchAccountFixture(t, "acc2", "")
 
 	captureStderr(t, func() { Launch([]string{"agent-a"}) })
-	if argv := spawnerArgv(t, record); !strings.Contains(argv, "--account\x00acc2") {
+	if argv := spawnArgvString(t, seen); !strings.Contains(argv, "--account\x00acc2") {
 		t.Errorf("spawner argv = %q, want --account acc2 passed through", argv)
 	}
 }
 
 // An identity with no `account:` of its own must relaunch with NO --account,
-// even when a config-level default exists. Launch no longer synthesizes that
-// default into the argv (SpawnAccountArgs): the spawner resolves it itself,
-// so the agent still lands on it, while the default stays live rather than
-// being pinned. Synthesizing it would make the spawn pipeline read it as an
-// explicit --account and persist it into identity.md (task-0d6mi's writer),
-// outranking every later `parlay defaults set account` rotation.
+// even when a config-level default exists (task-0d6mi, #274). Launch no
+// longer synthesizes that default into the argv (SpawnAccountArgs): the
+// spawn pipeline resolves it itself, so the agent still lands on it, while
+// the default stays live rather than being pinned. Synthesizing it would
+// make the pipeline read it as an explicit --account and persist it into
+// identity.md, outranking every later `parlay defaults set account`.
+//
+// Merge note: #274 wrote this assertion against the exec'd-spawner seam
+// (`spawnerArgv`). That seam is gone with bin/parlay-spawn, so the same
+// assertion runs through the in-process recorder instead — the argv under
+// test is identical either way.
 func TestLaunchOmitsConfiguredDefaultForUnpinnedIdentity(t *testing.T) {
-	record := launchAccountFixture(t, "", "spawnAccount = \"acc2\"\n")
+	seen := launchAccountFixture(t, "", "spawnAccount = \"acc2\"\n")
 
 	captureStderr(t, func() { Launch([]string{"agent-a"}) })
-	argv := spawnerArgv(t, record)
+	argv := spawnArgvString(t, seen)
 	if strings.Contains(argv, "--account") {
 		t.Errorf("spawner argv = %q, want no --account — the config default must stay live, not be pinned", argv)
 	}
@@ -472,10 +411,10 @@ func TestLaunchOmitsConfiguredDefaultForUnpinnedIdentity(t *testing.T) {
 }
 
 func TestLaunchIdentityAccountBeatsConfiguredDefault(t *testing.T) {
-	record := launchAccountFixture(t, "identity-acc", "spawnAccount = \"config-acc\"\n")
+	seen := launchAccountFixture(t, "identity-acc", "spawnAccount = \"config-acc\"\n")
 
 	captureStderr(t, func() { Launch([]string{"agent-a"}) })
-	argv := spawnerArgv(t, record)
+	argv := spawnArgvString(t, seen)
 	if !strings.Contains(argv, "--account\x00identity-acc") {
 		t.Errorf("spawner argv = %q, want the identity's account to win", argv)
 	}
@@ -488,10 +427,10 @@ func TestLaunchIdentityAccountBeatsConfiguredDefault(t *testing.T) {
 // spawner rejects `--account` with no value (exit 2), so passing an empty
 // string would turn "no account configured" into a hard launch failure.
 func TestLaunchOmitsAccountWhenNoneConfigured(t *testing.T) {
-	record := launchAccountFixture(t, "", "")
+	seen := launchAccountFixture(t, "", "")
 
 	captureStderr(t, func() { Launch([]string{"agent-a"}) })
-	if argv := spawnerArgv(t, record); strings.Contains(argv, "--account") {
+	if argv := spawnArgvString(t, seen); strings.Contains(argv, "--account") {
 		t.Errorf("spawner argv = %q, want no --account flag at all", argv)
 	}
 }

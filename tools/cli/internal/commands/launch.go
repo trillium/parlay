@@ -1,6 +1,6 @@
 // `parlay launch` — discover known agents and respawn one via the same
 // in-process spawn pipeline `parlay spawn` runs (see spawn.go's
-// runSpawnArgv, including its PARLAY_SPAWN_IMPL=bash escape hatch).
+// runSpawnArgv).
 //
 // Ported from packages/cli/src/commands/launch.ts (ticket B9).
 package commands
@@ -87,8 +87,7 @@ func spawnUsageHint() string {
 
 // Launch ports cmdLaunch: with no positional arg, lists known agents
 // cross-referenced against which are currently live; with an agent id arg,
-// spawns that agent via the resolved spawner binary (external — exec'd, not
-// reimplemented).
+// spawns that agent through the in-process spawn pipeline.
 func Launch(argv []string) {
 	if helpWanted("launch", argv) {
 		return
@@ -141,9 +140,8 @@ func Launch(argv []string) {
 		}
 		spawnArgs = append(spawnArgs, identity.SpawnAccountArgs(target.account)...)
 		fmt.Fprintf(os.Stderr, "parlay launch: spawning %s via parlay spawn …\n", target.id)
-		// Same dispatch as `parlay spawn` itself (spawn.go): in-process by
-		// default, bin/parlay-spawn when the PARLAY_SPAWN_IMPL=bash escape
-		// hatch is set. A failed spawn propagates its real exit code via
+		// Same dispatch as `parlay spawn` itself (spawn.go), in-process.
+		// A failed spawn propagates its real exit code via
 		// httpc.Exit rather than reporting success (robots-v81b's lesson:
 		// a swallowed spawn failure is indistinguishable from a launch).
 		runSpawnArgv(spawnArgs)

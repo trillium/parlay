@@ -1,9 +1,12 @@
 package spawn
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -126,18 +129,38 @@ func TestSpawnOneHerdrLaunchCommandMatchesBashFlagsAndEnv(t *testing.T) {
 	if len(m.agentStartOpts) != 1 {
 		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
 	}
-	cmd := strings.Join(m.agentStartOpts[0].Cmd, " ")
-	for _, flag := range []string{"--dangerously-skip-permissions", "--strict-mcp-config", "--fallback-model sonnet", `--settings '{"enabledPlugins":{"posthog@claude-plugins-official":false}}'`} {
-		if !strings.Contains(cmd, flag) {
-			t.Errorf("herdr launch command missing bash-parity flag %q; got: %s", flag, cmd)
-		}
+	start := m.agentStartOpts[0]
+	if start.Kind != "claude" {
+		t.Errorf("expected --kind claude, got %q", start.Kind)
+	}
+	// Argv entries, not a shell string: `herdr agent start` types its
+	// trailing args after the kind's canonical executable, so the --settings
+	// JSON is one unquoted argument here and herdr does the encoding.
+	wantArgs := []string{
+		"--dangerously-skip-permissions",
+		"--strict-mcp-config",
+		"--fallback-model", "sonnet",
+		"--settings", `{"enabledPlugins":{"posthog@claude-plugins-official":false}}`,
+		"--model", "sonnet",
+	}
+	if strings.Join(start.Cmd, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Errorf("herdr launch argv mismatch\n got: %q\nwant: %q", start.Cmd, wantArgs)
+	}
+
+	// The charter never rides in the argv — herdr refuses to encode its
+	// newlines — so it must arrive through `agent prompt` instead.
+	if len(m.agentPromptCalls) != 1 {
+		t.Fatalf("expected exactly one AgentPrompt call, got %d", len(m.agentPromptCalls))
+	}
+	if !strings.Contains(m.agentPromptCalls[0], "nope-flags-z1") {
+		t.Errorf("expected the startup charter to be submitted via agent prompt; got %q", m.agentPromptCalls[0])
 	}
 
 	if len(m.tabCreateCalls) != 1 {
 		t.Fatalf("expected exactly one TabCreate call, got %d", len(m.tabCreateCalls))
 	}
 	env := strings.Join(m.tabCreateCalls[0].Env, "\n")
-	for _, want := range []string{"PARLAY_SPAWN_MODEL=sonnet", "PARLAY_AGENT_MODEL=sonnet"} {
+	for _, want := range []string{"PARLAY_SPAWN_MODEL=sonnet", "PARLAY_AGENT_MODEL=sonnet", "PARLAY_AGENT_NAME=Nope Flags", "PARLAY_AGENT_COLOR=#c084fc"} {
 		if !strings.Contains(env, want) {
 			t.Errorf("herdr tab env missing bash-parity var %q; got: %s", want, env)
 		}
@@ -252,5 +275,333 @@ func TestSpawnNonBusyStartFailureDoesNotRetry(t *testing.T) {
 	}
 	if len(m.agentStartCalls) != 1 {
 		t.Errorf("a non-busy failure must not be retried; got %d AgentStart calls", len(m.agentStartCalls))
+	}
+}
+
+// task-20czm: the herdr launcher must honor --kind. Before this, it passed a
+// hardcoded `--kind claude` plus a fixed `bash -lc 'exec claude …'` script,
+// so `--kind opencode` silently launched claude. The kind now reaches
+// `herdr agent start --kind` (which resolves the canonical executable), and
+// only claude gets the YOLO flag set — every other harness takes an explicit
+// --model and relies on its own config (bin/parlay-spawn:1650-1654).
+func TestSpawnOneHerdrHonorsNonClaudeKind(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-kind-z1", "Nope Kind", "#c084fc", "brief", "--kind", "opencode", "--model", "opencode-go/deepseek-v4-pro"})
+	if rc != 0 {
+		t.Fatalf("expected success, got rc=%d", rc)
+	}
+	if len(m.agentStartOpts) != 1 {
+		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
+	}
+	start := m.agentStartOpts[0]
+	if start.Kind != "opencode" {
+		t.Errorf("expected --kind opencode to reach herdr, got %q", start.Kind)
+	}
+	want := []string{"--model", "opencode-go/deepseek-v4-pro"}
+	if strings.Join(start.Cmd, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("a non-claude kind takes only --model, never claude's YOLO flags\n got: %q\nwant: %q", start.Cmd, want)
+	}
+	if len(m.agentPromptCalls) != 1 {
+		t.Errorf("expected the charter to be delivered via agent prompt, got %d calls", len(m.agentPromptCalls))
+	}
+}
+
+// A charter that never lands leaves a started agent with no task, so a failed
+// `agent prompt` rolls the tab back exactly like a failed start
+// (bin/parlay-spawn:1685-1689).
+func TestSpawnOneHerdrPromptFailureRollsBack(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-prompt-z1", "Nope Prompt", "#c084fc", "brief", "--model", "sonnet"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when the charter cannot be delivered")
+	}
+	if !strings.Contains(out, "herdr agent prompt failed to deliver the charter") {
+		t.Errorf("expected the charter-delivery failure to be reported; got:\n%s", out)
+	}
+}
+
+// CodeRabbit, PR #273: `--kind ""` survives the flag parser, which only
+// checks that a value follows the flag. Unnormalized it reached the
+// subprocess launcher as `exec ”` (a command that cannot run) and the gc
+// launcher as a refusal reading `got ""`. spawnOne normalizes once, before
+// any launcher branch reads it.
+func TestSpawnOneNormalizesEmptyKindBeforeLauncherDispatch(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-emptykind-z1", "Empty Kind", "#c084fc", "brief", "--model", "sonnet", "--kind", ""})
+	if rc != 0 {
+		t.Fatalf("expected success, got rc=%d", rc)
+	}
+	if len(m.agentStartOpts) != 1 {
+		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
+	}
+	if got := m.agentStartOpts[0].Kind; got != "claude" {
+		t.Errorf("an empty --kind must normalize to claude before dispatch, got %q", got)
+	}
+	// The claude flag set must come with it — a normalized kind that skipped
+	// the YOLO flags would stall on the first permission prompt.
+	if !strings.Contains(strings.Join(m.agentStartOpts[0].Cmd, " "), "--dangerously-skip-permissions") {
+		t.Errorf("normalized claude kind must carry the claude flag set; got %q", m.agentStartOpts[0].Cmd)
+	}
+}
+
+// CodeRabbit, PR #273: the charter is task text, and this PR is what started
+// persisting it on the herdr path too. It must not be world-readable, and the
+// modes must be applied even when an earlier writer (writeAgentContext runs
+// first) already created the directory at 0755.
+func TestWriteStartupPromptKeepsTheCharterOwnerOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_AGENT_HOME", home)
+
+	// Pre-create the agent dir wide open, the way an earlier release left it.
+	agentDir := filepath.Join(home, "perm-check-z1")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(agentDir, "startup-prompt.txt")
+	if err := os.WriteFile(stale, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	promptFile, err := writeStartupPrompt("perm-check-z1", "the charter")
+	if err != nil {
+		t.Fatalf("writeStartupPrompt: %v", err)
+	}
+
+	fi, err := os.Stat(promptFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("charter file mode = %o, want 600 (it carries the task text)", got)
+	}
+	// The tightening happens BEFORE the write, so this also proves moving
+	// the Chmod ahead of WriteFile did not cost us the write itself.
+	body, err := os.ReadFile(promptFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "the charter\n" {
+		t.Errorf("charter content = %q, want the new charter (not the stale one)", body)
+	}
+	di, err := os.Stat(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := di.Mode().Perm(); got != 0o700 {
+		t.Errorf("agent dir mode = %o, want 700 even when it already existed", got)
+	}
+}
+
+// CodeRabbit (Major), PR #273: in `--pane` in-place mode there is no tab, so
+// the charter-delivery failure path's `if tabID != ""` guard made the whole
+// rollback a no-op — while stderr still claimed it was "rolling back the
+// tab". AgentStart has already succeeded by then, so the failure left a live,
+// charterless agent in the caller's pane AND its registration standing.
+//
+// herdr has no agent-stop operation (`herdr agent` offers
+// list/get/read/send-keys/prompt/rename/focus/wait/attach/start and nothing
+// that ends one), and the pane belongs to the caller, so what rollback CAN do
+// is drop the registration — the half that makes a charterless agent
+// dangerous rather than merely untidy — and say what it could not undo.
+func TestSpawnOneInPlacePromptFailureUnregistersAndNeverClosesCallersPane(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	var unregistered []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if id, _ := body["id"].(string); id != "" {
+				unregistered = append(unregistered, id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-inplace-z1", "In Place", "#c084fc", "brief",
+			"--model", "sonnet", "--pane", "pane-caller-99"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when the charter cannot be delivered")
+	}
+
+	// The registration must be withdrawn: a registered channel with nothing
+	// coherent behind it is the ghost `parlay send` will happily task.
+	if len(unregistered) != 1 || unregistered[0] != "nope-inplace-z1" {
+		t.Errorf("expected the failed launch to unregister its agent, got %v", unregistered)
+	}
+	// The caller's pane is the operator's own terminal. Closing it would be a
+	// worse outcome than the one being cleaned up.
+	if len(m.paneCloseCalls) != 0 {
+		t.Errorf("in-place rollback must never close the caller's pane, got %v", m.paneCloseCalls)
+	}
+	// There is no tab in in-place mode; closing one would mean we closed
+	// something we did not create.
+	if len(m.tabCloseCalls) != 0 {
+		t.Errorf("in-place rollback must not close a tab it never created, got %v", m.tabCloseCalls)
+	}
+	// And it must say what it could NOT undo, naming the pane — the old
+	// message claimed a tab rollback that never happened.
+	if !strings.Contains(out, "pane-caller-99") || !strings.Contains(out, "still running there with no task") {
+		t.Errorf("expected an accurate report of the stranded agent and its pane; got:\n%s", out)
+	}
+}
+
+// The tab-launch shape still ends the agent by closing the tab this pipeline
+// created, and withdraws the registration too.
+func TestSpawnOneTabPromptFailureClosesTabAndUnregisters(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	var unregistered []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if id, _ := body["id"].(string); id != "" {
+				unregistered = append(unregistered, id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	_, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-tab-z1", "Tab Mode", "#c084fc", "brief", "--model", "sonnet"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when the charter cannot be delivered")
+	}
+	if len(m.tabCloseCalls) != 1 {
+		t.Errorf("a tab launch must close the tab it created, got %v", m.tabCloseCalls)
+	}
+	if len(unregistered) != 1 {
+		t.Errorf("expected the failed launch to unregister its agent, got %v", unregistered)
+	}
+}
+
+// CodeRabbit (Major, outside-diff), PR #273: spawnOne registers the agent
+// BEFORE spawnViaHerdr, so the TabCreate-failure return bypassed rollback and
+// left a registration with nothing behind it — the same leak that was just
+// fixed one path below it.
+func TestSpawnOneTabCreateFailureUnregisters(t *testing.T) {
+	m := &mockLauncher{failTabCreate: true}
+	withMockLauncher(t, m)
+
+	var unregistered []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if id, _ := body["id"].(string); id != "" {
+				unregistered = append(unregistered, id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	_, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-tabfail-z1", "Tab Fail", "#c084fc", "brief", "--model", "sonnet"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when tab create returns no root pane")
+	}
+	if len(unregistered) != 1 || unregistered[0] != "nope-tabfail-z1" {
+		t.Errorf("a failed tab create must withdraw the registration spawnOne already made, got %v", unregistered)
+	}
+}
+
+// CodeRabbit (Minor), PR #273: the unregister result decides what rollback is
+// allowed to SAY. Announcing "the registration has been withdrawn" when the
+// call failed is the same lie this helper exists to remove — the operator
+// would stop looking at a channel that is still routable.
+func TestRollbackNeverClaimsAnUnregisterThatFailed(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			w.WriteHeader(http.StatusInternalServerError) // cleanup fails
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-unregfail-z1", "Unreg Fail", "#c084fc", "brief",
+			"--model", "sonnet", "--pane", "pane-caller-77"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail")
+	}
+	if strings.Contains(out, "registration has been withdrawn") {
+		t.Errorf("must not claim a withdrawal that failed; got:\n%s", out)
+	}
+	if !strings.Contains(out, "may still be routable") {
+		t.Errorf("expected the failed cleanup to be reported; got:\n%s", out)
+	}
+	if !strings.Contains(out, "parlay agent-down nope-unregfail-z1") {
+		t.Errorf("expected the manual-removal instruction naming the agent; got:\n%s", out)
+	}
+}
+
+// A 404 from /api/chat/unregister means the channel is already gone — the end
+// state this call is reaching for — so it must not be reported as a failed
+// cleanup, or every rollback raises a false alarm.
+func TestRollbackTreatsUnregister404AsDone(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, _ := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-unreg404-z1", "Unreg 404", "#c084fc", "brief",
+			"--model", "sonnet", "--pane", "pane-caller-78"})
+	})
+	if strings.Contains(out, "may still be routable") {
+		t.Errorf("a 404 is the desired end state, not a cleanup failure; got:\n%s", out)
+	}
+	if !strings.Contains(out, "registration has been withdrawn") {
+		t.Errorf("expected rollback to report the registration gone; got:\n%s", out)
 	}
 }

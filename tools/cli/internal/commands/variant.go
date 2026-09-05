@@ -261,8 +261,15 @@ func variantLaunch(argv []string) {
 	// Bun.spawnSync(["parlay-spawn", ...], { stdio: ["inherit","inherit","inherit"] })
 	// with NO error check at all — even a failed exec is silently ignored in
 	// the TS original. Faithfully replicated: blocking, inherited stdio,
-	// start/exit errors both discarded.
-	spawnCmd := exec.Command("parlay-spawn", spawnArgs...)
+	// start/exit errors both discarded. The command is `parlay spawn` on this
+	// binary now (task-42qot retired the standalone script); it stays a
+	// subprocess rather than an in-process call precisely to keep that
+	// errors-discarded contract — the in-process path exits the process.
+	self, exeErr := os.Executable()
+	if exeErr != nil || self == "" {
+		self = "parlay"
+	}
+	spawnCmd := exec.Command(self, append([]string{"spawn"}, spawnArgs...)...)
 	spawnCmd.Stdin = os.Stdin
 	spawnCmd.Stdout = os.Stdout
 	spawnCmd.Stderr = os.Stderr

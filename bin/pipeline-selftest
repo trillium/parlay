@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pipeline-selftest — cheap, no-inference checks for the mechanic-dispatch
-# pipeline (robots ticket -> mechanic-dispatch -> parlay-spawn -> herdr).
+# pipeline (robots ticket -> mechanic-dispatch -> parlay spawn -> herdr).
 # Each check isolates one hop so a failure points at the actual broken layer
 # instead of needing a full claude agent boot (minutes + tokens) to find out.
 #
@@ -33,10 +33,10 @@ new_tab() {
 }
 
 # 0. herdr contract gate (robots-4v2e): assert herdr still exposes every
-#    subcommand + flag parlay-spawn shells out to. This is the post-upgrade
+#    subcommand + flag `parlay spawn` shells out to. This is the post-upgrade
 #    tripwire — run it right after `herdr update` to catch API drift BEFORE it
 #    silently breaks a live dispatch. Sources bin/herdr-contract (the single
-#    source of truth shared with parlay-spawn's startup gate).
+#    source of truth shared with the spawner's startup gate).
 check_herdr_contract() {
   if [ ! -f "$SELFTEST_DIR/herdr-contract" ]; then
     bad "herdr contract" "bin/herdr-contract missing (the contract gate is not installed)"
@@ -46,9 +46,9 @@ check_herdr_contract() {
   source "$SELFTEST_DIR/herdr-contract"
   # herdr_contract_check prints its own precise DRIFT/WARN lines to stderr.
   if herdr_contract_check 2>&1; then
-    ok "herdr contract (every parlay-spawn flag/subcommand present)"
+    ok "herdr contract (every 'parlay spawn' flag/subcommand present)"
   else
-    bad "herdr contract" "herdr drifted — see the DRIFT/FAIL lines above; fix parlay-spawn + bin/herdr-contract"
+    bad "herdr contract" "herdr drifted — see the DRIFT/FAIL lines above; fix tools/cli/internal/spawn + bin/herdr-contract"
   fi
 }
 
@@ -94,7 +94,7 @@ check_agent_start_no_prompt() {
   herdr pane send-text "$root_pane" "$UNSET_CMD" >/dev/null 2>&1
   herdr pane send-keys "$root_pane" enter >/dev/null 2>&1
   herdr pane wait-output "$root_pane" --regex 'READY_[0-9]+' --timeout 5000 >/dev/null 2>&1
-  # Mirror parlay-spawn's agent_pane_busy retry (robots-i4pi): the first attempt
+  # Mirror the spawner's agent_pane_busy retry (robots-i4pi): the first attempt
   # on a brand-new pane reliably loses the race with herdr's availability
   # bookkeeping; the retry closes it. Single-attempt here would flap FAIL while
   # production is actually fine.
@@ -131,11 +131,6 @@ check_parlay_api() {
 #    stubbed out — proves the routing decision without launching anything real.
 check_dispatch_branch_logic() {
   local stub_dir; stub_dir=$(mktemp -d)
-  cat > "$stub_dir/parlay-spawn" <<'EOF'
-#!/usr/bin/env bash
-echo "STUB: parlay-spawn called with: $*"
-exit 0
-EOF
   cat > "$stub_dir/parlay" <<'EOF'
 #!/usr/bin/env bash
 echo "STUB: parlay called with: $*"
@@ -154,13 +149,13 @@ EOF
 echo "[OPEN] fake ticket"
 exit 0
 EOF
-  chmod +x "$stub_dir"/parlay-spawn "$stub_dir"/parlay "$stub_dir"/herdr "$stub_dir"/robots
+  chmod +x "$stub_dir"/parlay "$stub_dir"/herdr "$stub_dir"/robots
   local out
   out=$(PATH="$stub_dir:$PATH" mechanic-dispatch selftest-ticket default 2>&1)
-  if printf '%s' "$out" | grep -q "STUB: parlay-spawn called"; then
-    ok "dispatch routes an absent mechanic to parlay-spawn"
+  if printf '%s' "$out" | grep -q "STUB: parlay called with: spawn"; then
+    ok "dispatch routes an absent mechanic to 'parlay spawn'"
   else
-    bad "dispatch branch logic" "expected a parlay-spawn stub call, got: $out"
+    bad "dispatch branch logic" "expected a 'parlay spawn' stub call, got: $out"
   fi
   rm -rf "$stub_dir"
 }
@@ -169,7 +164,7 @@ EOF
 check_full_launch() {
   local id="selftest-full-$$"
   echo "  spending real inference: launching $id and waiting for 'working' ..."
-  if parlay-spawn "$id" "Selftest" "#888888" "Reply with OK then stop." --cwd "$HOME" --model sonnet >/dev/null 2>&1 \
+  if parlay spawn "$id" "Selftest" "#888888" "Reply with OK then stop." --cwd "$HOME" --model sonnet >/dev/null 2>&1 \
      && herdr agent wait "$id" --until working --timeout 60000 >/dev/null 2>&1; then
     ok "full launch reached working"
   else

@@ -3,10 +3,10 @@
 #   • a git-repo zone (parlay) dispatches with --worktree AND keeps --cwd <repo>
 #   • the default/~ zone dispatches WITHOUT --worktree
 # ...and the beads-required binding (robots-aswz):
-#   • --bead <store-qualified id> is always passed, so parlay-spawn's
+#   • --bead <store-qualified id> is always passed, so `parlay spawn`'s
 #     beads-required gate cannot refuse the launch with exit 2
 #   • a bare ticket id ("test") still yields the qualified "robots-test"
-# parlay-spawn/herdr/robots/parlay are stubbed and $HOME is redirected to a
+# parlay/herdr/robots are stubbed and $HOME is redirected to a
 # sandbox, so no real agent launches and no real repo is touched.
 #
 # Run: tools/mechanic-dispatch/mechanic-dispatch.test.sh
@@ -28,11 +28,6 @@ STUB="$TMP/bin"
 mkdir -p "$STUB"
 CAPTURE="$TMP/spawn-argv"
 
-# parlay-spawn: record argv (one element per line), launch nothing.
-cat >"$STUB/parlay-spawn" <<EOF
-#!/bin/sh
-printf '%s\n' "\$@" > "$CAPTURE"
-EOF
 
 # herdr: '{}' → absent agent + no workspace, so dispatch takes the launch path.
 cat >"$STUB/herdr" <<'EOF'
@@ -40,9 +35,15 @@ cat >"$STUB/herdr" <<'EOF'
 echo '{}'
 EOF
 
-# parlay: only reached on the live path (not exercised here); no-op.
-cat >"$STUB/parlay" <<'EOF'
+# parlay: `parlay spawn` records its argv (one element per line, minus the
+# subcommand word) and launches nothing; every other verb is only reached on
+# the live path (not exercised here) and is a no-op.
+cat >"$STUB/parlay" <<EOF
 #!/bin/sh
+if [ "\$1" = spawn ]; then
+  shift
+  printf '%s\n' "\$@" > "$CAPTURE"
+fi
 exit 0
 EOF
 
@@ -95,7 +96,7 @@ else
 fi
 
 # --- case 3: --bead is always passed, store-qualified -------------------------
-# Without it, parlay-spawn's beads-required mode refuses the launch (exit 2) and
+# Without it, `parlay spawn`'s beads-required mode refuses the launch (exit 2) and
 # no mechanic starts at all — the robots-aswz defect.
 bead_arg() { grep -A1 -Fx -- '--bead' "$CAPTURE" | tail -1; }
 claim_arg() { grep -A1 -Fx -- '--claim' "$CAPTURE" | tail -1; }
@@ -118,7 +119,7 @@ fi
 
 # --- case 4: a BARE ticket id is qualified before binding ---------------------
 # `mechanic-dispatch test` (below) is a legal call — the robots store resolves a
-# bare id — but parlay-spawn derives the store from the id's LEADING TOKEN, so a
+# bare id — but `parlay spawn` derives the store from the id's LEADING TOKEN, so a
 # bare --bead would resolve to no store at all. The original repro was the same
 # shape: `mechanic-dispatch tnwd`.
 : > "$CAPTURE"

@@ -11,8 +11,10 @@ import (
 )
 
 // launchAccountFixture seeds an agent (optionally pinning `account:`), a
-// config.toml under the tmp state home freshHome established, and a recording
-// parlay-spawn on PATH. Returns the path the spawner records its argv to.
+// config.toml under the tmp state home freshHome established, and points the
+// launch dispatch at a recording stub instead of re-exec'ing this binary
+// (which, under `go test`, is the test suite). Returns the path the stub
+// records its argv to.
 func launchAccountFixture(t *testing.T, identityAccount, configTOML string) string {
 	t.Helper()
 	home := freshHome(t)
@@ -30,12 +32,15 @@ func launchAccountFixture(t *testing.T, identityAccount, configTOML string) stri
 func installRecordingSpawner(t *testing.T) string {
 	t.Helper()
 	bin := t.TempDir()
-	record := filepath.Join(bin, "parlay-spawn.argv")
+	record := filepath.Join(bin, "spawn.argv")
+	stub := filepath.Join(bin, "fake-spawn")
 	script := "#!/bin/sh\n: > " + record + "\nfor a in \"$@\"; do echo \"$a\" >> " + record + "; done\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "parlay-spawn"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin)
+	orig := launchSpawnCommand
+	launchSpawnCommand = func() []string { return []string{stub} }
+	t.Cleanup(func() { launchSpawnCommand = orig })
 	return record
 }
 

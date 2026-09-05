@@ -51,7 +51,7 @@ const mustRead = (p: string) => {
   return src
 }
 
-const spawnSrc = mustRead(`${PL}/bin/parlay-spawn`)
+const spawnSrc = mustRead(`${PL}/tools/cli/internal/spawn/spawn.go`) // task-42qot: bin/parlay-spawn is deleted; the flag surface lives here
 const cliIndex = mustRead(`${PL}/tools/cli/main.go`)
 const cliStatusSrc = mustRead(`${PL}/tools/cli/internal/commands/status_verb.go`)
 const cliSuperviseSrc = mustRead(`${PL}/tools/cli/internal/commands/supervise.go`)
@@ -81,9 +81,9 @@ const probe = {
   effortSpawn: /--effort\b/.test(spawnSrc),
   modeSpawn: /--mode\b/.test(spawnSrc),
   projectSpawn: /--project\b/.test(spawnSrc),
-  // C3: batch id=repo dispatch is landed when the thin-loop block and its per-pair
-  // failure report are both present in parlay-spawn.
-  batchSpawn: /Batch dispatch \(thin loop\)/.test(spawnSrc) && /batch: FAILED to spawn/.test(spawnSrc),
+  // C3: batch id=repo dispatch is landed when the batch entry point and its
+  // per-pair failure report are both present in the spawn package.
+  batchSpawn: /func runBatchSpawn\(/.test(spawnSrc) && /batch: FAILED to spawn/.test(spawnSrc),
   // C4: the runtime worktree-tangle guard ported from fm-guard. Landed = the
   // `parlay guard` verb dispatches AND the variant lifecycle calls guardRepo().
   tangleGuardBuilt:
@@ -137,18 +137,18 @@ interface Row {
 
 const M: Row[] = [
   // --- spawn / launch ---
-  { cap: "Spawn a direct report", fm: "fm-spawn.sh", parlay: "bin/parlay-spawn", verdict: "COVERED-same", built: has(`${PL}/bin/parlay-spawn`) },
-  { cap: "Model pin", fm: "--model", parlay: "parlay-spawn --model", verdict: "COVERED-same", built: probe.spawnFlag("model") },
-  { cap: "Effort level", fm: "--effort", parlay: "parlay-spawn --effort (§3.4)", verdict: "COVERED-alternate", built: probe.effortSpawn },
-  { cap: "Per-task worktree isolation (mandatory)", fm: "treehouse worktree", parlay: "parlay-spawn --worktree opt-in (§3.3)", verdict: "COVERED-alternate", built: probe.worktreeSpawn, note: "mandatory→opt-in; parlay agents often not in a repo" },
-  { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "parlay-spawn id=repo … --prompt (thin loop, §3.8)", verdict: "COVERED-alternate", built: probe.batchSpawn, note: "C3 RESOLVED (task-ovkq): thin loop re-execs single mode per pair; shared --prompt/--model/--color, name+color derived per id; one failed pair does not stop the rest, batch exits non-zero" },
+  { cap: "Spawn a direct report", fm: "fm-spawn.sh", parlay: "tools/cli/internal/spawn", verdict: "COVERED-same", built: has(`${PL}/tools/cli/internal/spawn/spawn.go`) },
+  { cap: "Model pin", fm: "--model", parlay: "parlay spawn --model", verdict: "COVERED-same", built: probe.spawnFlag("model") },
+  { cap: "Effort level", fm: "--effort", parlay: "parlay spawn --effort (§3.4)", verdict: "COVERED-alternate", built: probe.effortSpawn },
+  { cap: "Per-task worktree isolation (mandatory)", fm: "treehouse worktree", parlay: "parlay spawn --worktree opt-in (§3.3)", verdict: "COVERED-alternate", built: probe.worktreeSpawn, note: "mandatory→opt-in; parlay agents often not in a repo" },
+  { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "parlay spawn id=repo … --prompt (thin loop, §3.8)", verdict: "COVERED-alternate", built: probe.batchSpawn, note: "C3 RESOLVED (task-ovkq): thin loop re-execs single mode per pair; shared --prompt/--model/--color, name+color derived per id; one failed pair does not stop the rest, batch exits non-zero" },
   { cap: "Multi-harness (codex/opencode/pi/grok)", fm: "fm-harness.sh + adapters", parlay: "deferred primitive, seam scaffolded (§3.4)", verdict: "DEFERRED", note: "built LAST; claude-only until then" },
   { cap: "Runtime backend (tmux/zellij/orca/cmux)", fm: "fm-backend.sh", parlay: "firstmate-retained (herdr-only by design)", verdict: "DROP-justified", note: "decision-3ae does not ask parlay to own backends" },
   { cap: "Crew-dispatch profiles + quota-balanced", docDerived: "crew-dispatch", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: foldDocAvailable ? "firstmate POLICY, retention stated (§3.4a)" : "— (retention claim not checkable here)", verdict: "STAYS-FIRSTMATE", note: foldDocAvailable ? "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" : "the retention + re-activation statement was sourced from the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
 
   // --- brief / meta / identity ---
   { cap: "Structured brief contract", fm: "fm-brief.sh", parlay: "enrollment + appended task contract (§3.1)", verdict: "COVERED-alternate", built: /## Definition of done/.test(spawnSrc) },
-  // Recorded meta: parlay-spawn passes --mode/--yolo to identity --register (YAML frontmatter,
+  // Recorded meta: `parlay spawn` passes --mode/--yolo to identity --register (YAML frontmatter,
   // not firstmate's key=value .meta format). Probe: --mode/--yolo present in spawn.
   // BLIND SPOT: --mode/--yolo are all this checks. The rest of the meta superset the row
   // claims (--project_bead, --worktree recording) is designed-not-built and unprobed here.

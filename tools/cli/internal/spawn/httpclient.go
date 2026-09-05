@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -56,6 +57,28 @@ func registerAgent(server, id, name, color string) error {
 		return fmt.Errorf("register-agent failed — is Pulse running on %s? %w", server, err)
 	}
 	return nil
+}
+
+// unregisterAgent removes the registration this pipeline created, for use
+// when a launch fails after registerAgent already succeeded. Best-effort by
+// design: the caller is already on an error path, and a failed cleanup must
+// not mask the failure that triggered it.
+//
+// This is the half of rollback that matters most. A registration nothing
+// removes is precisely the ghost robots-jkwc describes — a row the server
+// happily routes work to, with no live listener behind it — so a spawn that
+// aborts after registering has to take its row back out.
+func unregisterAgent(server, id string) error {
+	err := postJSON(server+"/api/chat/unregister", map[string]any{"id": id})
+	// 404 is "no such channel" — already the end state this call is trying
+	// to reach, so it is a success, not a cleanup failure. commands/shutdown.go
+	// makes the same call and draws the same distinction deliberately;
+	// reporting it as a failure would raise a false alarm on the one path
+	// that must be trustworthy.
+	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+		return nil
+	}
+	return err
 }
 
 // postHello posts the "Spawning…" hello reply so the tab goes live
