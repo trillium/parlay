@@ -41,7 +41,11 @@ const spawnUsage = `Usage: parlay spawn <agent-id> <display-name> <hex-color> <i
   --effort LEVEL  effort level forwarded to claude (low|medium|high|xhigh|max)
   --worktree      create an isolated git worktree at <repo>/.worktrees/parlay-<id>
                   and run the agent there instead of --cwd directly.
-  --account NAME  spawn the agent under a ccjuggler account.
+  --account NAME  spawn the agent under a ccjuggler account, and PIN it: the
+                  name is recorded in the agent's identity.md, so a later
+                  'parlay launch <id>' brings it back on the same account.
+                  Omit it and the agent uses the configured default
+                  (see 'parlay defaults'), which stays unpinned.
   --workspace ID|LABEL  land the new tab in a herdr workspace (id or label;
                   a label is created if none matches). Named spawns only.
   --pane ID       in-place mode: launch into an existing herdr pane instead
