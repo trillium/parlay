@@ -27,10 +27,9 @@ const gcTeardownTestChildEnv = "GCTEARDOWN_TEST_CHILD"
 // TestMain neutralizes the ambient inputs a per-test HOME redirect does NOT
 // cover. Redirecting HOME already isolates config.StateHome() (and so the
 // spawn account's/spawn impl's config.toml), because os.UserHomeDir honors
-// $HOME — but PARLAY_SPAWN_DEFAULT_ACCOUNT and PARLAY_SPAWN_IMPL both
-// out-rank that file, so an exported one on the developer's shell would
-// inject an --account into a spawner argv, or pin runSpawnArgv to an
-// implementation, no test asked for. Clearing both here isolates every current and
+// $HOME — but PARLAY_SPAWN_DEFAULT_ACCOUNT out-ranks that file, so an
+// exported one on the developer's shell would inject an --account into a
+// spawn argv no test asked for. Clearing it here isolates every current and
 // future test in this package by construction rather than each one
 // remembering.
 func TestMain(m *testing.M) {
@@ -39,7 +38,6 @@ func TestMain(m *testing.M) {
 		return
 	}
 	_ = os.Setenv(config.SpawnAccountEnv, "")
-	_ = os.Setenv(config.SpawnImplEnv, "")
 	os.Exit(m.Run())
 }
 

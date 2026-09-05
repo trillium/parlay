@@ -167,34 +167,19 @@ func ServerSource() ServerSourceInfo {
 	return ServerSourceInfo{SourceDefault, DefaultServer}
 }
 
-// SpawnAccountEnv is the env override for the default ccjuggler account,
-// read by bin/parlay-spawn under the same name.
+// SpawnAccountEnv is the env override for the default ccjuggler account.
 const SpawnAccountEnv = "PARLAY_SPAWN_DEFAULT_ACCOUNT"
-
-// SpawnImplEnv selects which spawn implementation `parlay spawn` runs
-// (tools/cli/internal/commands/spawn.go; docs/scope-go-spawn.md §0): empty or
-// "go" is the in-process Go launcher (tools/cli/internal/spawn) — the default,
-// and the only path once PR B lands; "bash" execs bin/parlay-spawn from PATH,
-// the documented escape hatch for a broken or untrusted Go path, and refuses
-// loudly rather than falling back if the script is missing. Case-insensitive;
-// any other non-empty value is a usage error at the call site, never a silent
-// no-op.
-const SpawnImplEnv = "PARLAY_SPAWN_IMPL"
 
 // spawnAccountRe matches a `spawnAccount = <value>` assignment; the value is
 // unquoted by trimSpawnAccountValue below.
 var spawnAccountRe = regexp.MustCompile(`^\s*spawnAccount\s*=\s*(.*)$`)
 
-// spawnImplRe matches a top-level `spawnImpl = <value>` assignment, same
-// shape and stop-at-first-table-header semantics as spawnAccountRe.
-var spawnImplRe = regexp.MustCompile(`^\s*spawnImpl\s*=\s*(.*)$`)
-
 // tomlTableRe matches a `[table]` / `[[array]]` header — where the top-level
 // scope this reader cares about ends.
 var tomlTableRe = regexp.MustCompile(`^\s*\[`)
 
-// spawnAccountConfigPath is the TOML config bin/parlay-spawn reads. Note this
-// is NOT configPath(): the persisted CLI config is config.json, while
+// spawnAccountConfigPath is the TOML config the spawn pipeline reads. Note
+// this is NOT configPath(): the persisted CLI config is config.json, while
 // spawnAccount has always lived in config.toml alongside it. Both hang off
 // StateHome(). The `parlay spawn-account set/show/clear` verbs write and read
 // this file (via SetSpawnAccount / PersistedSpawnAccount below), preserving
@@ -234,41 +219,6 @@ func SpawnAccount() string {
 		return env
 	}
 	return spawnAccountFromTOML(spawnAccountConfigPath())
-}
-
-// SpawnImpl resolves the spawner-implementation override: a non-empty
-// PARLAY_SPAWN_IMPL wins, else the top-level `spawnImpl` key in
-// $PARLAY_STATE_HOME/config.toml, else "" (no override — the caller's normal
-// auto precedence applies). The value is returned exactly as configured
-// (not lower-cased) since "" meaning "unset" must stay distinguishable from
-// a value the caller will itself validate/normalize.
-func SpawnImpl() string {
-	if env := strings.TrimSpace(os.Getenv(SpawnImplEnv)); env != "" {
-		return env
-	}
-	return spawnImplFromTOML(spawnAccountConfigPath())
-}
-
-// spawnImplFromTOML reads the top-level `spawnImpl` string out of
-// config.toml, using the same single-key line scanner as
-// spawnAccountFromTOML (stops at the first `[table]` header — a key nested
-// under a section is a different key than this top-level one).
-func spawnImplFromTOML(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if tomlTableRe.MatchString(line) {
-			return ""
-		}
-		m := spawnImplRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		return trimSpawnAccountValue(m[1])
-	}
-	return ""
 }
 
 // spawnAccountFromTOML reads the top-level `spawnAccount` string out of a
