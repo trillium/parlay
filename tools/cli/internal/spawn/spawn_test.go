@@ -30,6 +30,7 @@ type mockLauncher struct {
 	paneWaitOutputCalls []string
 	agentPromptCalls    []string
 	failPrompt          bool
+	failTabCreate       bool
 	tabCloseCalls       []string
 	paneCloseCalls      []string
 }
@@ -44,6 +45,9 @@ func (m *mockLauncher) TabCreate(opts TabCreateOptions) (string, string, error) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.tabCreateCalls = append(m.tabCreateCalls, opts)
+	if m.failTabCreate {
+		return "tab-" + opts.Label, "", nil // a tab, but no root pane
+	}
 	return "tab-" + opts.Label, "pane-" + opts.Label, nil
 }
 func (m *mockLauncher) AgentStart(opts AgentStartOptions) (string, error) {

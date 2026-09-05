@@ -319,9 +319,11 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		})
 		if err != nil || rootPane == "" {
 			fmt.Fprintln(os.Stderr, "parlay-spawn: herdr tab create failed — no root pane returned.")
-			if tabID != "" {
-				_ = launcher.TabClose(tabID)
-			}
+			// spawnOne registers the agent BEFORE calling this, so returning
+			// here without rolling back leaves a registration with nothing
+			// behind it. Pane is empty by construction: this is the branch
+			// that creates a tab, and nothing has been started yet.
+			rollbackLaunch(launcher, server, opts.AgentID, tabID, "")
 			return fmt.Errorf("herdr tab create failed — no root pane returned")
 		}
 	}
@@ -434,12 +436,23 @@ func rollbackLaunch(launcher Launcher, server, agentID, tabID, pane string) {
 	if tabID != "" {
 		_ = launcher.TabClose(tabID)
 	}
-	_ = unregisterAgent(server, agentID)
+	// The unregister result is load-bearing for what we are allowed to SAY
+	// next. Announcing "the registration has been removed" when the call
+	// failed is the same class of lie this helper exists to remove — the
+	// operator would stop looking at a channel that is still routable.
+	unregErr := unregisterAgent(server, agentID)
+	if unregErr != nil {
+		fmt.Fprintf(os.Stderr,
+			"parlay-spawn: could not withdraw %q's registration (%v) — the channel may still be routable, and 'parlay send' would accept work for it.\n"+
+				"  Remove it by hand: parlay agent-down %s\n", agentID, unregErr, agentID)
+	}
 	if tabID == "" && pane != "" {
 		fmt.Fprintf(os.Stderr,
 			"parlay-spawn: in-place mode — the agent was already started in YOUR pane %s, and herdr has no way to stop it, so it is still running there with no task.\n"+
-				"  Its registration has been removed, so nothing will route work to it.\n"+
 				"  End it yourself in that pane (Ctrl-C), then re-run the spawn.\n", pane)
+		if unregErr == nil {
+			fmt.Fprintln(os.Stderr, "  Its registration has been withdrawn, so nothing will route work to it.")
+		}
 	}
 }
 

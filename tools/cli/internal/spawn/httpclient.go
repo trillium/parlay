@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -68,7 +69,16 @@ func registerAgent(server, id, name, color string) error {
 // happily routes work to, with no live listener behind it — so a spawn that
 // aborts after registering has to take its row back out.
 func unregisterAgent(server, id string) error {
-	return postJSON(server+"/api/chat/unregister", map[string]any{"id": id})
+	err := postJSON(server+"/api/chat/unregister", map[string]any{"id": id})
+	// 404 is "no such channel" — already the end state this call is trying
+	// to reach, so it is a success, not a cleanup failure. commands/shutdown.go
+	// makes the same call and draws the same distinction deliberately;
+	// reporting it as a failure would raise a false alarm on the one path
+	// that must be trustworthy.
+	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+		return nil
+	}
+	return err
 }
 
 // postHello posts the "Spawning…" hello reply so the tab goes live

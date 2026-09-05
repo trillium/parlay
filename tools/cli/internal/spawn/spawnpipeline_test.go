@@ -507,3 +507,101 @@ func TestSpawnOneTabPromptFailureClosesTabAndUnregisters(t *testing.T) {
 		t.Errorf("expected the failed launch to unregister its agent, got %v", unregistered)
 	}
 }
+
+// CodeRabbit (Major, outside-diff), PR #273: spawnOne registers the agent
+// BEFORE spawnViaHerdr, so the TabCreate-failure return bypassed rollback and
+// left a registration with nothing behind it — the same leak that was just
+// fixed one path below it.
+func TestSpawnOneTabCreateFailureUnregisters(t *testing.T) {
+	m := &mockLauncher{failTabCreate: true}
+	withMockLauncher(t, m)
+
+	var unregistered []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if id, _ := body["id"].(string); id != "" {
+				unregistered = append(unregistered, id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	_, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-tabfail-z1", "Tab Fail", "#c084fc", "brief", "--model", "sonnet"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when tab create returns no root pane")
+	}
+	if len(unregistered) != 1 || unregistered[0] != "nope-tabfail-z1" {
+		t.Errorf("a failed tab create must withdraw the registration spawnOne already made, got %v", unregistered)
+	}
+}
+
+// CodeRabbit (Minor), PR #273: the unregister result decides what rollback is
+// allowed to SAY. Announcing "the registration has been withdrawn" when the
+// call failed is the same lie this helper exists to remove — the operator
+// would stop looking at a channel that is still routable.
+func TestRollbackNeverClaimsAnUnregisterThatFailed(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			w.WriteHeader(http.StatusInternalServerError) // cleanup fails
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-unregfail-z1", "Unreg Fail", "#c084fc", "brief",
+			"--model", "sonnet", "--pane", "pane-caller-77"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail")
+	}
+	if strings.Contains(out, "registration has been withdrawn") {
+		t.Errorf("must not claim a withdrawal that failed; got:\n%s", out)
+	}
+	if !strings.Contains(out, "may still be routable") {
+		t.Errorf("expected the failed cleanup to be reported; got:\n%s", out)
+	}
+	if !strings.Contains(out, "parlay agent-down nope-unregfail-z1") {
+		t.Errorf("expected the manual-removal instruction naming the agent; got:\n%s", out)
+	}
+}
+
+// A 404 from /api/chat/unregister means the channel is already gone — the end
+// state this call is reaching for — so it must not be reported as a failed
+// cleanup, or every rollback raises a false alarm.
+func TestRollbackTreatsUnregister404AsDone(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, _ := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-unreg404-z1", "Unreg 404", "#c084fc", "brief",
+			"--model", "sonnet", "--pane", "pane-caller-78"})
+	})
+	if strings.Contains(out, "may still be routable") {
+		t.Errorf("a 404 is the desired end state, not a cleanup failure; got:\n%s", out)
+	}
+	if !strings.Contains(out, "registration has been withdrawn") {
+		t.Errorf("expected rollback to report the registration gone; got:\n%s", out)
+	}
+}
