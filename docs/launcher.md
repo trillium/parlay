@@ -17,10 +17,13 @@ unless `PARLAY_SPAWN_VIA_CLI=1` is already set — `parlay spawn` is the sole
 sanctioned public entry point, and it sets that flag itself before exec'ing the
 script under `PARLAY_SPAWN_IMPL=bash` (task-qyu8q scope 3). The default
 in-process Go path never sets it and has no such check: it *is* the entry point,
-so there is no second binary to hand a token to. A model is a required argument
-on every spawn, by the same ticket, and both paths enforce it: nothing here
-silently inherits the launching session's default model or falls back to sonnet
-without saying so.
+so there is no second binary to hand a token to. Every spawn requires a
+*resolved* model, by the same ticket, and both paths enforce it — but the model
+need not be passed explicitly. It may come from `--model`, from a `--profile`
+that carries one, or from `--no-pii`'s free-model auto-routing, each of which
+resolves before the `requireModel` gate runs. What no spawn does is silently
+inherit the launching session's default model or fall back to sonnet without
+saying so.
 
 **There is one spawner, not two resolving against each other on `PATH`**
 (task-42qot). `parlay spawn` runs `tools/cli/internal/spawn` **in-process** —

@@ -140,9 +140,8 @@ jobs:
       # tools/cli already guards itself with TestGofmtClean
       # (tools/cli/internal/commands/gofmt_test.go), which runs as part of
       # `go test` below — but that test resolves its root to the tools/cli
-      # module and therefore covers exactly one of the five modules. This step
-      # is what covers the other four; it is not a duplicate of that guard, it
-      # is the other 80%.
+      # module and therefore covers exactly one of the modules in GO_MODULES.
+      # This step is what covers the rest; it is not a duplicate of that guard.
       - name: gofmt
         run: |
           dirty="$(gofmt -l $GO_MODULES)"
@@ -153,7 +152,7 @@ jobs:
             echo "reformats doc comments and can rewrite documented prose."
             exit 1
           fi
-          echo "all five modules are gofmt-clean"
+          echo "all listed modules are gofmt-clean"
 
       - name: Build
         run: |
@@ -188,7 +187,7 @@ jobs:
       # detector was the only thing in the repo that pointed at it, and it was
       # not being run, so a real defect sat behind a green check.
       #
-      # All six modules are race-clean as of this change, so this costs a
+      # Every listed module is race-clean as of this change, so this costs a
       # slower test run and buys the class of bug that only ever shows up as
       # something rare and destructive on the captain's box. If a module ever
       # legitimately cannot run under -race, exclude that MODULE by name here
