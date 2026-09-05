@@ -208,22 +208,3 @@ func TestRepoIdentityDistinguishesRepos(t *testing.T) {
 		t.Error("repoIdentity should fail outside a git repo")
 	}
 }
-
-// The bash source of truth must carry the same two fixes: treehouse pinned to
-// $PROJECT_PATH, and a repo-identity post-condition before launch.
-func TestBashSpawnPinsTreehouseToProjectPath(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "bin", "parlay-spawn"))
-	if err != nil {
-		t.Skipf("bin/parlay-spawn not readable: %v", err)
-	}
-	s := string(src)
-	if !strings.Contains(s, `$(cd "$PROJECT_PATH" && treehouse get --lease`) {
-		t.Error("bin/parlay-spawn must run 'treehouse get' with cwd = $PROJECT_PATH (robots-d04t)")
-	}
-	if !strings.Contains(s, "REPO MISMATCH") || !strings.Contains(s, "repo_identity") {
-		t.Error("bin/parlay-spawn must hard-check worktree repo identity against --cwd before launching (robots-d04t)")
-	}
-	if !strings.Contains(s, "security find-generic-password -a ccjuggler -s ccjuggler-NAME") {
-		t.Error("bin/parlay-spawn --help must document the keychain lookup the way resolve_account_token actually queries it")
-	}
-}

@@ -49,7 +49,7 @@ case "$STATUS_LINE" in
 esac
 
 # --- resolve the store-qualified bead id --------------------------------------
-# parlay-spawn runs in beads-required mode: every spawn must name an OPEN beads
+# `parlay spawn` runs in beads-required mode: every spawn must name an OPEN beads
 # work item via --bead, and it resolves the store from the id's leading token
 # (robots-aswz -> the `robots` wrapper). Omitting it made the dead-mechanic
 # launch branch below refuse with exit 2 and launch NOTHING — including every
@@ -105,9 +105,9 @@ fi
 
 # --- worktree isolation decision ---------------------------------------------
 # A robots mechanic must never mutate a repo's PRIMARY checkout — it works in an
-# isolated git worktree that parlay-spawn creates at <repo>/.worktrees/parlay-<id>
+# isolated git worktree that `parlay spawn` creates at <repo>/.worktrees/parlay-<id>
 # (treehouse if on PATH, else plain git worktree). We ask for it with --worktree,
-# which parlay-spawn resolves against --cwd (it requires --cwd to be inside a git
+# which `parlay spawn` resolves against --cwd (it requires --cwd to be inside a git
 # repo and derives <repo> from `git -C <cwd> rev-parse --show-toplevel`), so
 # --worktree + --cwd <repo-root> compose without any extra plumbing here.
 #
@@ -115,7 +115,7 @@ fi
 # zone added to zone_entry() is isolated automatically. The 'default'/~ zone is
 # deliberately excluded and left NON-ISOLATED (triage-only): $HOME is not a repo,
 # there is nothing to worktree there, and passing --worktree would make
-# parlay-spawn fail rather than create a bogus worktree.
+# `parlay spawn` fail rather than create a bogus worktree.
 WORKTREE_ARG=""
 if [ "$ZONE" != default ] && git -C "$CWD" rev-parse --show-toplevel >/dev/null 2>&1; then
   WORKTREE_ARG="--worktree"
@@ -153,11 +153,11 @@ echo "liveness: $AGENT = $STATUS"
 # work (robots tickets default to a "fix + robots close" contract). No task
 # prose is duplicated here — it lives on the ticket.
 if [ "$STATUS" = "absent" ]; then
-  echo "-> mechanic is dead; launching via parlay-spawn (--claim $BEAD)${WORKTREE_ARG:+ in isolated worktree}"
-  # task-qyu8q scope 3: mechanic-dispatch calls bin/parlay-spawn directly
-  # (not through the `parlay spawn` CLI) — it IS a sanctioned direct caller.
-  export PARLAY_SPAWN_VIA_CLI=1
-  exec parlay-spawn "$AGENT" "$NAME" "$COLOR" --claim "$BEAD" --bead "$BEAD" \
+  echo "-> mechanic is dead; launching via parlay spawn (--claim $BEAD)${WORKTREE_ARG:+ in isolated worktree}"
+  # task-qyu8q scope 3: `parlay spawn` is the only entry point — the
+  # standalone parlay-spawn script and its PARLAY_SPAWN_VIA_CLI handshake are
+  # both gone (task-42qot), so there is nothing left to call directly.
+  exec parlay spawn "$AGENT" "$NAME" "$COLOR" --claim "$BEAD" --bead "$BEAD" \
     --cwd "$CWD" --model opus \
     $WORKTREE_ARG \
     ${MECHANIC_WS:+--workspace "$MECHANIC_WS"}
