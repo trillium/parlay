@@ -157,11 +157,11 @@ parlay spawn code-reviewer "Code Reviewer" "#c084fc" \
   "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
 ```
 
-`parlay spawn` is the sole public entry point for `bin/parlay-spawn` — that script now
-refuses to run without a handshake env only the CLI sets (task-qyu8q scope 3). That claim
-does not extend to `tools/parlay-bin`: the spawner resolution order prefers it over
-`bin/parlay-spawn` when both are on PATH, and it is a separate Go port with neither the
-handshake gate nor the mandatory-model gate (task-21d36).
+`parlay spawn` is the sole public entry point for spawning. By default it runs the Go
+launcher in-process (`tools/cli/internal/spawn`); `PARLAY_SPAWN_IMPL=bash` is a
+soon-to-be-removed escape hatch that execs `bin/parlay-spawn` instead, and that script
+refuses to run without a handshake env only the CLI sets (task-qyu8q scope 3). Both paths
+enforce the mandatory-model gate (task-21d36).
 
 To reach it from your phone, expose the host — Tailscale, LAN IP, or a private
 tunnel — and export `PARLAY_SERVER` as that address instead of `localhost`.
@@ -213,7 +213,7 @@ flowchart LR
     registry["Agent registry & presence\nagents.json"]
     relay["Relay\ntools/relay — per-agent spool fan-out"]
     monitor["Monitor / listen\ntools/cli/internal/monitor"]
-    launcher["Launcher\nbin/parlay-spawn · tools/parlay-bin"]
+    launcher["Launcher\ntools/cli/internal/spawn · bin/parlay-spawn"]
     agent["A spawned agent process\n(herdr terminal)"]
 
     input -- "POST edits, evaluated by\nthe Go eval engine" --> bun

@@ -18,10 +18,10 @@ tools/cli/bin/
 # The remaining compiled Go binaries `go build ./...` drops in each module root.
 # ~28 MB of these were committed once and still weigh on every clone, so every
 # module's output is listed here so none can be re-added.
-# (tools/relay/relay is already ignored above; tools/parlay-bin also carries
-# its own nested .gitignore, and the entry here keeps every module's binary
-# path visible in this one file. packages/eval-engine merged into tools/cli —
-# task-0ke9 — so its binary entry is gone.)
+# (tools/relay/relay is already ignored above; the entries here keep every
+# module's binary path visible in this one file. packages/eval-engine merged
+# into tools/cli — task-0ke9 — and tools/parlay-bin was folded into
+# tools/cli/internal/spawn — task-42qot — so neither has a binary entry.)
 #
 # packages/spawn-profiles/validate was missing until 2026-08-26. Nothing caught
 # it because that module was also missing from CI's GO_MODULES, so the go job's
@@ -30,7 +30,6 @@ tools/cli/bin/
 # and the module belongs in GO_MODULES; the workflow now fails if the latter is
 # forgotten.
 tools/cli/cli
-tools/parlay-bin/parlay-bin
 packages/spawn-profiles/validate
 
 # Go server build artifact (9.9MB) — CI hygiene gate caps tracked blobs at 2 MiB

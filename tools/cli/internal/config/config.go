@@ -171,13 +171,14 @@ func ServerSource() ServerSourceInfo {
 // read by bin/parlay-spawn under the same name.
 const SpawnAccountEnv = "PARLAY_SPAWN_DEFAULT_ACCOUNT"
 
-// SpawnImplEnv is the explicit override for which spawner binary
-// resolveSpawnerChoice (tools/cli/internal/commands) picks, ahead of any PATH
-// lookup or auto-fallback (docs/scope-go-spawn.md Stage 4): "go" pins
-// parlay-bin (tools/parlay-bin) and refuses loudly rather than falling back
-// if it is not on PATH; "bash" pins bin/parlay-spawn — the documented escape
-// hatch for a broken or untrusted Go binary. Case-insensitive; any other
-// non-empty value is a usage error at the call site, never a silent no-op.
+// SpawnImplEnv selects which spawn implementation `parlay spawn` runs
+// (tools/cli/internal/commands/spawn.go; docs/scope-go-spawn.md §0): empty or
+// "go" is the in-process Go launcher (tools/cli/internal/spawn) — the default,
+// and the only path once PR B lands; "bash" execs bin/parlay-spawn from PATH,
+// the documented escape hatch for a broken or untrusted Go path, and refuses
+// loudly rather than falling back if the script is missing. Case-insensitive;
+// any other non-empty value is a usage error at the call site, never a silent
+// no-op.
 const SpawnImplEnv = "PARLAY_SPAWN_IMPL"
 
 // spawnAccountRe matches a `spawnAccount = <value>` assignment; the value is

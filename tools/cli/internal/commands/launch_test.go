@@ -452,8 +452,10 @@ func TestLaunchPassesIdentityAccountToSpawner(t *testing.T) {
 }
 
 // The config default must reach the spawner too. This is the case that was
-// silently broken: resolveSpawner prefers parlay-bin, which reads only its
-// --account flag, so a config-only default never applied to a relaunch.
+// silently broken back when a separate parlay-bin binary won spawner
+// resolution and read only its --account flag, so a config-only default never
+// applied to a relaunch. The binary is gone, but the argv assertion stays:
+// Launch must still pass the configured account through explicitly.
 func TestLaunchFallsBackToConfiguredSpawnAccount(t *testing.T) {
 	record := launchAccountFixture(t, "", "spawnAccount = \"acc2\"\n")
 
