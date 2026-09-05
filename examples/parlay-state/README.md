@@ -72,6 +72,7 @@ Written by `parlay identity --register …`, read back by `parlay launch <id>`,
 | `worktree` | for teardown | Git worktree to remove on teardown. |
 | `project` | no | The repo the worktree belongs to. |
 | `mode`, `effort`, `yolo` | no | Free-form profile strings this fleet's spawner reads. Recorded, not interpreted by the CLI. |
+| `account` | no | ccjuggler account the agent relaunches under. Written by a spawn that passed `--account`; read back by `parlay launch <id>` and `identity --launch <id>`. Absent means no pin — the configured default applies at relaunch time instead. |
 
 `name` and `color` are not cosmetic either: `knownAgents()`
 (`tools/cli/internal/commands/launch.go`) skips any agent store whose

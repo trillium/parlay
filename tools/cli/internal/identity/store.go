@@ -63,6 +63,12 @@ var (
 		// robots-6xq7 trap applies: dropping either from this table would
 		// kill the WHOLE register call (worktree included) with EXIT_USAGE.
 		"--gc-session", "--gc-city",
+		// --account pins the ccjuggler account an agent relaunches under
+		// (the spawn-time-account writer, task-0d6mi). Same robots-6xq7 trap:
+		// a value flag missing from here makes args.Parse die EXIT_USAGE and
+		// kills the WHOLE register call, so the account (and every other
+		// field) would silently never be recorded.
+		"--account",
 	}
 )
 

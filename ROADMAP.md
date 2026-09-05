@@ -40,11 +40,6 @@ Port the bash layer into Go so the CLI is the single spawn path.
 
 - Use `juggle use <account>` instead of direct keychain read (task-4e9sd)
 
-### Agent lifecycle
-Agents launched by Parlay have no firstmate record — nothing closes them.
-
-- `account:` field never written to identity.md — the read half has no writer (task-0d6mi)
-
 ### Parlay/firstmate fold
 Full merge of the two supervision layers.
 

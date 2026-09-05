@@ -57,6 +57,20 @@ type registerIdentityOptions struct {
 	BeadID       string
 	GCSession    string
 	GCCity       string
+	Account      string
+}
+
+// identityAccount is the account persisted into the spawned agent's
+// identity.md: the explicitly-passed --account only. When no flag was given,
+// opts.Account still carries resolveDefaultAccount's ambient value (it drives
+// live token resolution), but persisting that would freeze today's config
+// default into the agent forever and make later `parlay defaults set account`
+// rotations invisible to it.
+func identityAccount(opts SpawnOptions) string {
+	if !opts.AccountFromFlag {
+		return ""
+	}
+	return opts.Account
 }
 
 // registerIdentity is best-effort — a failure here does not fail the spawn,
@@ -93,6 +107,9 @@ func registerIdentity(opts registerIdentityOptions) {
 	}
 	if opts.GCCity != "" {
 		args = append(args, "--gc-city", opts.GCCity)
+	}
+	if opts.Account != "" {
+		args = append(args, "--account", opts.Account)
 	}
 	cmd := exec.Command("parlay", args...)
 	_ = cmd.Run()
