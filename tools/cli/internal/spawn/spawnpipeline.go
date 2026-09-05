@@ -383,10 +383,11 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		}
 	}
 	if !startOK {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: herdr agent start failed after %d attempt(s) — rolling back the tab to avoid a ghost tab. (last: %s)\n", made, strings.TrimSpace(lastOut))
-		if tabID != "" {
-			_ = launcher.TabClose(tabID)
-		}
+		fmt.Fprintf(os.Stderr, "parlay-spawn: herdr agent start failed after %d attempt(s) — rolling back to avoid a ghost registration. (last: %s)\n", made, strings.TrimSpace(lastOut))
+		// No agent was started on this path, so there is nothing running to
+		// strand — only the registration to take back. Pane is passed empty
+		// for the same reason: there is no live agent to warn about.
+		rollbackLaunch(launcher, server, opts.AgentID, tabID, "")
 		return fmt.Errorf("herdr agent start failed after %d attempt(s)", made)
 	}
 	// rootPane is now the agent pane — do not close it.
@@ -399,14 +400,47 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 	// herdr's paste-safe channel. A failure here leaves a started agent with
 	// no task, so it rolls the tab back exactly like a failed start.
 	if promptErr := launcher.AgentPrompt(opts.AgentID, startupPrompt); promptErr != nil {
-		fmt.Fprintf(os.Stderr, "parlay spawn: herdr agent prompt failed to deliver the charter — rolling back the tab to avoid a ghost %q tab.\n", opts.AgentID)
-		if tabID != "" {
-			_ = launcher.TabClose(tabID)
-		}
+		fmt.Fprintf(os.Stderr, "parlay-spawn: herdr agent prompt failed to deliver the charter to %q — rolling back.\n", opts.AgentID)
+		// The agent IS started by this point, so this is the one path that
+		// can strand a live, charterless agent. rollbackLaunch closes the tab
+		// when this pipeline made one, and in in-place mode reports what it
+		// could not undo instead of claiming a rollback that never happened
+		// (the old message said "rolling back the tab" while the tabID guard
+		// below it made the whole branch a no-op for --pane).
+		rollbackLaunch(launcher, server, opts.AgentID, tabID, opts.Pane)
 		return fmt.Errorf("herdr agent prompt failed to deliver the charter to %s: %w", opts.AgentID, promptErr)
 	}
 
 	return nil
+}
+
+// rollbackLaunch undoes as much of a failed herdr launch as herdr actually
+// permits, and says plainly what it could not undo.
+//
+// Two shapes, because in-place mode has no safe kill. For a tab this
+// pipeline created, closing it ends the agent with it. For `--pane <ID>` the
+// pane belongs to the CALLER (yolo backgrounds this and returns into its own
+// terminal), and herdr exposes no agent-stop operation at all — `herdr agent`
+// offers list/get/read/send-keys/prompt/rename/focus/wait/attach/start and
+// nothing that ends one. `pane close` would end the operator's own terminal,
+// a worse outcome than the one being cleaned up, so it is not an option.
+//
+// What both shapes DO undo is the registration, and that is the half that
+// actually endangers the fleet: a registered channel with nothing coherent
+// behind it is robots-jkwc's ghost, and `parlay send` routes work to it
+// happily. Dropping the row means a charterless agent gets ignored rather
+// than tasked.
+func rollbackLaunch(launcher Launcher, server, agentID, tabID, pane string) {
+	if tabID != "" {
+		_ = launcher.TabClose(tabID)
+	}
+	_ = unregisterAgent(server, agentID)
+	if tabID == "" && pane != "" {
+		fmt.Fprintf(os.Stderr,
+			"parlay-spawn: in-place mode — the agent was already started in YOUR pane %s, and herdr has no way to stop it, so it is still running there with no task.\n"+
+				"  Its registration has been removed, so nothing will route work to it.\n"+
+				"  End it yourself in that pane (Ctrl-C), then re-run the spawn.\n", pane)
+	}
 }
 
 // spawnViaSubprocess launches the agent as a detached `sh -c` child instead

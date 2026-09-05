@@ -1,6 +1,7 @@
 package spawn
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -411,5 +412,98 @@ func TestWriteStartupPromptKeepsTheCharterOwnerOnly(t *testing.T) {
 	}
 	if got := di.Mode().Perm(); got != 0o700 {
 		t.Errorf("agent dir mode = %o, want 700 even when it already existed", got)
+	}
+}
+
+// CodeRabbit (Major), PR #273: in `--pane` in-place mode there is no tab, so
+// the charter-delivery failure path's `if tabID != ""` guard made the whole
+// rollback a no-op — while stderr still claimed it was "rolling back the
+// tab". AgentStart has already succeeded by then, so the failure left a live,
+// charterless agent in the caller's pane AND its registration standing.
+//
+// herdr has no agent-stop operation (`herdr agent` offers
+// list/get/read/send-keys/prompt/rename/focus/wait/attach/start and nothing
+// that ends one), and the pane belongs to the caller, so what rollback CAN do
+// is drop the registration — the half that makes a charterless agent
+// dangerous rather than merely untidy — and say what it could not undo.
+func TestSpawnOneInPlacePromptFailureUnregistersAndNeverClosesCallersPane(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	var unregistered []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if id, _ := body["id"].(string); id != "" {
+				unregistered = append(unregistered, id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-inplace-z1", "In Place", "#c084fc", "brief",
+			"--model", "sonnet", "--pane", "pane-caller-99"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when the charter cannot be delivered")
+	}
+
+	// The registration must be withdrawn: a registered channel with nothing
+	// coherent behind it is the ghost `parlay send` will happily task.
+	if len(unregistered) != 1 || unregistered[0] != "nope-inplace-z1" {
+		t.Errorf("expected the failed launch to unregister its agent, got %v", unregistered)
+	}
+	// The caller's pane is the operator's own terminal. Closing it would be a
+	// worse outcome than the one being cleaned up.
+	if len(m.paneCloseCalls) != 0 {
+		t.Errorf("in-place rollback must never close the caller's pane, got %v", m.paneCloseCalls)
+	}
+	// There is no tab in in-place mode; closing one would mean we closed
+	// something we did not create.
+	if len(m.tabCloseCalls) != 0 {
+		t.Errorf("in-place rollback must not close a tab it never created, got %v", m.tabCloseCalls)
+	}
+	// And it must say what it could NOT undo, naming the pane — the old
+	// message claimed a tab rollback that never happened.
+	if !strings.Contains(out, "pane-caller-99") || !strings.Contains(out, "still running there with no task") {
+		t.Errorf("expected an accurate report of the stranded agent and its pane; got:\n%s", out)
+	}
+}
+
+// The tab-launch shape still ends the agent by closing the tab this pipeline
+// created, and withdraws the registration too.
+func TestSpawnOneTabPromptFailureClosesTabAndUnregisters(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+
+	var unregistered []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/unregister" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if id, _ := body["id"].(string); id != "" {
+				unregistered = append(unregistered, id)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	_, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-tab-z1", "Tab Mode", "#c084fc", "brief", "--model", "sonnet"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when the charter cannot be delivered")
+	}
+	if len(m.tabCloseCalls) != 1 {
+		t.Errorf("a tab launch must close the tab it created, got %v", m.tabCloseCalls)
+	}
+	if len(unregistered) != 1 {
+		t.Errorf("expected the failed launch to unregister its agent, got %v", unregistered)
 	}
 }

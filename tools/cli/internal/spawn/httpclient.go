@@ -58,6 +58,19 @@ func registerAgent(server, id, name, color string) error {
 	return nil
 }
 
+// unregisterAgent removes the registration this pipeline created, for use
+// when a launch fails after registerAgent already succeeded. Best-effort by
+// design: the caller is already on an error path, and a failed cleanup must
+// not mask the failure that triggered it.
+//
+// This is the half of rollback that matters most. A registration nothing
+// removes is precisely the ghost robots-jkwc describes — a row the server
+// happily routes work to, with no live listener behind it — so a spawn that
+// aborts after registering has to take its row back out.
+func unregisterAgent(server, id string) error {
+	return postJSON(server+"/api/chat/unregister", map[string]any{"id": id})
+}
+
 // postHello posts the "Spawning…" hello reply so the tab goes live
 // immediately. bin/parlay-spawn step 2 (lines 344–347) — best-effort, bash
 // ignores a failure here (`|| true`).
