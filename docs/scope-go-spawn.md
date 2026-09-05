@@ -13,7 +13,9 @@
 > [`docs/agent-notes/go-spawner-folded-into-tools-cli.md`](agent-notes/go-spawner-folded-into-tools-cli.md).**
 >
 > Three reading rules for everything below:
-> 1. Every `tools/parlay-bin/<file>.go` path is `tools/cli/internal/spawn/<file>.go`.
+> 1. Former `tools/parlay-bin/<file>.go` paths moved to TWO destinations:
+>    the ccjuggler account helpers are `tools/cli/internal/juggle/`, and
+>    everything else is `tools/cli/internal/spawn/<file>.go`.
 > 2. Every `bin/parlay-spawn:<line>` citation points into a deleted file —
 >    `git show 046919aa:bin/parlay-spawn` to read it.
 > 3. Anything in §2 marked **Partial**, **Missing** or **Divergent** may since

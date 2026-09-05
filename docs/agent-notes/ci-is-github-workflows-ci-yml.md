@@ -13,7 +13,7 @@ green and 3 provably broken.
 
 Four parallel jobs, each pinned to action commit SHAs with `permissions:
 contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
-all five modules), **bun** (tests for `packages/{input,client,server,cli}` and
+every module in `GO_MODULES`), **bun** (tests for `packages/{input,client,server,cli}` and
 `tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
 dependencies — plus typecheck for `packages/input` and `tools/split-test`),
 **shell** (nine hermetic harnesses, preceded by a `git`/`jq`/`curl`/`python3`

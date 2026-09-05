@@ -238,7 +238,7 @@ flowchart LR
 | **Events / history (JSONL)** | Append-only chat history, plus the hook/tool-activity tailers that feed it — two different files depending on which server wrote them. | [`docs/events-history.md`](docs/events-history.md) |
 | **Agent registry & presence** | Who is enrolled as a chat tab, and transient (in-memory-only) connection counts. | [`docs/agent-registry.md`](docs/agent-registry.md) |
 | **Monitor / listen** | How an enrolled agent actually receives messages — relay-backed by default, `--legacy-poll` as a no-relay fallback with a documented dead-tab gap. | [`docs/monitor.md`](docs/monitor.md) |
-| **Launcher (spawn)** | Launches a new background agent into a live chat tab — two implementations, one of which lacks the other's safety gates. | [`docs/launcher.md`](docs/launcher.md) |
+| **Launcher (spawn)** | Launches a new background agent into a live chat tab — one in-process implementation (`tools/cli/internal/spawn`), so the model and beads gates cannot be routed around. | [`docs/launcher.md`](docs/launcher.md) |
 | **Relay** | Single fan-out daemon between the server's long-poll feed and every enrolled agent's monitor; a per-runtime-dir singleton, not built by default. | [`docs/relay.md`](docs/relay.md) |
 | **Live-command registry** | A separate registry from agent enrollment — tracks running `parlay` CLI invocations for `parlay commands` and the panel's live-commands view. | [`docs/live-commands.md`](docs/live-commands.md) |
 | **CLI** | The `parlay` Go command surface and the embedded voice/phrase eval engine. | [`tools/cli`](tools/cli), [`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md) |
