@@ -428,7 +428,7 @@ replaced or dropped:
 - Real `scratchpad.md` and `handoff` content — working notes about private
   projects.
 - The relay, launchd, and spawner configuration (`tools/relay/deploy`,
-  `tools/parlay-bin`, `herdr`). Host-specific supervision, not config a reader
-  copies.
+  `tools/cli/internal/spawn`, `herdr`). Host-specific supervision, not config
+  a reader copies.
 - `~/.parlay/guard/`, `~/.parlay/robots-watch/`, `~/.parlay/specs/`, and
   `reincarnations.log` — runtime scratch written by daemons, not configuration.

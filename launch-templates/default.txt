@@ -1,1 +1,1 @@
-../tools/parlay-bin/launch-templates/default.txt
+../tools/cli/internal/spawn/launch-templates/default.txt

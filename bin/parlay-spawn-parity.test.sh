@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Cross-implementation parity harness — docs/scope-go-spawn.md Stage 4.
+# Cross-implementation parity harness — docs/scope-go-spawn.md Stage 4
+# (Go side folded into the parlay CLI itself by task-42qot).
 #
 # Runs the SAME named-spawn scenarios through bin/parlay-spawn (bash) and the
-# real, built tools/parlay-bin binary (via bin/parlay-bin, its production
+# in-process Go pipeline (`parlay spawn`, via bin/parlay, its production
 # wrapper) and asserts equivalent observable outcomes: exit code, and a
 # refusal/registration message substring. Hermetic — every scenario refuses
 # before any herdr tab, subprocess, or network side effect that would start a
@@ -10,11 +11,9 @@
 # PARLAY_SERVER="http://127.0.0.1:1", a guaranteed connection-refused address,
 # so it fails fast without a mock server and never launches anything.
 #
-# Unlike bin/parlay-bin.test.sh (which stubs `go` itself to test the
-# wrapper's build-if-stale logic without a toolchain), this harness needs a
-# REAL go build to get a genuine A/B behavioral comparison — so it only runs
-# where a go toolchain exists (the "go" CI job, not "shell"; see
-# .github/workflows/ci.yml).
+# This harness needs a REAL go build (bin/parlay's build-if-stale) to get a
+# genuine A/B behavioral comparison — so it only runs where a go toolchain
+# exists (the "go" CI job, not "shell"; see .github/workflows/ci.yml).
 #
 # Scope: the named-spawn shape's gate chain only (kebab validation → bead
 # gate → PII routing → model-required → registration), in gate order. Not
@@ -30,7 +29,7 @@ set -u
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 BASH_SPAWN="$SELF_DIR/parlay-spawn"
-GO_SPAWN="$REPO_ROOT/bin/parlay-bin"
+GO_SPAWN="$REPO_ROOT/bin/parlay"
 
 PASS=0
 FAIL=0
@@ -105,8 +104,11 @@ run_bash() {
 }
 
 run_go() {
-  local via_cli="${PARITY_VIA_CLI-1}"
-  common_env env PARLAY_SPAWN_VIA_CLI="$via_cli" PARLAY_SPAWN_BEADS_REQUIRED="${PARITY_BEADS_REQUIRED:-0}" \
+  # PARLAY_SPAWN_IMPL= (empty) neutralizes any ambient escape-hatch setting:
+  # the Go side of this A/B must be the in-process pipeline, never a detour
+  # back through bash. (Empty env falls through to config.toml, absent under
+  # the redirected HOME, which selects in-process — config.SpawnImpl.)
+  common_env env PARLAY_SPAWN_IMPL= PARLAY_SPAWN_BEADS_REQUIRED="${PARITY_BEADS_REQUIRED:-0}" \
     "$GO_SPAWN" spawn "$@" 2>&1
 }
 
@@ -129,10 +131,12 @@ assert_parity() {
 }
 
 # ── 1. PARLAY_SPAWN_VIA_CLI missing — the one-front-door invariant ──────────
-# Message text differs only in the binary name prefix ("parlay-spawn:" vs
-# "parlay-bin:") — both share "refusing to run directly — task-qyu8q scope 3".
-PARITY_VIA_CLI="" assert_parity "via-cli-missing" 2 "refusing to run directly — task-qyu8q scope 3" \
-  parity-a "Parity A" "#aabbcc" "task"
+# BASH-ONLY since task-42qot: `parlay spawn` runs the pipeline in-process, so
+# the Go side has no cross-binary handshake left to police — only the bash
+# script (still invokable directly) keeps its refusal.
+bash_out="$(PARITY_VIA_CLI="" run_bash parity-a "Parity A" "#aabbcc" "task")"; bash_rc=$?
+if [ "$bash_rc" -eq 2 ]; then ok "via-cli-missing: bash exit 2"; else bad "via-cli-missing: bash exit — want 2, got $bash_rc; output:"$'\n'"$bash_out"; fi
+if grep -qF "refusing to run directly — task-qyu8q scope 3" <<<"$bash_out"; then ok "via-cli-missing: bash message"; else bad "via-cli-missing: bash message missing; output:"$'\n'"$bash_out"; fi
 
 # ── 2. Invalid kebab-slug agent-id ───────────────────────────────────────────
 # Quote style diverges by design (bash: 'Not_Kebab', go's fmt %q: "Not_Kebab")

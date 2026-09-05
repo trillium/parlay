@@ -48,14 +48,15 @@ var listenSubcommands = map[string]bool{
 }
 
 // parlayBinaryNames are the basenames a parlay CLI process can run under:
-// the `bin/parlay` wrapper, the Go binary it execs (tools/cli/bin/parlay-cli),
-// and the spawn binary. Requiring the subcommand to be preceded by one of
-// these is what keeps a shell wrapper whose *command string* merely contains
-// "parlay listen --agent X" from being mistaken for the listener itself.
+// the `bin/parlay` wrapper and the Go binary it execs
+// (tools/cli/bin/parlay-cli). Requiring the subcommand to be preceded by one
+// of these is what keeps a shell wrapper whose *command string* merely
+// contains "parlay listen --agent X" from being mistaken for the listener
+// itself. ("parlay-bin", the former standalone spawn binary, was folded into
+// the CLI by task-42qot and no longer runs as its own process.)
 var parlayBinaryNames = map[string]bool{
 	"parlay":     true,
 	"parlay-cli": true,
-	"parlay-bin": true,
 }
 
 // freeTextFlagValues take an arbitrary human string whose contents can

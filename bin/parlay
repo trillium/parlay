@@ -22,6 +22,9 @@ CLI_DIR="$REPO/tools/cli"
 GO_BIN="$CLI_DIR/bin/parlay-cli"
 if [ ! -x "$GO_BIN" ] || [ -n "$(find "$CLI_DIR" -name '*.go' -newer "$GO_BIN" -print -quit)" ]; then
   mkdir -p "$(dirname "$GO_BIN")"
-  (cd "$CLI_DIR" && go build -o "$GO_BIN" .) || exit 1
+  # CGO_ENABLED=0: the beads dependency's embedded-Dolt tree drags in ICU C++
+  # headers under default CGO on macOS, bricking the build (robots-wgij).
+  # Nothing in the CLI needs cgo.
+  (cd "$CLI_DIR" && CGO_ENABLED=0 go build -o "$GO_BIN" .) || exit 1
 fi
 exec "$GO_BIN" "$@"

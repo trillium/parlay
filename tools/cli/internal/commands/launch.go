@@ -1,5 +1,6 @@
-// `parlay launch` — discover known agents and spawn one via the spawner
-// binary (parlay-bin, falling back to parlay-spawn).
+// `parlay launch` — discover known agents and respawn one via the same
+// in-process spawn pipeline `parlay spawn` runs (see spawn.go's
+// runSpawnArgv, including its PARLAY_SPAWN_IMPL=bash escape hatch).
 //
 // Ported from packages/cli/src/commands/launch.ts (ticket B9).
 package commands
@@ -7,7 +8,6 @@ package commands
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -78,105 +78,11 @@ func knownAgents() ([]knownAgent, int) {
 	return known, unlaunchable
 }
 
-// spawnerNames lists the agent-spawning binaries in preference order:
-// parlay-bin (the Go port, ticket A1, which takes a `spawn` subcommand) then
-// parlay-spawn (the bash original this repo still ships in bin/, same
-// positional contract with no subcommand word). config.SpawnImpl()
-// (PARLAY_SPAWN_IMPL env var, else config.toml's `spawnImpl` key) overrides
-// this order entirely — see resolveSpawnerChoice.
-var spawnerNames = []string{"parlay-bin", "parlay-spawn"}
-var spawnerSubcommand = map[string]string{"parlay-bin": "spawn"}
-
-// spawnerChoice is which binary resolveSpawnerChoice picked, plus whether
-// that pick was an explicit PARLAY_SPAWN_IMPL/config override (explicit) or
-// the auto-preference order (!explicit). Spawn (spawn.go) uses explicit to
-// decide whether a Go binary that fails to even start may fall back to bash,
-// or must fail loudly instead — see execSpawner.
-type spawnerChoice struct {
-	bin      string
-	argv     []string
-	name     string
-	explicit bool
-}
-
-// resolveSpawnerChoice implements the documented precedence
-// (docs/scope-go-spawn.md Stage 4) for which binary executes a spawn:
-//
-//  1. config.SpawnImpl() ("go" or "bash", case-insensitive; PARLAY_SPAWN_IMPL
-//     env var, else config.toml's top-level `spawnImpl` key). An explicit
-//     choice is authoritative and never auto-falls-back: "go" fails loudly if
-//     parlay-bin is not on PATH, and "bash" is the documented escape hatch
-//     for a broken or untrusted Go binary. Any other non-empty value is a
-//     usage error — a typo must not silently resolve to auto mode.
-//  2. Otherwise, parlay-bin when it resolves on PATH (auto-preferred, marked
-//     !explicit — a parlay-bin picked this way that fails to even start may
-//     still fall back to bash at exec time; see spawn.go's execSpawner).
-//  3. Otherwise, bin/parlay-spawn (bash).
-//
-// robots-v81b: resolution used to hardcode exec.Command("parlay-bin", …) and
-// discard the run error, faithfully replicating launch.ts's unchecked
-// Bun.spawnSync. The A1 rename was never accompanied by an install of
-// parlay-bin anywhere, so on a host whose PATH carries only the
-// bin/parlay-spawn symlink, every `parlay launch <id>` printed a spawning
-// announcement, exited 0, and launched nothing — ENOENT was indistinguishable
-// from success. Resolving both names fixes the common case; the error
-// returned here is fatal at the call site so an unresolvable spawner is loud.
-func resolveSpawnerChoice(spawnArgs []string) (spawnerChoice, error) {
-	if override := strings.TrimSpace(config.SpawnImpl()); override != "" {
-		switch strings.ToLower(override) {
-		case "go":
-			abs, lookErr := exec.LookPath("parlay-bin")
-			if lookErr != nil || abs == "" {
-				return spawnerChoice{}, fmt.Errorf("%s=go (or config.toml spawnImpl=go) demands parlay-bin, but it is not on PATH", config.SpawnImplEnv)
-			}
-			return spawnerChoice{bin: abs, argv: append([]string{"spawn"}, spawnArgs...), name: "parlay-bin", explicit: true}, nil
-		case "bash":
-			abs, lookErr := exec.LookPath("parlay-spawn")
-			if lookErr != nil || abs == "" {
-				return spawnerChoice{}, fmt.Errorf("%s=bash (or config.toml spawnImpl=bash) demands parlay-spawn, but it is not on PATH", config.SpawnImplEnv)
-			}
-			return spawnerChoice{bin: abs, argv: spawnArgs, name: "parlay-spawn", explicit: true}, nil
-		default:
-			return spawnerChoice{}, fmt.Errorf("invalid %s (or config.toml spawnImpl) value %q — must be \"go\" or \"bash\"", config.SpawnImplEnv, override)
-		}
-	}
-	for _, name := range spawnerNames {
-		abs, lookErr := exec.LookPath(name)
-		if lookErr != nil || abs == "" {
-			continue
-		}
-		if sub := spawnerSubcommand[name]; sub != "" {
-			return spawnerChoice{bin: abs, argv: append([]string{sub}, spawnArgs...), name: name}, nil
-		}
-		return spawnerChoice{bin: abs, argv: spawnArgs, name: name}, nil
-	}
-	return spawnerChoice{}, fmt.Errorf("no spawner on PATH — install one of %s (this repo ships bin/parlay-spawn; symlink it into ~/.local/bin)", strings.Join(spawnerNames, " or "))
-}
-
-// resolveSpawner is resolveSpawnerChoice's (bin, argv, err) shape, kept for
-// callers (Launch) that don't need to know whether the pick was explicit.
-func resolveSpawner(spawnArgs []string) (bin string, argv []string, err error) {
-	choice, err := resolveSpawnerChoice(spawnArgs)
-	if err != nil {
-		return "", nil, err
-	}
-	return choice.bin, choice.argv, nil
-}
-
-// spawnUsageHint describes how agents are created, naming whichever spawner
-// this host actually has rather than a binary the reader may not own.
+// spawnUsageHint describes how agents are created. Since task-42qot the
+// spawn pipeline runs in-process — `parlay spawn` is the single entry
+// point, so the hint no longer probes PATH for spawner binaries.
 func spawnUsageHint() string {
-	name := spawnerNames[len(spawnerNames)-1]
-	for _, candidate := range spawnerNames {
-		if abs, err := exec.LookPath(candidate); err == nil && abs != "" {
-			name = candidate
-			break
-		}
-	}
-	if sub := spawnerSubcommand[name]; sub != "" {
-		name += " " + sub
-	}
-	return name + " <id> <name> <color> <prompt> [--cwd PATH]"
+	return "parlay spawn <id> <name> <color> <prompt> [--cwd PATH]"
 }
 
 // Launch ports cmdLaunch: with no positional arg, lists known agents
@@ -234,21 +140,13 @@ func Launch(argv []string) {
 			spawnArgs = append(spawnArgs, "--model", target.model)
 		}
 		spawnArgs = append(spawnArgs, identity.SpawnAccountArgs(target.account)...)
-		bin, argv, err := resolveSpawner(spawnArgs)
-		if err != nil {
-			httpc.Die(fmt.Sprintf("parlay launch: cannot spawn %s — %v", target.id, err), config.ExitRuntime)
-			return
-		}
-		spawner := filepath.Base(bin)
-		fmt.Fprintf(os.Stderr, "parlay launch: spawning %s via %s …\n", target.id, spawner)
-		// Blocking with inherited stdio, as launch.ts's Bun.spawnSync was —
-		// but the result is checked. A spawner that cannot start, or that
-		// exits non-zero, is a failed launch and must not report success.
-		cmd := exec.Command(bin, argv...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			httpc.Die(fmt.Sprintf("parlay launch: %s failed to spawn %s — %v", spawner, target.id, err), config.ExitRuntime)
-		}
+		fmt.Fprintf(os.Stderr, "parlay launch: spawning %s via parlay spawn …\n", target.id)
+		// Same dispatch as `parlay spawn` itself (spawn.go): in-process by
+		// default, bin/parlay-spawn when the PARLAY_SPAWN_IMPL=bash escape
+		// hatch is set. A failed spawn propagates its real exit code via
+		// httpc.Exit rather than reporting success (robots-v81b's lesson:
+		// a swallowed spawn failure is indistinguishable from a launch).
+		runSpawnArgv(spawnArgs)
 		return
 	}
 

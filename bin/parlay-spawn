@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================================
-# RETIRED as the default spawn implementation — docs/scope-go-spawn.md Stage 5.
-# `parlay spawn` now reaches the Go spawner (tools/parlay-bin, exec'd via
-# bin/parlay-bin) by default; resolveSpawnerChoice in
-# tools/cli/internal/commands/launch.go picks this script only when the Go
-# binary isn't on PATH or fails to even start. This file is NOT deleted and
-# stays fully functional — it is the sanctioned escape hatch for a spawn the
-# Go path can't yet handle. Force it explicitly with either:
+# RETIRED as the default spawn implementation — task-42qot.
+# `parlay spawn` now runs the Go spawn pipeline IN-PROCESS
+# (tools/cli/internal/spawn, the folded former tools/parlay-bin module);
+# there is no fallback to this script on any Go failure. This file is NOT
+# deleted and stays fully functional — it is the sanctioned escape hatch for
+# a spawn the Go path can't yet handle. Force it explicitly with either:
 #
 #   PARLAY_SPAWN_IMPL=bash parlay spawn ...
 #   # or persist the choice: spawnImpl = "bash"   (top-level key in
 #   # ~/.parlay/config.toml — see tools/cli/internal/config/config.go)
 #
-# `PARLAY_SPAWN_IMPL=go` (or `spawnImpl = "go"`) demands the Go binary and
-# never falls back here, even on failure — see execSpawner in
-# tools/cli/internal/commands/spawn.go. This script's own hard-refuse-without-
-# PARLAY_SPAWN_VIA_CLI behavior below is unchanged by any of this.
+# The hatch (execBashSpawner in tools/cli/internal/commands/spawn.go) sets
+# PARLAY_SPAWN_VIA_CLI=1, satisfying this script's own hard-refuse-without-
+# handshake behavior below, which is unchanged by any of this.
 # ============================================================================
 #
 # parlay-spawn — launch a NEW background Claude Code agent "from Parlay".
@@ -62,7 +60,7 @@
 set -euo pipefail
 
 # GO_ONLY_VERBS (task-ub2l7, docs/scope-go-spawn.md) — flags/verbs that exist
-# only in the Go spawner (tools/parlay-bin) with no bash counterpart at all,
+# only in the Go spawner (tools/cli/internal/spawn) with no bash counterpart at all,
 # distinct from the retired TS<->Go CLI parity harness's own GO_ONLY_VERBS
 # concept (tools/cli/parity/run.sh, deleted with packages/cli in T-08; see
 # AGENTS.md) — that one was about the `parlay spawn` CLI verb itself having
@@ -79,7 +77,7 @@ GO_ONLY_VERBS=()
 for _goonly in "${GO_ONLY_VERBS[@]+"${GO_ONLY_VERBS[@]}"}"; do
   for _arg in "$@"; do
     if [ "$_arg" = "$_goonly" ]; then
-      echo "parlay-spawn: '$_goonly' is Go-only — no bash implementation exists, even via the PARLAY_SPAWN_IMPL=bash escape hatch. Use \`parlay spawn\` (tools/parlay-bin) instead." >&2
+      echo "parlay-spawn: '$_goonly' is Go-only — no bash implementation exists, even via the PARLAY_SPAWN_IMPL=bash escape hatch. Use \`parlay spawn\` (tools/cli/internal/spawn) instead." >&2
       exit 2
     fi
   done
@@ -1309,7 +1307,7 @@ if [ "$WANT_WORKTREE" -eq 1 ]; then
           _wt_created=1
           # Recorded ONLY on a verified treehouse lease (never the plain git
           # worktree fallback below) — this is what the subprocess launch branch
-          # passes to `parlay-bin subprocess-spawn --worktree-path`, so
+          # passes to `parlay subprocess-spawn --worktree-path`, so
           # subprocess-stop knows to `treehouse return` it and a plain
           # git-worktree agent is never mistaken for a leased one.
           TREEHOUSE_LEASED_PATH="$WORKTREE_PATH"
@@ -1698,8 +1696,8 @@ else
 # environments. No tab/pane exists, so the charter can't be delivered via
 # herdr's paste-safe `agent prompt` channel; instead it is written to disk and
 # piped into the agent process's stdin as part of its one-shot launch command
-# (tools/parlay-bin's subprocess-spawn runs `sh -c <command>` once, detached —
-# see tools/parlay-bin/subprocess_spawn.go's header comment for the full design
+# (`parlay subprocess-spawn` runs `sh -c <command>` once, detached —
+# see tools/cli/internal/spawn/subprocess_spawn.go's header comment for the full design
 # rationale, including why this is a from-scratch port of the old gascity
 # lifecycle semantics rather than an import or a `gc` CLI wrapper).
 SUBPROCESS_PROMPT_FILE="$AGENT_DIR/startup-prompt.txt"
@@ -1736,14 +1734,10 @@ done
 SUBPROCESS_WORKTREE_FLAG=()
 [ -n "$TREEHOUSE_LEASED_PATH" ] && SUBPROCESS_WORKTREE_FLAG=(--worktree-path "$TREEHOUSE_LEASED_PATH")
 
-# Build tools/parlay-bin if missing or stale, mirroring bin/parlay's own
-# build-if-stale pattern for tools/cli.
-SUBPROCESS_BIN_DIR="$BIN_DIR/../tools/parlay-bin"
-SUBPROCESS_GO_BIN="$SUBPROCESS_BIN_DIR/bin/parlay-bin"
-if [ ! -x "$SUBPROCESS_GO_BIN" ] || [ -n "$(find "$SUBPROCESS_BIN_DIR" -name '*.go' -newer "$SUBPROCESS_GO_BIN" -print -quit)" ]; then
-  mkdir -p "$(dirname "$SUBPROCESS_GO_BIN")"
-  (cd "$SUBPROCESS_BIN_DIR" && go build -o "$SUBPROCESS_GO_BIN" .) || exit 1
-fi
+# The subprocess lifecycle verbs live in the parlay CLI itself since
+# task-42qot (tools/cli/internal/spawn — the former tools/parlay-bin module);
+# bin/parlay handles its own build-if-stale.
+SUBPROCESS_GO_BIN="$BIN_DIR/parlay"
 
 if ! "$SUBPROCESS_GO_BIN" subprocess-spawn "$AGENT_ID" "$SUBPROCESS_COMMAND" "$CWD" \
     --state-dir "$AGENT_DIR/gascity" \
