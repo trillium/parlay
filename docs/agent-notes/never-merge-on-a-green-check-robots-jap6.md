@@ -312,3 +312,37 @@ Two consequences for planning:
 This does not satisfy `parlay merge-gate`, which reads GitHub and cannot see a
 local run. Use both: the local review to catch defects before pushing, and the
 `@coderabbitai` comment to put reviewable evidence where the gate can find it.
+
+## A `READY` verdict has a blind spot: outside-diff findings (task-42qot, PR #273)
+
+`merge-gate`'s review-evidence checks look at review THREADS. CodeRabbit cannot
+always attach a finding to a thread: when the code it wants to comment on is
+outside the PR's diff hunks, it says so —
+
+> ⚠️ Some comments are outside the diff and can't be posted inline due to
+> platform limitations. **Outside diff range comments (1)**
+
+— and puts the finding in the review BODY instead. A body-only finding creates
+no thread, so `unresolved-threads` sees nothing and the gate returns `READY`.
+
+This is not hypothetical. On PR #273 the gate reported READY while a **Major**
+was outstanding: the in-place (`--pane`) rollback path was a no-op that
+announced "rolling back the tab", leaving a live charterless agent and its
+registration behind. It was found only by reading the review body.
+
+**So the check is three surfaces, not one:**
+
+1. `parlay merge-gate <pr>` — necessary, not sufficient.
+2. The newest CodeRabbit review **body**, for `Outside diff range comments`.
+3. The unresolved-thread list.
+
+Two related traps from the same PR, both of which produced a green check with
+no review behind it:
+
+- **"Action performed — Review triggered"** is not "review finished". The
+  trigger message posts immediately; the review may still be rate-limited.
+  `merge-gate` reads the check description and will say `Review rate limited`
+  when that happened.
+- A **reply** to a review thread creates an empty-bodied review object. Do not
+  read "a review exists covering this head" as "the code was reviewed" without
+  a matching `Review finished` reply or actual findings.
