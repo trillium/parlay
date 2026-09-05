@@ -11,6 +11,7 @@ import { startHookFiringTailer } from "./hook-tailer"
 import { startToolEventTailer } from "./tool-tailer"
 import { startPruneSweeps, startIdleReapSweeps } from "./prune"
 import { backfillFromToolActivity } from "./session-channel"
+import { SERVER_IDLE_TIMEOUT_SEC } from "./timeouts"
 import { mkdirSync } from "fs"
 
 const PORT     = Number(process.env.PARLAY_PORT ?? 4242)
@@ -31,6 +32,11 @@ startIdleReapSweeps()
 
 serve({
   port: PORT,
+  // Bun defaults this to 10s and closes any quieter connection with an empty
+  // 200, which killed every 30s long-poll and every SSE stream before its
+  // first keepalive (task-2nwlw). Derived from the holds themselves so a
+  // longer hold cannot silently outgrow it — see timeouts.ts.
+  idleTimeout: SERVER_IDLE_TIMEOUT_SEC,
   async fetch(req) {
     const url = new URL(req.url)
     // Liveness + store sanity, outside /api/chat — the same route and shape

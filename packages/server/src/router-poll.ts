@@ -3,6 +3,7 @@ import { pollWaiters, setAgentPresence, CORS, lastPollByChannel, broadcastPresen
 import { markReceived } from "./messages"
 import { isTombstoned } from "./prune"
 import { rewriteMessageForServe } from "./link-rewrite"
+import { POLL_WAIT_MS } from "./timeouts"
 import type { PollWaiter } from "./types"
 
 // task-1t0m: GET /api/chat/poll must be genuinely read-only, not read-only-
@@ -60,7 +61,7 @@ export function handlePollRequest(req: Request, pathname: string): Response | nu
         removeWaiter()
         broadcastPresenceMap()
         try { controller.enqueue(enc.encode(JSON.stringify({ timeout: true }))); controller.close() } catch { /* client gone */ }
-      }, 30_000)
+      }, POLL_WAIT_MS)
       waiter = {
         resolve(msg) {
           try { controller.enqueue(enc.encode(JSON.stringify(rewriteMessageForServe(msg)))); controller.close() } catch { /* client gone */ }

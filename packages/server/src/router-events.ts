@@ -4,6 +4,7 @@ import { sseClients, agents, agentActive, CORS, sseEvent, computePresenceMap } f
 import { bundleVersion } from "./bundle-version"
 import { parseDeclaration, recognize, type CapabilityDeclaration } from "./capability"
 import { rewriteMessagesForServe } from "./link-rewrite"
+import { SSE_KEEPALIVE_MS } from "./timeouts"
 
 export function handleEventsRequest(req: Request, pathname: string): Response | null {
   if (req.method === "GET" && pathname === "/api/chat/history") {
@@ -69,6 +70,11 @@ export function handleEventsRequest(req: Request, pathname: string): Response | 
         new Date(a.ts).getTime() - new Date(b.ts).getTime()
       )
     }
+    // Held so cancel() can stop it. The interval used to outlive the stream:
+    // cancel() dropped the client from the map but left the timer armed, so it
+    // kept firing enqueue() into a controller the runtime had already torn
+    // down until the throw happened to clean it up (task-2nwlw).
+    let keepalive: ReturnType<typeof setInterval> | undefined
     const stream = new ReadableStream({
       start(controller) {
         sseClients.set(clientId, { id: clientId, controller, device, ua, connectedAt: new Date().toISOString(), ...(caps ? { caps } : {}) })
@@ -84,12 +90,12 @@ export function handleEventsRequest(req: Request, pathname: string): Response | 
         controller.enqueue(enc.encode(sseEvent("agents",         Array.from(agents.values()))))
         controller.enqueue(enc.encode(sseEvent("agent_presence", { active: agentActive })))
         controller.enqueue(enc.encode(sseEvent("presence_map",   computePresenceMap())))
-        const keepalive = setInterval(() => {
+        keepalive = setInterval(() => {
           try { controller.enqueue(enc.encode(": ka\n\n")) }
           catch { clearInterval(keepalive); sseClients.delete(clientId) }
-        }, 25_000)
+        }, SSE_KEEPALIVE_MS)
       },
-      cancel() { sseClients.delete(clientId) },
+      cancel() { if (keepalive !== undefined) clearInterval(keepalive); sseClients.delete(clientId) },
     })
     return new Response(stream, {
       headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", ...CORS },

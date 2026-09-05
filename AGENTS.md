@@ -76,6 +76,7 @@ Reach for these instead of the hand-rolled equivalent.
 
 ## Architecture pointers
 
+- **`Bun.serve()` defaults `idleTimeout` to 10s and answers an empty-bodied 200 when it fires** — that killed the 30s long-poll and made the 25s SSE keepalive unreachable, which is the :4242 wedge. Holds and the derived timeout live in `packages/server/src/timeouts.ts`; never hardcode one next to a handler. → [notes](docs/agent-notes/bun-serve-needs-an-explicit-idletimeout.md)
 - **`packages/server`** is a standalone Bun `serve()` app owning `/api/chat/*`. Live history is `~/exchange/chat-history.jsonl` — do not clobber. → [notes](docs/agent-notes/packages-server-is-a-standalone-bun.md)
 - **`packages/go-server`** is the Go rewrite. Its spec is `docs/api-contract.md` — `docs/scope-go-server.md` has never existed. Always `git log --all` before concluding a cited doc is missing. → [notes](docs/agent-notes/go-rewrite-of-packages-server-use.md)
 - **`tools/cli`** is the Go CLI `bin/parlay` execs — every verb, with no exceptions (the last gap, `spawn-account`, closed post-T-08; verb-by-verb table: `docs/go-cli-parity.md`). It cites `docs/scope-go-cli.md` and `docs/plan-go-migration-tickets.md`, neither of which exists. The TS source those docs told you to check against is gone too, deleted with `packages/cli` in T-08 — reach it with `git log --all -- packages/cli/src/<file>.ts`, and treat it as archaeology rather than a spec. → [notes](docs/agent-notes/go-cli-tools-cli-the-packages.md)
