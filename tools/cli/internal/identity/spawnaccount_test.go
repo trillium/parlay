@@ -22,6 +22,13 @@ func launchAccountFixture(t *testing.T, identityAccount, configTOML string) stri
 			t.Fatal(err)
 		}
 	}
+	return installRecordingSpawner(t)
+}
+
+// installRecordingSpawner puts a parlay-spawn on PATH that records its argv
+// one arg per line, and returns the path it records to.
+func installRecordingSpawner(t *testing.T) string {
+	t.Helper()
 	bin := t.TempDir()
 	record := filepath.Join(bin, "parlay-spawn.argv")
 	script := "#!/bin/sh\n: > " + record + "\nfor a in \"$@\"; do echo \"$a\" >> " + record + "; done\nexit 0\n"
@@ -69,11 +76,22 @@ func TestHandleLaunchPassesIdentityAccountToSpawner(t *testing.T) {
 	}
 }
 
-func TestHandleLaunchFallsBackToConfiguredSpawnAccount(t *testing.T) {
+// An UNPINNED identity must relaunch with no --account at all, even when a
+// config-level default exists. The spawn pipeline resolves that default
+// itself, so the agent still lands on it — but synthesizing it into the argv
+// would make the pipeline read it as an explicit --account and persist it
+// into identity.md (task-0d6mi's writer), pinning today's default forever and
+// making every later `parlay defaults set account` rotation invisible to this
+// agent.
+func TestHandleLaunchOmitsConfiguredDefaultForUnpinnedIdentity(t *testing.T) {
 	record := launchAccountFixture(t, "", "spawnAccount = \"acc2\"\n")
 
-	if argv := launchedArgv(t, record); !strings.Contains(argv, "--account\x00acc2") {
-		t.Errorf("spawner argv = %q, want the configured spawnAccount passed through", argv)
+	argv := launchedArgv(t, record)
+	if strings.Contains(argv, "--account") {
+		t.Errorf("spawner argv = %q, want no --account — the config default must stay live, not be pinned", argv)
+	}
+	if strings.Contains(argv, "acc2") {
+		t.Errorf("spawner argv = %q, want the config default absent from the relaunch argv", argv)
 	}
 }
 
@@ -124,15 +142,7 @@ func TestRegisterWritesAccountAndRelaunchUsesIt(t *testing.T) {
 	}
 
 	// Relaunch path: `identity --launch` must forward acc7 to the spawner.
-	bin := t.TempDir()
-	record := filepath.Join(bin, "parlay-spawn.argv")
-	script := "#!/bin/sh\n: > " + record + "\nfor a in \"$@\"; do echo \"$a\" >> " + record + "; done\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "parlay-spawn"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin)
-
-	argv := relaunchedArgv(t, "acctest", record)
+	argv := relaunchedArgv(t, "acctest", installRecordingSpawner(t))
 	if !strings.Contains(argv, "--account\x00acc7") {
 		t.Errorf("relaunch spawner argv = %q, want --account acc7 (come back on acc7)", argv)
 	}
