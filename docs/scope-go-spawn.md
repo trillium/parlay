@@ -22,6 +22,48 @@ not carried over from an earlier report. Where verification disagreed with a pri
 
 ---
 
+## 0. Addendum (2026-09-04) — task-42qot supersedes the Stage 5 end-state
+
+**Read this before §7.** The staged plan below ends at a Stage 5 "bash tombstone"
+in which `bin/parlay-spawn` stays the installed spawner and `resolveSpawner()`
+keeps falling back to it by design. **task-42qot replaces that end-state.** The
+reconciliation no longer ends with two implementations resolving against each
+other on `PATH`; it ends with one:
+
+- `tools/parlay-bin` is **deleted as a module and folded into `tools/cli`** as
+  `internal/spawn` (+ `internal/juggle`). There is no `parlay-bin` binary, no
+  `bin/parlay-bin` wrapper, and no `GO_MODULES` entry for it.
+- `parlay spawn` calls that code **in-process**. Stage 3's `resolveSpawnerChoice`
+  precedence ladder and the whole `resolveSpawner()` machinery are **deleted**,
+  not merely defaulted differently — so §7's "prefers `parlay-bin` when it
+  resolves on PATH" and its captain-only `~/.local/bin/parlay-bin` symlink
+  leftover are both moot.
+- `PARLAY_SPAWN_IMPL` survives with a narrower meaning: unset/`go` is
+  in-process, `bash` execs `parlay-spawn` from `PATH` (still setting
+  `PARLAY_SPAWN_VIA_CLI=1`, exit codes verbatim), anything else is a usage
+  error. It is a one-release escape hatch, not a precedence ladder.
+- The Go side's `PARLAY_SPAWN_VIA_CLI` check is **removed** — §5's and §6's
+  one-front-door reasoning is satisfied structurally now (the Go path *is* the
+  front door; a handshake token guards nothing when there is no second binary
+  to hand it to). Bash keeps its check, and the escape hatch sets it.
+- §2's `agent_pane_busy` "not ported" row is closed: the retry loop now exists
+  in `internal/spawn/spawnpipeline.go` (budget `PARLAY_SPAWN_START_RETRIES`,
+  default 60, 0.5s sleep, busy-substring-only, rollback on exhaustion) — robots-naet.
+
+This landed in two PRs. **PR A** (this change) does the fold and the in-process
+wiring, and leaves `bin/parlay-spawn` in place and working. **PR B** deletes
+`bin/parlay-spawn`, its test scripts, the parity suite, and the `bash` arm of
+`PARLAY_SPAWN_IMPL`, and migrates the repo's remaining `parlay-spawn` references
+to `parlay spawn`. Until PR B lands, everything §1–§6 says about the bash script
+is still live and accurate.
+
+**§1–§6 remain the authoritative record of what had to be reconciled**; only §7's
+Stage 5 end-state is superseded. Path citations throughout still read
+`tools/parlay-bin/<file>.go` — the same files now live at
+`tools/cli/internal/spawn/<file>.go`.
+
+---
+
 ## 1. `bin/parlay-spawn` today — the authoritative inventory
 
 `bin/parlay-spawn` is **1859 lines** (`wc -l bin/parlay-spawn`), not the ~600 lines
@@ -153,7 +195,7 @@ all. **Divergent** = implemented differently on purpose (noted as such) or by ac
 | Worktree creation, treehouse-first + plain-git fallback | ✓ | ✓ | **Full** — including the robots-d04t repo-identity guard and the wrong-repo-worktree rejection | `worktree.go:98-180` (`setupWorktree`). **Correction to PR #238's own body**, which described this as "git-toplevel only" — that undersold it; the treehouse lease path, `guardTreehousePool`, and both post-condition checks are present and match bash's `:364-409` block clause for clause. |
 | herdr tab creation + AgentStart + rollback-on-failure | ✓ | ✓ (deliberately reordered, see below) | **Full**, with one improvement | `launcher.go:76-88`, `spawnpipeline.go:47-56` — `newHerdrLauncher()` fails fast **before** any registration/hello/context-write side effect, unlike bash which calls herdr unconditionally at the actual launch step with no `command -v herdr` guard, so a missing herdr under `set -e` aborts bash *after* those side effects already ran |
 | herdr RPC-socket fast path | ✓ (prefers RPC when the daemon socket exists) | ✗ (always shells to the `herdr` binary) | **Divergent (correctness-neutral, latency-only)** | `launcher.go:90-99` (`runHerdrJSON` always uses `exec.Command`); bash's RPC path is at `:202-334` per the full earlier read |
-| `agent_pane_busy` retry loop | ✓ (up to 60 attempts, tunable) | ✗ | **Missing — disclosed leftover, not in this task's scope** | no retry loop found in `launcher.go`'s `AgentStart` or `spawnpipeline.go`. Deliberately left out of the profiles/PII/bead/pane/workspace/config/launcher-selection reconciliation task that closed the other rows in this table: bash's fuller herdr launch flow (this retry loop, a separate `agent prompt` delivery step, and RPC-vs-non-RPC branching) was scoped out in favor of preserving this port's existing simpler design (prompt delivered via the `PARLAY_SPAWN_PROMPT` env var, no retry) |
+| `agent_pane_busy` retry loop | ✓ (up to 60 attempts, tunable) | ✓ (task-42qot) | **Full — closed by task-42qot; see §0.** The status below is the pre-task-42qot record: | no retry loop found in `launcher.go`'s `AgentStart` or `spawnpipeline.go`. Deliberately left out of the profiles/PII/bead/pane/workspace/config/launcher-selection reconciliation task that closed the other rows in this table: bash's fuller herdr launch flow (this retry loop, a separate `agent prompt` delivery step, and RPC-vs-non-RPC branching) was scoped out in favor of preserving this port's existing simpler design (prompt delivered via the `PARLAY_SPAWN_PROMPT` env var, no retry) |
 | Identity registration (`identity --register`) | ✓ | ✓ | **Partial — missing bead/GC fields** | `identitycli.go:44-87` (`registerIdentityOptions`/`registerIdentity`) has no `BeadID`, `GCSession`, or `GCCity` fields; bash's call at `:594-603` (per earlier read) forwards those when set |
 | Ephemeral minting (`identity --mint-ephemeral`) | ✓ | ✓ | **Full** | `identitycli.go:22-42` (`mintEphemeral`) |
 | Startup-prompt composition (single-sourced template) | ✓ | ✓ | **Full** — same `launch-templates/default.txt`, byte-identical trailing-newline handling (robots-hrt2) | `prompt.go:10-86` |
@@ -342,7 +384,8 @@ surface (`--profile`/`--list`, `--pii`/`--no-pii`, `--bead`/`--force`, `--pane`,
 `--workspace`) and wired the already-implemented `subprocess`/`gc` launchers into the spawn
 pipeline's launcher selection. Every §2 row now reads Full, or — where a row is Partial or
 Divergent — that status reflects a deliberate, disclosed scope decision (the herdr-path
-`--kind` gap, the non-ported `agent_pane_busy` retry loop, the subprocess/gc watchdog
+`--kind` gap, the then-non-ported `agent_pane_busy` retry loop (since closed by
+task-42qot — §0), the subprocess/gc watchdog
 leftover, the herdr duplicate-guard launcher-gating divergence) rather than an unnoticed gap.
 `bin/parlay-spawn` was untouched throughout both PRs — it remains the only spawner anything
 depends on until Stage 3.
@@ -429,6 +472,13 @@ harness already settled and which this reconciliation does not reopen.) **Done**
 tombstone header + escape hatch + `GO_ONLY_VERBS` mechanism exist and are tested — met by this
 PR. `resolveSpawner()` retaining a bash fallback path at all is the intended end state, not a
 leftover: per the design, bash is permanently the escape hatch, not scheduled for removal.
+
+> **Superseded by task-42qot — see §0.** The last two sentences no longer hold: `resolveSpawner()`
+> is deleted, `parlay spawn` runs the Go path in-process, and bash *is* scheduled for removal
+> (PR B). `PARLAY_SPAWN_IMPL=bash` still selects bash, but as a one-release escape hatch rather
+> than one arm of a precedence ladder, and `PARLAY_SPAWN_IMPL=go` is now just the default spelled
+> out. The `GO_ONLY_VERBS` mechanism and the tombstone header are unchanged and still live until
+> PR B deletes the script.
 
 Each stage ships a coherent, independently green state — per task-04g1's own escape hatch
 ("if the port turns out to be too large to land safely in one task, stop at a coherent green

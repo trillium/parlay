@@ -147,7 +147,7 @@ func captureStdout(t *testing.T, fn func()) string {
 	// The drained text comes back over a channel rather than out of a shared
 	// buffer, matching the six other capture helpers in this module
 	// (internal/commands, internal/httpc, internal/identity,
-	// internal/robotswatch, tools/parlay-bin). This one was the outlier: it
+	// internal/robotswatch, internal/spawn). This one was the outlier: it
 	// had the copying goroutine append to a strings.Builder that the test
 	// goroutine then read.
 	//

@@ -29,8 +29,8 @@ const gcTeardownTestChildEnv = "GCTEARDOWN_TEST_CHILD"
 // spawn account's/spawn impl's config.toml), because os.UserHomeDir honors
 // $HOME — but PARLAY_SPAWN_DEFAULT_ACCOUNT and PARLAY_SPAWN_IMPL both
 // out-rank that file, so an exported one on the developer's shell would
-// inject an --account into a spawner argv, or pin resolveSpawnerChoice to a
-// binary, no test asked for. Clearing both here isolates every current and
+// inject an --account into a spawner argv, or pin runSpawnArgv to an
+// implementation, no test asked for. Clearing both here isolates every current and
 // future test in this package by construction rather than each one
 // remembering.
 func TestMain(m *testing.M) {

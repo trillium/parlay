@@ -1,1 +1,1 @@
-../tools/parlay-bin/launch-templates/claim.txt
+../tools/cli/internal/spawn/launch-templates/claim.txt

@@ -1,6 +1,6 @@
 # Launcher (spawn)
 
-**Code:** `bin/parlay-spawn` (bash, the original implementation) and `tools/parlay-bin` (`spawn.go` + `spawnpipeline.go` + `launcher.go`, a Go port).
+**Code:** `tools/cli/internal/spawn` (`spawn.go` + `spawnpipeline.go` + `launcher.go`, the Go implementation `parlay spawn` runs in-process) and `bin/parlay-spawn` (bash, the original implementation, now an escape hatch).
 
 `parlay spawn <agent-id> <display-name> <hex-color> <initial-prompt> ...`
 launches a brand-new, top-level Claude Code session inside a detached
@@ -13,23 +13,38 @@ starts, not after its own first enrollment call. It explicitly unsets
 the parent environment and Claude Code refuses to nest under those vars.
 
 **`bin/parlay-spawn` is gated, not a free-standing script.** It refuses to run
-unless `PARLAY_SPAWN_VIA_CLI=1` is already set — `parlay spawn` (the Go CLI)
-is the sole sanctioned public entry point and sets that flag itself before
-exec'ing the script (task-qyu8q scope 3). A model is a required argument on
-every spawn, by the same ticket: nothing here silently inherits the launching
-session's default model or falls back to sonnet without saying so.
+unless `PARLAY_SPAWN_VIA_CLI=1` is already set — `parlay spawn` is the sole
+sanctioned public entry point, and it sets that flag itself before exec'ing the
+script under `PARLAY_SPAWN_IMPL=bash` (task-qyu8q scope 3). The default
+in-process Go path never sets it and has no such check: it *is* the entry point,
+so there is no second binary to hand a token to. Every spawn requires a
+*resolved* model, by the same ticket, and both paths enforce it — but the model
+need not be passed explicitly. It may come from `--model`, from a `--profile`
+that carries one, or from `--no-pii`'s free-model auto-routing, each of which
+resolves before the `requireModel` gate runs. What no spawn does is silently
+inherit the launching session's default model or fall back to sonnet without
+saying so.
 
-**Two separate implementations exist and resolve differently depending on
-`PATH`.** `tools/parlay-bin` is a newer Go port of the same launch flow, with
-a richer surface (`--ephemeral` identities, `<id>=<repo>` batch dispatch,
-`--worktree` isolation, `--account`). Per the root `CLAUDE.md`, when both are
-on `PATH` the spawner-resolution order **prefers `tools/parlay-bin` over
-`bin/parlay-spawn`** — and the Go port has **neither** the
-`PARLAY_SPAWN_VIA_CLI` handshake gate **nor** the mandatory-model gate that
-`bin/parlay-spawn` enforces (task-21d36). That is a genuine parity gap between
-the two launchers, not a documentation gap — verified by reading both
-scripts' argument handling on 2026-09-03; do not assume the Go port inherits
-the bash script's safety gates just because it replaces it on `PATH`.
+**There is one spawner, not two resolving against each other on `PATH`**
+(task-42qot). `parlay spawn` runs `tools/cli/internal/spawn` **in-process** —
+the former `tools/parlay-bin` module, folded into `tools/cli`. There is no
+`parlay-bin` binary and no spawner-resolution order; `resolveSpawner()` is
+deleted. `PARLAY_SPAWN_IMPL` (env) or `spawnImpl` (`~/.parlay/config.toml`)
+still selects: unset or `"go"` is the in-process path, `"bash"` execs
+`parlay-spawn` from `PATH` with `PARLAY_SPAWN_VIA_CLI=1` and passes its exit
+code through verbatim, anything else is a usage error. That `bash` arm is a
+one-release escape hatch scheduled for deletion; `bin/parlay-spawn` and the
+parity suite go with it.
+
+The Go path carries the mandatory-model gate (task-21d36, backported in #238)
+and every §2 organ of [`docs/scope-go-spawn.md`](scope-go-spawn.md), plus the
+surface bash never grew (`--ephemeral` identities, `<id>=<repo>` batch
+dispatch, `--worktree` isolation, `--account`). It does **not** carry the
+`PARLAY_SPAWN_VIA_CLI` handshake — deliberately, since it is itself the front
+door and has no second binary to hand a token to. Bash keeps its own check for
+as long as it exists. `bin/parlay-spawn-parity.test.sh` holds the two sides to
+the same gate-chain exit codes and messages, with the `VIA_CLI` scenario
+bash-only for that reason.
 
 Post-launch, an optional watchdog (`PARLAY_SPAWN_NO_WATCHDOG=1` to disable)
 confirms the spawned agent's first turn actually fired within

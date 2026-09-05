@@ -1,6 +1,8 @@
-// task-qyu8q scope 3: `parlay spawn` sets PARLAY_SPAWN_VIA_CLI=1 before
-// exec'ing the resolved spawner binary — this is the handshake bin/parlay-spawn
-// requires to prove the call came through the CLI, not a direct invocation.
+// task-qyu8q scope 3: the PARLAY_SPAWN_IMPL=bash escape hatch sets
+// PARLAY_SPAWN_VIA_CLI=1 before exec'ing bin/parlay-spawn — this is the
+// handshake the bash script requires to prove the call came through the CLI,
+// not a direct invocation. (The default in-process path has no handshake to
+// set — there is no cross-binary call left to police; task-42qot.)
 package commands
 
 import (
@@ -8,9 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
 func TestSpawnSetsViaCliHandshakeEnv(t *testing.T) {
+	t.Setenv(config.SpawnImplEnv, "bash")
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, "env.out")
 

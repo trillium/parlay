@@ -10,7 +10,7 @@
 // "Reclaimed" that leaves the process running is worse than not sweeping at
 // all, because the sweep's own log says the resource is gone.
 //
-// The mapping teardown needs is set up at spawn time by tools/parlay-bin:
+// The mapping teardown needs is set up at spawn time by the spawn pipeline (internal/spawn):
 // `herdr agent start <id>` names the herdr agent after the parlay agent id,
 // and `herdr tab create --label <id>` labels its tab the same. So the parlay
 // agent id is the lookup key on both sides, and both sides matter:
@@ -95,7 +95,7 @@ func classifyHerdrClose(s herdrSurface) herdrCloseAction {
 // herdrJSON runs a herdr subcommand and parses its stdout. herdr exits 0
 // even when it prints an `error` object (verified against `herdr agent get
 // <unknown>`), so the exit code is deliberately ignored and the reply body
-// is the only signal — same reasoning as tools/parlay-bin's runHerdrJSON.
+// is the only signal — same reasoning as internal/spawn's runHerdrJSON.
 // A missing binary, a dead daemon or unparseable output all return nil.
 func herdrJSON(argv ...string) map[string]any {
 	if _, err := exec.LookPath("herdr"); err != nil {

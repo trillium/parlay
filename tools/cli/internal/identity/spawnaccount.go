@@ -18,11 +18,13 @@ import (
 // identityAccount is the identity's `account:` frontmatter value; it wins,
 // and an unset (or whitespace-only) one falls back to config.SpawnAccount().
 //
-// Passing the configured default explicitly is not redundant: resolveSpawner
-// PREFERS parlay-bin, and parlay-bin reads neither config.toml nor
-// PARLAY_SPAWN_DEFAULT_ACCOUNT — only its own --account flag. Only the bash
-// bin/parlay-spawn derives the default itself, so without this a relaunched
-// agent silently came up on the launching shell's ambient session token.
+// The identity's account must be passed explicitly: the spawn pipeline
+// (internal/spawn) resolves only the config-level default
+// (PARLAY_SPAWN_DEFAULT_ACCOUNT env, else config.toml's spawnAccount) and
+// knows nothing of identity frontmatter, so without this a relaunched agent
+// with a pinned account silently came up on the wrong token. Passing the
+// configured default too is redundant but harmless — the pipeline would
+// derive the same value.
 //
 // Returning nil rather than an empty value is load-bearing: the spawner
 // exits 2 on a valueless --account, so an empty string would turn "no

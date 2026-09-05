@@ -41,12 +41,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ── Go: tools/cli, tools/relay, tools/parlay-bin, packages/go-server,
+  # ── Go: tools/cli, tools/relay, packages/go-server,
   #    packages/spawn-profiles ──────────────────────────────────────────────
   # Separate modules, no root go.work, so each is entered on its own.
-  # tools/cli requires the beads library (crew store, docs/status-lift-topology.md)
-  # and godog; tools/parlay-bin requires godog; packages/spawn-profiles requires
-  # go-toml — all three have go.sum files. packages/go-server and tools/relay are
+  # tools/cli requires the beads library (crew store, docs/status-lift-topology.md),
+  # godog and go-toml (the spawn pipeline, folded in by task-42qot);
+  # packages/spawn-profiles requires go-toml — both have go.sum files. packages/go-server and tools/relay are
   # pure standard library with no external dependencies.
   go:
     name: Go (build, vet, test, gofmt)
@@ -69,7 +69,7 @@ jobs:
     # about that module. Naming a count here is what went stale, so the check
     # derives the truth from the filesystem instead.
     env:
-      GO_MODULES: tools/cli tools/relay tools/parlay-bin packages/go-server packages/spawn-profiles
+      GO_MODULES: tools/cli tools/relay packages/go-server packages/spawn-profiles
       # CGO off by default: with CGO on, the beads dependency's embedded-Dolt
       # path drags in a C++ ICU binding that needs ICU headers installed (and
       # minutes of cgo compilation). CGO_ENABLED=0 selects the library's
@@ -93,8 +93,6 @@ jobs:
             tools/cli/go.mod
             tools/cli/go.sum
             tools/relay/go.mod
-            tools/parlay-bin/go.mod
-            tools/parlay-bin/go.sum
             packages/go-server/go.mod
             packages/spawn-profiles/go.mod
 
@@ -142,9 +140,8 @@ jobs:
       # tools/cli already guards itself with TestGofmtClean
       # (tools/cli/internal/commands/gofmt_test.go), which runs as part of
       # `go test` below — but that test resolves its root to the tools/cli
-      # module and therefore covers exactly one of the five modules. This step
-      # is what covers the other four; it is not a duplicate of that guard, it
-      # is the other 80%.
+      # module and therefore covers exactly one of the modules in GO_MODULES.
+      # This step is what covers the rest; it is not a duplicate of that guard.
       - name: gofmt
         run: |
           dirty="$(gofmt -l $GO_MODULES)"
@@ -155,7 +152,7 @@ jobs:
             echo "reformats doc comments and can rewrite documented prose."
             exit 1
           fi
-          echo "all five modules are gofmt-clean"
+          echo "all listed modules are gofmt-clean"
 
       - name: Build
         run: |
@@ -190,7 +187,7 @@ jobs:
       # detector was the only thing in the repo that pointed at it, and it was
       # not being run, so a real defect sat behind a green check.
       #
-      # All six modules are race-clean as of this change, so this costs a
+      # Every listed module is race-clean as of this change, so this costs a
       # slower test run and buys the class of bug that only ever shows up as
       # something rare and destructive on the captain's box. If a module ever
       # legitimately cannot run under -race, exclude that MODULE by name here
@@ -234,9 +231,9 @@ jobs:
           echo "working tree clean after a full build"
 
       # docs/scope-go-spawn.md Stage 4: runs the same named-spawn scenarios
-      # through bash's bin/parlay-spawn and the real tools/parlay-bin binary
-      # (built on demand by bin/parlay-bin) and asserts equivalent exit codes
-      # and messages. Needs a real go toolchain to get a genuine A/B build, so
+      # through bash's bin/parlay-spawn and the in-process Go pipeline
+      # (`parlay spawn` via bin/parlay, built on demand) and asserts
+      # equivalent exit codes and messages. Needs a real go toolchain to get a genuine A/B build, so
       # this lives here rather than in the toolchain-less "shell" job below.
       - name: Spawner parity (bash vs. Go)
         run: bin/parlay-spawn-parity.test.sh
@@ -370,9 +367,6 @@ jobs:
   # ~/.treehouse at all. bin/context-reset.test.sh does the same: it redirects
   # HOME, TMPDIR and PARLAY_AGENT_HOME into one mktemp root, stubs the handoff
   # CLI, and asserts the pid it resolved is its own fixture before any kill.
-  # bin/parlay-bin.test.sh (docs/scope-go-spawn.md Stage 4) copies the wrapper
-  # into its own mktemp scratch repo and stubs `go` on PATH — this job has no
-  # Go toolchain at all, so the harness never attempts a real build.
   # Everything else that runs as a shell script is excluded because it drives
   # live or macOS-only state or stands up a real server fixture — AGENTS.md
   # owns that "not covered" list and its per-entry reasons; do not re-enumerate
@@ -445,7 +439,6 @@ jobs:
           git config --global user.email ci@example.invalid
           git config --global user.name  "parlay ci"
           for t in bin/parlay-pii-lib.test.sh \
-                   bin/parlay-bin.test.sh \
                    bin/parlay-spawn.templates.test.sh \
                    bin/parlay-spawn.integration.test.sh \
                    bin/parlay-spawn.quoting.test.sh \
