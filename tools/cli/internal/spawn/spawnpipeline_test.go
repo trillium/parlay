@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -330,5 +332,75 @@ func TestSpawnOneHerdrPromptFailureRollsBack(t *testing.T) {
 	}
 	if !strings.Contains(out, "herdr agent prompt failed to deliver the charter") {
 		t.Errorf("expected the charter-delivery failure to be reported; got:\n%s", out)
+	}
+}
+
+// CodeRabbit, PR #273: `--kind ""` survives the flag parser, which only
+// checks that a value follows the flag. Unnormalized it reached the
+// subprocess launcher as `exec ”` (a command that cannot run) and the gc
+// launcher as a refusal reading `got ""`. spawnOne normalizes once, before
+// any launcher branch reads it.
+func TestSpawnOneNormalizesEmptyKindBeforeLauncherDispatch(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-emptykind-z1", "Empty Kind", "#c084fc", "brief", "--model", "sonnet", "--kind", ""})
+	if rc != 0 {
+		t.Fatalf("expected success, got rc=%d", rc)
+	}
+	if len(m.agentStartOpts) != 1 {
+		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
+	}
+	if got := m.agentStartOpts[0].Kind; got != "claude" {
+		t.Errorf("an empty --kind must normalize to claude before dispatch, got %q", got)
+	}
+	// The claude flag set must come with it — a normalized kind that skipped
+	// the YOLO flags would stall on the first permission prompt.
+	if !strings.Contains(strings.Join(m.agentStartOpts[0].Cmd, " "), "--dangerously-skip-permissions") {
+		t.Errorf("normalized claude kind must carry the claude flag set; got %q", m.agentStartOpts[0].Cmd)
+	}
+}
+
+// CodeRabbit, PR #273: the charter is task text, and this PR is what started
+// persisting it on the herdr path too. It must not be world-readable, and the
+// modes must be applied even when an earlier writer (writeAgentContext runs
+// first) already created the directory at 0755.
+func TestWriteStartupPromptKeepsTheCharterOwnerOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PARLAY_AGENT_HOME", home)
+
+	// Pre-create the agent dir wide open, the way an earlier release left it.
+	agentDir := filepath.Join(home, "perm-check-z1")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(agentDir, "startup-prompt.txt")
+	if err := os.WriteFile(stale, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	promptFile, err := writeStartupPrompt("perm-check-z1", "the charter")
+	if err != nil {
+		t.Fatalf("writeStartupPrompt: %v", err)
+	}
+
+	fi, err := os.Stat(promptFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("charter file mode = %o, want 600 (it carries the task text)", got)
+	}
+	di, err := os.Stat(agentDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := di.Mode().Perm(); got != 0o700 {
+		t.Errorf("agent dir mode = %o, want 700 even when it already existed", got)
 	}
 }

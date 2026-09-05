@@ -87,6 +87,17 @@ const subprocessEnvUnset = `unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_
 // newHerdrLauncher doc comment for why this ordering is a deliberate fix
 // over the bash version.
 func spawnOne(opts SpawnOptions) error {
+	// `--kind ""` survives the flag parser (it only checks that a value
+	// FOLLOWS the flag, not that it is non-empty), and defaultSpawnOptions'
+	// "claude" is overwritten by it. Normalize once here, before any
+	// launcher branch reads it: the gc launcher would refuse with a
+	// baffling `got ""`, and the subprocess launcher would build
+	// `exec ''` — a command that cannot run. bash's own `$KIND` default is
+	// the same value (bin/parlay-spawn:886,1085).
+	if opts.Kind == "" {
+		opts.Kind = "claude"
+	}
+
 	server := parlayServer()
 
 	if opts.Mode == "branch" || opts.Mode == "pr" {
@@ -340,14 +351,6 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 	// busy rejection is transient — any other failure is non-transient and
 	// rolls back immediately. A busy marker in the output is treated as
 	// failure regardless of exit code, mirroring bash's exit-0 guard.
-	// bash's `$KIND` default (bin/parlay-spawn:886,1085). An empty Kind can
-	// only reach here from a caller that built SpawnOptions by hand; the
-	// flag parser always defaults it.
-	kind := opts.Kind
-	if kind == "" {
-		kind = "claude"
-	}
-
 	attempts := startRetryBudget()
 	startOK := false
 	lastOut := ""
@@ -360,9 +363,9 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		made = try
 		out, startErr := launcher.AgentStart(AgentStartOptions{
 			ID:     opts.AgentID,
-			Kind:   kind,
+			Kind:   opts.Kind,
 			PaneID: rootPane,
-			Cmd:    agentStartArgs(kind, opts.Model),
+			Cmd:    agentStartArgs(opts.Kind, opts.Model),
 		})
 		lastOut = out
 		busy := strings.Contains(out, "agent_pane_busy")
@@ -509,12 +512,19 @@ func spawnViaGC(opts SpawnOptions, server, promptFile string) (sessionID, cityDi
 // nudge an agent whose first turn never fired.
 func writeStartupPrompt(agentID, startupPrompt string) (string, error) {
 	agentDir := agentHomeDir(agentID)
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentDir, 0o700); err != nil {
 		return "", fmt.Errorf("creating agent dir: %w", err)
 	}
 	promptFile := filepath.Join(agentDir, "startup-prompt.txt")
-	if err := os.WriteFile(promptFile, []byte(startupPrompt+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(promptFile, []byte(startupPrompt+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("writing startup prompt: %w", err)
 	}
+	// MkdirAll and WriteFile only apply their mode when they CREATE the
+	// path, so neither tightens a directory or file an earlier release (or
+	// writeAgentContext, which runs first) already left at 0755/0644.
+	// Chmod both explicitly, best-effort: a permissions bump must never fail
+	// a launch that has otherwise succeeded.
+	_ = os.Chmod(agentDir, 0o700)
+	_ = os.Chmod(promptFile, 0o600)
 	return promptFile, nil
 }
