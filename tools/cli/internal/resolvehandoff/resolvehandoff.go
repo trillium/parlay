@@ -155,7 +155,7 @@ func parseCreatedMs(s string) (int64, bool) {
 
 // isInherited reports whether row predates the current agent session.
 // Primary signal: sessionStartedAt (epoch ms, from
-// ~/.parlay/agents/<id>/session-start, written by parlay-spawn on every new
+// ~/.parlay/agents/<id>/session-start, written by `parlay spawn` on every new
 // spawn). Fallback: row's created age vs the 24h inheritedAgeMs threshold.
 func isInherited(row handoffRow, sessionStartedAt *int64) bool {
 	// Prefer the store's real created_at; fall back to the legacy created alias.
@@ -197,7 +197,7 @@ type UnsubmittedResult struct {
 // Returns (result, false) when nothing open / already pinned. Never panics.
 //   - pinnedPointer: the id currently pinned in identity.md ("" if none).
 //   - sessionStartedAt: epoch ms this agent session started, from
-//     parlay-spawn's session-start sentinel file; nil when absent (falls
+//     the spawn pipeline's session-start sentinel file; nil when absent (falls
 //     back to the 24h age threshold to distinguish inherited handoffs).
 //   - Inherited == true means the handoff predates this session; the agent
 //     did NOT create it and should NOT run `identity --submit` (that would

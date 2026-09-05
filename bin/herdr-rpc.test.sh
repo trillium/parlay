@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # herdr-rpc.test.sh — regression coverage for the herdr RPC path used by
-# parlay-spawn. Hermetic: no herdr daemon, no network. The socket is a real
+# `parlay spawn`. Hermetic: no herdr daemon, no network. The socket is a real
 # Unix socket served by a throwaway `nc -lU`, so the request bytes herdr_rpc
 # actually puts on the wire are captured and asserted verbatim.
 #
@@ -11,10 +11,10 @@
 #     plus a literal '}'. Unset $2 coincidentally yields '{}', which is why it
 #     looked correct — but every caller-supplied value got a stray '}' appended
 #     ('{"a":1}' -> '{"a":1}}'), jq rejected it with "invalid JSON text passed
-#     to --argjson", and EVERY RPC call failed. parlay-spawn's tab.create then
+#     to --argjson", and EVERY RPC call failed. The spawner's tab.create then
 #     returned nothing and the spawn died with "no root pane returned".
 #
-#  2. parlay-spawn's RPC request shapes had drifted from herdr 0.8.0. Because
+#  2. The spawner's RPC request shapes had drifted from herdr 0.8.0. Because
 #     defect 1 made every RPC call fail before it reached the daemon, and the
 #     helpers are all `>/dev/null 2>&1 || true`, the drift was invisible. These
 #     are asserted structurally (against the jq filters in the source) rather
@@ -167,45 +167,6 @@ STRAY="$(grep -rn ':-{' "$BIN_DIR" "$BIN_DIR/../tools" 2>/dev/null \
   | grep -v 'herdr-rpc.test.sh' \
   | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
 check "no \${x:-{...}} brace default remains in bin/ or tools/" "" "$STRAY"
-
-# ---------------------------------------------------------------------------
-# E. parlay-spawn's RPC request shapes match the herdr 0.8.0 API.
-#    Verified live against the daemon on 2026-08-18; asserted statically here
-#    so the check needs no herdr. If herdr moves these again, fix the call site
-#    AND this assertion together — that pairing is the point.
-# ---------------------------------------------------------------------------
-SPAWN="$BIN_DIR/parlay-spawn"
-if [ ! -f "$SPAWN" ]; then
-  fail "parlay-spawn not found at $SPAWN"
-else
-  SRC="$(cat "$SPAWN")"
-
-  # agent.get / agent.wait address the agent as "target"; "name" is rejected
-  # with "invalid request: missing field `target`".
-  contains "agent.get sends target (not name)" \
-    '{"target":$n}' "$SRC"
-  contains "agent.wait sends target (not name)" \
-    '{"target":$n,"until":[$u],"timeout":$t}' "$SRC"
-
-  # pane.send_keys takes a SEQUENCE of keys; a bare string is rejected with
-  # "invalid type: string, expected a sequence".
-  contains "pane.send_keys sends keys as an array" \
-    '{"pane_id":$p,"keys":[$k]}' "$SRC"
-
-  # pane.wait_for_output needs an internally-tagged OutputMatch plus an
-  # explicit snapshot source (the RPC layer has no default for it, unlike
-  # the CLI's --source, which defaults to recent).
-  contains "pane.wait_for_output sends a tagged match struct" \
-    '"match":{"type":"regex","value":$r}' "$SRC"
-  contains "pane.wait_for_output sends an explicit source" \
-    '"source":"recent"' "$SRC"
-
-  # agent.prompt's wait is AgentPromptWaitOptions, not a boolean.
-  contains "agent.prompt sends wait as an options struct" \
-    '"wait":{"until":[$u],"timeout":$to}' "$SRC"
-  not_contains "agent.prompt no longer sends wait as a boolean" \
-    '"wait":true' "$SRC"
-fi
 
 echo
 if [ "$FAILED" -eq 0 ]; then

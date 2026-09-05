@@ -95,7 +95,7 @@ func TestLaunchSuppressedWhenBoundItemClosed(t *testing.T) {
 	if !strings.Contains(logs, "SUPPRESSED") || !strings.Contains(logs, "robots-2x2n") {
 		t.Errorf("expected suppressed-launch message, got: %s", logs)
 	}
-	if strings.Contains(logs, "parlay-spawn") {
+	if strings.Contains(logs, "parlay spawn") {
 		t.Errorf("a closed-item launch must not reach the spawn path, got: %s", logs)
 	}
 }
@@ -111,7 +111,7 @@ func TestLaunchProceedsWhenBoundItemOpen(t *testing.T) {
 	if strings.Contains(logs, "SUPPRESSED") {
 		t.Errorf("open-item launch must not be suppressed, got: %s", logs)
 	}
-	if !strings.Contains(logs, "parlay-spawn") {
+	if !strings.Contains(logs, "parlay spawn") {
 		t.Errorf("expected the dry spawn plan for an open item, got: %s", logs)
 	}
 }

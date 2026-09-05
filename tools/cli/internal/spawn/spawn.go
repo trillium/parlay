@@ -1,3 +1,13 @@
+// Package spawn is the agent-launch pipeline `parlay spawn` runs in-process
+// (task-42qot). It is the ONLY spawner: bin/parlay-spawn, the bash script
+// this package was ported from, was deleted along with the
+// PARLAY_SPAWN_IMPL=bash escape hatch that reached it.
+//
+// Comments throughout still cite `bin/parlay-spawn:<line>` as provenance for
+// a ported behavior. Those are deliberate archaeology, not live paths — read
+// them with `git show 046919aa:bin/parlay-spawn`. When a cited behavior
+// changes here, change the behavior and the comment; do not go re-deriving
+// the bash line numbers.
 package spawn
 
 import (
@@ -215,7 +225,7 @@ func parseTailFlags(args []string, opts *SpawnOptions, rejectCwd, allowPaneAndWo
 			opts.Launcher = "subprocess"
 		case "--gascity":
 			opts.Launcher = "subprocess"
-			fmt.Fprintln(os.Stderr, "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release.")
+			fmt.Fprintln(os.Stderr, "parlay spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release.")
 		case "--bead":
 			if i+1 >= len(args) {
 				return fmt.Errorf("--bead requires a value")
@@ -248,7 +258,7 @@ func resolveModelAndKind(opts *SpawnOptions) error {
 		}
 		if model != "" && opts.Model == "" {
 			opts.Model = model
-			fmt.Fprintf(os.Stderr, "parlay-spawn: --profile %s — using model %s (kind=%s)\n", opts.Profile, opts.Model, opts.Kind)
+			fmt.Fprintf(os.Stderr, "parlay spawn: --profile %s — using model %s (kind=%s)\n", opts.Profile, opts.Model, opts.Kind)
 		}
 	}
 	return requireModel(opts.Model)
@@ -333,15 +343,15 @@ func runNamedSpawn(args []string) int {
 		rest = rest[1:]
 	}
 	if err := parseTailFlags(rest, &opts, false, true); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return usageExit()
 	}
 	if err := validateKebabSlug(opts.AgentID); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 2
 	}
 	if opts.Prompt == "" && opts.Claim == "" {
-		fmt.Fprintln(os.Stderr, "parlay-spawn: give the agent work — an initial-prompt positional or --claim <task-id>")
+		fmt.Fprintln(os.Stderr, "parlay spawn: give the agent work — an initial-prompt positional or --claim <task-id>")
 		return usageExit()
 	}
 	// Named-path gate order mirrors bash's shared section (lines 1091-1103):
@@ -356,11 +366,11 @@ func runNamedSpawn(args []string) int {
 	}
 	runPIIRouting(&opts)
 	if err := resolveModelAndKind(&opts); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 2
 	}
 	if err := spawnOne(opts); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 1
 	}
 	return 0
@@ -368,14 +378,14 @@ func runNamedSpawn(args []string) int {
 
 func runEphemeralSpawn(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "parlay-spawn: --ephemeral requires a prompt")
+		fmt.Fprintln(os.Stderr, "parlay spawn: --ephemeral requires a prompt")
 		return usageExit()
 	}
 	opts := defaultSpawnOptions()
 	opts.Ephemeral = true
 	opts.Prompt = args[0]
 	if err := parseTailFlags(args[1:], &opts, false, false); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return usageExit()
 	}
 	// Ephemeral gate order (bash lines 872-874): bead_gate then require_model
@@ -392,16 +402,16 @@ func runEphemeralSpawn(args []string) int {
 		return 1
 	}
 	if err := resolveModelAndKind(&opts); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 2
 	}
 
 	id, name, color, err := mintEphemeral(parlayServer(), opts.Cwd, opts.Model)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(os.Stderr, "parlay-spawn: minted ephemeral identity %s (%s, %s)\n", id, name, color)
+	fmt.Fprintf(os.Stderr, "parlay spawn: minted ephemeral identity %s (%s, %s)\n", id, name, color)
 	opts.AgentID, opts.Name, opts.Color = id, name, color
 
 	// Shared-section PII routing (bash lines 1093-1097), post-mint.
@@ -412,18 +422,17 @@ func runEphemeralSpawn(args []string) int {
 	}
 
 	if err := spawnOne(opts); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
 // runBatchSpawn ports bin/parlay-spawn's batch loop (lines 176–267) as an
-// in-process loop rather than a self re-exec — the natural Go idiom.
-// bin/parlay-spawn.batch.test.sh is the parity oracle for the per-pair-
-// failure-doesn't-stop-the-batch contract preserved here; see
-// docs/scope-go-spawn.md §5 item 6 for why it's one of only 5 of the 8
-// suite files actually wired into CI.
+// in-process loop rather than a self re-exec — the natural Go idiom. The
+// per-pair-failure-doesn't-stop-the-batch contract preserved here is now
+// pinned by spawn_test.go's batch cases; bash's own oracle
+// (bin/parlay-spawn.batch.test.sh) went with the script.
 func runBatchSpawn(args []string) int {
 	var pairs []string
 	shared := defaultSpawnOptions()
@@ -434,28 +443,28 @@ func runBatchSpawn(args []string) int {
 		switch args[i] {
 		case "--prompt":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --prompt requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --prompt requires a value")
 				return 2
 			}
 			shared.Prompt = args[i+1]
 			i += 2
 		case "--model":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --model requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --model requires a value")
 				return 2
 			}
 			shared.Model = args[i+1]
 			i += 2
 		case "--profile":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --profile requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --profile requires a value")
 				return 2
 			}
 			shared.Profile = args[i+1]
 			i += 2
 		case "--kind":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --kind requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --kind requires a value")
 				return 2
 			}
 			shared.Kind = args[i+1]
@@ -472,18 +481,18 @@ func runBatchSpawn(args []string) int {
 			i++
 		case "--gascity":
 			shared.Launcher = "subprocess"
-			fmt.Fprintln(os.Stderr, "parlay-spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release.")
+			fmt.Fprintln(os.Stderr, "parlay spawn: WARNING — --gascity is deprecated (renamed --subprocess); still works until the next release.")
 			i++
 		case "--bead":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --bead requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --bead requires a value")
 				return 2
 			}
 			shared.BeadID = args[i+1]
 			i += 2
 		case "--color":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --color requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --color requires a value")
 				return 2
 			}
 			sharedColor = args[i+1]
@@ -493,14 +502,14 @@ func runBatchSpawn(args []string) int {
 			i++
 		case "--mode":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --mode requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --mode requires a value")
 				return 2
 			}
 			shared.Mode = args[i+1]
 			i += 2
 		case "--effort":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --effort requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --effort requires a value")
 				return 2
 			}
 			shared.Effort = args[i+1]
@@ -510,20 +519,20 @@ func runBatchSpawn(args []string) int {
 			i++
 		case "--account":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "parlay-spawn: --account requires a value")
+				fmt.Fprintln(os.Stderr, "parlay spawn: --account requires a value")
 				return 2
 			}
 			shared.Account = args[i+1]
 			i += 2
 		case "--cwd":
-			fmt.Fprintln(os.Stderr, "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)")
+			fmt.Fprintln(os.Stderr, "parlay spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)")
 			return 2
 		case "--ephemeral":
-			fmt.Fprintln(os.Stderr, "parlay-spawn: --ephemeral cannot combine with batch id=repo pairs")
+			fmt.Fprintln(os.Stderr, "parlay spawn: --ephemeral cannot combine with batch id=repo pairs")
 			return 2
 		default:
 			if strings.HasPrefix(args[i], "-") {
-				fmt.Fprintf(os.Stderr, "parlay-spawn: unknown batch flag: %s\n", args[i])
+				fmt.Fprintf(os.Stderr, "parlay spawn: unknown batch flag: %s\n", args[i])
 				return 2
 			}
 			pairs = append(pairs, args[i])
@@ -532,7 +541,7 @@ func runBatchSpawn(args []string) int {
 	}
 
 	if shared.Prompt == "" {
-		fmt.Fprintln(os.Stderr, "parlay-spawn: batch dispatch requires a shared --prompt (the brief handed to every spawned agent)")
+		fmt.Fprintln(os.Stderr, "parlay spawn: batch dispatch requires a shared --prompt (the brief handed to every spawned agent)")
 		return 2
 	}
 	beadsRequired := resolveBeadsRequired(loadSpawnConfig())
@@ -551,7 +560,7 @@ func runBatchSpawn(args []string) int {
 	// dispatched — resolves shared.Profile into shared.Model/Kind so every
 	// pair inherits it without re-resolving the profile file per pair.
 	if err := resolveModelAndKind(&shared); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 2
 	}
 
@@ -559,7 +568,7 @@ func runBatchSpawn(args []string) int {
 	for _, pair := range pairs {
 		eq := strings.Index(pair, "=")
 		if eq < 0 {
-			fmt.Fprintf(os.Stderr, "parlay-spawn: batch dispatch expects every argument as id=repo; got %q\n", pair)
+			fmt.Fprintf(os.Stderr, "parlay spawn: batch dispatch expects every argument as id=repo; got %q\n", pair)
 			rc = 2
 			continue
 		}

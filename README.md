@@ -157,11 +157,10 @@ parlay spawn code-reviewer "Code Reviewer" "#c084fc" \
   "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
 ```
 
-`parlay spawn` is the sole public entry point for spawning. By default it runs the Go
-launcher in-process (`tools/cli/internal/spawn`); `PARLAY_SPAWN_IMPL=bash` is a
-soon-to-be-removed escape hatch that execs `bin/parlay-spawn` instead, and that script
-refuses to run without a handshake env only the CLI sets (task-qyu8q scope 3). Both paths
-enforce the mandatory-model gate (task-21d36).
+`parlay spawn` is the sole entry point for spawning, and the only one there is: the
+launcher runs in-process (`tools/cli/internal/spawn`). The bash spawner and its
+`PARLAY_SPAWN_IMPL=bash` escape hatch are gone (task-42qot), so the mandatory-model gate
+(task-21d36) cannot be routed around.
 
 To reach it from your phone, expose the host — Tailscale, LAN IP, or a private
 tunnel — and export `PARLAY_SERVER` as that address instead of `localhost`.
@@ -187,7 +186,7 @@ of every module in the repo:
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
 
-Agent-facing entry points live in `bin/` (`parlay`, `parlay-spawn`, …).
+Agent-facing entry points live in `bin/` (`parlay`, `parlay-treehouse-guard`, …).
 
 ## System map
 
@@ -213,7 +212,7 @@ flowchart LR
     registry["Agent registry & presence\nagents.json"]
     relay["Relay\ntools/relay — per-agent spool fan-out"]
     monitor["Monitor / listen\ntools/cli/internal/monitor"]
-    launcher["Launcher\ntools/cli/internal/spawn · bin/parlay-spawn"]
+    launcher["Launcher\ntools/cli/internal/spawn"]
     agent["A spawned agent process\n(herdr terminal)"]
 
     input -- "POST edits, evaluated by\nthe Go eval engine" --> bun

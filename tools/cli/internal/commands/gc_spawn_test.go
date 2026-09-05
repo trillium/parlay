@@ -168,7 +168,7 @@ func TestGCSpawnRunSurfacesTypedRefusal(t *testing.T) {
 }
 
 func TestGCSpawnResultEnvelopeShape(t *testing.T) {
-	// The --json envelope is a typed contract for bin/parlay-spawn; field
+	// The --json envelope is a typed contract for the spawn pipeline; field
 	// names are load-bearing.
 	out, err := json.Marshal(gcSpawnResult{})
 	if err != nil {

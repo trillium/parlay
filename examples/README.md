@@ -384,7 +384,7 @@ observed by eye — if one stops holding, `bootstrap-sandbox.sh` fails.
   listening" throughout.
 - `parlay launch <id>` actually spawning a process, and `parlay teardown` /
   `parlay sweep` actually collecting one. Both shell out to host tooling
-  (`parlay-spawn`, `herdr`) that is not part of this repo.
+  (`parlay spawn`, `herdr`) that is not part of this repo.
 - `packages/go-server`, the Go rewrite of the server. It reads the same registry
   and settings shapes, but this example was exercised against `packages/server`.
 - Anything on Linux or Windows. macOS only.

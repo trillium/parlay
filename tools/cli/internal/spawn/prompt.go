@@ -14,7 +14,7 @@ var defaultTemplate string
 var claimTemplate string
 
 // composeDoD mirrors bin/parlay-spawn's per-mode Definition of Done (the
-// DOD switch in parlay-spawn at the "Compose the Definition of Done per
+// DOD switch in bash at the "Compose the Definition of Done per
 // delivery mode" step).
 func composeDoD(mode, agentID string) string {
 	switch mode {

@@ -7,16 +7,12 @@ disable-model-invocation: false
 
 # How to spawn a parlay agent
 
-Use `parlay spawn` — the Go CLI's sole public entry point for launching agents (task-qyu8q
-scope 3). It forwards your arguments to `bin/parlay-spawn` after setting the handshake env
-that script requires; calling `bin/parlay-spawn` directly now refuses.
-
-**Caveat:** "sole public entry point" holds only for `bin/parlay-spawn`. `resolveSpawner()`
-prefers `tools/parlay-bin` over `bin/parlay-spawn` whenever both are on PATH (see [Default
-account](#default-account) below) — that binary is a separate Go port with no
-`PARLAY_SPAWN_VIA_CLI` handshake and no mandatory-model gate of its own (task-21d36). If
-`tools/parlay-bin` is installed on PATH, both gates are bypassed regardless of how you invoke
-`parlay spawn`.
+Use `parlay spawn` — the sole entry point for launching agents (task-qyu8q scope 3), and
+now the only one there is. The spawn pipeline runs **in-process** inside the `parlay`
+binary (`tools/cli/internal/spawn`); task-42qot deleted the standalone `bin/parlay-spawn`
+script, its `PARLAY_SPAWN_IMPL=bash` escape hatch, and the separate `parlay-bin` binary
+that used to win spawner resolution. There is no second spawner and no PATH precedence
+order, so the mandatory-model gate and the beads gate cannot be routed around.
 
 ## Signature
 
@@ -83,9 +79,7 @@ set-but-empty falls through to `config.toml` rather than disabling the lookup. `
 overrides both.
 
 `parlay launch <id>` and `identity --launch <id>` resolve an account themselves and pass it
-as `--account`: the identity's `account:` frontmatter first, else this default. That is not
-redundant — `tools/parlay-bin` (preferred by the spawner resolution order) reads neither the
-env var nor `config.toml`, only its own flag.
+as `--account`: the identity's `account:` frontmatter first, else this default.
 
 ## Launcher
 
@@ -131,23 +125,22 @@ parlay spawn refactor-x "Refactor X" "#6366f1" \
 1. Register agent name with Parlay server
 2. `herdr tab create` — opens a new terminal tab, injects env vars
 3. Pane prep — clears inherited claude env vars, echoes `READY_$$`, waits for shell
-4. `herdr agent start` — launches the claude harness in the pane
-5. Retry loop — polls until agent state is `running`
-6. `herdr agent prompt` — delivers the task description as the startup prompt
-7. `parlay identity --register` — seeds the launch spec (worktree, project, etc.)
-9. Liveness watchdog — nudges if the agent goes idle > 60s
-
-## Snapshot logs
-
-Every spawn writes a hash-deduped JSONL log of pane content at each stage to:
-```
-~/.parlay/spawn-logs/<agent-id>.jsonl
-```
-Each snapshot fires in a background subshell (`&`) — pane logging never blocks the critical path. Useful for diagnosing stuck spawns. Capped at 1000 entries.
+4. `herdr agent start` — launches the harness for `--kind` in the pane, retrying while
+   herdr reports `agent_pane_busy` (budget `PARLAY_SPAWN_START_RETRIES`, default 60)
+5. `herdr agent prompt` — delivers the task description as the startup prompt. It cannot
+   ride in the `agent start` argv: herdr types those args into the pane as a shell command
+   line and refuses to encode the charter's newlines
+6. `parlay identity --register` — seeds the launch spec (worktree, project, etc.)
+7. Liveness watchdog — a detached `parlay spawn-watchdog` child, one arm per launcher
+   (herdr re-sends the charter if the first turn never fired; subprocess and gc observe and
+   report). Disable with `PARLAY_SPAWN_NO_WATCHDOG=1`; tune with
+   `PARLAY_SPAWN_LIVENESS_TIMEOUT_MS` (default 60000). Logs:
+   `$TMPDIR/parlay-watchdog-<launcher>.log`
 
 ## Troubleshooting
 
 - **"ccjuggler-resolve not found"** — run `bun install` in `packages/ccjuggler` or ensure the bin is on PATH.
 - **"no root pane returned"** — herdr tab create failed; check `herdr` is running and the socket path is valid.
-- **Agent registers but never receives prompt** — check the spawn-logs JSONL for which stage stalled.
+- **Agent registers but never receives prompt** — check `$TMPDIR/parlay-watchdog-<launcher>.log`
+  for whether the watchdog saw the first turn fire.
 - **Wrong worktree / repo** — `treehouse get` resolves from the process cwd; always pass `--cwd <repo>` explicitly.

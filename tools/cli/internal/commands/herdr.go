@@ -175,7 +175,7 @@ func herdrTabPaneCount(tabID string) int {
 	return herdrDigInt(v, "result", "tab", "pane_count")
 }
 
-// herdrTabIDForLabel finds the tab parlay-spawn labeled with this agent id.
+// herdrTabIDForLabel finds the tab `parlay spawn` labeled with this agent id.
 // Ties (a label reused across tabs) resolve to the first listed; the next
 // sweep pass picks up whatever is left, which is strictly better than
 // closing tabs this call cannot attribute.

@@ -12,7 +12,13 @@ import (
 // spawnLaunchedByValue is the exact literal packages/server/src/types.ts
 // documents for this launcher ("parlay-spawn" | "parlay-claim") and
 // idle-reap.ts's shouldIdleReap keys its "parlay"-prefix reap eligibility
-// test on. bin/parlay-spawn sends this same literal (line 1209).
+// test on.
+//
+// It keeps its hyphen deliberately even though the bash spawner it was named
+// for is gone: this is a WIRE value stamped onto every registry row, matched
+// by a server-side predicate and compared against rows written by earlier
+// releases. Renaming it to match the verb would split live registry data for
+// no user-visible gain. Nothing prints it as a command to run.
 const spawnLaunchedByValue = "parlay-spawn"
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}

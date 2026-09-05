@@ -194,7 +194,7 @@ func cmdMem(kind MemKind, argv []string) {
 	}
 
 	// --register: seed/update this identity's launch spec (frontmatter:
-	// id/name/color/model/cwd). parlay-spawn calls this so the identity
+	// id/name/color/model/cwd). `parlay spawn` calls this so the identity
 	// fully describes how to relaunch the agent. Facts and the handoff
 	// pointer below it are preserved.
 	if res.Bool("--register") {
@@ -214,13 +214,13 @@ func cmdMem(kind MemKind, argv []string) {
 		if res.Bool("--ephemeral") {
 			fm.Set("ephemeral", "true")
 		}
-		// Fold §3.2 lifecycle meta fields — written by parlay-spawn at
+		// Fold §3.2 lifecycle meta fields — written by `parlay spawn` at
 		// launch time, read back by identity --launch and parlay teardown.
 		// Only set when provided. worktree/project are what make teardown's
 		// git safety reachable at all; the port had dropped them (see
 		// store.go's MemValueFlags note, robots-6xq7).
 		// `bead` is the spawn-time work-item binding (beads-required mode):
-		// bin/parlay-spawn forwards its --bead here, and from then on that
+		// `parlay spawn` forwards its --bead here, and from then on that
 		// bead's open/closed state governs this agent's lifecycle — see
 		// worklink.go's BeadKey, which every relaunch guard reads.
 		for _, k := range []string{"mode", "effort", "kind", "yolo", "worktree", "project", "bead"} {
@@ -350,7 +350,7 @@ func cmdMem(kind MemKind, argv []string) {
 		submitArgs := []string{"--reboot"}
 		item, closed := BoundWorkItemClosed(file)
 		// beads-required mode: for a SPAWN-bound bead (`bead:`, written by
-		// parlay-spawn --bead), --submit is the "this work is finished" exit,
+		// `parlay spawn --bead`), --submit is the "this work is finished" exit,
 		// so it closes that bead here — after the handoff pointer is pinned
 		// (the state stays recoverable even if this is the last thing that
 		// happens) and before the reset fires.

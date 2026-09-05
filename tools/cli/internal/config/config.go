@@ -191,7 +191,7 @@ func spawnAccountConfigPath() string {
 // SpawnAccount resolves the default ccjuggler account name to spawn agents
 // under, or "" when none is configured.
 //
-// Precedence is bin/parlay-spawn's, exactly: a non-empty
+// Precedence matches the retired bash spawner's, exactly: a non-empty
 // PARLAY_SPAWN_DEFAULT_ACCOUNT > `spawnAccount` in config.toml > empty. An
 // env var set but empty falls through to the config file, matching the bash
 // `[ -z ... ]` test rather than the header comment above it, which claims an
@@ -275,7 +275,7 @@ func trimSpawnAccountValue(raw string) string {
 }
 
 // SpawnAccountConfigPath returns the config.toml path that holds the spawn
-// account — the file bin/parlay-spawn reads. Exposed for `parlay defaults`
+// account — the file the spawn pipeline reads. Exposed for `parlay defaults`
 // to print where a value lives; the server URL's file is a different one
 // (config.json, see ConfigFilePath).
 func SpawnAccountConfigPath() string {
@@ -292,7 +292,7 @@ func PersistedSpawnAccount() string {
 }
 
 // SetSpawnAccount persists account as the default ccjuggler spawn account in
-// $PARLAY_STATE_HOME/config.toml (the same file bin/parlay-spawn reads and
+// $PARLAY_STATE_HOME/config.toml (the same file the spawn pipeline reads and
 // `parlay launch` resolves through SpawnAccount). An empty account clears the
 // key — control returns to PARLAY_SPAWN_DEFAULT_ACCOUNT, then to no account.
 //

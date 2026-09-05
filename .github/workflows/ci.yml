@@ -230,14 +230,6 @@ jobs:
           fi
           echo "working tree clean after a full build"
 
-      # docs/scope-go-spawn.md Stage 4: runs the same named-spawn scenarios
-      # through bash's bin/parlay-spawn and the in-process Go pipeline
-      # (`parlay spawn` via bin/parlay, built on demand) and asserts
-      # equivalent exit codes and messages. Needs a real go toolchain to get a genuine A/B build, so
-      # this lives here rather than in the toolchain-less "shell" job below.
-      - name: Spawner parity (bash vs. Go)
-        run: bin/parlay-spawn-parity.test.sh
-
   # ── Bun workspace: packages/input, packages/client, packages/server,
   #    plus tools/gate-tag ───────────────────────────────────────────
   # packages/server has real test files but no "test" script
@@ -438,13 +430,7 @@ jobs:
           # without an identity, and the redirected HOME has no gitconfig.
           git config --global user.email ci@example.invalid
           git config --global user.name  "parlay ci"
-          for t in bin/parlay-pii-lib.test.sh \
-                   bin/parlay-spawn.templates.test.sh \
-                   bin/parlay-spawn.integration.test.sh \
-                   bin/parlay-spawn.quoting.test.sh \
-                   bin/parlay-spawn.batch.test.sh \
-                   bin/parlay-spawn.worktree.test.sh \
-                   bin/parlay-treehouse-guard.test.sh \
+          for t in bin/parlay-treehouse-guard.test.sh \
                    bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
                    tools/hooks/hooks.test.sh \

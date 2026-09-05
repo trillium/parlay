@@ -8,7 +8,7 @@
 #   agents), the OS kills it with SIGKILL before it processes any arguments.
 #   The herdr daemon socket (~/.config/herdr/herdr.sock) is a plain Unix
 #   socket accepting newline-delimited JSON-RPC — accessible from any context.
-#   This script wraps that socket so parlay-spawn can call herdr operations
+#   This script wraps that socket so callers can drive herdr operations
 #   without needing the herdr binary to be alive.
 #
 # USAGE (direct):
@@ -46,7 +46,7 @@ herdr_rpc() {
   # accident) but appends a stray '}' to EVERY caller-supplied value, e.g.
   # '{"name":"x"}' -> '{"name":"x"}}'. jq then rejects it with
   # "invalid JSON text passed to --argjson", every RPC call fails, and
-  # parlay-spawn's socket path silently falls apart (tab.create returns
+  # the caller's socket path silently falls apart (tab.create returns
   # nothing -> "herdr tab create failed — no root pane returned").
   # Two steps, no brace default. Same reason at the other two sites below.
   local params="${2:-}"

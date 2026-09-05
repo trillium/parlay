@@ -5,7 +5,7 @@
 // through the synthesised template (gctemplate's prompt.template.md /
 // prompt_mode). This verb is the post-launch watchdog that replaces the
 // herdr path's weakest link — the 60s timeout that re-prompts the ENTIRE
-// charter (bin/parlay-spawn's `_herdr_agent_prompt_wait`, which can double
+// charter (bash's `_herdr_agent_prompt_wait`, which could double
 // the charter). The contract here is deliverStartupTurn's (pinned gc,
 // internal/runtime/herdr/client.go): CONFIRM the startup turn happened, or
 // REPORT that it did not — never re-submit the charter.
@@ -21,7 +21,7 @@
 //     delivers a short fixed kick (never the charter) via gc's verified
 //     nudge and reports gc's confirmation either way.
 //
-// The JSON envelope is the charter-delivery record: bin/parlay-spawn's
+// The JSON envelope is the charter-delivery record: the spawn watchdog's
 // watchdog appends it to the agent dir so "was the startup turn confirmed?"
 // has a durable, machine-readable answer.
 package commands
@@ -71,7 +71,7 @@ var gcLivenessPollInterval = 1 * time.Second
 //
 // The signal is deliberately narrow. /api/chat/subscribers also lists the
 // channel under `registered` and (Bun server) as an "offline" presence row
-// as soon as bin/parlay-spawn's pre-launch register-agent POST lands, and
+// as soon as the spawn pipeline's pre-launch register-agent POST lands, and
 // the go-server's presence is touched by the spawner's own hello reply —
 // none of which the agent emitted. What only the agent can produce is its
 // poll listener: an open waiter in poll.channels, or (Bun server) a presence
