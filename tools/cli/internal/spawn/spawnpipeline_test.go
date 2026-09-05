@@ -396,6 +396,15 @@ func TestWriteStartupPromptKeepsTheCharterOwnerOnly(t *testing.T) {
 	if got := fi.Mode().Perm(); got != 0o600 {
 		t.Errorf("charter file mode = %o, want 600 (it carries the task text)", got)
 	}
+	// The tightening happens BEFORE the write, so this also proves moving
+	// the Chmod ahead of WriteFile did not cost us the write itself.
+	body, err := os.ReadFile(promptFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "the charter\n" {
+		t.Errorf("charter content = %q, want the new charter (not the stale one)", body)
+	}
 	di, err := os.Stat(agentDir)
 	if err != nil {
 		t.Fatal(err)

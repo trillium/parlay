@@ -515,16 +515,21 @@ func writeStartupPrompt(agentID, startupPrompt string) (string, error) {
 	if err := os.MkdirAll(agentDir, 0o700); err != nil {
 		return "", fmt.Errorf("creating agent dir: %w", err)
 	}
+	// MkdirAll and WriteFile only apply their mode when they CREATE the
+	// path, so neither tightens a directory or file an earlier release (or
+	// writeAgentContext, which runs first) already left at 0755/0644. Chmod
+	// both explicitly — and do it BEFORE the write, not after: WriteFile
+	// truncates and refills a pre-existing 0644 file without changing its
+	// mode, so tightening afterwards leaves the fresh charter readable to
+	// every local user for the length of the write. Best-effort: a
+	// permissions bump must never fail a launch that has otherwise
+	// succeeded, and the Chmod on promptFile is expected to fail with
+	// ENOENT on the common path where the file does not exist yet.
+	_ = os.Chmod(agentDir, 0o700)
 	promptFile := filepath.Join(agentDir, "startup-prompt.txt")
+	_ = os.Chmod(promptFile, 0o600)
 	if err := os.WriteFile(promptFile, []byte(startupPrompt+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("writing startup prompt: %w", err)
 	}
-	// MkdirAll and WriteFile only apply their mode when they CREATE the
-	// path, so neither tightens a directory or file an earlier release (or
-	// writeAgentContext, which runs first) already left at 0755/0644.
-	// Chmod both explicitly, best-effort: a permissions bump must never fail
-	// a launch that has otherwise succeeded.
-	_ = os.Chmod(agentDir, 0o700)
-	_ = os.Chmod(promptFile, 0o600)
 	return promptFile, nil
 }
