@@ -28,6 +28,8 @@ type mockLauncher struct {
 	paneSendTextCalls   []string
 	paneSendKeysCalls   []string
 	paneWaitOutputCalls []string
+	agentPromptCalls    []string
+	failPrompt          bool
 }
 
 func (m *mockLauncher) AgentGet(id string) (string, error) {
@@ -60,6 +62,15 @@ func (m *mockLauncher) TabClose(tabID string) error                      { retur
 func (m *mockLauncher) PaneClose(paneID string) error                    { return nil }
 func (m *mockLauncher) AgentWait(id, status string, timeoutMs int) error { return nil }
 func (m *mockLauncher) AgentSend(id, text string) error                  { return nil }
+func (m *mockLauncher) AgentPrompt(id, text string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.agentPromptCalls = append(m.agentPromptCalls, text)
+	if m.failPrompt {
+		return &mockErr{"agent prompt failed"}
+	}
+	return nil
+}
 func (m *mockLauncher) TabsForLabel(id string) ([]TabRef, error)         { return nil, nil }
 func (m *mockLauncher) PaneSendText(paneID, text string) error {
 	m.mu.Lock()

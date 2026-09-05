@@ -126,18 +126,38 @@ func TestSpawnOneHerdrLaunchCommandMatchesBashFlagsAndEnv(t *testing.T) {
 	if len(m.agentStartOpts) != 1 {
 		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
 	}
-	cmd := strings.Join(m.agentStartOpts[0].Cmd, " ")
-	for _, flag := range []string{"--dangerously-skip-permissions", "--strict-mcp-config", "--fallback-model sonnet", `--settings '{"enabledPlugins":{"posthog@claude-plugins-official":false}}'`} {
-		if !strings.Contains(cmd, flag) {
-			t.Errorf("herdr launch command missing bash-parity flag %q; got: %s", flag, cmd)
-		}
+	start := m.agentStartOpts[0]
+	if start.Kind != "claude" {
+		t.Errorf("expected --kind claude, got %q", start.Kind)
+	}
+	// Argv entries, not a shell string: `herdr agent start` types its
+	// trailing args after the kind's canonical executable, so the --settings
+	// JSON is one unquoted argument here and herdr does the encoding.
+	wantArgs := []string{
+		"--dangerously-skip-permissions",
+		"--strict-mcp-config",
+		"--fallback-model", "sonnet",
+		"--settings", `{"enabledPlugins":{"posthog@claude-plugins-official":false}}`,
+		"--model", "sonnet",
+	}
+	if strings.Join(start.Cmd, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Errorf("herdr launch argv mismatch\n got: %q\nwant: %q", start.Cmd, wantArgs)
+	}
+
+	// The charter never rides in the argv — herdr refuses to encode its
+	// newlines — so it must arrive through `agent prompt` instead.
+	if len(m.agentPromptCalls) != 1 {
+		t.Fatalf("expected exactly one AgentPrompt call, got %d", len(m.agentPromptCalls))
+	}
+	if !strings.Contains(m.agentPromptCalls[0], "nope-flags-z1") {
+		t.Errorf("expected the startup charter to be submitted via agent prompt; got %q", m.agentPromptCalls[0])
 	}
 
 	if len(m.tabCreateCalls) != 1 {
 		t.Fatalf("expected exactly one TabCreate call, got %d", len(m.tabCreateCalls))
 	}
 	env := strings.Join(m.tabCreateCalls[0].Env, "\n")
-	for _, want := range []string{"PARLAY_SPAWN_MODEL=sonnet", "PARLAY_AGENT_MODEL=sonnet"} {
+	for _, want := range []string{"PARLAY_SPAWN_MODEL=sonnet", "PARLAY_AGENT_MODEL=sonnet", "PARLAY_AGENT_NAME=Nope Flags", "PARLAY_AGENT_COLOR=#c084fc"} {
 		if !strings.Contains(env, want) {
 			t.Errorf("herdr tab env missing bash-parity var %q; got: %s", want, env)
 		}
@@ -252,5 +272,63 @@ func TestSpawnNonBusyStartFailureDoesNotRetry(t *testing.T) {
 	}
 	if len(m.agentStartCalls) != 1 {
 		t.Errorf("a non-busy failure must not be retried; got %d AgentStart calls", len(m.agentStartCalls))
+	}
+}
+
+// task-20czm: the herdr launcher must honor --kind. Before this, it passed a
+// hardcoded `--kind claude` plus a fixed `bash -lc 'exec claude …'` script,
+// so `--kind opencode` silently launched claude. The kind now reaches
+// `herdr agent start --kind` (which resolves the canonical executable), and
+// only claude gets the YOLO flag set — every other harness takes an explicit
+// --model and relies on its own config (bin/parlay-spawn:1650-1654).
+func TestSpawnOneHerdrHonorsNonClaudeKind(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-kind-z1", "Nope Kind", "#c084fc", "brief", "--kind", "opencode", "--model", "opencode-go/deepseek-v4-pro"})
+	if rc != 0 {
+		t.Fatalf("expected success, got rc=%d", rc)
+	}
+	if len(m.agentStartOpts) != 1 {
+		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
+	}
+	start := m.agentStartOpts[0]
+	if start.Kind != "opencode" {
+		t.Errorf("expected --kind opencode to reach herdr, got %q", start.Kind)
+	}
+	want := []string{"--model", "opencode-go/deepseek-v4-pro"}
+	if strings.Join(start.Cmd, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("a non-claude kind takes only --model, never claude's YOLO flags\n got: %q\nwant: %q", start.Cmd, want)
+	}
+	if len(m.agentPromptCalls) != 1 {
+		t.Errorf("expected the charter to be delivered via agent prompt, got %d calls", len(m.agentPromptCalls))
+	}
+}
+
+// A charter that never lands leaves a started agent with no task, so a failed
+// `agent prompt` rolls the tab back exactly like a failed start
+// (bin/parlay-spawn:1685-1689).
+func TestSpawnOneHerdrPromptFailureRollsBack(t *testing.T) {
+	m := &mockLauncher{failPrompt: true}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-prompt-z1", "Nope Prompt", "#c084fc", "brief", "--model", "sonnet"})
+	})
+	if rc == 0 {
+		t.Fatal("expected the spawn to fail when the charter cannot be delivered")
+	}
+	if !strings.Contains(out, "herdr agent prompt failed to deliver the charter") {
+		t.Errorf("expected the charter-delivery failure to be reported; got:\n%s", out)
 	}
 }

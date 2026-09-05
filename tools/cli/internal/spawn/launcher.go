@@ -68,6 +68,16 @@ type Launcher interface {
 	// the liveness watchdog when the initial turn never fires).
 	AgentSend(id, text string) error
 
+	// AgentPrompt submits text to the agent through herdr's paste-safe
+	// channel (`herdr agent prompt`). This is the ONLY way to hand an agent
+	// a multi-line charter: `herdr agent start` types its trailing args into
+	// the pane as a shell command line, and herdr refuses to encode an
+	// embedded newline ("agent arguments cannot be encoded safely for the
+	// target shell"). Best-effort at the herdr layer, like bash's
+	// `_herdr_agent_prompt`, but the caller treats a non-nil error as fatal
+	// and rolls the tab back (bin/parlay-spawn:1685-1689).
+	AgentPrompt(id, text string) error
+
 	// TabsForLabel lists every live tab whose label equals id — used by
 	// `parlay reset --reboot` to reconcile down to exactly one tab.
 	TabsForLabel(id string) ([]TabRef, error)
@@ -188,8 +198,19 @@ func (h *herdrLauncher) PaneClose(paneID string) error {
 	return exec.Command("herdr", "pane", "close", paneID).Run()
 }
 
+// AgentWait shells `herdr agent wait <id> --until <status> --timeout <ms>`.
+// The flag is `--until`, not `--status` (`herdr agent wait --help`); this Go
+// port shipped `--status` from PR #23 onward, which herdr rejects as an
+// unknown argument — so every wait failed instantly and the liveness
+// watchdog nudged every single spawn instead of only the stalled ones.
 func (h *herdrLauncher) AgentWait(id, status string, timeoutMs int) error {
-	return exec.Command("herdr", "agent", "wait", id, "--status", status, "--timeout", strconv.Itoa(timeoutMs)).Run()
+	return exec.Command("herdr", "agent", "wait", id, "--until", status, "--timeout", strconv.Itoa(timeoutMs)).Run()
+}
+
+// AgentPrompt shells `herdr agent prompt <id> <text>` — the charter-delivery
+// channel (bash's `_herdr_agent_prompt`, bin/parlay-spawn:349-356).
+func (h *herdrLauncher) AgentPrompt(id, text string) error {
+	return exec.Command("herdr", "agent", "prompt", id, text).Run()
 }
 
 func (h *herdrLauncher) AgentSend(id, text string) error {

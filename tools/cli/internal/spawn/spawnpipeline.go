@@ -33,29 +33,46 @@ func startRetryBudget() int {
 // `/bin/sleep 0.5`). A package var so tests can stub it out.
 var startRetrySleep = func() { time.Sleep(500 * time.Millisecond) }
 
-// launchScript mirrors bin/parlay-spawn's herdr-path $AGENT_START_ARGS
-// (bin/parlay-spawn:1628, the `claude)` case). It is a FIXED string, not
-// templated per spawn — $PARLAY_SPAWN_MODEL and $PARLAY_SPAWN_PROMPT are read
-// from the launched process's own environment (set via herdr --env) when this
-// script actually runs, not interpolated by this program. This sidesteps
-// docs/scope-go-spawn.md §5's single highest-risk area (shell escaping across
-// the Go→shell boundary): the prompt text — arbitrarily large, arbitrary
-// characters — never gets embedded into a shell command string at all.
+// claudeAgentStartArgs is the trailing argv `herdr agent start` types after
+// the kind's canonical executable for --kind claude — bash's
+// `AGENT_START_ARGS` (bin/parlay-spawn:1651). YOLO mode
+// (skip-permissions + sonnet fallback) so a remotely driven agent never
+// stalls on a permission prompt the absent user can't answer;
+// --strict-mcp-config and --settings (disabling the posthog plugin) are
+// load-bearing flags bash's herdr path always passes.
+var claudeAgentStartArgs = []string{
+	"--dangerously-skip-permissions",
+	"--strict-mcp-config",
+	"--fallback-model", "sonnet",
+	"--settings", `{"enabledPlugins":{"posthog@claude-plugins-official":false}}`,
+}
+
+// agentStartArgs builds the `herdr agent start` trailing argv for one kind,
+// mirroring bash's `case "$KIND"` (bin/parlay-spawn:1650-1654): claude gets
+// the YOLO flag set, every other harness gets only an explicit --model and
+// relies on its own config for permissions/fallback (opencode's permission
+// surface is its opencode.json).
 //
-// Runs in YOLO mode (skip-permissions + sonnet fallback) so a remotely
-// driven agent never stalls on a permission prompt the absent user can't
-// answer. --strict-mcp-config and --settings (disabling the posthog plugin)
-// are load-bearing flags bash's herdr path always passes; task-ub2l7 found
-// this Go port had silently dropped both since the port was first written —
-// see docs/scope-go-spawn.md's gap matrix.
+// task-20czm: before this, the herdr path ignored opts.Kind entirely and
+// always ran a fixed `bash -lc 'exec claude …'` script, so `--kind opencode`
+// silently launched claude. Two things make that impossible now — the kind
+// reaches `herdr agent start --kind`, which resolves the canonical
+// executable itself, and the flag set is chosen per kind.
 //
-// This always execs `claude` regardless of opts.Kind — bash's herdr path is
-// kind-aware (AGENT_START_ARGS varies by $KIND, line ~1610). Extending this
-// fixed script to be kind-aware is left as an explicit gap (see
-// docs/scope-go-spawn.md's gap matrix and the PR body for this ticket): the
-// subprocess and gc launcher branches below DO honor opts.Kind, since they
-// build their launch command per spawn rather than sharing one fixed script.
-const launchScript = `unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT; exec claude --dangerously-skip-permissions --strict-mcp-config --fallback-model sonnet --settings '{"enabledPlugins":{"posthog@claude-plugins-official":false}}' ${PARLAY_SPAWN_MODEL:+--model "$PARLAY_SPAWN_MODEL"} "$PARLAY_SPAWN_PROMPT"`
+// Nothing is templated into a shell string here: this is an argv herdr
+// encodes, so docs/scope-go-spawn.md §5's Go→shell escaping hazard is
+// avoided the same way the fixed script avoided it. The charter is NOT an
+// argument at all — see AgentPrompt in launcher.go.
+func agentStartArgs(kind, model string) []string {
+	var args []string
+	if kind == "claude" {
+		args = append(args, claudeAgentStartArgs...)
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return args
+}
 
 // subprocessEnvUnset mirrors the herdr path's in-place `_pane_prep` unset
 // list (bin/parlay-spawn line ~968) — new subprocess children inherit this
@@ -237,8 +254,9 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 	// shell via herdr tab create --env (the valid injection point; herdr
 	// agent start does not accept --env).
 	//
-	// PARLAY_SPAWN_MODEL is launchScript's own read (the --model flag it
-	// builds); PARLAY_AGENT_MODEL is the separate, stable name downstream
+	// PARLAY_SPAWN_MODEL is a pane-local record of the resolved spawn model
+	// (--model now reaches the agent as an `agent start` argv entry);
+	// PARLAY_AGENT_MODEL is the separate, stable name downstream
 	// consumers actually look for (claim.go's `--claim` model fallback,
 	// gctemplate.go) — bash's herdr path sets both (bin/parlay-spawn:1557).
 	// task-ub2l7 found the Go port only set the first, so a herdr-launched
@@ -249,6 +267,8 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		"PARLAY_SPAWN_MODEL=" + opts.Model,
 		"PARLAY_SERVER=" + server,
 		"PARLAY_AGENT_ID=" + opts.AgentID,
+		"PARLAY_AGENT_NAME=" + opts.Name,
+		"PARLAY_AGENT_COLOR=" + opts.Color,
 	}
 	if opts.Model != "" {
 		envList = append(envList, "PARLAY_AGENT_MODEL="+opts.Model)
@@ -306,6 +326,14 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 	// busy rejection is transient — any other failure is non-transient and
 	// rolls back immediately. A busy marker in the output is treated as
 	// failure regardless of exit code, mirroring bash's exit-0 guard.
+	// bash's `$KIND` default (bin/parlay-spawn:886,1085). An empty Kind can
+	// only reach here from a caller that built SpawnOptions by hand; the
+	// flag parser always defaults it.
+	kind := opts.Kind
+	if kind == "" {
+		kind = "claude"
+	}
+
 	attempts := startRetryBudget()
 	startOK := false
 	lastOut := ""
@@ -318,9 +346,9 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		made = try
 		out, startErr := launcher.AgentStart(AgentStartOptions{
 			ID:     opts.AgentID,
-			Kind:   "claude",
+			Kind:   kind,
 			PaneID: rootPane,
-			Cmd:    []string{"bash", "-lc", launchScript},
+			Cmd:    agentStartArgs(kind, opts.Model),
 		})
 		lastOut = out
 		busy := strings.Contains(out, "agent_pane_busy")
@@ -344,6 +372,21 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		return fmt.Errorf("herdr agent start failed after %d attempt(s)", made)
 	}
 	// rootPane is now the agent pane — do not close it.
+
+	// Charter delivery (bin/parlay-spawn:1685-1689). It is a separate step,
+	// not an `agent start` argument: herdr types those args into the pane as
+	// a shell command line and refuses to encode the charter's newlines
+	// ("agent arguments cannot be encoded safely for the target shell"), so
+	// the agent launches bare and `agent prompt` submits the charter through
+	// herdr's paste-safe channel. A failure here leaves a started agent with
+	// no task, so it rolls the tab back exactly like a failed start.
+	if promptErr := launcher.AgentPrompt(opts.AgentID, startupPrompt); promptErr != nil {
+		fmt.Fprintf(os.Stderr, "parlay spawn: herdr agent prompt failed to deliver the charter — rolling back the tab to avoid a ghost %q tab.\n", opts.AgentID)
+		if tabID != "" {
+			_ = launcher.TabClose(tabID)
+		}
+		return fmt.Errorf("herdr agent prompt failed to deliver the charter to %s: %w", opts.AgentID, promptErr)
+	}
 
 	return nil
 }
