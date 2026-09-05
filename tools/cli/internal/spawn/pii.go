@@ -50,10 +50,10 @@ func applyBeadPIILabel(pii piiState, beadID string) {
 		return
 	}
 	if err := exec.Command("task", "label", "add", beadID, "contains-pii").Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: WARNING — could not label bead %s with contains-pii\n", beadID)
+		fmt.Fprintf(os.Stderr, "parlay spawn: WARNING — could not label bead %s with contains-pii\n", beadID)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "parlay-spawn: labeled bead %s with contains-pii\n", beadID)
+	fmt.Fprintf(os.Stderr, "parlay spawn: labeled bead %s with contains-pii\n", beadID)
 }
 
 // checkBeadPIILabel mirrors pii_check_bead_label (lines 26-40): if the bead
@@ -76,7 +76,7 @@ func checkBeadPIILabel(pii piiState, beadID string) piiState {
 		return pii
 	}
 	if pii == piiFalse {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: bead %s is labeled contains-pii; overriding --no-pii\n", beadID)
+		fmt.Fprintf(os.Stderr, "parlay spawn: bead %s is labeled contains-pii; overriding --no-pii\n", beadID)
 	}
 	return piiTrue
 }
@@ -89,7 +89,7 @@ func enforcePII(pii piiState, kind, model string) (newKind, newModel string) {
 		return kind, model
 	}
 	if kind != "" && kind != "claude" {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: contains-pii — %s routes through a third-party API; forcing claude\n", kind)
+		fmt.Fprintf(os.Stderr, "parlay spawn: contains-pii — %s routes through a third-party API; forcing claude\n", kind)
 		return "claude", ""
 	}
 	return kind, model
@@ -137,7 +137,7 @@ func routePIIModel(pii piiState, kind, model string) (newKind, newModel string) 
 
 	live := liveFreeOpencodeModels()
 	if len(live) == 0 {
-		fmt.Fprintln(os.Stderr, "parlay-spawn: no-pii — could not read opencode's model list; staying on claude defaults rather than pinning a model that may not exist")
+		fmt.Fprintln(os.Stderr, "parlay spawn: no-pii — could not read opencode's model list; staying on claude defaults rather than pinning a model that may not exist")
 		return kind, model
 	}
 
@@ -154,9 +154,9 @@ func routePIIModel(pii piiState, kind, model string) (newKind, newModel string) 
 	}
 	if pick == "" {
 		pick = live[0]
-		fmt.Fprintf(os.Stderr, "parlay-spawn: no-pii — none of the preferred free models are offered any more; falling back to %s. Update piiFreeModelPreference in tools/cli/internal/spawn/pii.go.\n", pick)
+		fmt.Fprintf(os.Stderr, "parlay spawn: no-pii — none of the preferred free models are offered any more; falling back to %s. Update piiFreeModelPreference in tools/cli/internal/spawn/pii.go.\n", pick)
 	}
 
-	fmt.Fprintf(os.Stderr, "parlay-spawn: no-pii — routing to free model %s\n", pick)
+	fmt.Fprintf(os.Stderr, "parlay spawn: no-pii — routing to free model %s\n", pick)
 	return "opencode", pick
 }
