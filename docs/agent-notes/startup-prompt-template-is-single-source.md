@@ -4,19 +4,19 @@ The agent startup-prompt template lives in ONE physical place: the regular files
 `tools/cli/internal/spawn/launch-templates/{default,claim}.txt`. The repo-root
 `launch-templates/{default,claim}.txt` are tracked **symlinks** to those files.
 
-- `bin/parlay-spawn` reads `launch-templates/default.txt` through the symlink
-  (its `TEMPLATES_DIR="$BIN_DIR/../launch-templates"`), via `load_template`.
 - `tools/cli/internal/spawn/prompt.go` embeds the real file with
-  `//go:embed launch-templates/default.txt` (go:embed cannot follow a symlink,
-  so the regular file must live inside the package dir and the symlink must be
-  on the bash side).
-- `composeStartupPrompt` performs the same `{{VAR}}` → value substitution
-  `load_template` does, plus trims the template's trailing newline (bash's
-  `content=$(cat …)` strips it; go:embed preserves it).
+  `//go:embed launch-templates/default.txt` — go:embed cannot follow a
+  symlink, which is why the regular file lives inside the package dir and the
+  repo-root path is the symlink, not the other way round.
+- `composeStartupPrompt` does the `{{VAR}}` → value substitution and trims the
+  template's trailing newline (bash's `content=$(cat …)` stripped it; go:embed
+  preserves it, so the trim is what keeps output byte-identical to the
+  pre-port bytes `TestStartupPromptMatchesBashPath` still pins).
 
 **Edit the template in `tools/cli/internal/spawn/launch-templates/`, never the symlink.**
-Both paths then pick it up. `TestStartupPromptMatchesBashPath` (`prompt.go`
-parity) proves byte-identical output.
+The repo-root symlinks stay so the templates are findable from the repo root;
+nothing reads them through that path any more, now that the bash spawner and
+its `load_template` are gone.
 
 ## Known bash quirk the parity deliberately does not match
 

@@ -13,9 +13,8 @@ are easy to get wrong from the code alone.
 goes out through *both* `httpc.Exit` (so every `httpc.Die` in every verb closes
 its record without those verbs knowing) and a `defer` in `main` (normal return
 and panic — a panic reports a non-zero exit so the record never reads green).
-Anything that is not the Go CLI — `bin/parlay-spawn`,
-`tools/monitor/parlay-monitor.sh`, the retired `packages/cli`, work the server
-originates — is invisible; `parlay commands` excludes itself so the observer
+Anything that is not the Go CLI — `tools/monitor/parlay-monitor.sh`, the
+retired `packages/cli`, work the server originates — is invisible; `parlay commands` excludes itself so the observer
 never shows up in its own output; and a bare `parlay` (the fleet snapshot) has
 no verb to report under, so it does not register either. Both renderers print
 that limit in their empty state. Do **not** "improve" coverage by having the server infer

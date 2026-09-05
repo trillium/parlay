@@ -38,9 +38,9 @@ Four things worth knowing before editing it:
   Only a unique key guarantees every landed commit gets a verdict.
 - **`gofmt` in CI is not a duplicate of `TestGofmtClean`.** That test
   (`tools/cli/internal/commands/gofmt_test.go`) resolves its root to the
-  tools/cli module, so it guards one module of five; the CI step covers the
-  other four. Three modules have external dependencies and go.sum files
-  (tools/cli, tools/parlay-bin, packages/spawn-profiles); the remaining two
+  tools/cli module, so it guards one module of the `GO_MODULES` list; the CI
+  step covers the rest. Two modules have external dependencies and go.sum
+  files (tools/cli, packages/spawn-profiles); the other two
   (packages/go-server, tools/relay) are pure stdlib.
 - **Every test step redirects `$HOME`, and it is load-bearing, not ceremony.**
   `packages/cli`'s tests resolve `join(homedir(), ".parlay", "agents", …)`
