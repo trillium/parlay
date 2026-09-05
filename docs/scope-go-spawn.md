@@ -239,6 +239,44 @@ those side effects have already run, leaving an orphaned registration with no li
 behind it. Any reconciliation work must preserve this ordering — it is a strict improvement,
 not a difference to "fix away."
 
+### 3.1 Driving a non-default herdr session (`PARLAY_HERDR_SESSION`)
+
+Every `herdr` invocation in `internal/spawn` goes through `herdrCommand`
+(`launcher.go`), which prepends `--session <name>` when `PARLAY_HERDR_SESSION` is
+set and is otherwise byte-identical to a bare `exec.Command("herdr", …)`. It exists
+because the spawn pipeline is otherwise **untestable against a real herdr**: herdr
+0.8.2 relocates nothing by environment (`HERDR_CONFIG_PATH` moves the config file,
+not the API socket), so a named non-`default` session plus an explicit `--session`
+on every call is the only local isolation there is. Without it, the only way to
+prove a live spawn works is to drive the operator's own working session.
+
+Two properties are load-bearing, and a regression test pins each:
+
+- **The flag precedes the subcommand, never trails it.** `herdr agent start` ends in
+  `-- [AGENT_ARG]...`, and herdr hands everything after that separator to the agent's
+  own executable. A trailing `--session <name>` would scope nothing and instead launch
+  `claude --session <name>` — the same misreading of `--` that broke this path in the
+  first place (task-p5wvc). This is not hypothetical: `firstmate`'s own
+  `bin/fm-herdr-lab.sh run` appends the flag, so it silently falls through to the
+  **default** session for exactly this one command shape.
+- **Unset means unscoped.** No `--session` is emitted at all, so the fleet's default
+  session resolves exactly as before.
+
+A lab session is not a drop-in replica of the captain's, and two differences bite:
+
+1. **A fresh session has no workspace at all.** `tab create` fails
+   `workspace_not_found: no active workspace`, so a live spawn there needs
+   `--workspace <label>` — `resolveWorkspace` then creates one.
+2. **The herdr daemon's env reaches every tab it will ever create.** A lab server
+   provisioned from inside an account-scoped Claude session hands each tab that
+   account's `CLAUDE_CONFIG_DIR`, so `claude` boots against a config with no
+   folder-trust record, parks on the "Is this a project you trust?" prompt, and
+   `agent start` returns `agent_not_ready: blocked during startup`. That is the same
+   poisoned-daemon-env failure class as the `CLAUDECODE` nesting markers
+   (`nestingMarkerUnset`), one variable further out — and unlike those it is not
+   parlay's to unset, since `CLAUDE_CONFIG_DIR` is legitimate account routing.
+   Provision the lab from a shell that does not export it.
+
 ---
 
 ## 4. Environment sourcing semantics

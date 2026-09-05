@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 )
 
 // TabRef is one herdr tab matching a label query.
@@ -117,8 +119,41 @@ func newHerdrLauncher() (*herdrLauncher, error) {
 	return &herdrLauncher{}, nil
 }
 
+// herdrSession names the herdr session every call in this package is scoped
+// to, read from PARLAY_HERDR_SESSION. Empty — the normal case — means no
+// --session flag at all, so the fleet's default session is used exactly as
+// before.
+//
+// It exists because `parlay spawn` is otherwise untestable against a real
+// herdr: herdr 0.8.2 relocates nothing by env (`HERDR_CONFIG_PATH` moves the
+// config file, not the API socket), so a named non-default session plus an
+// explicit `--session` on every call is the ONLY local isolation there is.
+// Without this, a live spawn proof can only be run against the operator's own
+// working session — and the two defects this pipeline was fixed for
+// (task-p5wvc) were both invisible to a green package and visible only in a
+// real launch.
+func herdrSession() string {
+	return strings.TrimSpace(os.Getenv("PARLAY_HERDR_SESSION"))
+}
+
+// herdrCommand builds `herdr [--session <name>] <args…>`.
+//
+// The flag goes BEFORE the subcommand, never appended, and that ordering is
+// load-bearing rather than stylistic: `agent start` ends in
+// `-- [AGENT_ARG]...`, and herdr passes everything after that separator to
+// the agent's own executable. A trailing `--session <name>` there would not
+// scope herdr at all — it would launch `claude --session <name>`. Misreading
+// what lives after `--` is the exact defect this pipeline was fixed for, so
+// this helper is written not to reintroduce it.
+func herdrCommand(args ...string) *exec.Cmd {
+	if s := herdrSession(); s != "" {
+		return exec.Command("herdr", append([]string{"--session", s}, args...)...)
+	}
+	return exec.Command("herdr", args...)
+}
+
 func runHerdrJSON(args ...string) (map[string]any, error) {
-	cmd := exec.Command("herdr", args...)
+	cmd := herdrCommand(args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	_ = cmd.Run() // herdr's own exit code is not authoritative here; parse what it printed
@@ -186,16 +221,16 @@ func (h *herdrLauncher) AgentStart(opts AgentStartOptions) (string, error) {
 		args = append(args, "--")
 		args = append(args, opts.Cmd...)
 	}
-	out, err := exec.Command("herdr", args...).CombinedOutput()
+	out, err := herdrCommand(args...).CombinedOutput()
 	return string(out), err
 }
 
 func (h *herdrLauncher) TabClose(tabID string) error {
-	return exec.Command("herdr", "tab", "close", tabID).Run()
+	return herdrCommand("tab", "close", tabID).Run()
 }
 
 func (h *herdrLauncher) PaneClose(paneID string) error {
-	return exec.Command("herdr", "pane", "close", paneID).Run()
+	return herdrCommand("pane", "close", paneID).Run()
 }
 
 // AgentWait shells `herdr agent wait <id> --until <status> --timeout <ms>`.
@@ -204,31 +239,31 @@ func (h *herdrLauncher) PaneClose(paneID string) error {
 // unknown argument — so every wait failed instantly and the liveness
 // watchdog nudged every single spawn instead of only the stalled ones.
 func (h *herdrLauncher) AgentWait(id, status string, timeoutMs int) error {
-	return exec.Command("herdr", "agent", "wait", id, "--until", status, "--timeout", strconv.Itoa(timeoutMs)).Run()
+	return herdrCommand("agent", "wait", id, "--until", status, "--timeout", strconv.Itoa(timeoutMs)).Run()
 }
 
 // AgentPrompt shells `herdr agent prompt <id> <text>` — the charter-delivery
 // channel (bash's `_herdr_agent_prompt`, bin/parlay-spawn:349-356).
 func (h *herdrLauncher) AgentPrompt(id, text string) error {
-	return exec.Command("herdr", "agent", "prompt", id, text).Run()
+	return herdrCommand("agent", "prompt", id, text).Run()
 }
 
 func (h *herdrLauncher) AgentSend(id, text string) error {
-	return exec.Command("herdr", "agent", "send", id, text).Run()
+	return herdrCommand("agent", "send", id, text).Run()
 }
 
 func (h *herdrLauncher) PaneSendText(paneID, text string) error {
-	_ = exec.Command("herdr", "pane", "send-text", paneID, text).Run() // best-effort, parity with bash's `|| true`
+	_ = herdrCommand("pane", "send-text", paneID, text).Run() // best-effort, parity with bash's `|| true`
 	return nil
 }
 
 func (h *herdrLauncher) PaneSendKeys(paneID, keys string) error {
-	_ = exec.Command("herdr", "pane", "send-keys", paneID, keys).Run()
+	_ = herdrCommand("pane", "send-keys", paneID, keys).Run()
 	return nil
 }
 
 func (h *herdrLauncher) PaneWaitOutput(paneID, regex string, timeoutMs int) error {
-	_ = exec.Command("herdr", "pane", "wait-output", paneID, "--regex", regex, "--timeout", strconv.Itoa(timeoutMs)).Run()
+	_ = herdrCommand("pane", "wait-output", paneID, "--regex", regex, "--timeout", strconv.Itoa(timeoutMs)).Run()
 	return nil
 }
 

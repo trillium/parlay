@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 )
 
@@ -69,7 +68,7 @@ func resolveWorkspace(want string) (string, error) {
 // file's herdr calls.
 func runHerdr(args ...string) ([]byte, error) {
 	var out bytes.Buffer
-	cmd := exec.Command("herdr", args...)
+	cmd := herdrCommand(args...)
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return nil, err
