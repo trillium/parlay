@@ -1,6 +1,6 @@
-# Grounded in tools/parlay-bin/subprocess_spawn.go (subprocessSpawn /
+# Grounded in tools/cli/internal/spawn/subprocess_spawn.go (subprocessSpawn /
 # subprocessStop / subprocessAlive) — the detached-process launcher behind
-# `parlay-bin subprocess-spawn` / `subprocess-stop` / `subprocess-ping`
+# `parlay subprocess-spawn` / `subprocess-stop` / `subprocess-ping`
 # (deprecated aliases: gascity-spawn / gascity-stop / gascity-ping).
 @REQ-SPAWN-001
 Feature: subprocess agent spawn lifecycle

@@ -1,44 +1,46 @@
-# The Go spawner lives in `tools/cli/internal/spawn` — there is no second spawner binary
+# `tools/cli/internal/spawn` is the only spawner there is
 
-`tools/parlay-bin` no longer exists. Its whole tree was folded into `tools/cli`
-as `internal/spawn` (plus `internal/juggle`) by task-42qot; its `go.mod`/`go.sum`
-were deleted because `tools/cli` already carried every dependency. `parlay spawn`
-now runs that code **in-process** — no exec, no second binary, no `PATH`
-resolution order, and no `PARLAY_SPAWN_VIA_CLI` handshake on the Go side (the
-Go path *is* the front door, so there is nothing to hand a token to; bash keeps
-its own check, and the escape hatch sets it).
+`parlay spawn` runs the spawn pipeline **in-process**. There is no second
+implementation, and no way to reach one:
 
-Dispatch is `config.SpawnImpl()` in `tools/cli/internal/commands/spawn.go`:
+| Gone | What it was | Removed by |
+|---|---|---|
+| `tools/parlay-bin` | a separate Go module + binary, preferred by name on `PATH` | PR A (task-42qot) |
+| `resolveSpawner()` / `resolveSpawnerChoice` | the precedence ladder that picked between them | PR A |
+| `bin/parlay-spawn` | the original 1859-line bash spawner | PR B |
+| `PARLAY_SPAWN_IMPL` / `spawnImpl` | the `go`-vs-`bash` selector | PR B |
+| `PARLAY_SPAWN_VIA_CLI` | the handshake proving a call came through the CLI | PR B |
 
-| `PARLAY_SPAWN_IMPL` / `spawnImpl` config key | Behavior |
-|---|---|
-| unset or `go` | in-process `internal/spawn` (the default) |
-| `bash` | exec `parlay-spawn` from `PATH` with `PARLAY_SPAWN_VIA_CLI=1`, exit codes passed through verbatim |
-| anything else | usage error |
+The handshake went with the script it guarded. It existed so
+`bin/parlay-spawn` could refuse a direct invocation that bypassed `parlay
+spawn`'s gates; with one implementation behind one verb, the property is
+structural and a token would guard nothing.
 
-The `bash` arm is a deliberate escape hatch, kept for one release so a
-regression in the Go path has a same-day fallback. **PR B deletes it** along
-with `bin/parlay-spawn`, its test scripts, and the parity suite — see
-[`docs/scope-go-spawn.md`](../scope-go-spawn.md)'s task-42qot addendum.
+**Practical consequence:** anything that used to exec `parlay-spawn` now runs
+`parlay spawn`. Three callers were migrated in PR B —
+`tools/mechanic-dispatch/mechanic-dispatch`, `identity --launch`, and `parlay
+variant launch`. The two Go callers re-exec **this** binary via
+`os.Executable()` rather than looking for `parlay` on `PATH`; under `go test`
+that resolves to the test binary, which is why `identity`'s dispatch is a
+package var a test can point at a stub.
 
-## What this note used to say, and why it is wrong now
+## Read `docs/scope-go-spawn.md` as history
 
-Until task-42qot this note described `tools/parlay-bin` as a dead,
-behind-schedule partial port that was never installed on `PATH`, and warned
-that `resolveSpawner()`'s preference for it was not evidence the Go path ran in
-production. All of that is obsolete: `resolveSpawner` and the whole
-spawner-resolution machinery are deleted, and the Go path is what every
-`parlay spawn` executes. The organ-by-organ gap matrix that motivated the
-reconciliation is still worth reading as the record of what had to be closed —
-[`docs/scope-go-spawn.md`](../scope-go-spawn.md) §2 — but read it as history,
-not as a live list of gaps.
+Its §2 organ-by-organ gap matrix is the record of what the reconciliation had
+to close, and §1 is the only surviving inventory of what the bash spawner did.
+Neither is a live map: every path it cites as `tools/parlay-bin/<file>.go` is
+`tools/cli/internal/spawn/<file>.go`, and its Stage 3–5 end-state (two
+implementations resolving against each other, bash as the permanent escape
+hatch) is superseded by this note.
 
-## Things the move did not change
+The bash script itself is recoverable — `git show 046919aa:bin/parlay-spawn` —
+and the `bin/parlay-spawn:<line>` citations throughout `internal/spawn` point
+into that blob, deliberately. They are provenance for why a ported behavior is
+shaped the way it is; do not re-derive them, and do not read them as live
+paths.
 
-- **The bash spawner is still byte-compatible where it counts.** The parity
-  harness (`bin/parlay-spawn-parity.test.sh`) still runs both sides through the
-  gate chain; its Go side is now `bin/parlay spawn`, and the `PARLAY_SPAWN_VIA_CLI`
-  scenario is bash-only because the Go side no longer has that gate.
+## Things the fold did not change
+
 - **`bin/parlay` must build with `CGO_ENABLED=0`** — folding `internal/spawn`
   into `tools/cli` put the beads dependency's embedded-Dolt/ICU tree in the
   spawner's build graph too (robots-wgij).
@@ -46,3 +48,8 @@ not as a live list of gaps.
   `tools/cli/internal/spawn/launch-templates/`; the repo-root
   `launch-templates/*` symlinks were retargeted, not replaced. See
   [`startup-prompt-template-is-single-source.md`](startup-prompt-template-is-single-source.md).
+- **The bash-vs-Go parity harness is gone**, deleted with the bash side it
+  diffed against. What replaced it is ordinary Go test coverage in
+  `internal/spawn` — which means a behavior nobody wrote a Go test for is now
+  unguarded, where the A/B used to catch it. Treat `internal/spawn` changes
+  accordingly.
