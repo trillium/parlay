@@ -37,7 +37,14 @@ func launchAccountFixture(t *testing.T, identityAccount, configTOML string) stri
 // adjacent pair.
 func launchedArgv(t *testing.T, record string) string {
 	t.Helper()
-	res := args.Parse(string(KindIdentity), []string{"--launch", "worker"}, MemBoolFlags, MemValueFlags)
+	return relaunchedArgv(t, "worker", record)
+}
+
+// relaunchedArgv runs `identity --launch <id>` for the given agent id and
+// returns the argv the fake spawner recorded, NUL-joined.
+func relaunchedArgv(t *testing.T, id, record string) string {
+	t.Helper()
+	res := args.Parse(string(KindIdentity), []string{"--launch", id}, MemBoolFlags, MemValueFlags)
 	captureStdout(t, func() {
 		if !HandleLaunch(KindIdentity, res) {
 			t.Fatal("HandleLaunch should have handled --launch")
@@ -90,5 +97,43 @@ func TestHandleLaunchOmitsAccountWhenNoneConfigured(t *testing.T) {
 
 	if argv := launchedArgv(t, record); strings.Contains(argv, "--account") {
 		t.Errorf("spawner argv = %q, want no --account flag at all", argv)
+	}
+}
+
+// End-to-end writer loop (task-0d6mi): `identity --register --account acc7`
+// must record the account in identity.md with NO hand-seeded frontmatter,
+// and a subsequent relaunch must come back on acc7. This closes the gap the
+// fixture-based tests above leave open — they seed `account:` by hand, which
+// is exactly why the missing register writer never surfaced as a failure.
+func TestRegisterWritesAccountAndRelaunchUsesIt(t *testing.T) {
+	startHarness(t)
+	home := freshHome(t)
+
+	// Spawn path: register a fresh agent (no prior identity.md) under acc7.
+	captureStdout(t, func() {
+		CmdIdentity([]string{
+			"--register", "--agent", "acctest", "--name", "Acc Test", "--color", "#010203",
+			"--cwd", "/tmp/acctest", "--account", "acc7",
+		})
+	})
+
+	// The account must have landed in identity.md frontmatter.
+	fm := ReadFrontmatter(filepath.Join(home, "acctest", "identity.md"))
+	if got := fm.Get("account"); got != "acc7" {
+		t.Fatalf("identity.md account = %q, want acc7 (register must write it)", got)
+	}
+
+	// Relaunch path: `identity --launch` must forward acc7 to the spawner.
+	bin := t.TempDir()
+	record := filepath.Join(bin, "parlay-spawn.argv")
+	script := "#!/bin/sh\n: > " + record + "\nfor a in \"$@\"; do echo \"$a\" >> " + record + "; done\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "parlay-spawn"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	argv := relaunchedArgv(t, "acctest", record)
+	if !strings.Contains(argv, "--account\x00acc7") {
+		t.Errorf("relaunch spawner argv = %q, want --account acc7 (come back on acc7)", argv)
 	}
 }

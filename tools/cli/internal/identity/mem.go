@@ -223,7 +223,7 @@ func cmdMem(kind MemKind, argv []string) {
 		// bin/parlay-spawn forwards its --bead here, and from then on that
 		// bead's open/closed state governs this agent's lifecycle — see
 		// worklink.go's BeadKey, which every relaunch guard reads.
-		for _, k := range []string{"mode", "effort", "kind", "yolo", "worktree", "project", "bead"} {
+		for _, k := range []string{"mode", "effort", "kind", "yolo", "worktree", "project", "bead", "account"} {
 			if v := strings.TrimSpace(optString(res, "--"+k)); v != "" {
 				fm.Set(k, v)
 			}

@@ -57,6 +57,7 @@ type registerIdentityOptions struct {
 	BeadID       string
 	GCSession    string
 	GCCity       string
+	Account      string
 }
 
 // registerIdentity is best-effort — a failure here does not fail the spawn,
@@ -93,6 +94,9 @@ func registerIdentity(opts registerIdentityOptions) {
 	}
 	if opts.GCCity != "" {
 		args = append(args, "--gc-city", opts.GCCity)
+	}
+	if opts.Account != "" {
+		args = append(args, "--account", opts.Account)
 	}
 	cmd := exec.Command("parlay", args...)
 	_ = cmd.Run()
