@@ -309,8 +309,13 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 	attempts := startRetryBudget()
 	startOK := false
 	lastOut := ""
-	try := 1
-	for ; try <= attempts; try++ {
+	// made counts starts actually issued, not the loop cursor: on exhaustion
+	// the cursor sits one past the budget, and an error message that
+	// over-reports its own attempt count sends the next operator looking for
+	// a start that never happened.
+	made := 0
+	for try := 1; try <= attempts; try++ {
+		made = try
 		out, startErr := launcher.AgentStart(AgentStartOptions{
 			ID:     opts.AgentID,
 			Kind:   "claude",
@@ -332,11 +337,11 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		}
 	}
 	if !startOK {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: herdr agent start failed after %d attempt(s) — rolling back the tab to avoid a ghost tab. (last: %s)\n", try, strings.TrimSpace(lastOut))
+		fmt.Fprintf(os.Stderr, "parlay-spawn: herdr agent start failed after %d attempt(s) — rolling back the tab to avoid a ghost tab. (last: %s)\n", made, strings.TrimSpace(lastOut))
 		if tabID != "" {
 			_ = launcher.TabClose(tabID)
 		}
-		return fmt.Errorf("herdr agent start failed after %d attempt(s)", try)
+		return fmt.Errorf("herdr agent start failed after %d attempt(s)", made)
 	}
 	// rootPane is now the agent pane — do not close it.
 

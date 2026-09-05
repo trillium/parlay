@@ -225,8 +225,11 @@ func TestSpawnBusyRetryBudgetExhausts(t *testing.T) {
 	if len(m.agentStartCalls) != 3 {
 		t.Errorf("expected exactly 3 AgentStart attempts (PARLAY_SPAWN_START_RETRIES=3), got %d", len(m.agentStartCalls))
 	}
-	if !strings.Contains(out, "herdr agent start failed after") {
-		t.Errorf("expected the attempt count in the rollback message; got:\n%s", out)
+	// The exact count matters: a loop that reports its cursor rather than the
+	// starts it issued says "after 4 attempt(s)" here. Assert the number, not
+	// just the prefix, or that off-by-one rides along unnoticed.
+	if !strings.Contains(out, "herdr agent start failed after 3 attempt(s)") {
+		t.Errorf("expected the rollback message to report exactly 3 attempts; got:\n%s", out)
 	}
 }
 
