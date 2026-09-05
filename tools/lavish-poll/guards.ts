@@ -72,6 +72,18 @@ export function readBudget(
     }
     warn(`ignoring ${name}=${JSON.stringify(raw)} — not a positive number; using ${out[key]}`)
   }
+  // The cap has to sit at or above the first step, or backoffFor() flattens
+  // every wait to the cap and the documented `backoffMs` floor stops being a
+  // floor — a smaller LAVISH_POLL_MAX_BACKOFF_MS would quietly re-open the
+  // fast-retry window this budget exists to close. Each override is valid on
+  // its own, so this is clamped after all of them rather than inside the loop.
+  if (out.maxBackoffMs < out.backoffMs) {
+    warn(
+      `${BUDGET_ENV.maxBackoffMs}=${out.maxBackoffMs} is below ${BUDGET_ENV.backoffMs}=${out.backoffMs}; ` +
+        `raising the cap to ${out.backoffMs}`,
+    )
+    out.maxBackoffMs = out.backoffMs
+  }
   return out
 }
 

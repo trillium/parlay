@@ -33,6 +33,27 @@ describe("readBudget", () => {
     expect(warnings.join("\n")).toContain("LAVISH_POLL_BACKOFF_MS")
   })
 
+  test("a cap below the base backoff is raised to it, and reported", () => {
+    // Every value here is individually valid, so the loop accepts both — the
+    // relation between them is what is wrong. Left alone, backoffFor() would
+    // return the 40ms cap for the very first failure and the documented 250ms
+    // floor would never be honoured.
+    const warnings: string[] = []
+    const b = readBudget({ LAVISH_POLL_MAX_BACKOFF_MS: "40" }, m => warnings.push(m))
+    expect(b.backoffMs).toBe(DEFAULT_BUDGET.backoffMs)
+    expect(b.maxBackoffMs).toBeGreaterThanOrEqual(b.backoffMs)
+    expect(b.maxBackoffMs).toBe(DEFAULT_BUDGET.backoffMs)
+    expect(warnings.join("\n")).toContain("LAVISH_POLL_MAX_BACKOFF_MS")
+    // The first failure still waits the full base backoff.
+    expect(backoffFor(1, b)).toBe(DEFAULT_BUDGET.backoffMs)
+  })
+
+  test("a cap at or above the base backoff is left exactly as configured", () => {
+    const b = readBudget({ LAVISH_POLL_BACKOFF_MS: "100", LAVISH_POLL_MAX_BACKOFF_MS: "800" })
+    expect(b.backoffMs).toBe(100)
+    expect(b.maxBackoffMs).toBe(800)
+  })
+
   test("an unset variable is not a malformed one", () => {
     const warnings: string[] = []
     readBudget({ LAVISH_POLL_MAX_RETRIES: "" }, m => warnings.push(m))
@@ -83,6 +104,8 @@ describe("isOrphaned", () => {
   test("ppid 1 is orphaned, anything else is not", () => {
     expect(isOrphaned(1)).toBe(true)
     expect(isOrphaned(2)).toBe(false)
-    expect(isOrphaned(process.ppid)).toBe(false)
+    // A literal, not process.ppid: the assertion must not depend on what the
+    // test runner happens to be parented to.
+    expect(isOrphaned(4242)).toBe(false)
   })
 })

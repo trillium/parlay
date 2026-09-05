@@ -81,6 +81,47 @@ describe("the poll loop is paced, not spun", () => {
   })
 })
 
+/** Accepts every request and answers 502 with a well-formed JSON body. */
+function jsonError(status: number) {
+  let hits = 0
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      hits++
+      return Response.json({ error: "bad gateway" }, { status })
+    },
+  })
+  return { server, url: `http://127.0.0.1:${server.port}`, hits: () => hits }
+}
+
+describe("a non-OK response is a failed poll, not a successful one", () => {
+  test("a JSON 502 spends the retry budget instead of resetting it", async () => {
+    // The dangerous variant of instantlyBroken(): the body PARSES. Pre-fix the
+    // decoded object had no id, fell through to the "progress" outcome, and
+    // cleared the failure streak on every iteration — so the give-up budget
+    // could never be spent and the loop ran against a dead-ish port forever.
+    const parlaySrv = jsonError(502)
+    try {
+      const r = await runBridge({
+        args: ["doc.md"],
+        parlayUrl: parlaySrv.url,
+        env: {
+          LAVISH_POLL_MAX_RETRIES: "3",
+          LAVISH_POLL_UNREACHABLE_WINDOW_MS: "600000",
+          LAVISH_POLL_BACKOFF_MS: "20",
+          LAVISH_POLL_MAX_BACKOFF_MS: "40",
+        },
+      })
+      expect(r.code).toBe(1)
+      expect(r.stderr).toContain("3 consecutive failed polls")
+      expect(r.stdout.trim()).toBe("")
+      expect(parlaySrv.hits()).toBeLessThan(25)
+    } finally {
+      parlaySrv.server.stop(true)
+    }
+  }, 30_000)
+})
+
 describe("an unreachable upstream exhausts the retry budget", () => {
   test("the wall-clock window ends a run that has no --timeout-ms at all", async () => {
     // The exact shape of the 21h process: no deadline, nothing listening.

@@ -93,7 +93,17 @@ while (Date.now() < deadline) {
   const parlayP = fetch(
     `${parlay}/api/chat/poll?after=${encodeURIComponent(lastParlayId)}&channel=${encodeURIComponent(agentId)}`,
     { signal: parlayAC.signal },
-  ).then(r => r.json() as Promise<ParlayMsg>).catch(() => ({ timeout: true, failed: true } as ParlayMsg))
+    // A non-OK response is a failure even when it carries a JSON body. fetch
+    // only rejects on a transport error, so a 502 from a dying or proxying
+    // server parsed cleanly and reached the loop as a message-shaped object
+    // with no id — which fell through to the "progress" path and RESET the
+    // failure streak. That is exactly the spin this guard exists to end, so
+    // status has to be classified before the body is decoded. The thrown-error
+    // path below stays separate: both are failures, by different routes.
+  ).then(r => (r.ok
+    ? (r.json() as Promise<ParlayMsg>)
+    : ({ timeout: true, failed: true } as ParlayMsg))
+  ).catch(() => ({ timeout: true, failed: true } as ParlayMsg))
 
   // 4387: streaming heartbeat mode (no timeoutMs) — holds connection open until data arrives
   const nativeP = fetch(
