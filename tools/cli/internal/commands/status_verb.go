@@ -49,7 +49,7 @@ func statusSink() (agent, file string) {
 		return agent, env
 	}
 	if agent == "" {
-		httpc.Die("parlay status: no agent identity — set PARLAY_STATUS_FILE, or run inside a parlay-spawn'd agent (sets PARLAY_AGENT_ID)", config.ExitUsage)
+		httpc.Die("parlay status: no agent identity — set PARLAY_STATUS_FILE, or run inside a parlay-spawned agent (sets PARLAY_AGENT_ID)", config.ExitUsage)
 		return "", ""
 	}
 	dir := filepath.Join(identity.AgentsRoot(), agent)

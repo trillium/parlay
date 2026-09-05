@@ -42,7 +42,7 @@ func TestStartupPromptMatchesBashPath(t *testing.T) {
 	// Render the same template through bin/parlay-spawn's exact load_template
 	// algorithm (cat + per-{{VAR}} literal substitution), reading the same
 	// physical file the Go path embeds. The MONITOR_CMD_JSON value is built the
-	// way parlay-spawn does it: shell_quote each component, then json_escape
+	// way bash did it: shell_quote each component, then json_escape
 	// the whole command (jq -Rs .).
 	templatePath := "launch-templates/default.txt"
 	if _, err := os.Stat(templatePath); err != nil {

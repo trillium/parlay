@@ -2,7 +2,7 @@
 
 > Reasoning for the reliability + observability hardening of `bin/context-reset`
 > (Mayor brief, 2026-07-15). Companion to the code; read with `bin/context-reset`
-> and `bin/parlay-spawn`.
+> and `tools/cli/internal/spawn`.
 
 ## The failure this prevents
 
@@ -36,7 +36,7 @@ together close it:
    herdr agents die with their tab, so this also removes the stale **agent
    record** — which is what lets the relaunch proceed at all (see layer 2).
 
-2. **parlay-spawn's duplicate guard (up-front).** `parlay-spawn` refuses to
+2. **The spawner's duplicate guard (up-front).** `parlay spawn` refuses to
    create an agent whose herdr id already exists, and rolls back the tab it
    created if `herdr agent start` fails. So a relaunch can only succeed once the
    old record is gone (layer 1 guarantees that), and a half-failed spawn never

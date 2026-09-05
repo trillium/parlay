@@ -27,8 +27,11 @@ func launchAccountFixture(t *testing.T, identityAccount, configTOML string) stri
 	return installRecordingSpawner(t)
 }
 
-// installRecordingSpawner puts a parlay-spawn on PATH that records its argv
-// one arg per line, and returns the path it records to.
+// installRecordingSpawner points the launch dispatch at a stub that records
+// its argv one arg per line, and returns the path it records to. It swaps
+// launchSpawnCommand rather than shadowing a binary on PATH: since
+// task-42qot `identity --launch` re-execs THIS binary, and under `go test`
+// that is the test suite itself.
 func installRecordingSpawner(t *testing.T) string {
 	t.Helper()
 	bin := t.TempDir()

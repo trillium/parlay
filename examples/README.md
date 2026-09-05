@@ -383,8 +383,9 @@ observed by eye — if one stops holding, `bootstrap-sandbox.sh` fails.
   example is trying to avoid. `parlay doctor` correctly WARNs "monitor not
   listening" throughout.
 - `parlay launch <id>` actually spawning a process, and `parlay teardown` /
-  `parlay sweep` actually collecting one. Both shell out to host tooling
-  (`parlay-spawn`, `herdr`) that is not part of this repo.
+  `parlay sweep` actually collecting one. The spawn pipeline itself lives in
+  this repo (`tools/cli/internal/spawn`, run in-process by `parlay spawn`),
+  but a real launch also needs `herdr`, which does not.
 - `packages/go-server`, the Go rewrite of the server. It reads the same registry
   and settings shapes, but this example was exercised against `packages/server`.
 - Anything on Linux or Windows. macOS only.

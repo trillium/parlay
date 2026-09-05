@@ -1,7 +1,7 @@
 // Package commands/docs: `parlay defaults` — show or persist the CLI's
 // default ccjuggler spawn account (the account agents come up under) plus the
 // current server URL, in one glance. The show form resolves through the same
-// precedence bin/parlay-spawn uses — PARLAY_SPAWN_DEFAULT_ACCOUNT env var >
+// precedence the spawn pipeline uses — PARLAY_SPAWN_DEFAULT_ACCOUNT env var >
 // `spawnAccount` in config.toml > none — so what is displayed is exactly what
 // a spawn picks up. The set/clear forms persist the config.toml half of that
 // chain; the server URL half lives under `parlay remote` and is shown here

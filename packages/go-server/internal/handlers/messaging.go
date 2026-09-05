@@ -52,7 +52,7 @@ type replyRequest struct {
 }
 
 // handleReply implements POST /api/chat/reply. `name`/`color` are documented
-// as sent only by parlay-spawn's hello message; ChatMessage has no Color
+// as sent only by the spawn pipeline's hello message; ChatMessage has no Color
 // field (docs/api-contract.md's ChatMessage interface doesn't list one, and
 // C0 didn't add one), so color is accepted but not persisted anywhere. name,
 // like send's `from`, becomes the stored message's From — the same
