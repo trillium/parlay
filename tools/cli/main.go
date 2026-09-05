@@ -137,6 +137,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Sweep(args)
 	case "spawn":
 		commands.Spawn(args)
+	case "spawn-watchdog":
+		commands.SpawnWatchdog(args)
 	case "reset", "reincarnate":
 		commands.Reset(args)
 	case "subprocess-spawn":

@@ -71,7 +71,7 @@ func (m *mockLauncher) AgentPrompt(id, text string) error {
 	}
 	return nil
 }
-func (m *mockLauncher) TabsForLabel(id string) ([]TabRef, error)         { return nil, nil }
+func (m *mockLauncher) TabsForLabel(id string) ([]TabRef, error) { return nil, nil }
 func (m *mockLauncher) PaneSendText(paneID, text string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

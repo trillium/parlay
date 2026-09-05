@@ -34,6 +34,15 @@ func Reset(argv []string) {
 	httpc.Exit(spawn.RunReset(argv))
 }
 
+// SpawnWatchdog runs one post-launch liveness watch — the detached child
+// `parlay spawn` arms after a successful launch, one arm per launcher.
+func SpawnWatchdog(argv []string) {
+	if helpWanted("spawn-watchdog", argv) {
+		return
+	}
+	httpc.Exit(spawn.RunSpawnWatchdog(argv))
+}
+
 // SubprocessSpawn starts a detached subprocess session — the herdr-free
 // launcher path, also reachable via `parlay spawn --subprocess`.
 func SubprocessSpawn(argv []string) { httpc.Exit(spawn.RunSubprocessSpawn(argv)) }

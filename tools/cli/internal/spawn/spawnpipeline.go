@@ -192,13 +192,22 @@ func spawnOne(opts SpawnOptions) error {
 	}
 	fmt.Fprintf(os.Stderr, "parlay-spawn: launching detached %s agent via %s (cwd=%s, %s) ...\n", opts.Kind, effectiveLauncher, opts.Cwd, focusWord)
 
+	// Every launcher persists the charter to <agent-dir>/startup-prompt.txt:
+	// subprocess and gc feed the launched process from it, and the herdr
+	// watchdog re-reads it when the first turn never fires (a detached
+	// watchdog process cannot inherit the string in memory).
+	promptFile, promptErr := writeStartupPrompt(opts.AgentID, startupPrompt)
+	if promptErr != nil {
+		return promptErr
+	}
+
 	var gcSessionID, gcCityDir string
 	var launchErr error
 	switch effectiveLauncher {
 	case "gc":
-		gcSessionID, gcCityDir, launchErr = spawnViaGC(opts, server, startupPrompt)
+		gcSessionID, gcCityDir, launchErr = spawnViaGC(opts, server, promptFile)
 	case "subprocess":
-		launchErr = spawnViaSubprocess(opts, server, startupPrompt, projectEnv, accountEnv, worktreePath, viaTreehouse)
+		launchErr = spawnViaSubprocess(opts, server, promptFile, projectEnv, accountEnv, worktreePath, viaTreehouse)
 	default:
 		launchErr = spawnViaHerdr(launcher, opts, server, startupPrompt, projectEnv, accountEnv)
 	}
@@ -223,15 +232,20 @@ func spawnOne(opts SpawnOptions) error {
 		})
 	}
 
-	// Post-launch liveness watchdogs are launcher-specific in bash (herdr:
-	// re-send the charter via `agent wait`/`agent send`; subprocess: poll
-	// /api/chat/subscribers; gc: delegate to `parlay gc-liveness`). Only the
-	// herdr variant is ported (armWatchdog, pre-existing). The subprocess
-	// and gc watchdog variants are an explicit, documented leftover — see
-	// docs/scope-go-spawn.md's gap matrix and this ticket's PR body.
-	if effectiveLauncher == "herdr" {
-		armWatchdog(launcher, opts.AgentID, startupPrompt)
-	}
+	// Post-launch liveness watchdog, one arm per launcher (task-br4r6;
+	// bin/parlay-spawn:1808-1894). Every launcher gets one now: herdr
+	// re-sends the charter via `agent wait`/`agent send`, subprocess polls
+	// /api/chat/subscribers, gc delegates to `parlay gc-liveness`. Before
+	// this, subprocess and gc launches were watched by nothing at all.
+	armWatchdog(watchdogSpec{
+		Launcher:   effectiveLauncher,
+		AgentID:    opts.AgentID,
+		Server:     server,
+		AgentDir:   agentHomeDir(opts.AgentID),
+		PromptFile: promptFile,
+		Session:    gcSessionID,
+		CityDir:    gcCityDir,
+	})
 
 	fmt.Fprintf(os.Stderr, "parlay-spawn: done. Agent %q registered; terminal launched.\n", opts.AgentID)
 	fmt.Fprintln(os.Stderr, "parlay-spawn: watch it come live with: parlay subscribers | jq '.poll'")
@@ -396,16 +410,7 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 // subprocessSpawn directly, in-process — a deliberate, beneficial divergence
 // from bash, which shells out to `parlay subprocess-spawn`; this Go
 // pipeline IS that code already.
-func spawnViaSubprocess(opts SpawnOptions, server, startupPrompt string, projectEnv, accountEnv []string, worktreePath string, viaTreehouse bool) error {
-	agentDir := agentHomeDir(opts.AgentID)
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		return fmt.Errorf("creating agent dir: %w", err)
-	}
-	promptFile := filepath.Join(agentDir, "startup-prompt.txt")
-	if err := os.WriteFile(promptFile, []byte(startupPrompt+"\n"), 0o644); err != nil {
-		return fmt.Errorf("writing startup prompt: %w", err)
-	}
-
+func spawnViaSubprocess(opts SpawnOptions, server, promptFile string, projectEnv, accountEnv []string, worktreePath string, viaTreehouse bool) error {
 	// Same YOLO-mode args as the herdr path's launchScript, expressed as a
 	// claude CLI flag string instead of a herdr `agent start` argv.
 	cmdArgs := ""
@@ -456,18 +461,9 @@ type gcSpawnResult struct {
 // spawnViaGC routes the launch through Gas City's session runtime via the
 // `parlay gc-spawn` verb, mirroring bin/parlay-spawn lines 1457-1487.
 // Strictly opt-in and claude-kind only.
-func spawnViaGC(opts SpawnOptions, server, startupPrompt string) (sessionID, cityDir string, err error) {
+func spawnViaGC(opts SpawnOptions, server, promptFile string) (sessionID, cityDir string, err error) {
 	if opts.Kind != "claude" {
 		return "", "", fmt.Errorf("the gc launcher only supports --kind claude for now (got %q) — use herdr or --subprocess", opts.Kind)
-	}
-
-	agentDir := agentHomeDir(opts.AgentID)
-	if mkErr := os.MkdirAll(agentDir, 0o755); mkErr != nil {
-		return "", "", fmt.Errorf("creating agent dir: %w", mkErr)
-	}
-	promptFile := filepath.Join(agentDir, "startup-prompt.txt")
-	if wErr := os.WriteFile(promptFile, []byte(startupPrompt+"\n"), 0o644); wErr != nil {
-		return "", "", fmt.Errorf("writing startup prompt: %w", wErr)
 	}
 
 	args := []string{"gc-spawn", opts.AgentID,
@@ -504,4 +500,21 @@ func spawnViaGC(opts SpawnOptions, server, startupPrompt string) (sessionID, cit
 	fmt.Fprintf(os.Stderr, "parlay-spawn: gc session %q launched for %s (city: %s).\n", displaySession, opts.AgentID, displayCity)
 
 	return res.SessionID, res.CityDir, nil
+}
+
+// writeStartupPrompt persists the composed charter to
+// <agent-dir>/startup-prompt.txt and returns its path. Every launcher uses
+// it: subprocess pipes it into the child's stdin, gc hands it to `parlay
+// gc-spawn --prompt-file`, and the detached herdr watchdog re-reads it to
+// nudge an agent whose first turn never fired.
+func writeStartupPrompt(agentID, startupPrompt string) (string, error) {
+	agentDir := agentHomeDir(agentID)
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating agent dir: %w", err)
+	}
+	promptFile := filepath.Join(agentDir, "startup-prompt.txt")
+	if err := os.WriteFile(promptFile, []byte(startupPrompt+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("writing startup prompt: %w", err)
+	}
+	return promptFile, nil
 }
