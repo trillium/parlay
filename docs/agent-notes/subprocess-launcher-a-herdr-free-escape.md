@@ -1,10 +1,10 @@
-# `subprocess` launcher: a herdr-free escape hatch in `bin/parlay-spawn` (`[spawn] launcher`)
+# `subprocess` launcher: a herdr-free escape hatch in `parlay spawn` (`[spawn] launcher`)
 
 <!-- Split out of AGENTS.md (the project's agent memory) to keep that
      file small enough to load every session. AGENTS.md carries the one-line
      rule; the full rationale lives here. -->
 
-`bin/parlay-spawn` supports a second launcher path, selected by
+`parlay spawn` supports a second launcher path, selected by
 `LAUNCHER` — resolved as a per-invocation `--subprocess` flag >
 `PARLAY_SPAWN_LAUNCHER` env var > `~/.parlay/config.toml`'s `[spawn]
 launcher` (parsed via `python3 -c 'import tomllib'`, so a missing `python3`
@@ -45,7 +45,7 @@ branch, not Gas City), and the two remaining real constraints are that the
 Go surface is `internal/`-only (no import possible — above) and that `gc
 session new` is template-shaped (it scaffolds a named session against
 gascity's own daemon-state machinery, which is not the lifecycle this
-launcher needs). So `tools/parlay-bin/subprocess_spawn.go` is a from-scratch
+launcher needs). So `tools/cli/internal/spawn/subprocess_spawn.go` is a from-scratch
 port of just the lifecycle semantics (detached `sh -c` child,
 process-group signaling, SIGTERM-then-SIGKILL stop) — see that file's own
 header comment for the full rationale, including one further deliberate
@@ -59,25 +59,23 @@ cross-process liveness job with no persistent listener required.
 `gascity`, though it contains no Gas City code. It now goes by `subprocess`
 everywhere: the `--subprocess` flag, `PARLAY_SPAWN_LAUNCHER=subprocess`,
 the `[spawn] launcher = "subprocess"` config value, and the three
-`tools/parlay-bin` commands `subprocess-spawn` / `subprocess-stop` /
-`subprocess-ping`. Every old spelling is still accepted as a deprecated
+`parlay subprocess-spawn` / `subprocess-stop` / `subprocess-ping` verbs. Every old spelling is still accepted as a deprecated
 alias for one release and prints a notice. The **on-disk state dir keeps
 its literal `gascity` segment on purpose** — it is the live state path of
 every session already running under the old name, so `subprocess-stop`
 always finds its own child's pid file and the rename orphans no session
 (`$AGENT_DIR/gascity`, compatible with the brief's norename constraint).
 
-**The three `tools/parlay-bin` subcommands** (`subprocess-spawn <agent-id>
+**The three `parlay subprocess-*` verbs** (`subprocess-spawn <agent-id>
 <command> <workdir> [--state-dir DIR] [--env K=V ...] [--worktree-path P]`,
 `subprocess-stop <agent-id> [--state-dir DIR]`, `subprocess-ping <agent-id>
-[--state-dir DIR]`) always take an explicit `--state-dir` from
-`bin/parlay-spawn` (`$AGENT_DIR/gascity`, i.e.
-`$HOME/.parlay/agents/<id>/gascity`) rather than relying on their own
-`agentHomeDir()` default — `agentHomeDir()` honors `PARLAY_AGENT_HOME`, but
-bash's `AGENT_DIR` does not, so passing it explicitly is what keeps the two
-in agreement. `tools/parlay-bin` is built if missing or stale, mirroring
-`bin/parlay`'s own build-if-stale pattern for `tools/cli` (same `find … -newer`
-check), at `tools/parlay-bin/bin/parlay-bin`.
+[--state-dir DIR]`) still exist as standalone verbs for driving a session by
+hand. The spawn pipeline no longer shells out to them — it calls
+`subprocessSpawn` in-process — but it passes the same explicit state dir
+(`$HOME/.parlay/agents/<id>/gascity`, the pre-rename directory name kept for
+sessions started before the rename) rather than relying on
+`agentHomeDir()`'s default, so a hand-run `subprocess-ping` and the pipeline
+agree on where the session lives.
 
 **Treehouse integration (the part the captain flagged critical)**: a
 treehouse-leased worktree must be returned on stop, or the pool starves
@@ -123,7 +121,7 @@ Unlike the herdr watchdog it never resubmits the charter on timeout — there
 is no paste-safe re-delivery channel here, only a warning naming
 `subprocess-ping` for manual inspection.
 
-Tests: `tools/parlay-bin/subprocess_spawn_test.go` covers the start/stop/
+Tests: `tools/cli/internal/spawn/subprocess_spawn_test.go` covers the start/stop/
 ping lifecycle, duplicate-session refusal, idempotent/stale-pid stop,
 SIGKILL escalation (via the `stopGrace` var, shrunk in-test), the treehouse
 sidecar write/return/cleanup cycle (a PATH-stubbed fake `treehouse` shim,
