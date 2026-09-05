@@ -60,6 +60,19 @@ type registerIdentityOptions struct {
 	Account      string
 }
 
+// identityAccount is the account persisted into the spawned agent's
+// identity.md: the explicitly-passed --account only. When no flag was given,
+// opts.Account still carries resolveDefaultAccount's ambient value (it drives
+// live token resolution), but persisting that would freeze today's config
+// default into the agent forever and make later `parlay defaults set account`
+// rotations invisible to it.
+func identityAccount(opts SpawnOptions) string {
+	if !opts.AccountFromFlag {
+		return ""
+	}
+	return opts.Account
+}
+
 // registerIdentity is best-effort — a failure here does not fail the spawn,
 // matching bash's `|| true` (line 602). Skipped entirely for ephemeral
 // agents, whose mint step already seeded the store with `ephemeral: true`;

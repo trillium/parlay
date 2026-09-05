@@ -203,7 +203,7 @@ func spawnOne(opts SpawnOptions) error {
 			BeadID:       opts.BeadID,
 			GCSession:    gcSessionID,
 			GCCity:       gcCityDir,
-			Account:      opts.Account,
+			Account:      identityAccount(opts),
 		})
 	}
 

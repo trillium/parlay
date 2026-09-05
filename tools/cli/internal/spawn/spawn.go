@@ -90,7 +90,14 @@ type SpawnOptions struct {
 	Effort       string
 	WantWorktree bool
 	Account      string
-	Ephemeral    bool
+	// AccountFromFlag records that Account came from an explicit --account
+	// on this invocation rather than from resolveDefaultAccount's ambient
+	// PARLAY_SPAWN_DEFAULT_ACCOUNT / config.toml spawnAccount fallback. Only
+	// an explicit account is pinned into the agent's identity.md; the
+	// config-level default must stay dynamic so a later `parlay defaults set
+	// account` rotation still reaches agents that never named one.
+	AccountFromFlag bool
+	Ephemeral       bool
 	Claim        string
 	Profile      string
 	Kind         string
@@ -183,6 +190,7 @@ func parseTailFlags(args []string, opts *SpawnOptions, rejectCwd, allowPaneAndWo
 				return fmt.Errorf("--account requires a value")
 			}
 			opts.Account = args[i+1]
+			opts.AccountFromFlag = true
 			i++
 		case "--claim":
 			if !allowPaneAndWorkspace {
@@ -514,6 +522,7 @@ func runBatchSpawn(args []string) int {
 				return 2
 			}
 			shared.Account = args[i+1]
+			shared.AccountFromFlag = true
 			i += 2
 		case "--cwd":
 			fmt.Fprintln(os.Stderr, "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)")

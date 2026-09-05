@@ -75,3 +75,61 @@ func TestRegisterIdentityOmitsAccountWhenEmpty(t *testing.T) {
 		t.Errorf("argv = %q, want no --account flag when none is set", argv)
 	}
 }
+
+// An explicit `--account acc7` on the spawn argv must survive parsing and be
+// persisted into the agent's identity.md registration (task-0d6mi).
+func TestExplicitAccountFlagIsPersistedIntoRegistration(t *testing.T) {
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_SPAWN_DEFAULT_ACCOUNT", "ambient-default")
+
+	opts := defaultSpawnOptions()
+	if err := parseTailFlags([]string{"--model", "sonnet", "--account", "acc7"}, &opts, false, true); err != nil {
+		t.Fatalf("parseTailFlags: %v", err)
+	}
+	if opts.Account != "acc7" {
+		t.Fatalf("opts.Account = %q, want acc7", opts.Account)
+	}
+
+	record := filepath.Join(t.TempDir(), "parlay.argv")
+	fakeParlayOnPATH(t, record)
+	registerIdentity(registerIdentityOptions{
+		AgentID: "acctest", Name: "Acc Test", Color: "#010203",
+		Cwd: "/tmp/acctest", Mode: "report", Account: identityAccount(opts),
+	})
+
+	if argv := recordedArgv(t, record); !strings.Contains(argv, "--account\x00acc7") {
+		t.Errorf("argv = %q, want --account acc7 persisted into registration", argv)
+	}
+}
+
+// A spawn with NO --account must leave identity.md account-free even when an
+// ambient default (PARLAY_SPAWN_DEFAULT_ACCOUNT / config.toml spawnAccount)
+// resolved one: the default still drives this launch's token resolution, but
+// pinning it into the frontmatter would outrank config forever and make a
+// later `parlay defaults set account` rotation invisible to the agent.
+func TestNoAccountFlagLeavesIdentityAccountUnset(t *testing.T) {
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_SPAWN_DEFAULT_ACCOUNT", "ambient-default")
+
+	opts := defaultSpawnOptions()
+	if err := parseTailFlags([]string{"--model", "sonnet"}, &opts, false, true); err != nil {
+		t.Fatalf("parseTailFlags: %v", err)
+	}
+	if opts.Account != "ambient-default" {
+		t.Fatalf("opts.Account = %q, want the ambient default to still drive this launch", opts.Account)
+	}
+	if opts.AccountFromFlag {
+		t.Fatal("AccountFromFlag = true with no --account on the argv")
+	}
+
+	record := filepath.Join(t.TempDir(), "parlay.argv")
+	fakeParlayOnPATH(t, record)
+	registerIdentity(registerIdentityOptions{
+		AgentID: "acctest", Name: "Acc Test", Color: "#010203",
+		Cwd: "/tmp/acctest", Mode: "report", Account: identityAccount(opts),
+	})
+
+	if argv := recordedArgv(t, record); strings.Contains(argv, "--account") {
+		t.Errorf("argv = %q, want no --account — the ambient default must not be pinned into identity.md", argv)
+	}
+}
