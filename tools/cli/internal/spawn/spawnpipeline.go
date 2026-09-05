@@ -74,11 +74,23 @@ func agentStartArgs(kind, model string) []string {
 	return args
 }
 
-// subprocessEnvUnset mirrors the herdr path's in-place `_pane_prep` unset
-// list (bin/parlay-spawn line ~968) — new subprocess children inherit this
-// CLI's own CLAUDECODE/CLAUDE_CODE_* env same as a fresh herdr pane does, so
-// the same nesting-marker unset applies here (lines 1673-1674).
-const subprocessEnvUnset = `unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT`
+// nestingMarkerUnset clears the env vars that mark "you are already inside a
+// Claude Code session". Claude Code refuses to nest under them, so an agent
+// launched with any of them still set exits immediately instead of coming up
+// — which on the herdr path is indistinguishable from a hang, because herdr
+// only reports `timed out waiting for agent startup` (task-p5wvc).
+//
+// One list, two callers: the herdr pane prep types it into the pane's login
+// shell before `agent start`, and the subprocess launcher prefixes it onto
+// its `sh -c` command line. Both children inherit the marker vars the same
+// way — a herdr tab from the herdr daemon's own env, a subprocess from this
+// CLI's — so they must clear the same set or one launcher silently drifts
+// into the failure mode the other is protected from.
+const nestingMarkerUnset = `unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT`
+
+// subprocessEnvUnset is the subprocess launcher's spelling of the same list
+// (bin/parlay-spawn line ~968, lines 1673-1674).
+const subprocessEnvUnset = nestingMarkerUnset
 
 // spawnOne runs the full single-agent spawn pipeline, mirroring
 // bin/parlay-spawn's non-batch body (lines 296–643, 1440–1800). The
@@ -328,24 +340,45 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		}
 	}
 
+	// Pane prep runs on EVERY herdr launch, not only the in-place one. bash
+	// sent it unconditionally and only ADDED the exports for `--pane`
+	// (bin/parlay-spawn @046919aa, lines ~1598-1625); this port gated the
+	// whole block on in-place mode, which dropped two load-bearing effects
+	// from every new-tab spawn (task-p5wvc):
+	//
+	//  1. The nesting-marker unset. A fresh tab's login shell inherits
+	//     CLAUDECODE/CLAUDE_CODE_* from whatever env the herdr daemon itself
+	//     was started with, so a daemon first launched from inside a Claude
+	//     session hands every tab it ever creates a poisoned env. Claude Code
+	//     refuses to nest under those vars and exits at once — herdr then
+	//     never detects the `--kind` agent it was told to expect and reports
+	//     `timed out waiting for agent startup`. The pre-#273 port hid this
+	//     behind launchScript's own leading `unset`; deleting that wrapper
+	//     took the unset with it and left nothing in its place here.
+	//  2. Parking the pane at a genuinely idle prompt. `agent start` rejects
+	//     a pane that is not "an available shell", and the `READY_$$` marker
+	//     is what proves the shell EXECUTED a line rather than merely having
+	//     one typed into it: `$$` sits in the pane as literal unexpanded text
+	//     until a real shell runs it, so matching the digits form cannot fire
+	//     on the echoed keystrokes alone.
+	//
+	// In-place mode layers the exports on top, because `--pane <ID>` skips
+	// TabCreate and that pane's env was therefore never set via `herdr tab
+	// create --env`. Each "KEY=VALUE" entry is exported as a single
+	// shell-quoted token — `export 'KEY=VALUE'` is recognized by export as a
+	// name=value assignment regardless of the surrounding quoting, matching
+	// bash's per-field `export KEY=$(shell_quote "$VALUE")` construction in
+	// one pass over envList instead of one line per field.
+	prep := nestingMarkerUnset
 	if opts.Pane != "" {
-		// In-place mode: the pane's env vars were NOT set via `herdr tab
-		// create --env`, so export them explicitly here before launching the
-		// agent (bash's `_pane_prep`, lines 1557-1573). Each "KEY=VALUE"
-		// entry is exported as a single shell-quoted token — `export
-		// 'KEY=VALUE'` is recognized by export as a name=value assignment
-		// regardless of the surrounding quoting, matching the effect of
-		// bash's per-field `export KEY=$(shell_quote "$VALUE")` construction
-		// in one pass over envList instead of one line per field.
-		prep := "unset CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT"
 		for _, kv := range envList {
 			prep += "; export " + shellQuote(kv)
 		}
-		prep += `; echo READY_$$`
-		_ = launcher.PaneSendText(rootPane, prep)
-		_ = launcher.PaneSendKeys(rootPane, "enter")
-		_ = launcher.PaneWaitOutput(rootPane, `READY_[0-9]+`, 5000)
 	}
+	prep += `; echo READY_$$`
+	_ = launcher.PaneSendText(rootPane, prep)
+	_ = launcher.PaneSendKeys(rootPane, "enter")
+	_ = launcher.PaneWaitOutput(rootPane, `READY_[0-9]+`, 5000)
 
 	// agent_pane_busy retry (bin/parlay-spawn lines 1636-1682, robots-i4pi):
 	// the FIRST `agent start` reliably rejects with agent_pane_busy on a

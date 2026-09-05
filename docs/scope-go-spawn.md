@@ -202,11 +202,11 @@ all. **Divergent** = implemented differently on purpose (noted as such) or by ac
 | Pre-trust workdir (`~/.claude.json`) | ✓ (jq, best-effort) | ✓ (atomic write: temp+fsync+rename, stricter than bash) | **Full, with a hardening improvement** | `env.go` companion `pretrustWorkdir` — actually `prompt.go`'s neighbor; see the file read directly: pretrust lives in its own file and does atomic temp-write+`Sync`+`Close`-checked+rename, unlike bash's plain `jq` overwrite |
 | ccjuggler account token resolution | ✓ | ✓ | **Full** — delegates to the same `juggle` Go package bash's own account resolution was ported to | `account.go:9-30` |
 | Post-launch liveness watchdog | ✓ (3 variants, one per launcher) | ✓ (herdr-only) | **Partial — disclosed leftover** | `watchdog.go:14-69` (`armWatchdog`) hardcodes an `AgentWait`/`AgentSend` pair against the `Launcher` interface, which only `herdrLauncher` implements. As of the launcher-selection work below, `subprocess` and `gc` are now real, reachable launcher choices in the spawn pipeline — so this row's watchdog gap is no longer hypothetical ("once those are wired"): a spawn routed through `--subprocess` or the `gc` launcher today gets no post-launch watchdog at all. Recording this as a real, disclosed leftover rather than fixing it, since bash's subprocess-watchdog (`/api/chat/subscribers` polling) and gc-watchdog (`parlay gc-liveness` delegation) are each their own organ and were out of this task's scope |
-| `--subprocess`/`--gascity` launcher selection *inside the spawn pipeline* | ✓ (`LAUNCHER=subprocess` branch, `:1646-1708` per earlier read) | ✓ | **Full** | `spawnpipeline.go` (`launcherFactory`/`effectiveLauncher` now branch on the resolved launcher, including `gascity`→`subprocess` normalization via `config.go`'s `resolveLauncher`), `spawnpipeline_test.go`. The previously-standalone `subprocess-spawn`/`-stop`/`-ping` top-level subcommands (`subprocess_spawn.go`) are unchanged and still exist independently. One disclosed narrowing: herdr's `launchScript` const stays hardcoded to `exec claude ...` regardless of `opts.Kind` — the subprocess and gc launcher paths *do* honor `opts.Kind`, but non-claude `--kind` dispatch through the herdr path specifically was left out of scope (see the `--kind` row below) |
+| `--subprocess`/`--gascity` launcher selection *inside the spawn pipeline* | ✓ (`LAUNCHER=subprocess` branch, `:1646-1708` per earlier read) | ✓ | **Full** | `spawnpipeline.go` (`launcherFactory`/`effectiveLauncher` now branch on the resolved launcher, including `gascity`→`subprocess` normalization via `config.go`'s `resolveLauncher`), `spawnpipeline_test.go`. The previously-standalone `subprocess-spawn`/`-stop`/`-ping` top-level subcommands (`subprocess_spawn.go`) are unchanged and still exist independently. ~~One disclosed narrowing: herdr's `launchScript` const stays hardcoded to `exec claude ...` regardless of `opts.Kind`~~ — **closed (task-20czm/task-p5wvc)**: `launchScript` is deleted; the herdr path passes `opts.Kind` to `herdr agent start --kind` and picks its flag set per kind via `agentStartArgs` |
 | `gc` launcher selection | ✓ (`:1452-1483`, opt-in, claude-kind only) | ✓ (opt-in via env/config, claude-kind only, matching bash's own scoping) | **Full** | `spawnpipeline.go`, `config.go` (`resolveLauncher`), `spawnpipeline_test.go`. The resolved OAuth account token is deliberately withheld from the `gc` launcher branch — only the account *name* is forwarded — mirroring bash's own stated rationale that the gc template's `[env]` block persists to disk |
 | Color algorithm (`color_from_id`/FNV-1a) | ✓ | ✓ | **Full, bit-identical by contract** | `color.go:5-25` — explicitly documents the three-way parity obligation against `packages/cli/src/identity-ephemeral.ts` and bash's own `color_from_id()` |
 | `--profile`/`--list` (profiles.toml + quota-axi headroom) | ✓ (bash's flag is `--list`, not `--list-profiles`; headroom is display-only in `--list`, never auto-selects a profile) | ✓ | **Full** | `profiles.go` (`resolveProfile`, `listProfiles`, `headroomLine`, `fetchQuotaReport`, `findUpward`), `profiles_test.go`. Ported as display-only to match bash's actual behavior, not the brief's initial "quota-headroom-aware profile selection" phrasing — bash never auto-selects on headroom, it only shows it in the `--list` table |
-| `--kind` (opencode etc.) | ✓ | ✓ for `subprocess`/`gc` launchers; herdr path unchanged | **Partial — deliberate, disclosed narrowing** | `spawnpipeline.go` passes `opts.Kind` through for the `subprocess`/`gc` launcher branches; herdr's fixed `launchScript` const (`spawnpipeline.go:24`) still always execs `claude`, so `--kind opencode` combined with the default herdr launcher does not change what actually launches. Templating `--kind` into `launchScript` was explicitly avoided — see §5 item 1's shell-escaping-boundary rationale, which still applies |
+| `--kind` (opencode etc.) | ✓ | ✓ for `subprocess`/`gc` launchers; herdr path unchanged | **Partial — deliberate, disclosed narrowing** | **Closed (task-20czm/task-p5wvc) — this row's narrowing no longer holds.** `launchScript` is deleted. `opts.Kind` now reaches `herdr agent start --kind`, which resolves the canonical executable itself, and `agentStartArgs` selects the flag set per kind. §5 item 1's old rationale is superseded there — it was the misreading, not a constraint |
 | `--pii`/`--no-pii` routing | ✓ (`bin/parlay-pii-lib.sh`) | ✓ | **Full**, with one disclosed ordering divergence | `pii.go` (`enforcePII`, `routePIIModel`, `applyBeadPIILabel`, `checkBeadPIILabel`, `liveFreeOpencodeModels`), `pii_test.go`. Named-spawn gate order is `bead_gate` → all four PII functions → `require_model`, matching bash. Ephemeral-spawn path diverges from a naive reading: `require_model`/`bead_gate` run *before* the identity mint, but PII routing runs *only after* the mint — this mirrors bash's own actual ordering, not an invented one, but is called out since it is easy to get backwards |
 | `--bead`/beads-required gating, `--force` | ✓ | ✓ | **Full** | `bead.go` (`beadGate`, `resolveBeadStatus`, `extractBeadStatus`, `beadGateError` with distinct exit codes: 2 for "required but missing", 1 for "named but bad"), `bead_test.go` |
 | `--claim` | ✓ | ✓ | **Full** — landed by PR #241, before this task's scope began | `spawn.go:94` (`Claim` field), `spawn.go:194,359` |
@@ -265,15 +265,25 @@ package could silently drift from bash or from its sibling implementations. Anyo
 reconciliation work should re-check this list before landing an organ, not just the gap
 matrix in §2.
 
-1. **The shell-escaping boundary is sidestepped, not solved, for the launch command.**
-   `spawnpipeline.go`'s `launchScript` (`:24`) is a **fixed string**, not templated per
-   spawn — `$PARLAY_SPAWN_MODEL` and `$PARLAY_SPAWN_PROMPT` are read from the *launched
-   process's own environment* (set via `herdr tab create --env`) when the script actually
-   runs, never interpolated into a shell command string by this Go program. This means the
-   prompt text — arbitrarily large, arbitrary characters — never crosses a Go→shell string-
-   building boundary at all. Any reconciliation work that starts templating flags into
-   `launchScript` (e.g. to support `--kind`) reintroduces exactly the class of bug this
-   design avoided; prefer extending the env-var contract instead.
+1. **~~The shell-escaping boundary is sidestepped by a fixed `launchScript`.~~ SUPERSEDED
+   (task-p5wvc) — `launchScript` is gone, and the advice it carried was the outage.**
+   This item used to describe `spawnpipeline.go`'s `launchScript` const as the design and
+   warn against templating flags into it. That design rested on misreading `herdr agent
+   start`'s trailing `-- [AGENT_ARG]...`. Those args are **appended to the canonical
+   executable `--kind` names** — they are not a command to run in its place. Passing
+   `-- bash -lc '<launchScript>'` therefore made herdr run `claude bash -lc '<script>'`:
+   claude with three garbage positional args, the script never executing, and herdr's
+   readiness detection reporting `timed out waiting for agent startup` on every real
+   launch. The wrapper also swallowed two effects nothing else supplied — the Claude Code
+   nesting-marker `unset`, and `--kind` itself, which was discarded so `--kind opencode`
+   silently launched claude.
+
+   The boundary the old item worried about is still avoided, just properly: `agentStartArgs`
+   builds an **argv** herdr encodes (no Go→shell string building), and the charter is not an
+   argument at all — `AgentPrompt` submits it through herdr's paste-safe channel, exactly as
+   bash did. The live invariant is the inverse of the old one: **the trailing argv must be
+   flags for the agent's own executable, never a wrapper process.**
+   `TestSpawnOneHerdrNeverWrapsTheAgentInAShell` pins it.
 2. **The color algorithm has three independent implementations that must stay bit-identical**
    with no shared source: `tools/parlay-bin/color.go`, `packages/cli/src/identity-ephemeral.ts`
    (JS, `Math.imul` + `>>> 0`), and bash's own `color_from_id()` (`&
@@ -440,7 +450,7 @@ bead/gc fields. The 3 bash-only `bin/parlay-spawn.*.test.sh` files not yet wired
 (it is about bash-only coverage, not bash/Go parity) and is unchanged by this PR.
 
 While building this suite's registration-unreachable scenario, found and fixed a real parity
-bug: `parlay-bin`'s herdr `launchScript` (`spawnpipeline.go`) was missing bash's
+bug: `parlay-bin`'s herdr `launchScript` (`spawnpipeline.go`, since deleted — task-p5wvc) was missing bash's
 `--strict-mcp-config` and `--settings '{"enabledPlugins":{"posthog@claude-plugins-official":
 false}}'` flags (bash: `bin/parlay-spawn:1653`), and its herdr `tab create --env` never set
 `PARLAY_AGENT_MODEL` alongside `PARLAY_SPAWN_MODEL` (bash: `bin/parlay-spawn:1556,1582`) — a

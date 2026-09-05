@@ -605,3 +605,93 @@ func TestRollbackTreatsUnregister404AsDone(t *testing.T) {
 		t.Errorf("expected rollback to report the registration gone; got:\n%s", out)
 	}
 }
+
+// task-p5wvc: `herdr agent start`'s trailing `-- [AGENT_ARG]...` are
+// arguments APPENDED to the kind's canonical executable, not a command to
+// run in its place. Reading them as a command sent
+// `-- bash -lc '<launchScript>'`, which made herdr run
+// `claude bash -lc '<script>'` — claude with three garbage positional args.
+// The script never executed, claude never came up healthy, and herdr's
+// readiness detection reported `timed out waiting for agent startup` on
+// EVERY real launch.
+//
+// The launch-argv assertions above pin the flags; this one pins the negative
+// that made them wrong, so a future refactor cannot quietly reintroduce a
+// wrapper process between herdr and the agent it was told to expect.
+func TestSpawnOneHerdrNeverWrapsTheAgentInAShell(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-nowrap-z1", "Nope NoWrap", "#c084fc", "brief", "--model", "sonnet"})
+	if rc != 0 {
+		t.Fatalf("expected success, got rc=%d", rc)
+	}
+	if len(m.agentStartOpts) != 1 {
+		t.Fatalf("expected exactly one AgentStart call, got %d", len(m.agentStartOpts))
+	}
+	// Every trailing arg herdr is handed must be a FLAG for the kind's own
+	// executable. The first entry is the tell: an interpreter, a `-c`, or a
+	// bare word there means something is being run instead of the agent.
+	for i, arg := range m.agentStartOpts[0].Cmd {
+		if i == 0 && !strings.HasPrefix(arg, "-") {
+			t.Fatalf("agent start's trailing argv must begin with a flag for the agent executable, not a command to run in its place; got %q (full argv: %q)", arg, m.agentStartOpts[0].Cmd)
+		}
+		switch arg {
+		case "bash", "sh", "zsh", "-lc", "-c", "exec":
+			t.Errorf("agent start's trailing argv wraps the agent in a shell at index %d (%q) — herdr appends these to the kind's executable, so this launches `claude %s …`; argv: %q", i, arg, arg, m.agentStartOpts[0].Cmd)
+		}
+	}
+}
+
+// task-p5wvc, second half: bash sent `_pane_prep` on EVERY herdr launch and
+// only added the exports for `--pane` (bin/parlay-spawn @046919aa:1598-1625).
+// This port gated the whole block on in-place mode, so a new-tab spawn never
+// cleared the Claude Code nesting markers the tab inherits from the herdr
+// daemon's env — and Claude Code exits rather than nest, which herdr can only
+// report as `timed out waiting for agent startup`. The unset must reach the
+// pane whether or not the pane was borrowed.
+func TestSpawnOneHerdrPreparesEveryPaneNotJustBorrowedOnes(t *testing.T) {
+	m := &mockLauncher{}
+	withMockLauncher(t, m)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	rc := runNamedSpawn([]string{"nope-prep-z1", "Nope Prep", "#c084fc", "brief", "--model", "sonnet"})
+	if rc != 0 {
+		t.Fatalf("expected success, got rc=%d", rc)
+	}
+	if len(m.tabCreateCalls) != 1 {
+		t.Fatalf("expected this to be the new-tab path, got %d TabCreate calls", len(m.tabCreateCalls))
+	}
+	if len(m.paneSendTextCalls) != 1 {
+		t.Fatalf("expected exactly one pane-prep send-text on the new-tab path, got %d", len(m.paneSendTextCalls))
+	}
+	prep := m.paneSendTextCalls[0]
+	for _, marker := range []string{"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT", "AI_AGENT", "CLAUDE_EFFORT"} {
+		if !strings.Contains(prep, marker) {
+			t.Errorf("pane prep must unset the nesting marker %q; got %q", marker, prep)
+		}
+	}
+	// The READY marker is what proves the pane's shell EXECUTED the line, so
+	// `agent start` is not handed a pane that is still busy.
+	if !strings.Contains(prep, "READY_$$") {
+		t.Errorf("pane prep must end with the READY_$$ execution marker; got %q", prep)
+	}
+	if len(m.paneWaitOutputCalls) != 1 {
+		t.Errorf("expected one wait-output call for the READY marker on the new-tab path, got %v", m.paneWaitOutputCalls)
+	}
+	// A new tab gets its env from `herdr tab create --env`, so re-exporting
+	// it into the pane would be redundant work on a path that does not need
+	// it — the exports stay in-place-only.
+	if strings.Contains(prep, "export") {
+		t.Errorf("the new-tab path takes its env from TabCreate --env, so pane prep should carry no exports; got %q", prep)
+	}
+}
