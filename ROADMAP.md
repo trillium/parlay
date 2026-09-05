@@ -38,19 +38,12 @@ Parlay + Pulse + Danny agents survive MacBook-off.
 ### Go-first / CLI consolidation
 Port the bash layer into Go so the CLI is the single spawn path.
 
-- Port `bin/parlay-spawn` to Go subcommand — bash script now errors out, use `parlay spawn` (task-04g1)
-- Add `spawn` to GO_ONLY_VERBS in tools/cli/parity/run.sh (task-4avd)
-- `tools/parlay-bin spawn` has the same silent-sonnet-fallback gap (task-21d36)
-- Wire `--profile` into parlay spawn (resolve from spawn-profiles TOML catalog) (task-3ui8)
 - Use `juggle use <account>` instead of direct keychain read (task-4e9sd)
 
 ### Agent lifecycle
 Agents launched by Parlay have no firstmate record — nothing closes them.
 
-- Fix unmanaged agent lifecycle (task-4dz9)
 - `account:` field never written to identity.md — the read half has no writer (task-0d6mi)
-- Graceful agent shutdown via parlay (task-35ww)
-- Relay watch-list polls retired agents every 2s (HTTP 410 spam) — prune dead agents (task-0n80i)
 
 ### Parlay/firstmate fold
 Full merge of the two supervision layers.
@@ -60,18 +53,13 @@ Full merge of the two supervision layers.
 - Adopt Parlay-central supervision architecture? (task-60qn) ⬅ decision needed
 
 ### Server and infrastructure
-- Graceful read-only poll: `/api/chat/poll` should be genuinely read-only (task-1t0m)
-- Make `PARLAY_ALLOWED_ORIGINS` reachable on installed path (plist + install.sh flag) (task-2gjz)
 - Fold `com.parlay.bundle-rebuild` launchd template into install flow (task-zubx)
-- Config-driven localhost link rewriter for off-home reachability (task-ead)
 
 ### Event fabric
 - Generic on-status-change EMIT hook in beads/bd for the Parlay event fabric (task-n1ao)
 - External events into agent context (event stream & webhook ingestion) (task-h5q)
 
 ### Docs and polish
-- README: document each part of the system with links to deep dives (task-wnxq)
-- Consolidate env-var docs: examples/env.example vs packages/server/README.md (task-wpbc)
 - Blog post: what Parlay is, how to use it, how to configure it (task-v2yp)
 
 ---
@@ -99,4 +87,32 @@ These are blocking work until the captain decides:
 
 ---
 
-_Last synced from task store: 2026-09-02_
+## Landed
+
+### Go-first / CLI consolidation
+
+- Port `bin/parlay-spawn` to Go subcommand — bash script now errors out, use `parlay spawn` (task-04g1) — PR #239, #249, #250, #270
+- Add `spawn` to GO_ONLY_VERBS in tools/cli/parity/run.sh (task-4avd) — closed obsolete: parity/run.sh deleted in T-08 (871b3f8f)
+- `tools/parlay-bin spawn` has the same silent-sonnet-fallback gap (task-21d36) — PR #238, #270
+- Wire `--profile` into parlay spawn (resolve from spawn-profiles TOML catalog) (task-3ui8) — PR #248
+
+### Agent lifecycle
+
+- Fix unmanaged agent lifecycle (task-4dz9) — PR #236
+- Graceful agent shutdown via parlay (task-35ww) — PR #234
+- Relay watch-list polls retired agents every 2s (HTTP 410 spam) — prune dead agents (task-0n80i) — PR #225
+
+### Server and infrastructure
+
+- Graceful read-only poll: `/api/chat/poll` should be genuinely read-only (task-1t0m) — PR #226
+- Make `PARLAY_ALLOWED_ORIGINS` reachable on installed path (plist + install.sh flag) (task-2gjz) — PR #224
+- Config-driven localhost link rewriter for off-home reachability (task-ead) — PR #229
+
+### Docs and polish
+
+- README: document each part of the system with links to deep dives (task-wnxq) — PR #233
+- Consolidate env-var docs: examples/env.example vs packages/server/README.md (task-wpbc) — PR #228
+
+---
+
+_Last synced from task store: 2026-09-05_
