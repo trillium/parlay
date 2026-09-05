@@ -385,17 +385,28 @@ func TestLaunchPassesIdentityAccountToSpawner(t *testing.T) {
 	}
 }
 
-// The config default must reach the spawner too. This is the case that was
-// silently broken back when a separate parlay-bin binary won spawner
-// resolution and read only its --account flag, so a config-only default never
-// applied to a relaunch. The binary is gone, but the argv assertion stays:
-// Launch must still pass the configured account through explicitly.
-func TestLaunchFallsBackToConfiguredSpawnAccount(t *testing.T) {
+// An identity with no `account:` of its own must relaunch with NO --account,
+// even when a config-level default exists (task-0d6mi, #274). Launch no
+// longer synthesizes that default into the argv (SpawnAccountArgs): the
+// spawn pipeline resolves it itself, so the agent still lands on it, while
+// the default stays live rather than being pinned. Synthesizing it would
+// make the pipeline read it as an explicit --account and persist it into
+// identity.md, outranking every later `parlay defaults set account`.
+//
+// Merge note: #274 wrote this assertion against the exec'd-spawner seam
+// (`spawnerArgv`). That seam is gone with bin/parlay-spawn, so the same
+// assertion runs through the in-process recorder instead — the argv under
+// test is identical either way.
+func TestLaunchOmitsConfiguredDefaultForUnpinnedIdentity(t *testing.T) {
 	seen := launchAccountFixture(t, "", "spawnAccount = \"acc2\"\n")
 
 	captureStderr(t, func() { Launch([]string{"agent-a"}) })
-	if argv := spawnArgvString(t, seen); !strings.Contains(argv, "--account\x00acc2") {
-		t.Errorf("spawner argv = %q, want the configured spawnAccount passed through", argv)
+	argv := spawnArgvString(t, seen)
+	if strings.Contains(argv, "--account") {
+		t.Errorf("spawner argv = %q, want no --account — the config default must stay live, not be pinned", argv)
+	}
+	if strings.Contains(argv, "acc2") {
+		t.Errorf("spawner argv = %q, want the config default absent from the relaunch argv", argv)
 	}
 }
 

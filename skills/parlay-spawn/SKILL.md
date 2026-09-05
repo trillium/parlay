@@ -82,10 +82,12 @@ Env var `PARLAY_SPAWN_DEFAULT_ACCOUNT` overrides the config, but **only when non
 set-but-empty falls through to `config.toml` rather than disabling the lookup. `--account`
 overrides both.
 
-`parlay launch <id>` and `identity --launch <id>` resolve an account themselves and pass it
-as `--account`: the identity's `account:` frontmatter first, else this default. That is not
-redundant — `tools/parlay-bin` (preferred by the spawner resolution order) reads neither the
-env var nor `config.toml`, only its own flag.
+A spawn given an explicit `--account` **pins** it: the account is written into the agent's
+`identity.md` frontmatter (`account:`), so `parlay launch <id>` and `identity --launch <id>`
+bring the agent back on the same account after a context reset. The default above is
+deliberately *not* pinned — an agent that never named an account is relaunched with no
+`--account` at all and picks up whatever the default resolves to at that moment, so a later
+`parlay defaults set account` rotation still reaches it.
 
 ## Launcher
 

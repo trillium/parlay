@@ -200,6 +200,7 @@ func TestRegisterRecordsAllLifecycleFields(t *testing.T) {
 			"--color", "#f97316", "--cwd", "/tmp/wt", "--mode", "crew",
 			"--yolo", "on", "--effort", "high", "--kind", "worker",
 			"--worktree", "/tmp/wt", "--project", "/tmp/proj",
+			"--account", "acc7",
 		})
 	})
 
@@ -208,6 +209,7 @@ func TestRegisterRecordsAllLifecycleFields(t *testing.T) {
 		"id": "wt-worker", "name": "WT Worker", "cwd": "/tmp/wt",
 		"mode": "crew", "yolo": "on", "effort": "high", "kind": "worker",
 		"worktree": "/tmp/wt", "project": "/tmp/proj",
+		"account": "acc7",
 	} {
 		if got := fm.Get(k); got != want {
 			t.Errorf("fm.%s = %q, want %q", k, got, want)

@@ -41,7 +41,11 @@ const spawnUsage = `Usage: parlay spawn <agent-id> <display-name> <hex-color> <i
   --effort LEVEL  effort level forwarded to claude (low|medium|high|xhigh|max)
   --worktree      create an isolated git worktree at <repo>/.worktrees/parlay-<id>
                   and run the agent there instead of --cwd directly.
-  --account NAME  spawn the agent under a ccjuggler account.
+  --account NAME  spawn the agent under a ccjuggler account, and PIN it: the
+                  name is recorded in the agent's identity.md, so a later
+                  'parlay launch <id>' brings it back on the same account.
+                  Omit it and the agent uses the configured default
+                  (see 'parlay defaults'), which stays unpinned.
   --workspace ID|LABEL  land the new tab in a herdr workspace (id or label;
                   a label is created if none matches). Named spawns only.
   --pane ID       in-place mode: launch into an existing herdr pane instead
@@ -90,16 +94,23 @@ type SpawnOptions struct {
 	Effort       string
 	WantWorktree bool
 	Account      string
-	Ephemeral    bool
-	Claim        string
-	Profile      string
-	Kind         string
-	KindFromFlag bool
-	PII          piiState
-	BeadID       string
-	Force        bool
-	Pane         string
-	Workspace    string
+	// AccountFromFlag records that Account came from an explicit --account
+	// on this invocation rather than from resolveDefaultAccount's ambient
+	// PARLAY_SPAWN_DEFAULT_ACCOUNT / config.toml spawnAccount fallback. Only
+	// an explicit account is pinned into the agent's identity.md; the
+	// config-level default must stay dynamic so a later `parlay defaults set
+	// account` rotation still reaches agents that never named one.
+	AccountFromFlag bool
+	Ephemeral       bool
+	Claim           string
+	Profile         string
+	Kind            string
+	KindFromFlag    bool
+	PII             piiState
+	BeadID          string
+	Force           bool
+	Pane            string
+	Workspace       string
 	// Launcher is the explicit --subprocess/--gascity override. Empty means
 	// "resolve from PARLAY_SPAWN_LAUNCHER / config.toml [spawn] launcher",
 	// mirroring bash's $LAUNCHER starting from config and only reassigned by
@@ -183,6 +194,7 @@ func parseTailFlags(args []string, opts *SpawnOptions, rejectCwd, allowPaneAndWo
 				return fmt.Errorf("--account requires a value")
 			}
 			opts.Account = args[i+1]
+			opts.AccountFromFlag = true
 			i++
 		case "--claim":
 			if !allowPaneAndWorkspace {
@@ -514,6 +526,7 @@ func runBatchSpawn(args []string) int {
 				return 2
 			}
 			shared.Account = args[i+1]
+			shared.AccountFromFlag = true
 			i += 2
 		case "--cwd":
 			fmt.Fprintln(os.Stderr, "parlay-spawn: --cwd is not valid in batch mode (each id=repo pair supplies its own cwd via <repo>)")
