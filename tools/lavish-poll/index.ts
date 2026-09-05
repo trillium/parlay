@@ -8,6 +8,8 @@
 import { parsePollArgs, UsageError, USAGE } from "./args"
 import { readCursor, writeCursor } from "./cursor"
 import { drop, nextStep, type NativeResult, type ParlayMsg } from "./protocol"
+import { readBudget } from "./guards"
+import { createPacer, installOrphanWatchdog } from "./spin"
 
 const LAVISH_NATIVE = process.env.LAVISH_URL ?? "http://127.0.0.1:4387"
 const [agentId, parlay, ...pollArgs] = process.argv.slice(2)
@@ -59,11 +61,20 @@ if (agentReply) {
 const deadline = timeoutMs === undefined ? Infinity : Date.now() + timeoutMs
 let lastParlayId = readCursor(agentId, file)
 
+// Hot-spin and orphan guards (robots-zahn) — guards.ts and spin.ts carry the
+// full why. In short: an unreachable upstream rejects the fetch in microseconds
+// instead of long-polling, so an unbounded retry is a busy loop, not a poll.
+const budget = readBudget(process.env, m => process.stderr.write(`lavish-poll: ${m}\n`))
+installOrphanWatchdog(budget)
+const pacer = createPacer(budget, deadline, parlay)
+
 // How long a winning Parlay message waits for the in-flight 4387 request to
 // contribute a dom_snapshot before giving up on it.
 const NATIVE_GRACE_MS = 200
 
 while (Date.now() < deadline) {
+  const iterStarted = Date.now()
+
   // One controller per request. These used to share a single `ac`, and the
   // `ac.abort()` that fired the moment the race resolved killed BOTH. So on the
   // chat path the native promise had already settled to null through its own
@@ -74,11 +85,25 @@ while (Date.now() < deadline) {
   const parlayAC = new AbortController()
   const nativeAC = new AbortController()
 
-  // Parlay: long-polls ~30s, returns {timeout:true} on expiry
+  // Parlay: long-polls ~30s, returns {timeout:true} on expiry. A REJECTION is a
+  // different animal — a dead or misbehaving upstream, settling in microseconds
+  // rather than after 30s — and mapping it onto a bare {timeout:true} made the
+  // two indistinguishable downstream, which is how a connection-refused loop
+  // passed for polling. `failed` is that distinction.
   const parlayP = fetch(
     `${parlay}/api/chat/poll?after=${encodeURIComponent(lastParlayId)}&channel=${encodeURIComponent(agentId)}`,
     { signal: parlayAC.signal },
-  ).then(r => r.json() as Promise<ParlayMsg>).catch(() => ({ timeout: true } as ParlayMsg))
+    // A non-OK response is a failure even when it carries a JSON body. fetch
+    // only rejects on a transport error, so a 502 from a dying or proxying
+    // server parsed cleanly and reached the loop as a message-shaped object
+    // with no id — which fell through to the "progress" path and RESET the
+    // failure streak. That is exactly the spin this guard exists to end, so
+    // status has to be classified before the body is decoded. The thrown-error
+    // path below stays separate: both are failures, by different routes.
+  ).then(r => (r.ok
+    ? (r.json() as Promise<ParlayMsg>)
+    : ({ timeout: true, failed: true } as ParlayMsg))
+  ).catch(() => ({ timeout: true, failed: true } as ParlayMsg))
 
   // 4387: streaming heartbeat mode (no timeoutMs) — holds connection open until data arrives
   const nativeP = fetch(
@@ -130,14 +155,25 @@ while (Date.now() < deadline) {
         next_step: nextStep(file, false, prompts),
       })
     }
-    continue // native returned "waiting" (shouldn't happen in streaming mode)
+    // Native returned "waiting" (shouldn't happen in streaming mode). Paced
+    // anyway: a 4387 that answers instantly instead of holding the connection
+    // open is the same unbounded restart loop by a different route.
+    await pacer.settle(iterStarted)
+    continue
   }
 
   // Parlay won. The native request is deliberately NOT aborted here — the grace
   // window below is the only thing that can populate dom_snapshot, so it has to
   // still be in flight when we get there.
   const msg = winner.v
-  if (msg.timeout) { nativeAC.abort(); continue } // 30s expired with no chat — restart both
+  if (msg.timeout) {
+    // 30s expired with no chat — restart both. Unless it did not take 30s:
+    // `failed` says the request never reached a server, and an unbounded retry
+    // of that is the 21h/98%-CPU process this guard exists for.
+    nativeAC.abort()
+    await pacer.settle(iterStarted, msg.failed ? "failed" : "progress")
+    continue
+  }
 
   // Advance the cursor as soon as a message has been CONSUMED, before filtering
   // on role or text. Filtering first meant an agent reply — which carries an id
@@ -175,6 +211,7 @@ while (Date.now() < deadline) {
   // this is the one path out of the Parlay branch that keeps looping, and it
   // must release the native request or each iteration would strand one.
   nativeAC.abort()
+  await pacer.settle(iterStarted, "progress")
 }
 
 process.stdout.write(JSON.stringify({
