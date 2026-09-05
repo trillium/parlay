@@ -19,14 +19,14 @@ import "strings"
 // synthesized default would pin itself on the first relaunch and outrank
 // every later `parlay defaults set account` rotation.
 //
-// Resolving that default is the DOWNSTREAM spawner's job, and the two callers
-// named above reach different ones. `parlay launch` goes in-process
-// (commands/launch.go's runSpawnArgv -> spawn.RunSpawn), where
-// resolveDefaultAccount reads env-then-config. `identity --launch`
-// (lifecycle.go) execs whatever `parlay-spawn` PATH resolves to, so the
-// default is entirely that binary's responsibility there. Either way an
-// unpinned agent still lands on the default, and it stays live rather than
-// being frozen into the identity.
+// Resolving that default is the DOWNSTREAM spawner's job, and since
+// task-42qot there is only one spawner for both callers to reach. `parlay
+// launch` goes in-process (commands/launch.go's runSpawnArgv ->
+// spawn.RunSpawn); `identity --launch` (lifecycle.go) re-execs THIS binary
+// as `parlay spawn` rather than hunting a `parlay-spawn` on PATH, which no
+// longer exists. Both therefore land in the same resolveDefaultAccount
+// (env-then-config). Either way an unpinned agent still lands on the
+// default, and it stays live rather than being frozen into the identity.
 //
 // The identity's own account must still be passed explicitly: the pipeline
 // knows nothing of identity frontmatter, so without this a relaunched agent
