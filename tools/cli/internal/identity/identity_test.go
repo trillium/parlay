@@ -160,7 +160,7 @@ func TestRegisterWithoutEphemeralOmitsMarker(t *testing.T) {
 // MemValueFlags and from --register's meta-field loop during the port, so
 // every worktree spawn's `parlay identity --register … --worktree <path>
 // --project <path>` died with EXIT_USAGE ("unknown flag") and wrote no
-// frontmatter at all. parlay-spawn swallows that exit code, so the agent
+// frontmatter at all. the spawn pipeline swallows that exit code, so the agent
 // launched with an empty launch spec — and `parlay teardown` then read no
 // worktree, deleted the store, and orphaned the worktree (plus any unpushed
 // commits in it) without ever running its git safety checks.
@@ -184,7 +184,7 @@ func TestRegisterRecordsWorktreeAndProject(t *testing.T) {
 	}
 }
 
-// robots-jusi: the whole launch spec parlay-spawn issues must survive one
+// robots-jusi: the whole launch spec `parlay spawn` issues must survive one
 // --register call. A flag missing from MemValueFlags is fatal (args.Parse exits
 // 2 before anything is written), so a single dropped lifecycle flag loses every
 // field, not just its own — this drives all of them through at once and checks

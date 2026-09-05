@@ -59,7 +59,7 @@ func PinnedHandoffID(agent string) string {
 	return strings.TrimSpace(string(m[1]))
 }
 
-// ReadSessionStartMs reads the epoch-ms timestamp written by parlay-spawn to
+// ReadSessionStartMs reads the epoch-ms timestamp written by `parlay spawn` to
 // ~/.parlay/agents/<id>/session-start. ok is false when the file is absent
 // or unparseable. Never panics.
 func ReadSessionStartMs(agent string) (ms int64, ok bool) {
@@ -76,14 +76,14 @@ func ReadSessionStartMs(agent string) (ms int64, ok bool) {
 
 // WriteSessionStartOnce writes a session-start sentinel if one does not yet
 // exist for agent. Called on first `parlay say` as a fallback for agents not
-// spawned via parlay-spawn. The sentinel marks "this session began now" so
+// spawned via `parlay spawn`. The sentinel marks "this session began now" so
 // any older open handoff is classified as inherited. Never panics (best
 // effort — a guard failure must never block a chat send).
 func WriteSessionStartOnce(agent string) {
 	dir := filepath.Join(agentHome(), agent)
 	file := filepath.Join(dir, "session-start")
 	if _, err := os.Stat(file); err == nil {
-		return // already set (by parlay-spawn or a prior first-say)
+		return // already set (by `parlay spawn` or a prior first-say)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return

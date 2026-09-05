@@ -255,7 +255,7 @@ already delivers sub-~1s, and the endpoint path is sub-second later.
 ### 2.5 One fabric, two consumers (both ride subscribe→emit→route→wake)
 | Consumer | Watch (SUBSCRIBE) | Emit (beads) | Deliver (parlay) |
 |---|---|---|---|
-| **robots → mechanic** | `store:robots, on:created` → `exec mechanic-dispatch {id}` | new robots bead open | spawn `mechanic-dispatch {id}` (resolves zone→agent, launches via parlay-spawn) |
+| **robots → mechanic** | `store:robots, on:created` → `exec mechanic-dispatch {id}` | new robots bead open | spawn `mechanic-dispatch {id}` (resolves zone→agent, launches via `parlay spawn`) |
 | **request-close → requester** | `bead:<request>, on:open->closed` → `notify {requester-channel}` | request bead closed | `parlay say --agent <requester> "{bead} done: {close_note}"` — firstmate wakes |
 
 Both are the *same* mechanism at different `deliver.kind`s. firstmate is the

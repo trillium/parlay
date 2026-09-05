@@ -1,5 +1,5 @@
 // `parlay say` / `parlay reply` — reply to YOUR OWN channel. Routes off
-// PARLAY_AGENT_ID (parlay-spawn sets it), so no url/id/name/color/JSON —
+// PARLAY_AGENT_ID (`parlay spawn` sets it), so no url/id/name/color/JSON —
 // just the text. The server keeps the agent's registered name/color. Text
 // comes from args, or stdin when no args are given (so long/multi-line
 // replies pipe in).
@@ -36,7 +36,7 @@ func CmdSay(argv []string) {
 		agent = strings.TrimSpace(os.Getenv("PARLAY_AGENT_ID"))
 	}
 	if agent == "" {
-		httpc.Die("parlay say: no agent identity — run inside a parlay-spawn'd agent (it sets PARLAY_AGENT_ID) or pass --agent <id>", config.ExitUsage)
+		httpc.Die("parlay say: no agent identity — run inside a parlay-spawned agent (it sets PARLAY_AGENT_ID) or pass --agent <id>", config.ExitUsage)
 		return
 	}
 	text := strings.TrimSpace(strings.Join(res.Positionals, " "))

@@ -222,7 +222,7 @@ func TestGCSpawnRunStartsSubprocessSession(t *testing.T) {
 	}
 
 	// Unit 7: bead-backed identity resolution against the REAL city. Stamp
-	// the session pointer the way parlay-spawn's register does (identity.md
+	// the session pointer the way the spawn pipeline's register does (identity.md
 	// projection, worktree alongside), then resolve. Every gcResolveRun
 	// spawns a fresh gc process reading the bead store from cold — there is
 	// no long-lived supervisor in this sandbox at all, so each resolution IS

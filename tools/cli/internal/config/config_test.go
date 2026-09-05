@@ -105,7 +105,7 @@ func TestSpawnAccountReadsTopLevelKeyFromConfigTOML(t *testing.T) {
 	}
 }
 
-// The env var is bin/parlay-spawn's highest-precedence source, so the Go
+// The env var is the spawn pipeline's highest-precedence source, so the Go
 // resolution must not out-rank it with the config file.
 func TestSpawnAccountEnvBeatsConfigFile(t *testing.T) {
 	home := t.TempDir()
@@ -118,7 +118,7 @@ func TestSpawnAccountEnvBeatsConfigFile(t *testing.T) {
 	}
 }
 
-// bin/parlay-spawn tests the env var with `[ -z ]`, so an env var that is set
+// The retired bash spawner tested the env var with `[ -z ]`, so an env var that is set
 // but empty falls THROUGH to the config file rather than disabling it. Go
 // must agree, or the same box resolves two different accounts depending on
 // which spawner is installed.
@@ -376,7 +376,7 @@ func TestSetSpawnAccountNestedKeyIsPassedThroughAndTopLevelInserted(t *testing.T
 func TestSetSpawnAccountReplacesWhenEnvOverrides(t *testing.T) {
 	// The write must not be defeated by a live env override: set persists to
 	// the file regardless, and SpawnAccount still reports the env value — the
-	// env var is bin/parlay-spawn's highest-precedence source.
+	// env var is the spawn pipeline's highest-precedence source.
 	home := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", home)
 	t.Setenv(SpawnAccountEnv, "env-acc")

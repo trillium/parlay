@@ -47,4 +47,4 @@ fi
 cp "$SRC" "$DEST"
 chmod +x "$DEST"
 echo "installed mechanic-dispatch → $DEST"
-echo "verify: mechanic-dispatch passes --worktree to parlay-spawn for git-repo zones; default/~ zone stays non-isolated"
+echo "verify: mechanic-dispatch passes --worktree to 'parlay spawn' for git-repo zones; default/~ zone stays non-isolated"

@@ -17,7 +17,7 @@ import (
 
 // SpawnAccount ports commands-spawn-account.ts's cmdSpawnAccount:
 // show (bare) / set <account> / clear the persisted default spawn account in
-// $PARLAY_STATE_HOME/config.toml — the file bin/parlay-spawn reads.
+// $PARLAY_STATE_HOME/config.toml — the file the spawn pipeline reads.
 func SpawnAccount(argv []string) {
 	if helpWanted("spawn-account", argv) {
 		return

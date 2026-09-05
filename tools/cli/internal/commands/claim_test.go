@@ -557,7 +557,7 @@ func TestClaimRobotsDefaultDoD(t *testing.T) {
 // --- no-work claims (robots-4ek1) -------------------------------------------
 //
 // A claim with nothing behind it must END the agent, not leave it idling on an
-// empty pane. `parlay-spawn --claim` tells a fresh agent to follow claim's
+// empty pane. `parlay spawn --claim` tells a fresh agent to follow claim's
 // printed output exactly, so the brief has to carry the whole exit procedure.
 
 // noWorkAgent points the status sink at a temp dir and returns the file

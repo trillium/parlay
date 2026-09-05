@@ -140,7 +140,7 @@ func spawnOne(opts SpawnOptions) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "parlay-spawn: registering agent %q with Parlay at %s ...\n", opts.AgentID, server)
+	fmt.Fprintf(os.Stderr, "parlay spawn: registering agent %q with Parlay at %s ...\n", opts.AgentID, server)
 	if err := registerAgent(server, opts.AgentID, opts.Name, opts.Color); err != nil {
 		return err
 	}
@@ -173,13 +173,13 @@ func spawnOne(opts SpawnOptions) error {
 	if envLines, count, envErr := sourceDotEnv(opts.Cwd); envErr == nil {
 		projectEnv = append(projectEnv, envLines...)
 		if count > 0 {
-			fmt.Fprintf(os.Stderr, "parlay-spawn: forwarding %d var(s) from %s/.env\n", count, opts.Cwd)
+			fmt.Fprintf(os.Stderr, "parlay spawn: forwarding %d var(s) from %s/.env\n", count, opts.Cwd)
 		}
 	}
 	if envLines, count, _, envrcErr := sourceEnvrc(opts.Cwd); envrcErr == nil {
 		projectEnv = append(projectEnv, envLines...)
 		if count > 0 {
-			fmt.Fprintf(os.Stderr, "parlay-spawn: forwarding %d var(s) from %s/.envrc via direnv\n", count, opts.Cwd)
+			fmt.Fprintf(os.Stderr, "parlay spawn: forwarding %d var(s) from %s/.envrc via direnv\n", count, opts.Cwd)
 		}
 	}
 
@@ -194,14 +194,14 @@ func spawnOne(opts SpawnOptions) error {
 			return tokErr
 		}
 		accountEnv = []string{"CLAUDE_CODE_OAUTH_TOKEN=" + token}
-		fmt.Fprintf(os.Stderr, "parlay-spawn: using account %q (token resolved)\n", opts.Account)
+		fmt.Fprintf(os.Stderr, "parlay spawn: using account %q (token resolved)\n", opts.Account)
 	}
 
 	focusWord := "--no-focus"
 	if opts.Focus {
 		focusWord = "--focus"
 	}
-	fmt.Fprintf(os.Stderr, "parlay-spawn: launching detached %s agent via %s (cwd=%s, %s) ...\n", opts.Kind, effectiveLauncher, opts.Cwd, focusWord)
+	fmt.Fprintf(os.Stderr, "parlay spawn: launching detached %s agent via %s (cwd=%s, %s) ...\n", opts.Kind, effectiveLauncher, opts.Cwd, focusWord)
 
 	// Every launcher persists the charter to <agent-dir>/startup-prompt.txt:
 	// subprocess and gc feed the launched process from it, and the herdr
@@ -259,8 +259,8 @@ func spawnOne(opts SpawnOptions) error {
 		CityDir:    gcCityDir,
 	})
 
-	fmt.Fprintf(os.Stderr, "parlay-spawn: done. Agent %q registered; terminal launched.\n", opts.AgentID)
-	fmt.Fprintln(os.Stderr, "parlay-spawn: watch it come live with: parlay subscribers | jq '.poll'")
+	fmt.Fprintf(os.Stderr, "parlay spawn: done. Agent %q registered; terminal launched.\n", opts.AgentID)
+	fmt.Fprintln(os.Stderr, "parlay spawn: watch it come live with: parlay subscribers | jq '.poll'")
 	return nil
 }
 
@@ -307,7 +307,7 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 		// In-place mode (--pane <ID>): skip tab creation and use the
 		// caller's pane directly (bash lines 1495-1498).
 		rootPane = opts.Pane
-		fmt.Fprintf(os.Stderr, "parlay-spawn: in-place mode — using caller's pane %s\n", rootPane)
+		fmt.Fprintf(os.Stderr, "parlay spawn: in-place mode — using caller's pane %s\n", rootPane)
 	} else {
 		var err error
 		tabID, rootPane, err = launcher.TabCreate(TabCreateOptions{
@@ -318,7 +318,7 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 			Env:         envList,
 		})
 		if err != nil || rootPane == "" {
-			fmt.Fprintln(os.Stderr, "parlay-spawn: herdr tab create failed — no root pane returned.")
+			fmt.Fprintln(os.Stderr, "parlay spawn: herdr tab create failed — no root pane returned.")
 			// spawnOne registers the agent BEFORE calling this, so returning
 			// here without rolling back leaves a registration with nothing
 			// behind it. Pane is empty by construction: this is the branch
@@ -380,12 +380,12 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 			break // non-transient failure — stop
 		}
 		if try < attempts {
-			fmt.Fprintf(os.Stderr, "parlay-spawn: agent_pane_busy on pane %s — retry %d/%d …\n", rootPane, try, attempts)
+			fmt.Fprintf(os.Stderr, "parlay spawn: agent_pane_busy on pane %s — retry %d/%d …\n", rootPane, try, attempts)
 			startRetrySleep()
 		}
 	}
 	if !startOK {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: herdr agent start failed after %d attempt(s) — rolling back to avoid a ghost registration. (last: %s)\n", made, strings.TrimSpace(lastOut))
+		fmt.Fprintf(os.Stderr, "parlay spawn: herdr agent start failed after %d attempt(s) — rolling back to avoid a ghost registration. (last: %s)\n", made, strings.TrimSpace(lastOut))
 		// No agent was started on this path, so there is nothing running to
 		// strand — only the registration to take back. Pane is passed empty
 		// for the same reason: there is no live agent to warn about.
@@ -402,7 +402,7 @@ func spawnViaHerdr(launcher Launcher, opts SpawnOptions, server, startupPrompt s
 	// herdr's paste-safe channel. A failure here leaves a started agent with
 	// no task, so it rolls the tab back exactly like a failed start.
 	if promptErr := launcher.AgentPrompt(opts.AgentID, startupPrompt); promptErr != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: herdr agent prompt failed to deliver the charter to %q — rolling back.\n", opts.AgentID)
+		fmt.Fprintf(os.Stderr, "parlay spawn: herdr agent prompt failed to deliver the charter to %q — rolling back.\n", opts.AgentID)
 		// The agent IS started by this point, so this is the one path that
 		// can strand a live, charterless agent. rollbackLaunch closes the tab
 		// when this pipeline made one, and in in-place mode reports what it
@@ -443,12 +443,12 @@ func rollbackLaunch(launcher Launcher, server, agentID, tabID, pane string) {
 	unregErr := unregisterAgent(server, agentID)
 	if unregErr != nil {
 		fmt.Fprintf(os.Stderr,
-			"parlay-spawn: could not withdraw %q's registration (%v) — the channel may still be routable, and 'parlay send' would accept work for it.\n"+
+			"parlay spawn: could not withdraw %q's registration (%v) — the channel may still be routable, and 'parlay send' would accept work for it.\n"+
 				"  Remove it by hand: parlay agent-down %s\n", agentID, unregErr, agentID)
 	}
 	if tabID == "" && pane != "" {
 		fmt.Fprintf(os.Stderr,
-			"parlay-spawn: in-place mode — the agent was already started in YOUR pane %s, and herdr has no way to stop it, so it is still running there with no task.\n"+
+			"parlay spawn: in-place mode — the agent was already started in YOUR pane %s, and herdr has no way to stop it, so it is still running there with no task.\n"+
 				"  End it yourself in that pane (Ctrl-C), then re-run the spawn.\n", pane)
 		if unregErr == nil {
 			fmt.Fprintln(os.Stderr, "  Its registration has been withdrawn, so nothing will route work to it.")
@@ -497,7 +497,7 @@ func spawnViaSubprocess(opts SpawnOptions, server, promptFile string, projectEnv
 	if err := subprocessSpawn(stateDir, opts.AgentID, command, opts.Cwd, envOverrides, worktreeFlag, opts.BeadID); err != nil {
 		return fmt.Errorf("subprocess-spawn failed to launch %s: %w", opts.AgentID, err)
 	}
-	fmt.Fprintf(os.Stderr, "parlay-spawn: subprocess session %q launched (state dir: %s)\n", opts.AgentID, stateDir)
+	fmt.Fprintf(os.Stderr, "parlay spawn: subprocess session %q launched (state dir: %s)\n", opts.AgentID, stateDir)
 	return nil
 }
 
@@ -548,7 +548,7 @@ func spawnViaGC(opts SpawnOptions, server, promptFile string) (sessionID, cityDi
 	if displayCity == "" {
 		displayCity = "unknown"
 	}
-	fmt.Fprintf(os.Stderr, "parlay-spawn: gc session %q launched for %s (city: %s).\n", displaySession, opts.AgentID, displayCity)
+	fmt.Fprintf(os.Stderr, "parlay spawn: gc session %q launched for %s (city: %s).\n", displaySession, opts.AgentID, displayCity)
 
 	return res.SessionID, res.CityDir, nil
 }

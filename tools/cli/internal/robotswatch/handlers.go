@@ -120,7 +120,7 @@ func mechanicDispatchOff() bool {
 
 // dispatchMechanic is the reusable dispatch: spawn `mechanic-dispatch <id>`
 // (idempotent — checks the zone's mechanic liveness and launches via
-// parlay-spawn only if down). Shared by the POLL path (handler a) and the
+// `parlay spawn` only if down). Shared by the POLL path (handler a) and the
 // TAILER fast path (robots-tail), so both triggers converge on one
 // dispatch. Failure-isolated: never panics.
 func dispatchMechanic(id string, verbose bool) {

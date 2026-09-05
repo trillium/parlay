@@ -73,8 +73,8 @@ the call site.
 An empty list means **nothing reported**, not "nothing is running". Specifically,
 the following are invisible here:
 
-- **Anything that is not the Go CLI.** Shell entry points (`bin/parlay-spawn`,
-  `tools/monitor/parlay-monitor.sh`, deploy scripts) and the retired TS CLI in
+- **Anything that is not the Go CLI.** Shell entry points
+  (`tools/monitor/parlay-monitor.sh`, deploy scripts) and the retired TS CLI in
   `packages/cli` do not report.
 - **Work the server does on its own** — SSE fan-out, sweeps, long-poll waiters.
   Those are not invocations and have no record here.

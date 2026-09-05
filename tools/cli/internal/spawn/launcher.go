@@ -106,7 +106,7 @@ type herdrLauncher struct{}
 // newHerdrLauncher fails fast if herdr is not on PATH, BEFORE the caller
 // performs any side effect (register-agent POST, hello reply, on-disk
 // context.json write). This is a deliberate fix over the bash version: bin/
-// parlay-spawn calls herdr unconditionally at the actual launch step (no
+// bash called herdr unconditionally at the actual launch step (no
 // `command -v herdr` guard — docs/scope-go-spawn.md §3), so under `set -e`
 // a missing herdr aborts mid-pipeline *after* those side effects already
 // ran, leaving an orphaned agent registration with no process behind it.
