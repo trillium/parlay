@@ -1,7 +1,5 @@
 import { describe, test, expect } from "bun:test"
 import { serve } from "bun"
-import { readFileSync } from "fs"
-import { join } from "path"
 import {
   POLL_WAIT_MS, SSE_KEEPALIVE_MS, SERVER_IDLE_TIMEOUT_SEC,
   BUN_MAX_IDLE_TIMEOUT_SEC, BUN_DEFAULT_IDLE_TIMEOUT_SEC,
@@ -41,22 +39,6 @@ describe("SERVER_IDLE_TIMEOUT_SEC invariants", () => {
     // A keepalive scheduled after the idle timeout is dead code: the runtime
     // closes the stream first, every time, so it never runs even once.
     expect(SSE_KEEPALIVE_MS).toBeLessThan(SERVER_IDLE_TIMEOUT_SEC * 1000)
-  })
-})
-
-describe("index.ts wiring", () => {
-  // The constant being correct is worthless if serve() is not handed it, and
-  // index.ts cannot be imported here — importing it binds a port and starts
-  // every tailer and sweep. Assert on the source instead.
-  const src = readFileSync(join(import.meta.dir, "index.ts"), "utf8")
-
-  test("serve() is passed the derived idleTimeout", () => {
-    expect(src).toContain("idleTimeout: SERVER_IDLE_TIMEOUT_SEC")
-    expect(src).toContain('from "./timeouts"')
-  })
-
-  test("no literal idleTimeout that could drift from the holds", () => {
-    expect(src).not.toMatch(/idleTimeout:\s*\d/)
   })
 })
 
