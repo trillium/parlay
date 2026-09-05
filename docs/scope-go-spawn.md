@@ -1,24 +1,32 @@
 # Go spawn reconciliation scope
 
-**Status:** binding scope doc for the `tools/parlay-bin` ↔ `bin/parlay-spawn` reconciliation
-(task-04g1, [discussion #237](https://github.com/trillium/parlay/discussions/237)).
-**Written:** 2026-09-03.
-**Scope:** documentation and comment-fix only. This document's own PR changes no runtime
-behavior anywhere — see [`AGENTS.md`](../AGENTS.md) / `CLAUDE.md` for the repo's
-docs+comments-only convention.
+> **HISTORICAL — this document describes a system that no longer exists.**
+> Read it as the record of what the `bin/parlay-spawn` → Go reconciliation had
+> to close, not as a map of the code. As of task-42qot (PR
+> [#270](https://github.com/trillium/parlay/pull/270) + its follow-up) there is
+> exactly ONE spawner: `tools/cli/internal/spawn`, run in-process by `parlay
+> spawn`. `tools/parlay-bin`, `bin/parlay-spawn`, `resolveSpawner()`,
+> `PARLAY_SPAWN_IMPL`/`spawnImpl` and the `PARLAY_SPAWN_VIA_CLI` handshake are
+> all deleted.
+>
+> **For current behavior read [`docs/launcher.md`](launcher.md) and
+> [`docs/agent-notes/go-spawner-folded-into-tools-cli.md`](agent-notes/go-spawner-folded-into-tools-cli.md).**
+>
+> Three reading rules for everything below:
+> 1. Every `tools/parlay-bin/<file>.go` path is `tools/cli/internal/spawn/<file>.go`.
+> 2. Every `bin/parlay-spawn:<line>` citation points into a deleted file —
+>    `git show 046919aa:bin/parlay-spawn` to read it.
+> 3. Anything in §2 marked **Partial**, **Missing** or **Divergent** may since
+>    have been closed. §0's changelog records the ones that were.
 
-This file did not exist before this PR. `tools/parlay-bin`'s own source comments have cited
-it since PR #23 (2026-08-03) — `main.go`, `launcher.go`, `env.go`, `color.go`,
-`identitycli.go`, `spawn.go`, `spawnpipeline.go`, `reset.go`, and their test files all point
-at sections below. Those citations were aspirational until now: before this PR, `git log
---all --diff-filter=A -- docs/scope-go-spawn.md` returned nothing — the same pattern noted
-elsewhere in `CLAUDE.md` for `docs/scope-go-server.md` and `docs/scope-go-cli.md`.
+**Status:** historical record of the `tools/parlay-bin` ↔ `bin/parlay-spawn`
+reconciliation (task-04g1, [discussion #237](https://github.com/trillium/parlay/discussions/237)).
+**Written:** 2026-09-03. **Superseded:** 2026-09-05 (task-42qot).
 
-Every claim below was re-verified against the current tree (`bin/parlay-spawn` at 1859
-lines, `tools/parlay-bin/spawn.go` at 366 lines, both post-rebase onto `origin/main`
-including PR #238's mandatory-model gate and PR #236's idle-reap launch-record stamping) —
-not carried over from an earlier report. Where verification disagreed with a prior summary
-(PR #238's own body, in one place), §8 says so and cites the code that settles it.
+Every claim in §1–§6 was verified against the tree as it stood on 2026-09-03
+(`bin/parlay-spawn` at 1859 lines, `tools/parlay-bin/spawn.go` at 366 lines).
+That verification is what makes §1 worth keeping: it is the only surviving
+inventory of what the bash spawner actually did.
 
 ---
 
@@ -61,6 +69,46 @@ is still live and accurate.
 Stage 5 end-state is superseded. Path citations throughout still read
 `tools/parlay-bin/<file>.go` — the same files now live at
 `tools/cli/internal/spawn/<file>.go`.
+
+### 0.1 PR B landed (2026-09-05) — what closed and what is now false
+
+PR B did the deletion half, and closed the last two capability gaps first so
+no commit dropped behavior.
+
+**Closed gaps** (§2 rows that no longer read Partial):
+
+- **`--kind` on the herdr path** (task-20czm). The herdr launcher passed a
+  hardcoded `--kind claude` plus a fixed `bash -lc 'exec claude …'` script, so
+  `--kind opencode` silently launched claude. It now passes `opts.Kind` to
+  `herdr agent start --kind` and builds the trailing argv per kind, mirroring
+  bash's `case "$KIND"`. The charter moved to `herdr agent prompt` — where
+  bash always sent it — because `agent start` types its trailing args into the
+  pane as a shell command line and herdr refuses to encode a newline.
+  Collateral: `Launcher.AgentWait` shelled `herdr agent wait --status`, but the
+  flag is `--until`, so every wait failed instantly and the watchdog treated
+  every spawn as stalled; and the herdr tab env never set
+  `PARLAY_AGENT_NAME`/`PARLAY_AGENT_COLOR`, which bash sends on every tab
+  create.
+- **The post-launch watchdog** (task-br4r6). All three arms exist now, behind
+  one `parlay spawn-watchdog` verb. The arming mechanism had to change too:
+  the herdr arm ran in a goroutine, which cannot outlive `parlay spawn` — the
+  process exits within milliseconds of arming — so the watch was destroyed as
+  soon as it was set up. Arming re-execs the binary as a DETACHED child, the
+  shape bash's `( … ) & disown` always had.
+
+**Now false wherever this document says otherwise:**
+
+- §1.3's `PARLAY_SPAWN_VIA_CLI` row, §5 item 1's fixed-`launchScript`
+  rationale, §5 item 5's PATH-stubbed-`herdr` test harness note, §5 item 6 and
+  §7 Stage 4's parity-suite discussion, §6's three one-front-door invariants
+  as *mechanisms* (invariant 2, the mandatory-model gate, still holds — it is
+  just enforced in one place now), and every Stage 3–5 statement about
+  spawner resolution, the `bin/parlay-bin` wrapper, `GO_ONLY_VERBS`, or the
+  bash tombstone header.
+- The `bin/parlay-spawn.*.test.sh` suite, `bin/parlay-spawn-parity.test.sh`
+  and `bin/parlay-pii-lib.sh` are deleted. §5 item 6's open ask — wire the
+  three unwired bash test files into CI — is closed by deletion, not by
+  coverage: it was bash-only coverage of a script that no longer exists.
 
 ---
 
@@ -201,12 +249,12 @@ all. **Divergent** = implemented differently on purpose (noted as such) or by ac
 | Startup-prompt composition (single-sourced template) | ✓ | ✓ | **Full** — same `launch-templates/default.txt`, byte-identical trailing-newline handling (robots-hrt2) | `prompt.go:10-86` |
 | Pre-trust workdir (`~/.claude.json`) | ✓ (jq, best-effort) | ✓ (atomic write: temp+fsync+rename, stricter than bash) | **Full, with a hardening improvement** | `env.go` companion `pretrustWorkdir` — actually `prompt.go`'s neighbor; see the file read directly: pretrust lives in its own file and does atomic temp-write+`Sync`+`Close`-checked+rename, unlike bash's plain `jq` overwrite |
 | ccjuggler account token resolution | ✓ | ✓ | **Full** — delegates to the same `juggle` Go package bash's own account resolution was ported to | `account.go:9-30` |
-| Post-launch liveness watchdog | ✓ (3 variants, one per launcher) | ✓ (herdr-only) | **Partial — disclosed leftover** | `watchdog.go:14-69` (`armWatchdog`) hardcodes an `AgentWait`/`AgentSend` pair against the `Launcher` interface, which only `herdrLauncher` implements. As of the launcher-selection work below, `subprocess` and `gc` are now real, reachable launcher choices in the spawn pipeline — so this row's watchdog gap is no longer hypothetical ("once those are wired"): a spawn routed through `--subprocess` or the `gc` launcher today gets no post-launch watchdog at all. Recording this as a real, disclosed leftover rather than fixing it, since bash's subprocess-watchdog (`/api/chat/subscribers` polling) and gc-watchdog (`parlay gc-liveness` delegation) are each their own organ and were out of this task's scope |
+| Post-launch liveness watchdog | ✓ (3 variants, one per launcher) | ✓ (all three) | **Full — closed by task-br4r6; see §0.1.** The status below is the pre-PR-B record: | `watchdog.go:14-69` (`armWatchdog`) hardcodes an `AgentWait`/`AgentSend` pair against the `Launcher` interface, which only `herdrLauncher` implements. As of the launcher-selection work below, `subprocess` and `gc` are now real, reachable launcher choices in the spawn pipeline — so this row's watchdog gap is no longer hypothetical ("once those are wired"): a spawn routed through `--subprocess` or the `gc` launcher today gets no post-launch watchdog at all. Recording this as a real, disclosed leftover rather than fixing it, since bash's subprocess-watchdog (`/api/chat/subscribers` polling) and gc-watchdog (`parlay gc-liveness` delegation) are each their own organ and were out of this task's scope |
 | `--subprocess`/`--gascity` launcher selection *inside the spawn pipeline* | ✓ (`LAUNCHER=subprocess` branch, `:1646-1708` per earlier read) | ✓ | **Full** | `spawnpipeline.go` (`launcherFactory`/`effectiveLauncher` now branch on the resolved launcher, including `gascity`→`subprocess` normalization via `config.go`'s `resolveLauncher`), `spawnpipeline_test.go`. The previously-standalone `subprocess-spawn`/`-stop`/`-ping` top-level subcommands (`subprocess_spawn.go`) are unchanged and still exist independently. One disclosed narrowing: herdr's `launchScript` const stays hardcoded to `exec claude ...` regardless of `opts.Kind` — the subprocess and gc launcher paths *do* honor `opts.Kind`, but non-claude `--kind` dispatch through the herdr path specifically was left out of scope (see the `--kind` row below) |
 | `gc` launcher selection | ✓ (`:1452-1483`, opt-in, claude-kind only) | ✓ (opt-in via env/config, claude-kind only, matching bash's own scoping) | **Full** | `spawnpipeline.go`, `config.go` (`resolveLauncher`), `spawnpipeline_test.go`. The resolved OAuth account token is deliberately withheld from the `gc` launcher branch — only the account *name* is forwarded — mirroring bash's own stated rationale that the gc template's `[env]` block persists to disk |
 | Color algorithm (`color_from_id`/FNV-1a) | ✓ | ✓ | **Full, bit-identical by contract** | `color.go:5-25` — explicitly documents the three-way parity obligation against `packages/cli/src/identity-ephemeral.ts` and bash's own `color_from_id()` |
 | `--profile`/`--list` (profiles.toml + quota-axi headroom) | ✓ (bash's flag is `--list`, not `--list-profiles`; headroom is display-only in `--list`, never auto-selects a profile) | ✓ | **Full** | `profiles.go` (`resolveProfile`, `listProfiles`, `headroomLine`, `fetchQuotaReport`, `findUpward`), `profiles_test.go`. Ported as display-only to match bash's actual behavior, not the brief's initial "quota-headroom-aware profile selection" phrasing — bash never auto-selects on headroom, it only shows it in the `--list` table |
-| `--kind` (opencode etc.) | ✓ | ✓ for `subprocess`/`gc` launchers; herdr path unchanged | **Partial — deliberate, disclosed narrowing** | `spawnpipeline.go` passes `opts.Kind` through for the `subprocess`/`gc` launcher branches; herdr's fixed `launchScript` const (`spawnpipeline.go:24`) still always execs `claude`, so `--kind opencode` combined with the default herdr launcher does not change what actually launches. Templating `--kind` into `launchScript` was explicitly avoided — see §5 item 1's shell-escaping-boundary rationale, which still applies |
+| `--kind` (opencode etc.) | ✓ | ✓ every launcher | **Full — closed by task-20czm; see §0.1.** The status below is the pre-PR-B record: | `spawnpipeline.go` passes `opts.Kind` through for the `subprocess`/`gc` launcher branches; herdr's fixed `launchScript` const (`spawnpipeline.go:24`) still always execs `claude`, so `--kind opencode` combined with the default herdr launcher does not change what actually launches. Templating `--kind` into `launchScript` was explicitly avoided — see §5 item 1's shell-escaping-boundary rationale, which still applies |
 | `--pii`/`--no-pii` routing | ✓ (`bin/parlay-pii-lib.sh`) | ✓ | **Full**, with one disclosed ordering divergence | `pii.go` (`enforcePII`, `routePIIModel`, `applyBeadPIILabel`, `checkBeadPIILabel`, `liveFreeOpencodeModels`), `pii_test.go`. Named-spawn gate order is `bead_gate` → all four PII functions → `require_model`, matching bash. Ephemeral-spawn path diverges from a naive reading: `require_model`/`bead_gate` run *before* the identity mint, but PII routing runs *only after* the mint — this mirrors bash's own actual ordering, not an invented one, but is called out since it is easy to get backwards |
 | `--bead`/beads-required gating, `--force` | ✓ | ✓ | **Full** | `bead.go` (`beadGate`, `resolveBeadStatus`, `extractBeadStatus`, `beadGateError` with distinct exit codes: 2 for "required but missing", 1 for "named but bad"), `bead_test.go` |
 | `--claim` | ✓ | ✓ | **Full** — landed by PR #241, before this task's scope began | `spawn.go:94` (`Claim` field), `spawn.go:194,359` |

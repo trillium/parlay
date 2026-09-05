@@ -38,7 +38,7 @@ owners.
 
 ## Naming note
 
-**parlay's** subprocess launcher (`tools/parlay-bin/subprocess_spawn.go`, which contains no
+**parlay's** subprocess launcher (`tools/cli/internal/spawn/subprocess_spawn.go`, which contains no
 Gas City code — §11) was renamed from `gascity` to `subprocess` in PR #133 (the
 `gascity`→`subprocess` rename, merged 2026-08-29); `gascity` remains a deprecated alias. It is
 not Gas City's own `subprocess` *provider*, which #133 did not touch — §10 flags that pair as a
@@ -71,7 +71,7 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 - **Owner:** Gas City's runtime/provider layer.
 - **Why:** `Provider.Start/Stop/Interrupt` and the supervisor singleton own the process; the
   `subprocess` provider is Gas City semantics (detached `sh -c` child), and parlay's
-  `subprocess` launcher (`tools/parlay-bin/subprocess_spawn.go`) is a from-scratch port of
+  `subprocess` launcher (`tools/cli/internal/spawn/subprocess_spawn.go`) is a from-scratch port of
   exactly those semantics — it contains **no Gas City code** (§11; the §11 comment-block
   correction landed in PR #132, and the `gascity`→`subprocess` rename in PR #133). Control
   verbs shell out with the verb's declared JSON flag (§5 — there is no persistent `--json` on
