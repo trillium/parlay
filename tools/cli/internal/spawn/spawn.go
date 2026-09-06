@@ -320,6 +320,18 @@ func isBatchPair(first string) bool {
 // in-process inside `parlay spawn`, so there is no cross-binary entry left
 // to police — `parlay spawn` IS the sole public entry point by construction.
 func runSpawnCommand(args []string) int {
+	// --list renders the profiles.toml catalog and spawns nothing. It must
+	// come before the shape dispatch: a bare "--list" is not a valid
+	// named spawn (fewer than 3 positionals), so without this it falls
+	// through to runNamedSpawn's usage error even though spawnUsage
+	// advertises it as a top-level form.
+	if len(args) == 1 && args[0] == "--list" {
+		if err := listProfiles(os.Stdout, resolveDefaultAccount(loadSpawnConfig())); err != nil {
+			fmt.Fprintf(os.Stderr, "parlay-spawn: %v\n", err)
+			return 2
+		}
+		return 0
+	}
 	if len(args) > 0 && args[0] == "--ephemeral" {
 		return runEphemeralSpawn(args[1:])
 	}

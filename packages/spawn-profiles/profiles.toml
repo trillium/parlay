@@ -70,3 +70,23 @@ resume_flag = "resume"
 resume_style = "subcommand"
 ready_delay_ms = 3000
 ready_prompt_prefix = "› "
+
+[[profile]]
+name = "pi-muse-spark"
+display_name = "Pi (Muse Spark 1.3, paid pool)"
+kind = "pi"
+command = "pi"
+model = "opencode-go/muse-spark-1.3-contributor"
+prompt_mode = "arg"
+resume_flag = "--session"
+ready_delay_ms = 8000
+
+[[profile]]
+name = "pi-muse-spark-free"
+display_name = "Pi (Muse Spark 1.3, free)"
+kind = "pi"
+command = "pi"
+model = "opencode/muse-spark-1.3-contributor-free"
+prompt_mode = "arg"
+resume_flag = "--session"
+ready_delay_ms = 8000

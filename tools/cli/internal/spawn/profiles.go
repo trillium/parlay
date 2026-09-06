@@ -111,10 +111,13 @@ type quotaReport struct {
 }
 
 // kindToQuotaProvider mirrors bash's KIND_TO_PROVIDER map (line 497).
+// pi drives opencode-go models (verified live 2026-09-06), so it draws from
+// the same opencode-go pool as the opencode harness.
 var kindToQuotaProvider = map[string]string{
 	"claude":   "claude",
 	"opencode": "opencode-go",
 	"codex":    "codex",
+	"pi":       "opencode-go",
 }
 
 // fetchQuotaReport best-effort shells to `quota-axi --json`, matching bash's
