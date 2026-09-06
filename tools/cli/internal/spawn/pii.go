@@ -13,8 +13,9 @@ import (
 // single character, e.g. "contains-pii" or "containspii").
 var containsPIIRe = regexp.MustCompile(`(?i)contains.pii`)
 
-// piiFreeModelPreference mirrors bin/parlay-pii-lib.sh's
-// PII_FREE_MODEL_PREFERENCE (line 68): an ordered PREFERENCE, never an
+// piiFreeModelPreference is the Go home of what was bin/parlay-pii-lib.sh's
+// PII_FREE_MODEL_PREFERENCE (deleted with the bash spawner it served, since
+// this file is now its only implementation): an ordered PREFERENCE, never an
 // assertion that a model exists — every name is checked against the live
 // `opencode models` list before use (robots-pd98: a previously hardcoded
 // name retired out from under every default --no-pii spawn).

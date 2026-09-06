@@ -32,8 +32,8 @@ walked by hand with `herdr tab close` afterwards. `teardownAgent` now ends by
 calling `closeHerdrSurface` (`tools/cli/internal/commands/herdr.go`), so both
 `sweep --apply` and a direct `parlay teardown` reclaim the terminal.
 
-The lookup key on both sides is the parlay agent id, because `tools/parlay-bin`
-spawns with `herdr agent start <id>` and `herdr tab create --label <id>`. Both
+The lookup key on both sides is the parlay agent id, because the spawn
+pipeline uses `herdr agent start <id>` and `herdr tab create --label <id>`. Both
 lookups are needed: a live agent resolves through `herdr agent get`, while an
 agent whose process already exited has no herdr agent at all and is findable
 only by its lingering labelled tab — that residue is what fills `herdr tab

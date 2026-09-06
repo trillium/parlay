@@ -78,14 +78,14 @@ func guardScriptPath() (string, error) {
 func guardTreehousePool(projectPath string) {
 	guard, err := guardScriptPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: treehouse pool guard unavailable (%v); continuing unguarded\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: treehouse pool guard unavailable (%v); continuing unguarded\n", err)
 		return
 	}
 	cmd := exec.Command(guard, projectPath)
 	cmd.Dir = projectPath
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: treehouse pool guard failed (%v); continuing unguarded\n", err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: treehouse pool guard failed (%v); continuing unguarded\n", err)
 	}
 }
 
@@ -128,9 +128,9 @@ func setupWorktree(projectPath, agentID, mode string) (string, bool, error) {
 				if candErr == nil && projRepoErr == nil && candRepo == projRepo {
 					worktreePath = candidate
 					created = true
-					fmt.Fprintf(os.Stderr, "parlay-spawn: worktree via treehouse at %s\n", worktreePath)
+					fmt.Fprintf(os.Stderr, "parlay spawn: worktree via treehouse at %s\n", worktreePath)
 				} else {
-					fmt.Fprintf(os.Stderr, "parlay-spawn: WRONG-REPO WORKTREE — treehouse handed back %s (git dir: %s),\n", candidate, candRepo)
+					fmt.Fprintf(os.Stderr, "parlay spawn: WRONG-REPO WORKTREE — treehouse handed back %s (git dir: %s),\n", candidate, candRepo)
 					fmt.Fprintf(os.Stderr, "  but --cwd resolved to %s (git dir: %s). Rejecting it and falling back to plain git worktree.\n", projectPath, projRepo)
 					ret := exec.Command(thPath, "return", candidate)
 					ret.Dir = projectPath
@@ -143,7 +143,7 @@ func setupWorktree(projectPath, agentID, mode string) (string, bool, error) {
 	if !created {
 		listOut, _ := exec.Command("git", "-C", projectPath, "worktree", "list", "--porcelain").Output()
 		if strings.Contains(string(listOut), "worktree "+worktreePath+"\n") || strings.HasSuffix(strings.TrimRight(string(listOut), "\n"), "worktree "+worktreePath) {
-			fmt.Fprintf(os.Stderr, "parlay-spawn: reusing existing worktree at %s\n", worktreePath)
+			fmt.Fprintf(os.Stderr, "parlay spawn: reusing existing worktree at %s\n", worktreePath)
 		} else {
 			var addErr error
 			if mode == "branch" || mode == "pr" {
@@ -157,7 +157,7 @@ func setupWorktree(projectPath, agentID, mode string) (string, bool, error) {
 			if addErr != nil {
 				return "", false, fmt.Errorf("git worktree add failed for %s: %w", worktreePath, addErr)
 			}
-			fmt.Fprintf(os.Stderr, "parlay-spawn: worktree created at %s (project: %s)\n", worktreePath, projectPath)
+			fmt.Fprintf(os.Stderr, "parlay spawn: worktree created at %s (project: %s)\n", worktreePath, projectPath)
 		}
 	}
 

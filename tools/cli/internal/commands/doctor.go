@@ -271,7 +271,7 @@ func checkIdentityEnv(st *doctorState) (CheckResult, bool) {
 			map[string]any{"agent_id": st.agent}), true
 	}
 	return singleLine("identity-env", vFail, "PARLAY_AGENT_ID is not set",
-		"run inside a parlay-spawn'd agent, or: export PARLAY_AGENT_ID=<id>", nil), true
+		"run inside a parlay-spawned agent, or: export PARLAY_AGENT_ID=<id>", nil), true
 }
 
 // checkServerURLSource is the informational "-- server URL source" line,
@@ -396,7 +396,7 @@ func checkIdentityMD(st *doctorState) (CheckResult, bool) {
 	switch {
 	case fmMatch == nil:
 		cr = singleLine("identity-md", vWarn, "identity.md has no frontmatter launch spec",
-			"re-seed: identity --register (parlay-spawn does this at spawn)",
+			"re-seed: identity --register (`parlay spawn` does this at spawn)",
 			map[string]any{"path": file, "bytes": utf16Len(txt)})
 	case id != "" && id != st.agent:
 		cr = singleLine("identity-md", vFail,

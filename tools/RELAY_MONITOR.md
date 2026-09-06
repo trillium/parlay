@@ -95,7 +95,7 @@ Monitor({ command: "parlay monitor --agent <id>", persistent: true })
 `parlay monitor --legacy-poll` keeps the old independent bun poll loop for the
 global feed or environments without the relay running.
 
-`bin/parlay-spawn` arms `parlay listen --agent <id>` instead, which also
+`parlay spawn` arms `parlay listen --agent <id>` instead, which also
 registers the agent and announces "listening" before execing into this same
 `runMonitor` loop — one call in place of the old register + reply + monitor
 three-step. See `parlay help listen`.

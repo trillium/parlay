@@ -42,8 +42,8 @@ func livenessTimeoutMs() int {
 }
 
 // watchdogLogPath is one log file per launcher arm, mirroring bash's three
-// separate logs. The basenames dropped the `parlay-spawn-` prefix with the
-// bash spawner itself — the writer is `parlay spawn` now.
+// separate logs. The basenames dropped their old `parlay-spawn-` prefix
+// with the bash spawner itself — the writer is `parlay spawn` now.
 func watchdogLogPath(launcher string) string {
 	tmpDir := os.Getenv("TMPDIR")
 	if tmpDir == "" {

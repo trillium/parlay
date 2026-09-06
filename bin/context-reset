@@ -327,7 +327,7 @@ if [ -n "$PINNED_HANDOFF" ] && [ "$HANDOFF_SRC" = "scrape" ]; then
 fi
 
 # ── the external watcher: verify claude closed, then optionally reboot ──
-# A panel-agent reboot first clears any lingering dead herdr tab so parlay-spawn's
+# A panel-agent reboot first clears any lingering dead herdr tab so the spawner's
 # duplicate-name guard doesn't block the relaunch.
 read -r -d '' WATCHER <<WSCRIPT || true
 echo "[\$(date '+%H:%M:%S')] watching claude PID $CLAUDE_PID for exit..."
@@ -342,7 +342,7 @@ if [ "$REBOOT" = "1" ]; then
   _keep=""
   # ── Change 1: reconcile to EXACTLY ONE live tab for this agent id ──
   # herdr agents die with their tab, so closing every old/dead/ghost tab for this
-  # id BOTH frees the name (parlay-spawn's duplicate guard then permits the
+  # id BOTH frees the name (the spawner's duplicate guard then permits the
   # relaunch) AND kills the two-same-name-tabs bug. Reliable — replaces the old
   # fail-open single-tab pre-close that let a ghost survive and duplicate.
   _tabs_for() { herdr tab list 2>/dev/null | jq -r --arg id "\$1" '.result.tabs[]? | select(.label==\$id) | .tab_id' 2>/dev/null; }

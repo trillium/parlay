@@ -1,6 +1,6 @@
 # spawn-profiles
 
-Named spawn profiles for `parlay-spawn --profile <name>`. A profile bundles
+Named spawn profiles for `parlay spawn --profile <name>`. A profile bundles
 everything needed to launch one agent harness (kind + model + flags + readiness +
 resume) so you don't hand-maintain `--kind`/`--model`/flag combos every time.
 
@@ -8,18 +8,18 @@ This package is **agent-focused**: adding a profile is a one-block edit to
 `profiles.toml`, gated by a validator that tells you exactly what's wrong. No
 single human owns it.
 
-**Current wiring (task-qyu8q):** `parlay-spawn --profile <name>` resolves only
+**Current wiring (task-qyu8q):** `parlay spawn --profile <name>` resolves only
 `kind` and `model` from the named profile today — that's enough to satisfy the
 model-required gate (every spawn must pick a model deliberately; a
 model-bearing profile counts as that choice). `command`, `args`, `prompt_mode`,
 `resume_flag`, `env`, and the rest of the field reference below are validated
-by `cmd/validate` but not yet threaded through by `parlay-spawn` itself.
+by `cmd/validate` but not yet threaded through by `parlay spawn` itself.
 
-Run `parlay-spawn --list` to see the catalog rendered (name, kind, model, and
+Run `parlay spawn --list` to see the catalog rendered (name, kind, model, and
 the ccjuggler account a spawn currently lands on), annotated with live
 `quota-axi --json` headroom per provider when `quota-axi` is on PATH. There is
 no per-profile `account` field today — every profile spawns under whatever
-account `parlay-spawn` would otherwise resolve (`--account`, then
+account `parlay spawn` would otherwise resolve (`--account`, then
 `PARLAY_SPAWN_DEFAULT_ACCOUNT`, then `~/.parlay/config.toml`'s `spawnAccount`).
 This is display/advisory only — `--list` never gates a spawn on quota.
 
@@ -35,8 +35,8 @@ This is display/advisory only — `--list` never gates a spawn on quota.
 |---|---|---|---|
 | `name` | **yes** | kebab-id | Stable id, unique, `[a-z0-9-]+`. This is the `--profile` value. |
 | `display_name` | no | string | Human label. |
-| `kind` | **yes** | string | Harness: `claude`, `opencode`, `codex`, … (forwarded as `parlay-spawn --kind`). |
-| `command` | **yes** | string | The binary `parlay-spawn` launches. |
+| `kind` | **yes** | string | Harness: `claude`, `opencode`, `codex`, … (forwarded as `parlay spawn --kind`). |
+| `command` | **yes** | string | The binary `parlay spawn` launches. |
 | `model` | no | string | Default model (forwarded as `--model`). |
 | `args` | no | string list | Fixed launch args appended to every spawn. |
 | `prompt_mode` | **yes** | `arg`\|`flag`\|`none` | How the initial prompt is delivered. |

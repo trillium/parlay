@@ -25,7 +25,7 @@ func pretrustWorkdir(cwd string) {
 
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (parse failed)\n", cwd)
+		fmt.Fprintf(os.Stderr, "parlay spawn: warn: could not pre-trust %s (parse failed)\n", cwd)
 		return
 	}
 
@@ -43,20 +43,20 @@ func pretrustWorkdir(cwd string) {
 
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (encode failed)\n", cwd)
+		fmt.Fprintf(os.Stderr, "parlay spawn: warn: could not pre-trust %s (encode failed)\n", cwd)
 		return
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(claudeJSONPath), ".claude.json.tmp-*")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (tempfile failed)\n", cwd)
+		fmt.Fprintf(os.Stderr, "parlay spawn: warn: could not pre-trust %s (tempfile failed)\n", cwd)
 		return
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(out); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
-		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (write failed)\n", cwd)
+		fmt.Fprintf(os.Stderr, "parlay spawn: warn: could not pre-trust %s (write failed)\n", cwd)
 		return
 	}
 	// Sync before the rename, and check Close. This is a read-modify-write of
@@ -71,16 +71,16 @@ func pretrustWorkdir(cwd string) {
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
-		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (sync failed)\n", cwd)
+		fmt.Fprintf(os.Stderr, "parlay spawn: warn: could not pre-trust %s (sync failed)\n", cwd)
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
-		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (close failed)\n", cwd)
+		fmt.Fprintf(os.Stderr, "parlay spawn: warn: could not pre-trust %s (close failed)\n", cwd)
 		return
 	}
 	if err := os.Rename(tmpPath, claudeJSONPath); err != nil {
 		os.Remove(tmpPath)
-		fmt.Fprintf(os.Stderr, "parlay-spawn: warn: could not pre-trust %s (rename failed)\n", cwd)
+		fmt.Fprintf(os.Stderr, "parlay spawn: warn: could not pre-trust %s (rename failed)\n", cwd)
 	}
 }

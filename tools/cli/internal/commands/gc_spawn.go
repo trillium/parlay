@@ -1,7 +1,7 @@
 // parlay gc-spawn — launch one parlay agent as a Gas City session (spawn-lift
 // unit 5, epic task-4cfpv.9).
 //
-// This is the Go half of the `gc` launcher: bin/parlay-spawn selects it with
+// This is the Go half of the `gc` launcher: `parlay spawn` selects it with
 // PARLAY_SPAWN_LAUNCHER=gc (strictly opt-in — herdr stays the default and the
 // default path is untouched), builds the launch spec from its own arg surface,
 // and shells out here. The verb owns everything that must be exact:
@@ -19,7 +19,7 @@
 // machine-wide :8372 singleton, and inherited GC_HOME/GC_CITY/GC_CITY_PATH/
 // BEADS_DIR/BD_NAME are dropped so ambient Gas City or beads context can
 // never leak into the launch. The Claude Code nesting markers are scrubbed
-// from the child environment too — the exact list bin/parlay-spawn's
+// from the child environment too — the exact list the spawn pipeline's
 // subprocess launcher unsets (SUBPROCESS_ENV_UNSET), so a gc-launched agent
 // starts as clean as a subprocess-launched one.
 //
@@ -56,7 +56,7 @@ const gcSpawnTimeout = 300 * time.Second
 // gcSpawnEnvScrub lists env vars dropped from the gc child environment:
 // ambient Gas City / beads context (a gc run from inside another city must
 // not resolve it), plus the Claude Code nesting markers — the exact
-// SUBPROCESS_ENV_UNSET list from bin/parlay-spawn, kept in lockstep so the
+// subprocessEnvUnset list in internal/spawn, kept in lockstep so the
 // two detached launchers prep the child identically.
 var gcSpawnEnvScrub = map[string]bool{
 	"GC_HOME": true, "GC_CITY": true, "GC_CITY_PATH": true,

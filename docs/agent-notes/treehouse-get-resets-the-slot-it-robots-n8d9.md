@@ -12,9 +12,9 @@ nothing else — so a clean slot holding a live agent's work looks free, and one
 spawn detached a running agent's branch out from under it. Detecting this
 afterwards is useless; the checkout has already happened.
 
-`bin/parlay-treehouse-guard` is the prevention, called by both spawn paths
-immediately before `treehouse get` (`bin/parlay-spawn`, and
-`guardTreehousePool` in `tools/parlay-bin/worktree.go`). It writes a
+`bin/parlay-treehouse-guard` is the prevention, called immediately before
+`treehouse get` by `guardTreehousePool` in
+`tools/cli/internal/spawn/worktree.go` — the one spawn path there is. It writes a
 protective lease — `lease_holder: "parlay-guard:<reason>"` — into the pool's
 `treehouse-state.json` for every slot that is still occupied, which treehouse
 does honor (verified against the real binary: it takes another slot, or
@@ -42,5 +42,5 @@ Two sharp edges for anything else that writes that state file:
 Coverage: `bin/parlay-treehouse-guard.test.sh` (real repos, real origin, real
 state file — every assertion reads what the guard actually wrote) and
 `TestSetupWorktreeGuardsPoolBeforeLeasing` in
-`tools/parlay-bin/worktree_test.go` (pins guard-before-`get` ordering and the
+`tools/cli/internal/spawn/worktree_test.go` (pins guard-before-`get` ordering and the
 guard's cwd).

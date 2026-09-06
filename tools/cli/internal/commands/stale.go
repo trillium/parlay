@@ -204,7 +204,7 @@ func resolveStaleWindow(agentID string) StaleWindow {
 func relaunchAdvice(agentID string) string {
 	return "  Relaunch instead of continuing:\n" +
 		fmt.Sprintf("    parlay sweep --apply --agent %s     # close the finished pane (refuses if it still holds work)\n", agentID) +
-		"    parlay-spawn <id> <name> <color> --claim <task-id>   # a fresh pane for the new task\n" +
+		"    parlay spawn <id> <name> <color> --claim <task-id>   # a fresh pane for the new task\n" +
 		fmt.Sprintf("  If this agent is a long-lived dispatcher that IS re-tasked in place, add %s to %s.",
 			agentID, filepath.Join(config.StateHome(), "sweep-keep"))
 }

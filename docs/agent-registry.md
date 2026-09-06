@@ -29,5 +29,5 @@ the same concept (which agents are enrolled) but are not the same file.
 
 Agents populate this registry via `parlay listen`/`monitor` (see
 [`docs/monitor.md`](monitor.md)) calling `register-agent`, and the [launcher](launcher.md)
-(`bin/parlay-spawn`) posts a hello on launch so a freshly spawned agent's tab
+(`parlay spawn`) posts a hello on launch so a freshly spawned agent's tab
 goes live immediately rather than waiting for its own first enrollment call.

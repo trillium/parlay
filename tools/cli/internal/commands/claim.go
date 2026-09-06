@@ -1,5 +1,5 @@
 // `parlay claim <task-id>` — one-call agent bootstrap (idea-tm0). Collapses
-// what used to be three separate steps baked into bin/parlay-spawn's
+// what used to be three separate steps baked into the spawner's
 // STARTUP_PROMPT into a single command a freshly-launched agent runs:
 //
 //  1. AGENT PROFILE — resolves id/name/color/model (flags > env > the ticket's
@@ -31,7 +31,7 @@
 // Task-id resolution shells out to the store's own wrapper (task/robots/idea/…,
 // each pins its BEADS_DIR), derived from the id's leading token, falling back to
 // a bare `bd` on PATH. Both are the same shell-out convention already used by
-// guard/launch/variant for git/herdr/parlay-spawn.
+// guard/launch/variant for git/herdr/spawn.
 package commands
 
 import (
@@ -94,7 +94,7 @@ func Claim(argv []string) {
 	}
 
 	// Profile resolution (precedence, highest first): explicit flag > env
-	// (parlay-spawn seeds these into the tab) > ticket metadata > derived.
+	// (`parlay spawn` seeds these into the tab) > ticket metadata > derived.
 	// Flags and env are read BEFORE the ticket resolves so the no-work exit
 	// below still knows who it is talking to when there is no ticket at all.
 	flagAgent, _ := res.String("--agent")
@@ -106,7 +106,7 @@ func Claim(argv []string) {
 	if err != nil {
 		// NO TICKET. The pane exists, the agent is awake, and there is nothing
 		// for it to do — the robots-4ek1 shape. Dying with a bare resolver error
-		// left the agent with no instruction (parlay-spawn's --claim prompt says
+		// left the agent with no instruction (`parlay spawn`'s --claim prompt says
 		// "follow its printed output exactly", and a one-line stderr complaint is
 		// not an instruction), so it lingered: registered, idle, holding a pane,
 		// waiting for a directive that never comes. Hand back the exit procedure
@@ -229,7 +229,7 @@ func claimEnroll(agent, name, color string, task claimTask) {
 // non-zero (robots-4ek1).
 //
 // The failure this exists to prevent is NOT the CLI's exit status, which was
-// already correct: it is the AGENT lingering afterwards. `parlay-spawn --claim`
+// already correct: it is the AGENT lingering afterwards. `parlay spawn --claim`
 // tells a fresh agent to "follow its printed output exactly", so whatever claim
 // prints IS the agent's whole instruction set — and a bare
 // `resolving "robots-aaa" … failed` is a complaint, not an instruction. The

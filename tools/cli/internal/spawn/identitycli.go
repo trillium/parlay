@@ -14,7 +14,7 @@ import (
 // --mint-ephemeral` (line 164), but the named-spawn registration path calls
 // bare `identity --register` (line 594) — a wrapper that only exists inside
 // an already-enrolled agent's own shell session (per the STARTUP_PROMPT
-// contract), not in the plain shell parlay-spawn itself typically runs from.
+// contract), not in the plain shell the spawner itself typically runs from.
 // Using `parlay identity` everywhere is the portable choice and matches
 // docs/scope-go-spawn.md §5's framing: this binary depends on `parlay`
 // (bun) being on PATH regardless. Identity itself stays out of scope.
@@ -124,6 +124,6 @@ func registerIdentity(opts registerIdentityOptions) {
 func registerEphemeralBead(agentID, beadID string) {
 	cmd := exec.Command("parlay", "identity", "--register", "--agent", agentID, "--ephemeral", "--bead", beadID)
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: WARNING — could not bind bead %s to ephemeral agent %s: %v\n", beadID, agentID, err)
+		fmt.Fprintf(os.Stderr, "parlay spawn: WARNING — could not bind bead %s to ephemeral agent %s: %v\n", beadID, agentID, err)
 	}
 }

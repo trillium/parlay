@@ -71,7 +71,7 @@ func beadGate(beadID string, beadsRequired, force bool) error {
 				return &beadGateError{msg: strings.TrimRight(tmpl, "\n"), exitCode: 2}
 			}
 			return &beadGateError{
-				msg: "parlay-spawn: beads-required mode is ON — every spawn must name an OPEN beads work item.\n" +
+				msg: "parlay spawn: beads-required mode is ON — every spawn must name an OPEN beads work item.\n" +
 					"  Pass --bead <id>. The bead's lifecycle governs the agent.",
 				exitCode: 2,
 			}
@@ -80,27 +80,27 @@ func beadGate(beadID string, beadsRequired, force bool) error {
 	}
 
 	if os.Getenv("PARLAY_SPAWN_SKIP_BEAD_CHECK") != "" {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: PARLAY_SPAWN_SKIP_BEAD_CHECK set — NOT verifying that %s is open.\n", beadID)
+		fmt.Fprintf(os.Stderr, "parlay spawn: PARLAY_SPAWN_SKIP_BEAD_CHECK set — NOT verifying that %s is open.\n", beadID)
 		return nil
 	}
 
 	status, resolvable := resolveBeadStatus(beadID)
 	if !resolvable {
-		fmt.Fprintf(os.Stderr, "parlay-spawn: WARNING — no store CLI on PATH for %s; cannot verify the bead is open. Proceeding with the binding recorded.\n", beadID)
+		fmt.Fprintf(os.Stderr, "parlay spawn: WARNING — no store CLI on PATH for %s; cannot verify the bead is open. Proceeding with the binding recorded.\n", beadID)
 		return nil
 	}
 
 	switch strings.ToLower(status) {
 	case "closed", "done", "completed", "resolved":
 		return &beadGateError{
-			msg: fmt.Sprintf("parlay-spawn: bead %s is %s — refusing to spawn.\n"+
+			msg: fmt.Sprintf("parlay spawn: bead %s is %s — refusing to spawn.\n"+
 				"  A closed bead means the work is over: the agent would be registered, launch,\n"+
 				"  and be refused its first relaunch. Re-open the bead, or spawn against an open one.", beadID, status),
 			exitCode: 1,
 		}
 	case "":
 		return &beadGateError{
-			msg: fmt.Sprintf("parlay-spawn: could not read a status for %s.\n"+
+			msg: fmt.Sprintf("parlay spawn: could not read a status for %s.\n"+
 				"  Refusing to spawn: a bead this script cannot resolve cannot govern the agent's\n"+
 				"  lifecycle, and a typo'd id would bind the agent to nothing. Check the id, or set\n"+
 				"  PARLAY_SPAWN_SKIP_BEAD_CHECK=1 to spawn without verifying.", beadID),
@@ -108,7 +108,7 @@ func beadGate(beadID string, beadsRequired, force bool) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "parlay-spawn: bead %s is %s — binding it to this agent.\n", beadID, status)
+	fmt.Fprintf(os.Stderr, "parlay spawn: bead %s is %s — binding it to this agent.\n", beadID, status)
 	return nil
 }
 

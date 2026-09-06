@@ -5,7 +5,7 @@ Cucumber.js scenarios under `features/spawn/account-resolution.feature`
 (steps in `packages/ccjuggler/src/features/*.steps.ts`), plus Godog scenarios
 under `features/spawn/agent-spawn.feature` and
 `features/eval-engine/profile-matching.feature` (steps in
-`tools/parlay-bin/features_test.go` and
+`tools/cli/internal/spawn/features_test.go` and
 `tools/cli/internal/evalengine/features_test.go`, run as `go test -run
 TestFeatures`). `packages/ccjuggler`'s `bun run test:bdd` must invoke
 `bun node_modules/.bin/cucumber-js` directly, not `bunx cucumber-js` — bunx
@@ -22,7 +22,7 @@ launchd deploy plist template. Point any future eval-engine work at
 `tools/cli/internal/evalengine/`, and remember it inherits the
 `CGO_ENABLED=0` requirement noted above for the rest of `tools/cli`.
 
-Similarly, `tools/parlay-bin/gascity_spawn.go` was renamed to
+Similarly, `internal/spawn`'s `gascity_spawn.go` was renamed to
 `subprocess_spawn.go` in 2026-08 (its own header comment has the full
 rationale); the functions are `subprocessSpawn`/`subprocessStop`/
 `subprocessAlive`, not `gascitySpawn`/`gascityStop`/`gascityAlive`. Only the

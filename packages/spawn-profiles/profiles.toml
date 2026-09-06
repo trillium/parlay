@@ -1,4 +1,4 @@
-# Spawn profiles — the catalog parlay-spawn resolves --profile from.
+# Spawn profiles — the catalog `parlay spawn` resolves --profile from.
 #
 # One [[profile]] block per named profile. Add a profile by appending a block;
 # then run `make validate` (or `go run ./cmd/validate`) and fix any errors it

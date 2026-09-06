@@ -40,12 +40,12 @@ func resolveWorkspace(want string) (string, error) {
 	_ = json.Unmarshal(listOut, &listResp)
 	for _, w := range listResp.Result.Workspaces {
 		if w.Label == want {
-			fmt.Fprintf(os.Stderr, "parlay-spawn: workspace '%s' resolved to %s\n", want, w.WorkspaceID)
+			fmt.Fprintf(os.Stderr, "parlay spawn: workspace '%s' resolved to %s\n", want, w.WorkspaceID)
 			return w.WorkspaceID, nil
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "parlay-spawn: workspace '%s' not found, creating...\n", want)
+	fmt.Fprintf(os.Stderr, "parlay spawn: workspace '%s' not found, creating...\n", want)
 	createOut, err := runHerdr("workspace", "create", "--label", want, "--no-focus")
 	if err != nil {
 		return "", fmt.Errorf("herdr workspace create '%s' failed: %w", want, err)
@@ -60,7 +60,7 @@ func resolveWorkspace(want string) (string, error) {
 	if err := json.Unmarshal(createOut, &createResp); err != nil || createResp.Result.Workspace.WorkspaceID == "" {
 		return "", fmt.Errorf("could not parse workspace_id from create response")
 	}
-	fmt.Fprintf(os.Stderr, "parlay-spawn: created workspace '%s' -> %s\n", want, createResp.Result.Workspace.WorkspaceID)
+	fmt.Fprintf(os.Stderr, "parlay spawn: created workspace '%s' -> %s\n", want, createResp.Result.Workspace.WorkspaceID)
 	return createResp.Result.Workspace.WorkspaceID, nil
 }
 

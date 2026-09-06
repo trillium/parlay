@@ -35,7 +35,7 @@ func subscribersServer(t *testing.T, channels ...string) *httptest.Server {
 		pollChannels = append(pollChannels, map[string]any{"channel": c})
 		presence = append(presence, map[string]any{"channel": c, "listening": true, "status": "listening"})
 	}
-	// The pre-registered-but-never-active decoy: what bin/parlay-spawn's
+	// The pre-registered-but-never-active decoy: what the spawn pipeline's
 	// register-agent POST alone produces (Bun server shape).
 	presence = append(presence, map[string]any{
 		"channel": "registered-only-decoy", "listening": false, "status": "offline", "lastSeen": nil,
@@ -131,7 +131,7 @@ func TestGCLivenessTimeoutOnTmuxDeliversFixedKick(t *testing.T) {
 }
 
 // TestGCLivenessRegistrationAloneDoesNotConfirm pins the false-positive
-// boundary: bin/parlay-spawn's pre-launch register-agent POST makes the
+// boundary: the spawn pipeline's pre-launch register-agent POST makes the
 // channel appear under `registered` and as an offline presence row before
 // the agent has done anything. That must never read as liveness.
 func TestGCLivenessRegistrationAloneDoesNotConfirm(t *testing.T) {

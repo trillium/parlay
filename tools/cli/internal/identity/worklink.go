@@ -30,7 +30,7 @@ import (
 const WorkItemKey = "task"
 
 // BeadKey is the identity-frontmatter key under which SPAWN-time binding records
-// the agent's work item (`parlay-spawn --bead <id>` → `identity --register …
+// the agent's work item (`parlay spawn --bead <id>` → `identity --register …
 // --bead <id>`, the beads-required mode). It is deliberately a second key rather
 // than a rename of WorkItemKey: `parlay claim` writes `task:` at CLAIM time and
 // nothing about that path changes here, so an agent can carry a spawn-time bead,

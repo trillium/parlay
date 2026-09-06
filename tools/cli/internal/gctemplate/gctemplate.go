@@ -1,7 +1,7 @@
 // Package gctemplate synthesises Gas City agent templates from parlay launch
 // specs (spawn-lift unit 4, epic task-4cfpv.9).
 //
-// A parlay launch spec is the surface bin/parlay-spawn takes today: agent id,
+// A parlay launch spec is the surface `parlay spawn` takes today: agent id,
 // display name, color, initial prompt, cwd, model, ccjuggler account. The
 // synthesiser turns one into a Pack Spec 2.0 agent directory —
 // agents/<id>/agent.toml + prompt.template.md — for the parlay pack inside

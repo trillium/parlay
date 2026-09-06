@@ -22,7 +22,7 @@
 // Sync — so both could publish an empty file through a rename:
 //
 //   - tools/cli/internal/config/config.go (writePersistedConfig)
-//   - tools/parlay-bin/claudejson.go (the ~/.claude.json pre-trust write)
+//   - tools/cli/internal/spawn/claudejson.go (the ~/.claude.json pre-trust write)
 //
 // They are fixed in place rather than replaced by a call to this package,
 // because each lives in its own Go module. Sharing this code would mean a new

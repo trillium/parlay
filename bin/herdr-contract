@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # herdr-contract — single source of truth for the herdr CLI contract that
-# parlay-spawn depends on, plus a preflight gate that asserts it.
+# `parlay spawn` depends on, plus a preflight gate that asserts it.
 #
 # WHY THIS EXISTS (robots-4v2e):
-#   parlay-spawn shells out to `herdr` with zero version pin and no contract
+#   The spawner shells out to `herdr` with zero version pin and no contract
 #   check, so every herdr upgrade is a live-fire test in production dispatch.
 #   In a single day herdr drift silently broke mechanic-dispatch three times:
 #     • robots-1uez: `agent start --cwd` flag removed (0.7.5 API split)
@@ -13,7 +13,7 @@
 #   rolled back a half-created tab — the ticket never got a mechanic.
 #
 #   This file turns that class of failure from a silent, per-ticket production
-#   break into a single loud, precise, up-front assertion: parlay-spawn calls
+#   break into a single loud, precise, up-front assertion: `parlay spawn` calls
 #   herdr_contract_check() at startup BEFORE registering anything, so a drifted
 #   herdr fails fast with a message naming the exact flag/subcommand that moved,
 #   instead of orphaning a tab mid-launch.
@@ -32,14 +32,14 @@
 #   2. If the version-range WARNING fires but everything else is green, the
 #      contract still holds — bump PARLAY_HERDR_MAX below to the new version.
 #   3. If a flag/subcommand assertion FAILS, herdr genuinely moved the contract:
-#      fix bin/parlay-spawn's call sites, update the assertions here to match,
-#      then bump the pin. This file and parlay-spawn move together, on purpose.
+#      fix tools/cli/internal/spawn's herdr call sites, update the assertions here to match,
+#      then bump the pin. This file and the spawner move together, on purpose.
 #
 # ENV OVERRIDES:
 #   PARLAY_HERDR_MIN / PARLAY_HERDR_MAX      override the pinned range (see below)
 #   PARLAY_HERDR_CONTRACT_TIMEOUT            seconds for each herdr --help probe (default 5)
 #   PARLAY_SPAWN_SKIP_CONTRACT=1             escape hatch: skip the gate entirely
-#                                            (parlay-spawn honors this; use only to
+#                                            (`parlay spawn` honors this; use only to
 #                                             unblock in an emergency, then fix)
 #
 # HOW THE GATE HANDLES A NON-RESPONSIVE HERDR (robots-co45):
@@ -57,18 +57,18 @@
 #     • non-zero + server-error text   → SKIP — server unreachable, not API drift
 #     • non-zero + no server-error     → DRIFT — command genuinely gone
 #   A run with only SKIPs warns and returns 2 (distinct from 0=ok and 1=drift) so
-#   parlay-spawn can emit a "dispatch unverified" notice without blocking.
+#   `parlay spawn` can emit a "dispatch unverified" notice without blocking.
 
 # --- The pin -----------------------------------------------------------------
-# Tested-good range: parlay-spawn is written against herdr's 0.7.5 agent-start
+# Tested-good range: the spawner is written against herdr's 0.7.5 agent-start
 # API split and verified through 0.8.x. MAX is exclusive — the next minor is the
 # most likely place a fresh contract break lands, so we want a tripwire there.
 PARLAY_HERDR_MIN="${PARLAY_HERDR_MIN:-0.7.5}"
 PARLAY_HERDR_MAX="${PARLAY_HERDR_MAX:-0.9.0}"
 
 # --- The contract ------------------------------------------------------------
-# Every (subcommand, required-flag) pair parlay-spawn actually invokes. Keep this
-# in lockstep with bin/parlay-spawn's herdr call sites — that is the whole point
+# Every (subcommand, required-flag) pair the spawner actually invokes. Keep this
+# in lockstep with tools/cli/internal/spawn's herdr call sites — that is the whole point
 # of the file. Format: "subcommand words|flag" (flag empty => just assert the
 # subcommand exists / accepts --help).
 _HERDR_CONTRACT=(
@@ -120,7 +120,7 @@ herdr_contract_check() {
   local strict_report="${1:-}"   # "report" => also print an OK line on success
 
   if ! command -v herdr >/dev/null 2>&1; then
-    echo "herdr-contract: FATAL — herdr is not on \$PATH. parlay-spawn cannot dispatch without it." >&2
+    echo "herdr-contract: FATAL — herdr is not on \$PATH. 'parlay spawn' cannot dispatch without it." >&2
     return 1
   fi
 
@@ -172,20 +172,20 @@ herdr_contract_check() {
         continue
       fi
       # No server-error text → command probably gone (genuine API drift).
-      echo "herdr-contract: DRIFT — 'herdr $sub' no longer exists (parlay-spawn depends on it)." >&2
+      echo "herdr-contract: DRIFT — 'herdr $sub' no longer exists ('parlay spawn' depends on it)." >&2
       missing=$((missing + 1))
       continue
     fi
 
     if [ -n "$flag" ] && ! printf '%s' "$help" | grep -qE -- "(^|[^a-z-])$flag([^a-z-]|$)"; then
-      echo "herdr-contract: DRIFT — 'herdr $sub' no longer accepts '$flag' (parlay-spawn passes it)." >&2
+      echo "herdr-contract: DRIFT — 'herdr $sub' no longer accepts '$flag' ('parlay spawn' passes it)." >&2
       missing=$((missing + 1))
     fi
   done
 
   if [ "$missing" -gt 0 ]; then
     echo "herdr-contract: FAIL — $missing herdr contract point(s) drifted. Dispatch WILL break." >&2
-    echo "  Fix bin/parlay-spawn's herdr call sites + the assertions in bin/herdr-contract, then re-run pipeline-selftest." >&2
+    echo "  Fix tools/cli/internal/spawn's herdr call sites + the assertions in bin/herdr-contract, then re-run pipeline-selftest." >&2
     return 1
   fi
 

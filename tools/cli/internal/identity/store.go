@@ -39,21 +39,21 @@ var (
 		// --worktree/--project were dropped from this table during the port
 		// (they ARE in store.ts's MEM_VALUE_FLAGS). args.Parse dies with
 		// EXIT_USAGE on an unknown flag, so every `parlay identity --register
-		// … --worktree <path> --project <path>` call parlay-spawn makes for a
+		// … --worktree <path> --project <path>` call `parlay spawn` makes for a
 		// worktree agent exited 2 and wrote NO frontmatter at all — and
-		// parlay-spawn's registerIdentity swallows the exit code (`_ =
+		// the spawn pipeline's registerIdentity swallows the exit code (`_ =
 		// cmd.Run()`), so the agent launched looking fine with an empty
 		// launch spec. Downstream that made `parlay teardown` read no
 		// worktree, delete the store, and orphan the worktree (and any
 		// unpushed commits in it) unchecked. Restored: robots-6xq7.
 		"--worktree", "--project",
 		// --bead binds a beads work item at SPAWN time (the beads-required
-		// mode: `bin/parlay-spawn --bead <id>` → `identity --register …
+		// mode: `parlay spawn --bead <id>` → `identity --register …
 		// --bead <id>`), and that bead's open/closed lifecycle then governs
 		// the agent's. It MUST be in this table, not MemBoolFlags: same
 		// robots-6xq7 trap as --worktree/--project above — a value flag
 		// missing from here makes args.Parse die EXIT_USAGE, and
-		// parlay-spawn's registration warns but does not abort, so the agent
+		// the spawn pipeline's registration warns but does not abort, so the agent
 		// would launch with no bead recorded and no relaunch suppression.
 		"--bead",
 		// --gc-session/--gc-city stamp the Gas City session pointer at spawn
@@ -145,7 +145,7 @@ func MemFile(kind MemKind, agentOverride string) (agent, file string) {
 	}
 	if agent == "" {
 		httpc.Die(
-			"parlay "+string(kind)+": no agent identity — run inside a parlay-spawn'd agent (sets PARLAY_AGENT_ID) or pass --agent <id>",
+			"parlay "+string(kind)+": no agent identity — run inside a parlay-spawned agent (sets PARLAY_AGENT_ID) or pass --agent <id>",
 			config.ExitUsage,
 		)
 		return "", ""

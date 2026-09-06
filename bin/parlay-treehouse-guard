@@ -6,7 +6,7 @@
 # dirty / has-live-processes / already-leased, and all three missed a slot that
 # a LIVE agent was working in:
 #
-#   parlay-spawn ... --cwd ~/code/firstmate --worktree
+#   parlay spawn ... --cwd ~/code/firstmate --worktree
 #     -> "worktree via treehouse at ~/.treehouse/firstmate-ed399d/12/firstmate"
 #
 # but ed399d/12 was already held by an agent from a DIFFERENT firstmate home
@@ -21,7 +21,7 @@
 # treehouse is a third-party binary with no "skip these slots" flag, but it
 # does honor one thing we can write: a lease. Per `treehouse get --help`, "a
 # leased worktree is never handed out by a later get and never removed by
-# prune". So this guard sweeps the pool BEFORE parlay-spawn calls
+# prune". So this guard sweeps the pool BEFORE `parlay spawn` calls
 # `treehouse get` and takes a protective lease (holder `parlay-guard:<reason>`)
 # on every slot that is still occupied. It is self-healing: a guard lease whose
 # reason no longer holds is released on the next sweep, so slots return to the
