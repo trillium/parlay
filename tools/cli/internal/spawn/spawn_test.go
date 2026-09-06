@@ -140,6 +140,27 @@ func captureStderr(t *testing.T, f func() int) (string, int) {
 	return <-done, rc
 }
 
+// captureStdout mirrors captureStderr for os.Stdout (listProfiles renders
+// the catalog table there, not on stderr).
+func captureStdout(t *testing.T, f func() int) (string, int) {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		buf, _ := io.ReadAll(r)
+		done <- string(buf)
+	}()
+	rc := f()
+	w.Close()
+	os.Stdout = orig
+	return <-done, rc
+}
+
 // deadRegisterServer always fails register-agent, so spawnOne fails before
 // any herdr side effect — the hermetic failure trigger this suite uses in
 // place of the bash suite's dead-port trick.
@@ -327,6 +348,108 @@ func TestRequireModel(t *testing.T) {
 	}
 	if err := requireModel(""); err == nil {
 		t.Error("requireModel(\"\") = nil, want a refusal error")
+	}
+}
+
+// The pi + muse-spark-1.3-contributor launch path must pass the same
+// mandatory-model gate every other harness/model pair passes: a profile
+// bearing kind=pi with a muse-spark model, and an explicit --kind pi +
+// --model pair, both resolve without refusal.
+func TestResolveModelAndKindPiMuseSpark(t *testing.T) {
+	writeProfilesToml(t, `
+[[profile]]
+name = "pi-muse-spark"
+kind = "pi"
+model = "opencode-go/muse-spark-1.3-contributor"
+
+[[profile]]
+name = "pi-muse-spark-free"
+kind = "pi"
+model = "opencode/muse-spark-1.3-contributor-free"
+`)
+
+	t.Run("paid-pool profile", func(t *testing.T) {
+		opts := &SpawnOptions{Profile: "pi-muse-spark"}
+		if err := resolveModelAndKind(opts); err != nil {
+			t.Fatalf("resolveModelAndKind(pi-muse-spark) = %v, want nil", err)
+		}
+		if opts.Kind != "pi" || opts.Model != "opencode-go/muse-spark-1.3-contributor" {
+			t.Errorf("got kind=%q model=%q", opts.Kind, opts.Model)
+		}
+	})
+
+	t.Run("free profile", func(t *testing.T) {
+		opts := &SpawnOptions{Profile: "pi-muse-spark-free"}
+		if err := resolveModelAndKind(opts); err != nil {
+			t.Fatalf("resolveModelAndKind(pi-muse-spark-free) = %v, want nil", err)
+		}
+		if opts.Kind != "pi" || opts.Model != "opencode/muse-spark-1.3-contributor-free" {
+			t.Errorf("got kind=%q model=%q", opts.Kind, opts.Model)
+		}
+	})
+
+	t.Run("explicit kind and model flags", func(t *testing.T) {
+		opts := &SpawnOptions{Kind: "pi", KindFromFlag: true, Model: "opencode-go/muse-spark-1.3-contributor"}
+		if err := resolveModelAndKind(opts); err != nil {
+			t.Fatalf("resolveModelAndKind(--kind pi --model ...) = %v, want nil", err)
+		}
+		if opts.Kind != "pi" || opts.Model != "opencode-go/muse-spark-1.3-contributor" {
+			t.Errorf("got kind=%q model=%q", opts.Kind, opts.Model)
+		}
+	})
+
+	t.Run("explicit flags win over profile", func(t *testing.T) {
+		opts := &SpawnOptions{Profile: "pi-muse-spark", Kind: "pi", KindFromFlag: true, Model: "opencode/muse-spark-1.3-contributor-free"}
+		if err := resolveModelAndKind(opts); err != nil {
+			t.Fatalf("resolveModelAndKind() = %v, want nil", err)
+		}
+		if opts.Kind != "pi" || opts.Model != "opencode/muse-spark-1.3-contributor-free" {
+			t.Errorf("got kind=%q model=%q", opts.Kind, opts.Model)
+		}
+	})
+}
+
+// `parlay spawn --list` renders the profiles.toml catalog to stdout and
+// spawns nothing — a bare --list must not fall through to runNamedSpawn's
+// usage error (fewer than 3 positionals) even though spawnUsage advertises
+// it as a top-level form.
+func TestRunSpawnListShowsCatalog(t *testing.T) {
+	writeProfilesToml(t, `
+[[profile]]
+name = "pi-muse-spark"
+kind = "pi"
+model = "opencode-go/muse-spark-1.3-contributor"
+
+[[profile]]
+name = "pi-muse-spark-free"
+kind = "pi"
+model = "opencode/muse-spark-1.3-contributor-free"
+`)
+	emptyPATH(t) // no quota-axi on PATH -> static catalog only
+
+	out, rc := captureStdout(t, func() int {
+		return runSpawnCommand([]string{"--list"})
+	})
+	if rc != 0 {
+		t.Fatalf("runSpawnCommand(--list) = %d, want 0", rc)
+	}
+	for _, want := range []string{"pi-muse-spark", "pi-muse-spark-free",
+		"opencode-go/muse-spark-1.3-contributor", "opencode/muse-spark-1.3-contributor-free"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--list output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunSpawnListMissingCatalog(t *testing.T) {
+	t.Setenv("PARLAY_SPAWN_PROFILES_TOML", filepath.Join(t.TempDir(), "nope.toml"))
+	emptyPATH(t)
+
+	_, rc := captureStdout(t, func() int {
+		return runSpawnCommand([]string{"--list"})
+	})
+	if rc != 2 {
+		t.Errorf("runSpawnCommand(--list) with missing catalog = %d, want 2", rc)
 	}
 }
 

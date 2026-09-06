@@ -27,6 +27,11 @@ model = "opencode/nemotron-3.5-lightning-free"
 [[profile]]
 name = "no-model"
 kind = "claude"
+
+[[profile]]
+name = "pi-spark"
+kind = "pi"
+model = "opencode-go/muse-spark-1.3-contributor"
 `
 
 func TestProfilesTomlPathEnvOverride(t *testing.T) {
@@ -101,6 +106,16 @@ func TestResolveProfile(t *testing.T) {
 		}
 	})
 
+	t.Run("found pi harness profile", func(t *testing.T) {
+		kind, model, err := resolveProfile("pi-spark")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if kind != "pi" || model != "opencode-go/muse-spark-1.3-contributor" {
+			t.Errorf("got (%q, %q)", kind, model)
+		}
+	})
+
 	t.Run("unknown profile name", func(t *testing.T) {
 		_, _, err := resolveProfile("does-not-exist")
 		if err == nil {
@@ -154,6 +169,17 @@ func TestHeadroomLine(t *testing.T) {
 				},
 			}}},
 			"opencode",
+			"monthly-window 50% remaining, resets 00:00",
+		},
+		{
+			"pi kind draws from the opencode-go pool",
+			&quotaReport{Providers: []quotaProvider{{
+				Provider: "opencode-go",
+				Windows: []quotaWindow{
+					{Kind: "monthly", ID: "monthly-window", PercentRemaining: intPtr(50), ResetsAt: "2026-10-01T00:00:00Z"},
+				},
+			}}},
+			"pi",
 			"monthly-window 50% remaining, resets 00:00",
 		},
 		{
