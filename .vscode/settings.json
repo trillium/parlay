@@ -1,6 +1,5 @@
 {
   "cucumberautocomplete.steps": [
-    "packages/ccjuggler/src/features/*.steps.ts",
     "tools/cli/internal/spawn/features_test.go",
     "tools/cli/internal/evalengine/features_test.go"
   ],
