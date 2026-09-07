@@ -17,9 +17,9 @@ stream.
 npm install parlay-input
 ```
 
-You need a running parlay server (see the parlay repo — `packages/server`, or
-the Go rewrite in `packages/go-server`; default port `4242`). Point the wrapper
-at it and hand it your input element:
+You need a running parlay server (see the parlay repo — `packages/go-server`;
+default address `http://127.0.0.1:4242`). Point the wrapper at it and hand it
+your input element:
 
 ```ts
 import { parlayInput } from "parlay-input"
@@ -91,8 +91,8 @@ Reference implementation (the source of truth this wrapper follows):
 - `packages/client/src/input.ts` — wires the DOM input element up end to end
 - `packages/client/src/sse.ts` — the shared `EventSource` connection + plugin registry
 - `packages/client/src/commands/dispatcher/` — the `ActionEnvelope` staleness/seq/resync logic (`up.ts`, `apply.ts`, `types.ts`)
-- `packages/server/src/eval-relay.ts` — the server-side relay to the Go eval engine
-- `packages/server/src/router.ts` — top-level `/api/chat/*` route dispatch
+- `packages/go-server/internal/handlers/eval.go` — the server-side relay to the Go eval engine
+- `packages/go-server/internal/handlers/` — top-level `/api/chat/*` route dispatch
 
 ### Endpoints
 
