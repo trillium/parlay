@@ -21,7 +21,7 @@ you are expected to reproduce the setup.
 | Doc | What it is |
 |---|---|
 | [`input.md`](input.md) | The `parlay-input` DOM wrapper — the up-channel from a composer element into the phrase engine. |
-| [`command-server.md`](command-server.md) | The Bun/`packages/server` and Go/`packages/go-server` chat API implementations — what each owns, and the current gap between them. |
+| [`command-server.md`](command-server.md) | The Go chat API server (`packages/go-server`) — what it owns, how it runs, and the wire contract |
 | [`events-history.md`](events-history.md) | The append-only chat-history JSONL files and the hook/tool tailers that feed them. |
 | [`agent-registry.md`](agent-registry.md) | Who is enrolled as a chat tab, and the transient presence counters — distinct from the live-command registry below. |
 | [`monitor.md`](monitor.md) | `parlay monitor`/`listen` — how an agent receives messages, relay-backed or legacy-poll. |
@@ -30,7 +30,7 @@ you are expected to reproduce the setup.
 
 | Doc | What it is |
 |---|---|
-| [`api-contract.md`](api-contract.md) | The HTTP/SSE contract for every `/api/chat/*` route, shared by the client, the CLI, and both server implementations. The most useful doc here if you are building against parlay. |
+| [`api-contract.md`](api-contract.md) | The HTTP/SSE contract for every `/api/chat/*` route, shared by the client, the CLI, and the Go server. The most useful doc here if you are building against parlay. |
 | [`COMMAND_DESIGN_CONTRACT.md`](COMMAND_DESIGN_CONTRACT.md) | How a voice/text command must be shaped so the Go eval engine can load it without being recompiled. |
 | [`CHANNEL_PICKER_CONTRACT.md`](CHANNEL_PICKER_CONTRACT.md) | The frozen event/action wire contract between the Go eval engine and the TS panel for the voice-driven channel picker. |
 | [`context-reset-single-tab.md`](context-reset-single-tab.md) | Why `bin/context-reset` is shaped the way it is — the single-tab guarantee when an agent restarts itself. |

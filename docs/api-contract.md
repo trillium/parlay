@@ -10,10 +10,13 @@
 > 2026-08-30 every route and shape below was re-derived from the **handler
 > source** of both servers — `packages/server/src/*` (TS) and
 > `packages/go-server/internal/*` (Go) — so the shapes here are read from the
-> code that produces them, not inferred from consumers. The contract describes
-> what the servers actually DO, warts included; known TS↔Go mismatches are
-> collected in [Divergences to fix](#divergences-to-fix) rather than papered
-> over.
+> code that produces them, not inferred from consumers. The TS server was
+> **deleted with the Bun→Go cutover** (the code half merged after Go reached
+> feature parity on the production surface), so the contract now describes
+> what the Go server does, and the "TS:" annotations below are historical
+> notes on the retired implementation where a modern caller still needs the
+> contrast. Known leftovers of that time are collected in
+> [Divergences to fix](#divergences-to-fix) rather than papered over.
 >
 > Base path for all REST/SSE routes: `/api/chat` (exceptions: `/health`,
 > `/api/debug/*`, `/parlay-ui.js`, static assets). `CHAT_BASE` in
@@ -23,23 +26,20 @@
 > `~/.parlay/config.json` `"server"` key → `http://localhost:4242`. All
 > request/response bodies are JSON unless noted.
 
-Two implementations serve this surface:
+One implementation serves this surface:
 
-- **TS server** — `packages/server`, a standalone Bun `serve()` app. The
-  production instance.
-- **Go server** — `packages/go-server` (`cmd/parlay-server`), the rewrite
-  built against this contract.
+- **Go server** — `packages/go-server` (`cmd/parlay-server`), the sole
+  production server, built against this contract.
 
-Routes marked **(TS only)** or **(Go only)** exist on one implementation.
-Everything else exists on both.
+Routes marked **(TS only)** referred to routes on the deleted Bun server and
+are kept so a caller can tell a retained-forever quirk from a regression.
 
 ## Conventions
 
 - **No authentication anywhere.** The surface trusts the network boundary
   (local/tailnet only — do not expose the port publicly). The enforced part of
-  the trust model is the cross-origin half: see [Origin guard](#origin-guard-both-servers).
-- **Two error conventions coexist** (verified in handler source, both servers
-  deliberately match):
+  the trust model is the cross-origin half: see [Origin guard](#origin-guard).
+- **Two error conventions coexist** (verified in handler source):
   - *App-error-on-200*: most write endpoints (`send`, `reply`, `alert`,
     `system`, `register-agent`, `declare-channel`, `draft` PUT, `eval`'s
     validation, tts family) return HTTP **200 with `{"error": "…"}`** on
@@ -51,23 +51,18 @@ Everything else exists on both.
     (400/502) return a **non-2xx with `{"error": "…"}`**.
 - **Malformed JSON body**: the Go server returns **400
   `{"error": "invalid JSON body"}`** on every JSON route uniformly
-  (`decodeJSON`). The TS server mostly returns 200 `{"error": "bad request"}`
-  (each handler's own catch).
+  (`decodeJSON`).
 - **Wrong method**: the Go server answers **405** with an `Allow` header and a
-  plain-text body `"<METHODS> only"` (`methodNotAllowed`) on every route. The
-  TS server generally falls through to its **404** handler; its only explicit
-  405 is `GET`-only `/api/chat/pages` (JSON `{"error": "GET only"}`).
-- **CORS**: unguarded read routes carry `Access-Control-Allow-Origin: *` on
-  the TS server; the Go server sends no ACAO on unguarded routes. Guarded
-  routes reflect the single allowed origin (see Origin guard).
+  plain-text body `"<METHODS> only"` (`methodNotAllowed`) on every route.
+- **CORS**: the Go server sends no `Access-Control-Allow-Origin` on unguarded
+  routes. Guarded routes reflect the single allowed origin (see Origin guard).
 
-### Origin guard (both servers)
+### Origin guard
 
 Unauthenticated does **not** mean unrestricted: the mutating and
 identifier-aiming surface — the routes that write state, drive a device, or
 hand out an identifier (device uuid, agent id) a hostile page could then aim
 at a mutating route — sits behind an origin guard —
-`packages/server/src/guard/` (route set in `guard/paths.ts`) and
 `packages/go-server/internal/guard`. **Within that surface a route is guarded
 by what its handler does, not by its HTTP method:** `GET
 /api/chat/subscribers` and `GET /api/chat/poll` are both guarded, the first
@@ -98,14 +93,13 @@ no longer registers the channel (task-1t0m). On those routes:
 - Allowed responses carry the **exact** origin in
   `Access-Control-Allow-Origin` plus `Vary: Origin` — never `*`.
 
-Both sides also guard whole subtrees (`GUARDED_PREFIXES` /
-`guardedPrefixes`): `/api/chat/agents/`, `/api/chat/plugin/`, `/api/debug/` —
-anything added under those is guarded before its handler exists.
+The guard also covers whole subtrees (`guardedPrefixes`): `/api/chat/agents/`,
+`/api/chat/plugin/`, `/api/debug/` — anything added under those is guarded
+before its handler exists.
 
 The read routes (`history`, `agents`, `version`,
 `GET /api/chat/uploads/<name>`) are outside the guard and behave as documented
-below. `/api/chat/events` is **guarded on the Go server and not on the TS
-one** — the two servers deliberately differ here. `packages/go-server` serves
+below. `/api/chat/events` is **guarded**: `packages/go-server` serves
 an external-producer ingress on `POST /api/chat/events` (see [SSE
 Events](#sse-events) below), so the path is in `internal/guard.GuardedPaths`,
 and because that classifier is method-independent the `GET` SSE stream is
@@ -119,29 +113,16 @@ access. `noGuardedCORSReads` in `internal/guard/guard.go` suppresses it: `GET
 disallowed origin gets 403 and an allowed one gets a stream it still cannot
 read cross-origin.
 
-That surface is not purely read-only, and the boundary above is narrower than
-"everything that writes or discloses". Two TS routes are **known, accepted,
-deliberately unguarded residue** — accepted meaning somebody looked and
-decided, not that nothing is exposed:
-
-- `GET /api/chat/events` **on the TS server only** writes `sseClients` from an
-  attacker-supplied `?device=` (`router-events.ts`), and the `tts_event` frames
-  it streams carry that device uuid to every connected client
-  (`router-tts-events.ts` broadcasts `{ …, device, ...body }` with no
-  filtering), so a cross-origin `EventSource` can read it.
-- `GET /api/chat/agents` (`router-messages.ts`) returns every registered agent
-  id under `Access-Control-Allow-Origin: *` — the same class of disclosure
-  `GET /api/chat/subscribers` was guarded for.
-
-Both are tracked separately as `identifier-disclosure-remains-on-sse`; they
-were ruled out of the guard's scope, not overlooked. What keeps the residue
-from chaining is that every route that *aims* anything (`eval`, `draft`,
-`device-cmd`, `navigate`, `reload`, `poll`, `upload`, `subscribers`) is
-guarded. The Go server does not expose it the same way: its unguarded routes
-send no `Access-Control-Allow-Origin` at all, so a foreign page's read still
-executes but its body stays unreadable, and its `/api/chat/events` is guarded
-outright (with the same no-ACAO posture preserved on the stream) and accepts
-`?device=` without storing it.
+The read surface is not purely read-only, but the boundary above is the whole
+of the guard's scope: the deleted TS server's two unguarded reads
+(`GET /api/chat/events` storing an attacker-supplied `?device=`, and
+`GET /api/chat/agents` answering `Access-Control-Allow-Origin: *`) were its
+`identifier-disclosure-remains-on-sse` residue and died with it. The Go server
+ties the read routes closed differently: its unguarded routes send no
+`Access-Control-Allow-Origin` at all, so a foreign page's read still executes
+but its body stays unreadable, and its `/api/chat/events` is guarded outright
+(with the same no-ACAO posture preserved on the stream) and accepts `?device=`
+without storing it.
 
 ---
 
@@ -163,26 +144,21 @@ Responses (always 200):
 ```jsonc
 { "ok": true, "id": "msg-id" }
 { "error": "empty message" }     // no text and no images
-{ "error": "bad request" }       // TS: unparseable body
+{ "error": "bad request" }     // unparseable body
 ```
-Broadcasts `message` (and `presence {status:"thinking"}` on TS) over SSE and
-wakes matching long-pollers.
+Broadcasts `message` over SSE and wakes matching long-pollers.
 
 ### `POST /api/chat/reply`
 An agent replies on **its own** channel. Identity comes from `agent` in the
-body; on the TS server, when `agent` is absent the handler falls back to the
-caller's environment/session context (`agent-context.ts`'s
-`loadAgentContext`). The Go server requires `agent` in the body.
+body, which the Go server requires.
 
 Request body:
 ```jsonc
 {
-  "text": "string",     // required on Go; TS accepts empty text when action or images present
-  "agent": "agent-id",  // channel this posts to (see fallback above)
+  "text": "string",     // required
+  "agent": "agent-id",  // channel this posts to (required)
   "name": "string",     // optional display-name upsert
-  "color": "#rrggbb",   // optional (TS persists on auto-register; Go accepts but does not persist)
-  "action": { "kind": "navigate"|"switch_tab", "url"?: "…", "channel"?: "…", "label": "…" },  // TS only; unknown kind → {error}
-  "images": ["url"]     // TS only
+  "color": "#rrggbb",   // optional (accepted but not persisted)
 }
 ```
 Responses (always 200):
@@ -200,9 +176,8 @@ Request body:
 ```
 Response (200): `{ "ok": true, "channels": N, "delivered": M }` — `channels` =
 channels the alert was recorded against, `delivered` = live pollers woken.
-**Broadcast-to-all differs by server:** TS's "all" is the global (no-channel)
-history **plus** every registered agent; Go's is every registered agent only.
-On both, an explicit **empty array** delivers to nobody.
+"All" means every registered agent. An explicit **empty array** delivers to
+nobody.
 
 ### `POST /api/chat/system`
 Post a system line onto the dedicated `"system"` channel
@@ -212,16 +187,14 @@ Request body:
 ```jsonc
 { "text": "string", "source": "string?", "meta": { }? }
 ```
-`text` is truncated to 500 characters (TS truncates UTF-16 code units, Go
-truncates runes — differs only on astral-plane text). Response (200):
+`text` is truncated to 500 runes. Response (200):
 `{ "ok": true, "id": "msg-id" }` or `{ "error": "text required" }`.
 
-### `POST /api/chat/message` (Go only)
+### `POST /api/chat/message`
 Lower-level persist-and-broadcast: stores the message and broadcasts the
 resulting `message` SSE event. The out-of-process seam for producers that
 cannot live in the server process (`parlay supervise` digests, the PAI hook
-tailer via `packages/server/src/hub-ingress.ts`'s `postHubMessage`). **The TS
-server has no such route — it 404s.**
+tailer via the go-server ingress).
 
 Request body:
 ```jsonc
@@ -262,51 +235,45 @@ interface ChatMessage {
 
 ### `GET /api/chat/poll?after=<lastId>&channel=<agentId>`
 Agent long-poll. Blocks until a message for the channel arrives or the
-server-side timeout elapses (**TS: 30s, Go: 25s**), then returns exactly one
+server-side timeout elapses (25s), then returns exactly one
 of:
 
 ```jsonc
 { "timeout": true }
-// or (TS) — the full ChatMessage
-{ "id": "…", "role": "user", "ts": "…", "text": "…", ... }
-// or (Go) — a subset
 { "id": "…", "role": "user", "text": "…", "from": "…?", "cursorReset": true?, "skipped": N? }
 ```
 
-- **410 Gone** `{ "error": "…", "gone": true }` (TS) when the channel is
+- **410 Gone** `{ "error": "…", "gone": true }` when the channel is
   tombstoned (unregistered via `agent-down`) — a dead agent must not re-create
-  itself by polling. Go answers tombstones the same way at the store level.
-- Polling an **unknown, non-tombstoned** channel is genuinely read-only on both
-  servers (task-1t0m): it neither creates nor resurrects a registry row.
+  itself by polling.
+- Polling an **unknown, non-tombstoned** channel is genuinely read-only
+  (task-1t0m): it neither creates nor resurrects a registry row.
   Registration only happens via the explicit, guarded `POST
   /api/chat/register-agent` — every real poll consumer (`parlay listen`,
-  `parlay monitor`, the relay) calls it before polling. The TS server does
-  still record in-memory, unpersisted presence (`lastPollByChannel` → the
-  `presence_map` "listening"/"idle" state below) for whatever channel it was
-  asked to poll, registered or not.
+  `parlay monitor`, the relay) calls it before polling.
 - Delivering a queued user message marks it received and broadcasts
-  `message_received` (payload `{ "id", "channel"? }` on TS; `{ "id" }` on Go).
+  `message_received` (payload `{ "id" }`).
 - A poll with no `after` waits for the *next* message only (no replay).
 
-`cursorReset`/`skipped` are **Go-server only**; the TS server never emits
-them. They appear only when `after` names a message the server cannot resolve
-among the channel's retained messages — a truncated or rotated store, a
-cursor from a previous server run, or a cursor belonging to a different
-channel. Rather than silently delivering nothing, the server resumes from the
-newest `min(50, retained)` messages on that channel (`DefaultReplayMax`,
-mirroring the relay's `PARLAY_REPLAY_MAX`) and says so: `cursorReset: true`,
-with `skipped` counting the older retained messages left outside that window.
-The reset frame carries the oldest message of that window, so the caller's
-next `after` resolves normally. A resolvable cursor never sets either field.
+`cursorReset`/`skipped` appear only when `after` names a message the server
+cannot resolve among the channel's retained messages — a truncated or rotated
+store, a cursor from a previous server run, or a cursor belonging to a
+different channel. Rather than silently delivering nothing, the server resumes
+from the newest `min(50, retained)` messages on that channel
+(`DefaultReplayMax`, mirroring the relay's `PARLAY_REPLAY_MAX`) and says so:
+`cursorReset: true`, with `skipped` counting the older retained messages left
+outside that window. The reset frame carries the oldest message of that
+window, so the caller's next `after` resolves normally. A resolvable cursor
+never sets either field.
 
-### Localhost link rewriting (`PARLAY_PUBLIC_HOST`, both servers)
+### Localhost link rewriting (`PARLAY_PUBLIC_HOST`)
 `ChatMessage.text` may contain `http://localhost:<port>` / `http://127.0.0.1:<port>`
 links (server URLs, panel links, agent endpoints) that are dead once the
 captain reads Parlay off-home. Setting `PARLAY_PUBLIC_HOST` rewrites just the
 host of those links, at serve time only — history (`GET /api/chat/history`),
 poll (`GET /api/chat/poll`), and the SSE `history`/`message` events all
-rewrite through the same helper (TS: `packages/server/src/link-rewrite.ts`;
-Go: `packages/go-server/internal/linkrewrite`). The stored/retained message
+rewrite through the same helper
+(`packages/go-server/internal/linkrewrite`). The stored/retained message
 text itself is never mutated — a client reading the durable log directly
 still sees the original `localhost` link.
 
@@ -338,17 +305,15 @@ Request body (all optional except `id`):
   "caps": { }               // free-form agent metadata (parlay listen --caps); unrelated to SSE ?caps=
 }
 ```
-Response (200): **TS** echoes the stored entry — `{ "ok": true, "id", "name",
-"color", "nicknames"?, "urls"?, "path"? }`. **Go** returns only
-`{ "ok": true, "nicknames"? }`. Errors: `{ "error": "id required" | "bad request" }`.
+Response (200): `{ "ok": true, "nicknames"? }`. Errors: `{ "error": "id required" | "bad request" }`.
 Broadcasts `agent_register` with the stored `AgentInfo`.
 
 ### `POST /api/chat/unregister`
 Deregister an agent's channel. **Status-error convention**: **400**
 `{"error": "id required"}`, **404** `{"error": "…"}` on unknown id.
 
-Request: `{ "id": "agent-id" }`. Success (200): `{ "ok": true, "id": "…" }` on
-both servers. Broadcasts `agent_unregister`.
+Request: `{ "id": "agent-id" }`. Success (200): `{ "ok": true, "id": "…" }`.
+Broadcasts `agent_unregister`.
 
 ### `DELETE /api/chat/agents/:id`
 REST alias of `unregister` (same handler path, id from the URL). Same
@@ -368,35 +333,28 @@ interface AgentInfo {
 ```
 
 ### `GET /api/chat/subscribers`
-Connection/presence/memory snapshot. Guarded (identifier disclosure).
+Connection/presence snapshot. Guarded (identifier disclosure).
 
-TS response (Go serves a subset — see [Divergences](#divergences-to-fix)):
+Response:
 ```jsonc
 {
   "parlay":     { "clients": 2 },                       // connected SSE clients
   "poll":       { "count": 1, "channels": [ { "channel": "id|null", /* + AgentInfo fields when registered */ } ] },
   "registered": { "count": 3, "agents": [ /* AgentInfo */ ] },
-  "presence":   [ { "channel": "id", /* + AgentInfo fields */, "listening": true, "lastSeen": "iso|null", "status": "listening"|"idle"|"offline" } ],
-  "presence_broadcasts": 12,                            // TS only
-  "capability_suppressed": { "navigate": 3 },           // both servers — gated event → deliveries suppressed
-  "capability_declarations": [ { "surface": { "kind": "panel", "instance"?: "…" }, "accepts": ["…"], "content": ["…"], "interactions": ["…"], "connectedAt": "iso", "device"?: "uuid" } ],  // both servers — one entry per declared SSE connection (device-identified or not), all three axes
-  "devices": [ { "device": "uuid", "ua": "…", "connectedAt": "iso", "surface"?: {...}, "accepts"?: ["…"] } ],  // TS only
-  "memory":  { "rssMB": 0, "heapUsedMB": 0, "externalMB": 0, "arrayBuffersMB": 0 },  // TS only
-  "history": { "count": 0, "approxBytes": 0, "approxKB": 0, "ssePerConnectKB": 0 }   // TS only
+  "presence":   [ { "channel": "id", "lastSeen": "iso|null" } ],
+  "capability_suppressed": { "navigate": 3 },           // gated event → deliveries suppressed
+  "capability_declarations": [ { "surface": { "kind": "panel", "instance"?: "…" }, "accepts": ["…"], "content": ["…"], "interactions": ["…"], "connectedAt": "iso", "device"?: "uuid" } ],  // one entry per declared SSE connection (device-identified or not), all three axes
 }
 ```
-A channel is `"listening"` if it long-polled within the last 35s
-(`LISTEN_WINDOW_MS`), `"idle"` if it has polled before but not recently,
-`"offline"` if registered but never polled.
 
 ### `POST /api/chat/declare-channel`
 Bind a session id to a channel (used by hooks to attribute system lines).
 
 Request: `{ "session_id": "s-1", "channel": "agent-id" }`. Response (200):
 `{ "ok": true, "session_id": "…", "channel": "…" }` or
-`{ "error": "session_id and channel required" }`. The TS server echoes the
-*requested* channel; the Go server's declarations are sticky per session and
-it echoes the *effective* channel, which can differ from the request.
+`{ "error": "session_id and channel required" }`. Declarations are sticky per
+session and the server echoes the *effective* channel, which can differ from
+the request.
 
 ---
 
@@ -421,10 +379,10 @@ one device or omit for all. Response (200):
 Navigate connected panels (Parlay-as-shell workspace navigation).
 
 Request: `{ "url": "string", "open_drawer": true?, "device": "uuid"? }`.
-Response (200): TS `{ "ok": true, "clients": N, "url", "openDrawer": bool,
-"device"?: "…" }`; Go names the response field `open_drawer`. Error:
+Response (200): `{ "ok": true, "clients": N, "url", "open_drawer": bool,
+"device"?: "…" }`. Error:
 `{ "error": "url required" }`. Broadcasts `navigate`
-`{ "url", "openDrawer" }` (both servers use `openDrawer` on the wire).
+`{ "url", "openDrawer" }`.
 
 ### `POST /api/chat/device-cmd`
 Drive a client device (reload TTS, switch channel, toggle hands-free, …).
@@ -446,7 +404,7 @@ Response (200): `{ "ok": true, "cmd": "…", "sent": N }` or
 ## Drafts
 
 ### `GET /api/chat/draft`
-Response: TS `{ "text": "string" }`. Go returns the whole stored draft:
+Response: `{ "text": "string" }`. The server returns the whole stored draft:
 `{ "text", "clientId"?, "updatedAt"? }` — extra fields are harmless to the
 one consumer, which reads `text`.
 
@@ -455,8 +413,7 @@ Save (or clear, with `text: ""`) the shared input draft.
 
 Request: `{ "text": "string", "clientId": "uuid"? }` — `clientId` is a
 per-page-load id the client uses to ignore its own `draft` SSE echo.
-Response (200): TS `{ "ok": true }` (or `{ "error": "bad request" }`); Go
-echoes the saved draft object instead. Broadcasts `draft`
+Response (200): echoes the saved draft object. Broadcasts `draft`
 `{ "text", "clientId"? }`.
 
 ---
@@ -471,24 +428,17 @@ Response (200):
 ```jsonc
 { "ok": true, "url": "/api/chat/uploads/<sha1-12>.<ext>", "bytes": 12345 }
 ```
-Failures: TS returns 200 `{ "error": "file field required" | "too large (10MB max)"
-| "images only (png/jpg/gif/webp/svg)" | "bad request" }`; Go returns a bare
-`{ "ok": false }` with no error field (its callers only check `ok`/`url`).
-TS accepts by MIME type or filename extension; Go sniffs the actual bytes
+Failures: returns a bare `{ "ok": false }` with no error field (its callers
+only check `ok`/`url`). The server sniffs the actual bytes
 (`http.DetectContentType`) and ignores the claimed type.
 
 ### `GET /api/chat/uploads/<name>`
-Serve an uploaded image inline. Unguarded read.
+Serve an uploaded image inline. Unguarded read. No name regex (store lookup
+instead); Content-Type is sniffed from the file bytes, not the extension; 404
+on unknown.
 
-- TS: `<name>` must match `^[a-z0-9]+\.(png|jpg|gif|webp|svg)$` else **400**
-  (plain text `bad name`); **404** plain text `not found`; success carries
-  `Content-Disposition: inline` and
-  `Cache-Control: public, max-age=31536000, immutable` (content-addressed).
-- Go: no name regex (store lookup instead); Content-Type is sniffed from the
-  file bytes, not the extension; 404 on unknown.
-
-On disk: `~/exchange/parlay-uploads/<name>` (TS canonical mapping — agents may
-read that path directly).
+On disk: `~/exchange/parlay-uploads/<name>` — agents may read that path
+directly.
 
 ---
 
@@ -510,15 +460,14 @@ interface ParlaySettings {
   commandPhrases: Record<string, string[]>
   hybridVoice: boolean
   localOnlyVoice: boolean
-  textScale: number        // clamped 85–160 on PUT (TS)
-  voiceSettleMs: number    // clamped 0–3000 on PUT (TS)
-  noKeyboardMode: boolean  // Go server + client only — ABSENT from the TS server's interface (a TS PUT drops it); see Divergences
+  textScale: number
+  voiceSettleMs: number
+  noKeyboardMode: boolean
 }
 ```
-PUT response (200): TS `{ "ok": true, "settings": { …stored } }` (or
-`{ "error": "…" }`); Go echoes the stored settings object bare, with no
-`ok` wrapper. A legacy `voiceClearPhrase: string` (singular) on disk is
-migrated to `voiceClearPhrases: string[]` at load time on both servers.
+PUT response (200): echoes the stored settings object bare. A legacy
+`voiceClearPhrase: string` (singular) on disk is migrated to
+`voiceClearPhrases: string[]` at load time.
 
 ---
 
@@ -576,9 +525,7 @@ keystroke. The Go server bounds the mapping at 4096 streams
 Synthesize speech via the local speak daemon.
 
 Request: `{ "text": "string (≤2000)", "voice"?: "…", "speed"?: 1.0 }`.
-Success: binary **`audio/wav`** body. Errors: JSON `{ "error": "…" }` — on
-the TS server the error body is (wart) still typed `audio/wav`, and the panel
-sniffs the RIFF magic to tell audio from error; the Go server types errors
+Success: binary **`audio/wav`** body. Errors: JSON `{ "error": "…" }` typed
 `application/json`.
 
 ### `POST /api/chat/tts-correction`
@@ -596,9 +543,7 @@ Appends to `tts-pronunciation-reports.jsonl` under the PAI dir.
 ### `POST /api/chat/tts-event`
 Fan a TTS lifecycle event (readiness dots, playback state) out to every
 listener. The body is free-form; the server stamps `ts` if absent and
-broadcasts it as the `tts_event` SSE event. **TS additionally resolves every
-pending long-poll waiter with the event** (agents see TTS state); the Go
-server broadcasts to SSE only. Response (200): `{ "ok": true }`.
+broadcasts it as the `tts_event` SSE event. Response (200): `{ "ok": true }`.
 
 ### `POST /api/chat/tts/validate-splits`
 Validate sentence-split quality for a block of text (LLM-assisted; JSON
@@ -606,9 +551,9 @@ content-type exempt for `curl -d` use). Request:
 `{ "text": "string", "model"?: "…" }`. Responses: 200
 `{ "blocks": [...], "evaluation": { "overall_score": N, "verdict": "…",
 "issues": [...], "suggestion": "…" }, "model": "…", "ms": N }`; **400**
-`text` missing; **502** when the evaluating model is unreachable (TS). The Go
-implementation currently returns a placeholder evaluation
-(`verdict: "unknown"`, `suggestion: "Ollama integration pending"`).
+`text` missing; **502** when the evaluating model is unreachable. The current
+implementation returns a placeholder evaluation (`verdict: "unknown"`,
+`suggestion: "Ollama integration pending"`).
 
 ---
 
@@ -618,9 +563,8 @@ implementation currently returns a placeholder evaluation
 List servable pages from `~/pulse-pages/` (every directory holding an
 `index.html`, with its `<title>` for fuzzy search). 30s server-side cache.
 Response: `{ "pages": [ { "tag": "dirname", "title": "…" } ] }`. Non-GET:
-**405** (TS: JSON `{ "error": "GET only" }`; Go: plain text). A server-side
-watcher broadcasts `pages_patch` `{ "added": [PageEntry], "removed": ["tag"] }`
-on changes.
+**405** plain text. A server-side watcher broadcasts `pages_patch`
+`{ "added": [PageEntry], "removed": ["tag"] }` on changes.
 
 ### `GET /api/chat/plugins`
 Installed plugin manifests, load-ordered (speak first — it wires the global
@@ -644,8 +588,8 @@ Request: `{ "op": "string", "args"?: any, "device"?: "uuid" }`. Responses
 ```jsonc
 { "ok": true, "result": … }
 { "ok": false, "error": "op required" | "panel did not respond (2.5s)" | "bad request" }
-{ "ok": false, "error": "no client for device <uuid>" }   // TS only — device-scoped delivery; Go ignores "device" and broadcasts to all
 ```
+The server ignores a `device` field and broadcasts to all clients.
 
 ### `POST /api/chat/plugin/cursorless/response`
 Panel-side reply leg. Request: `{ "rpcId": "…", "result": any }`. Response
@@ -656,13 +600,9 @@ rpcId was unknown/expired.
 Bundle version, polled on every SSE `connected` so a stale PWA tab
 self-upgrades. Response: `{ "version": "string" }` (`"unknown"` = no-op).
 
-### `GET /parlay-ui.js` (TS only)
-The embeddable panel loader, served `application/javascript`. Not under
-`/api/chat`.
-
 ---
 
-## Live commands (Go only)
+## Live commands
 
 The live-command registry: every running CLI verb reports itself so panels can
 show what the fleet is doing. Full contract:
@@ -671,9 +611,7 @@ By design the registry stores **no free-form text**: verb, agent id, pid, flag
 *names*, outcome token — never argv values, paths, or error strings.
 
 The three report routes require POST **and** `Content-Type: application/json`
-— anything else is **415** (`requireCommandReport`). TS serves none of these
-routes (a TS 404 on `/api/chat/commands` is how the CLI's `commandreport`
-detects an unsupported server and caches the 404 for 1h).
+— anything else is **415** (`requireCommandReport`).
 
 ### `GET /api/chat/commands`
 ```jsonc
@@ -706,12 +644,12 @@ includes a full `commands` snapshot.
 
 ## Debug / diagnostics
 
-### `POST /api/chat/debug-log` (TS only)
+### `POST /api/chat/debug-log`
 Batched client console errors/warnings + instrumented traces from the panel,
 appended to a log file so a phone (no devtools) can be diagnosed by tailing
-it. Wired in `router.ts` (TS); the Go server does not serve it yet — its
-route 404s there, and the client treats the 404 as "permanent no-op for the
-session" (confirmed, working degradation). Guarded (origin + JSON
+it. The Go server does not serve it — its route 404s, and the client treats
+the 404 as "permanent no-op for the session" (confirmed, working degradation).
+Guarded (origin + JSON
 content-type). Disabled entirely with `PARLAY_DEBUG_LOG=0`; log path
 overridable via `PARLAY_DEBUG_LOG_PATH`. Request
 `{ "device", "ua", "url", "entries": [ { "ts", "level": "error"|"warn"|"trace", "source", "message", "detail"? } ] }`;
@@ -719,30 +657,24 @@ responses 204 (disabled/empty/success), 400 (invalid JSON), 500 (persist
 failure to `$PARLAY_STATE_HOME/debug.log`). Fields truncated at 4000 chars,
 50 entries per batch.
 
-### `POST /api/debug/input-timing` (TS only)
-Mobile keystroke-latency telemetry (no devtools on a phone). Guarded (under
-`/api/debug/` prefix). Request:
-`{ "device": "string (≤40)", "ua"?: "string (≤200)", "samples": [ { "costMs": N, "sinceLastMs": N } ] }`
-→ 200 `{ "ok": true, "stored": N }`. Ring buffer of 200 samples per device.
-
-### `GET /api/debug/input-timing` (TS only)
-Per-device digest over the last 10 minutes:
-`{ "<device>": { "ua": "…", "samples": N, "cost": { "p50": N, "p95": N, "max": N }, "cadence": { "p50": N, "p95": N } | null } }`.
+The `POST`/`GET /api/debug/input-timing` routes are legacy and **unserved** —
+they existed only on the deleted TS server and there is no Go counterpart:
+a request to them 404s.
 
 ### `GET /health`
 Liveness + store sanity, outside `/api/chat`. Response:
 `{ "ok": true, "messages": N, "agents": N }`. Non-GET: 405 plain text.
 
 ### Static assets
-Both servers serve the built panel bundle standalone (no Pulse front door):
+The server serves the built panel bundle standalone (no Pulse front door):
 `/` (SPA fallback to `index.html`), `/annotate/<path>` (the Pulse symlink
 convention, mapped onto the bundle root), and `/fleet/` (the
-`packages/webview` fleet dashboard), from `PARLAY_ASSETS_DIR` (Go also:
-`-assets-dir`; TS default: the sibling `packages/client/dist`). Dispatched
+`packages/webview` fleet dashboard), from `PARLAY_ASSETS_DIR` (`-assets-dir`;
+default: the sibling `packages/client/dist`). Dispatched
 after all `/api/*` routes so it can never shadow them — and an unrouted
 `/api/*` path stays a real 404, never the SPA fallback (the CLI's
-`commandreport` caches that 404 to detect unsupported verbs). TS:
-`packages/server/src/static.ts`; Go: `internal/static`.
+`commandreport` caches that 404 to detect unsupported verbs). Source:
+`internal/static`.
 
 ---
 
@@ -755,21 +687,19 @@ reconnects with exponential backoff (1s → doubling, capped 30s).
 Query params:
 - `device` — client-generated localStorage uuid; enables device-scoped
   delivery (`navigate`/`reload`/`device_cmd`/`input_action` with a `device`
-  target, cursorless RPC). TS stores it on the connection; Go accepts it
-  without storing.
+  target, cursorless RPC). The server accepts it without storing.
 - `after` — last-seen message id. When resolvable, `history` in the connect
-  burst is the delta after that id. When absent (TS), history is windowed
+  burst is the delta after that id. When absent, history is windowed
   per-channel: the newest 50 per channel (`PER_CHANNEL`), except the channel
   owning the page named by `url` gets 200 (`OWNER_LIMIT`), merged and sorted
   by timestamp. An unresolvable `after` (evicted or never-existed id) also
   degrades to that windowed replay, and the `history` event is identical in
   shape either way — a client cannot tell delta from replay, so dedup by
   message id regardless.
-- `caps` — **both servers**: url-encoded
+- `caps` — url-encoded
   JSON interface-capability declaration, contract owned by
   [`docs/interface-capabilities.md`](./interface-capabilities.md) and the
-  normative engine `tools/cli/internal/capability` (TS mirror:
-  `packages/server/src/capability.ts`; Go-server mirror:
+  normative engine `tools/cli/internal/capability` (Go-server mirror:
   `packages/go-server/internal/capability`, sync-tested byte-identical
   against the engine). A declared connection only receives
   the presentation-command events (`navigate`, `reload`, `device_cmd`,
@@ -783,25 +713,24 @@ Query params:
   `register-agent`'s free-form `caps` field, which is INPUT-direction agent
   metadata.
 
-Connect burst, in order — TS: `connected`, `history`, `agents`,
-`agent_presence`, `presence_map`. Go adds `commands` (live-command snapshot)
-to the burst. Keepalive comment frame every 25s (TS `: ka`, Go
-`: keep-alive`).
+Connect burst, in order: `connected`, `history`, `agents`,
+`agent_presence`, `presence_map`, then `commands` (live-command snapshot).
+Keepalive comment frame every 25s (`: keep-alive`).
 
 | Event | Payload | Notes |
 |---|---|---|
-| `connected` | TS: `{ "clientId": "uuid", "capabilities"?: { "schema", "recognized": [], "unknown": [] } }` · Go: same minus `clientId` (legacy: `{}`) | Resets client backoff; triggers the `/version` self-upgrade check. `capabilities` echoes the `?caps=` negotiation (which accepts names this server gates on vs. never heard of). |
+| `connected` | `{ "capabilities"?: { "schema", "recognized": [], "unknown": [] } }` | Resets client backoff; triggers the `/version` self-upgrade check. `capabilities` echoes the `?caps=` negotiation (which accepts names this server gates on vs. never heard of). |
 | `history` | `ChatMessage[]` | Full, windowed, or delta history depending on `after`/`url`. |
 | `agents` | `AgentInfo[]` | Full registry snapshot. |
 | `agent_register` | `AgentInfo` | Single-agent upsert (explicit `register-agent`, auto-register on reply). |
 | `agent_unregister` | `{ "id": "string" }` | Agent removed (unregister/DELETE/sweep). |
-| `presence_map` | `Record<string, string>` (channel → status) | TS vocabulary: `"listening"`/`"idle"` (35s window, 10s sweep, broadcast on change only). Go: `"online"`. |
+| `presence_map` | `Record<string, string>` (channel → status) | Vocabulary: `"online"`. |
 | `message` | `ChatMessage` | The core new-message event. Deduped client-side by id. |
-| `message_received` | `{ "id", "channel"? }` | Delivery ack: a queued user message was polled → ◌→✓ pip. Go omits `channel`. |
-| `presence` | `{ "status": "string" }` | Thinking-dots indicator (`"thinking"`/`"idle"`, emitted around send/reply on TS). |
+| `message_received` | `{ "id" }` | Delivery ack: a queued user message was polled → ◌→✓ pip. |
+| `presence` | `{ "status": "string" }` | Thinking-dots indicator (`"thinking"`/`"idle"`). |
 | `draft` | `{ "text", "clientId"? }` | Cross-device draft sync; self-echoes ignored via `clientId`. |
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
-| `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the Go ingress (below) by the tool tailer. |
+| `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `tts_event` | `{ "id", "role": "tts_event", "type", "device", …, "ts" }` | TTS lifecycle fan-out from `POST /tts-event`. |
 | `lavish_session` | `{ "key", "file", "proxyUrl", "status" }` | Embedded-workspace card upsert. **Producer routes not wired** — see below. |
 | `reload` | *(none)* | `location.reload()`. |
@@ -810,22 +739,21 @@ to the burst. Keepalive comment frame every 25s (TS `: ka`, Go
 | `device_cmd` | `{ "cmd", "args"? }` | See `POST /device-cmd`. Gated. |
 | `pages_patch` | `{ "added"?: [PageEntry], "removed"?: ["tag"] }` | Page-nav picker updates. |
 | `cursorless_rpc` | `{ "rpcId", "op", "args" }` | Cursorless bridge, server → panel leg. |
-| `commands` | live-command snapshot (see `GET /commands`) | Go connect burst only. |
-| `command_update` | one command record | Go only; on every registry state change. |
+| `commands` | live-command snapshot (see `GET /commands`) | Connect burst only. |
+| `command_update` | one command record | On every registry state change. |
 
 Plugins may subscribe to additional event names via the client's
 `onSse(event, handler)` shim; the table covers every name with a first-party
 producer or subscriber. `commands`/`command_update` are owned by
 [`docs/live-commands.md`](./live-commands.md).
 
-### `POST /api/chat/events` (Go only)
-The external-producer ingress into the Go SSE hub, for a producer that cannot
-live inside that server process. The TS server has no such route — its
-`/api/chat/events` is `GET`-only.
+### `POST /api/chat/events`
+The external-producer ingress into the SSE hub, for a producer that cannot
+live inside the server process. Its `GET` sibling above is the stream itself —
+the path serves both.
 
-Callers: `packages/server/src/tool-tailer.ts`, via
-`packages/server/src/hub-ingress.ts` (`pushHubEvent`; target
-`PARLAY_HUB_URL`, default `http://127.0.0.1:4242`, 5s timeout, per-route
+Callers: the hook/tool tailer (Go), pushing `tool_event` against
+`PARLAY_HUB_URL` (default `http://127.0.0.1:4242`, 5s timeout, per-route
 ordered delivery chains that shed at 256 queued posts).
 
 Request body:
@@ -854,13 +782,13 @@ panel-aiming name with no producer in the repo (`navigate`, `reload`,
 `device_cmd`, `input_action`, `draft`), and any unknown name. `system_update`
 is refused too: it is a `ChatMessage.type` carried on `message`, not an event
 name — a producer wanting one posts to
-[`POST /api/chat/message`](#post-apichatmessage-go-only) with
+[`POST /api/chat/message`](#post-apichatmessage) with
 `type: "system_update"`, which persists first and broadcasts as a
 consequence. Rationale for each refusal is in
 `packages/go-server/internal/handlers/events_ingress.go`'s doc comment, which
 owns this contract.
 
-This route is in the Go guard's `GuardedPaths`; see § Origin guard above for
+This route is in the guard's `GuardedPaths`; see § Origin guard above for
 what that means for the `GET` stream on the same path.
 
 #### `input_action` envelope shape
@@ -886,8 +814,8 @@ interface Action {
 Full verb semantics are out of scope for this doc — see
 `docs/COMMAND_DESIGN_CONTRACT.md` and `docs/CHANNEL_PICKER_CONTRACT.md`.
 
-### Gas City bus dual-write / consume (Go only, flags — not endpoints)
-Behind default-off flags, the Go server can mirror its observability events
+### Gas City bus dual-write / consume (flags — not endpoints)
+Behind default-off flags, the server can mirror its observability events
 onto a Gas City event bus and consume bus events back into the hub:
 `-bus-emit`/`PARLAY_BUS_EMIT` dual-writes exactly `message`,
 `message_received`, `agent_register`, `command_update`, `tool_event`;
@@ -906,62 +834,42 @@ No HTTP surface changes either way.
 - **`parlay status`** is pure local file I/O — no HTTP call at all.
 - **`POST /api/events/bead-status`** is proposed, not built
   (`docs/CLI_VERBS_AND_EVENTS.md` §2.6).
-- **`POST /api/lavish/claim` and `GET /lavish-proxy/...`** — handlers exist
-  in `packages/server/src/lavish.ts` but are **not imported by
-  `index.ts`/`router.ts`: the routes 404**. The `lavish_session` SSE event
-  they would feed has a client-side subscriber but no live producer. Dead
-  code, documented so nobody "rediscovers" it as a live route.
+- **`POST /api/lavish/claim` and `GET /lavish-proxy/...`** — the handlers
+  lived in the deleted `packages/server/src/lavish.ts` and were never wired
+  into the router, so the routes 404'd there and 404 here too. The
+  `lavish_session` SSE event they would have fed has a client-side subscriber
+  but no live producer. Noted so nobody "rediscovers" them as live routes.
 
 ---
 
-## Divergences to fix
+## Divergences to fix (historical)
 
-Every known TS↔Go behavioral mismatch, in one place. "Fix" here means either
-converging the implementations or promoting the difference to a documented
-feature — until then, a portable caller must tolerate both sides.
-
-| # | Route / area | TS server | Go server |
-|---|---|---|---|
-| 1 | `connected` SSE payload | `{ clientId, capabilities? }` | `{ capabilities? }` — no clientId |
-| 2 | `?caps=` capability gate | Implemented (400 on invalid, gated delivery, suppression counters) | Implemented — converged (was ignored); row number retired, not reused |
-| 3 | `presence_map` vocabulary | `"listening"` / `"idle"` | `"online"` |
-| 4 | Poll timeout | 30s | 25s |
-| 5 | Poll message shape | full `ChatMessage` | `{ id, role, text, from? }` subset |
-| 6 | Poll unresolvable cursor | silent (never emits reset) | `cursorReset`/`skipped`, 50-message window |
-| 7 | `message_received` payload | `{ id, channel? }` | `{ id }` |
-| 8 | `register-agent` response | `{ ok, …stored entry }` | `{ ok, nicknames? }` |
-| 9 | `unregister` success body | `{ ok, id }` | `{ ok, id }` — converged (was `{ ok }`); row number retired, not reused |
-| 10 | `alert` with no targets | global channel + all registered agents | registered agents only |
-| 11 | `reply` minimum body | empty text OK with action/images; agent falls back to env/context | text AND agent required |
-| 12 | Wrong method | 404 fallthrough (except `/pages` 405 JSON) | 405 + `Allow` + plain text, everywhere |
-| 13 | Malformed JSON body | 200 `{ error: "bad request" }` (mostly) | 400 `{ error: "invalid JSON body" }` uniformly |
-| 14 | `subscribers` fields | full (memory, history, devices, presence_broadcasts) | subset: parlay/poll/registered, thin presence `{ channel, lastSeen }`, plus both capability fields (converged) |
-| 15 | `PUT /draft` response | `{ ok: true }` | echoes saved draft object |
-| 16 | `GET /draft` response | `{ text }` | `{ text, clientId?, updatedAt? }` |
-| 17 | `PUT /settings` response | `{ ok, settings }` | stored settings bare, no `ok` |
-| 18 | `noKeyboardMode` setting | absent from server interface — a PUT through TS drops it | present, round-trips |
-| 19 | `upload` failure body | 200 `{ error: "…" }` (message per cause) | 200 `{ ok: false }`, no message |
-| 20 | Upload acceptance check | MIME type or filename extension | content sniffing of actual bytes |
-| 21 | `navigate` response field | `openDrawer` | `open_drawer` (SSE payload is `openDrawer` on both) |
-| 22 | `declare-channel` echo | echoes requested channel | sticky per-session; echoes *effective* channel |
-| 23 | `/system` truncation | 500 UTF-16 code units | 500 runes |
-| 24 | `tts` error Content-Type | `audio/wav` (panel sniffs RIFF) | `application/json` |
-| 25 | `tts-event` fan-out | SSE broadcast **and** resolves all poll waiters | SSE broadcast only |
-| 26 | `tts/validate-splits` | live LLM evaluation | placeholder (`verdict: "unknown"`) |
-| 27 | cursorless `rpc` `device` field | device-scoped; `no client for device X` error | ignored; broadcasts to all |
-| 28 | `GET /api/chat/events` guard | unguarded (accepted residue) | guarded (no-ACAO stream) |
-| 29 | Go-only routes | — | `POST /events`, `POST /message`, `/commands` + 3 report routes |
-| 30 | TS-only routes | `/parlay-ui.js`, `/api/debug/input-timing`, `/api/chat/debug-log` | — |
+The TS↔Go divergence table lived here while both servers were live and a
+portable caller had to tolerate both sides. The TS server was deleted with
+the Bun→Go cutover (it diverged on: `connected` clientId, `presence_map`
+vocabulary, poll timeout/shape/reset, `message_received` payload,
+`register-agent` echo, `alert` no-target scope, `reply` minimum body, wrong
+method and malformed-JSON handling, `subscribers`/`draft`/`settings`
+response shapes, upload validation, `navigate` response field,
+`declare-channel` echo, `/system` truncation rule, `tts`/`tts-event`/
+`tts/validate-splits` behavior, cursorless `device` scoping, and the
+`/api/chat/events` guard posture), so those rows and the "one of two
+servers" framing no longer apply: every route in this doc now describes the
+one implementation that remains. The two rows that were genuinely
+partitioned surfaces — Go-only routes and TS-only routes (#29/#30) — are now
+simply the route list above: the Go-only ones are served, the TS-only ones
+(`/parlay-ui.js`, `/api/debug/input-timing`, `/api/chat/debug-log`) are gone
+with the server.
 
 ---
 
 ## Open Gaps
 
-1. **The Go server's TTS synthesis path is lightly exercised** — its speak
-   daemon socket protocol (`tts_engine.go`) mirrors the TS one but has not
-   been verified against a live daemon end to end in this pass.
+1. **The server's TTS synthesis path is lightly exercised** — its speak
+   daemon socket protocol (`tts_engine.go`) has not been verified against a
+   live daemon end to end in this pass.
 2. **`POST /api/chat/device-cmd` has no first-party POST call site in this
-   repo** — the request shape is read from both servers' handlers (so it is
+   repo** — the request shape is read from the server's handler (so it is
    accurate), but the producing callers are out-of-repo `curl`/agents.
 3. **CLI `types.ts` archaeology**: the retired `packages/cli` typed
    `ChatMessage.type` as only `"alert"`. The server truth is

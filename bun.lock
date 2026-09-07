@@ -30,10 +30,6 @@
         "typescript": "^5.7.0",
       },
     },
-    "packages/server": {
-      "name": "parlay-server",
-      "version": "0.1.0",
-    },
     "packages/webview": {
       "name": "webview",
       "version": "0.0.0",
@@ -500,7 +496,7 @@
 
     "parlay-input": ["parlay-input@workspace:packages/input"],
 
-    "parlay-server": ["parlay-server@workspace:packages/server"],
+    "parse-json": ["parse-json@8.3.0", "", { "dependencies": { "@babel/code-frame": "^7.26.2", "index-to-position": "^1.1.0", "type-fest": "^4.39.1" } }, "sha512-ybiGyvspI+fAoRQbIPRddCcSTV9/LsJbf0e/S85VLowVGzRmokfneg2kwVW/KU5rOXrPSbF1qAKPMgNTqqROQQ=="],
 
     "path-exists": ["path-exists@4.0.0", "", {}, "sha512-ak9Qy5Q7jYb2Wwcey5Fpvg2KoAc/ZIhLSLOSBmRmygPsGwkVVt0fZa0qrtMz+m6tJTAHfZQ8FnmB4MG4LWy7/w=="],
 
