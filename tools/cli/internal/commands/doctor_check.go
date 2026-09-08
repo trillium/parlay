@@ -17,8 +17,11 @@ import "github.com/trillium/parlay/tools/cli/internal/config"
 // command form when the original prose fix is cleanly executable; when it
 // isn't (alternatives joined by "or:", a placeholder like <id>/<url>, a tool
 // call rather than a shell command), Argv is omitted and Summary carries the
-// prose verbatim — never a fabricated command. Healable is always false in
-// this stage; guarded self-heal is stage 3 (design §3), out of scope here.
+// prose verbatim — never a fabricated command. Healable is true only for the
+// stage-3 self-heal whitelist (heal.go's healFixes, mirrored via
+// healWhitelisted) — a fix parlay heal is authorized to execute. Everything
+// else stays healable:false: a rebuild, an operator choice, or a placeholder
+// command is refused rather than run.
 type Fix struct {
 	Summary    string   `json:"summary,omitempty"`
 	Argv       []string `json:"argv,omitempty"`

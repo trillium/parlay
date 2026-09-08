@@ -153,6 +153,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Variant(args)
 	case "doctor":
 		commands.Doctor(args)
+	case "heal":
+		commands.Heal(args)
 	case "health":
 		commands.Health(args)
 	case "robots-watch":

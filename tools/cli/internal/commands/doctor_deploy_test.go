@@ -519,8 +519,8 @@ func TestDoctorDeployJSONSchemaShape(t *testing.T) {
 		}
 		ids[c.ID] = true
 		for _, f := range c.Fixes {
-			if f.Healable {
-				t.Errorf("check %s has a healable fix; self-heal is stage 3, never here", c.ID)
+			if f.Healable && !healWhitelisted(c.ID) {
+				t.Errorf("check %s has a healable fix not on the stage-3 whitelist (healWhitelisted)", c.ID)
 			}
 		}
 	}

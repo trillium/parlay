@@ -327,6 +327,7 @@ func checkAgentRegistered(st *doctorState) (CheckResult, bool) {
 			Argv:       []string{"parlay", "monitor", "--agent", st.agent},
 			Reversible: true,
 			Idempotent: true,
+			Healable:   healWhitelisted("agent-registered"),
 		}), true
 }
 
@@ -365,7 +366,14 @@ func checkMonitorListening(st *doctorState) (CheckResult, bool) {
 	fixText := fmt.Sprintf(`arm it: Monitor({ command: "parlay monitor --agent %s", persistent: true })`, st.agent)
 	return singleLine("monitor-listening", vWarn,
 		fmt.Sprintf("monitor not listening (presence: %s) — captain messages will queue, not stream", status), fixText,
-		map[string]any{"agent_id": st.agent, "presence_status": status}), true
+		map[string]any{"agent_id": st.agent, "presence_status": status},
+		Fix{
+			Summary:    fixText,
+			Argv:       []string{"parlay", "monitor", "--agent", st.agent},
+			Reversible: true,
+			Idempotent: true,
+			Healable:   healWhitelisted("monitor-listening"),
+		}), true
 }
 
 // checkIdentityMD is check 5a: identity.md exists, its frontmatter parses,
