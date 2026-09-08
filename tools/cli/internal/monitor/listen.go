@@ -3,9 +3,10 @@
 //
 // Collapses previously separate agent-driven steps into one atomic, idempotent
 // call:
-//  0. Relay preflight (issue #173): run parlay-monitor.sh --preflight FIRST so a
-//     missing relay is diagnosed before anything is registered — a fresh-clone
-//     user (no relay binary) must never end up registered-but-deaf.
+//  0. Relay preflight (issue #173) for the relay-backed path: run
+//     parlay-monitor.sh --preflight FIRST so a missing relay is diagnosed before
+//     anything is registered. `--legacy-poll` deliberately skips this because
+//     its documented purpose is to work without a relay.
 //  1. add-self-to-agent-registry: POST /api/chat/register-agent (identity +
 //     optional --caps), so the tab/registry entry exists under this id.
 //  2. Announce "listening" on the agent's own channel via /api/chat/reply.
@@ -121,20 +122,18 @@ func CmdListen(argv []string) {
 	}
 
 	// 1. Relay preflight (issue #173). Verify the relay can actually stream this
-	// agent BEFORE registering or announcing anything, so a fresh-clone user (no
-	// relay binary) fails with the diagnosis NOW — not after the agent is
-	// registered-but-deaf. Reuses parlay-monitor.sh's exact setup guards via
-	// --preflight: runtime-dir scoping, ensure-up, the socket guard, and the
-	// cross-server enroll refusal. A non-zero exit means the monitor that would
-	// follow this enroll cannot start — so we Die before enroll, leaving nothing
-	// registered. Runs after --account (which only persists config) but before
-	// the singleton guard signals anything and before any network call.
-	if code := preflightRelay(agent); code != 0 {
-		httpc.Die(fmt.Sprintf(
-			"parlay listen: relay cannot stream '%s' (preflight exit %d) — NOT registered, so nothing is deaf. Fix the relay condition above and re-run.\n"+
-				"parlay listen:   install the relay with tools/relay/deploy/install.sh, or start it manually.",
-			agent, code), config.ExitRuntime)
-		return
+	// agent BEFORE registering or announcing anything. A relay-backed listener
+	// must fail before enrollment rather than becoming registered-but-deaf.
+	// `--legacy-poll` intentionally skips this entire block: that mode is the
+	// no-relay escape hatch and polls the configured HTTP server directly.
+	if !res.Bool("--legacy-poll") {
+		if code := preflightRelay(agent); code != 0 {
+			httpc.Die(fmt.Sprintf(
+				"parlay listen: relay cannot stream '%s' (preflight exit %d) — NOT registered, so nothing is deaf. Fix the relay condition above and re-run.\n"+
+					"parlay listen:   install the relay with tools/relay/deploy/install.sh, or start it manually.",
+				agent, code), config.ExitRuntime)
+			return
+		}
 	}
 
 	// 2. Singleton guard (robots-fgyz). Arming is a takeover, not an addition:
