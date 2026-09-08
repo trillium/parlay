@@ -433,6 +433,7 @@ jobs:
           for t in bin/parlay-treehouse-guard.test.sh \
                    bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
+                   tools/inbox-dispatch/inbox-dispatch.test.sh \
                    tools/hooks/hooks.test.sh \
                    tools/monitor/parlay-monitor.test.sh; do
             echo "::group::$t"

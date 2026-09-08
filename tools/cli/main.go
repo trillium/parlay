@@ -171,6 +171,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Idle(args)
 	case "mechanic":
 		commands.Mechanic(args)
+	case "inbox-dispatch":
+		commands.InboxDispatch(args)
 	case "eval":
 		commands.Eval(args)
 	case "merge-gate":

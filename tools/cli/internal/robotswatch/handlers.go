@@ -28,6 +28,9 @@ var watches = []watch{
 	// robots: created → mechanic-dispatch (handler a); closed → notify the
 	// originating agent stamped on the bead as notify:<channel> (robots-3q7n).
 	{Store: "robots", Kinds: []EventKind{EventCreated, EventClosed}},
+	// inbox: created → inbox-dispatch (handler a2); closed → notify the
+	// creating agent and poke the persistent pi-inbox worker.
+	{Store: "inbox", Kinds: []EventKind{EventCreated, EventClosed}},
 	{Store: "questions", Kinds: []EventKind{EventClosed}}, // → notify-requester (handler b)
 	{Store: "task", Kinds: []EventKind{EventClosed}},      // → notify-requester (handler b)
 }
@@ -84,7 +87,9 @@ func routeEvent(ev RouteEvent, bead Bead, verbose bool) {
 	switch key {
 	case "robots:created":
 		handleRobotsCreated(ev, verbose) // handler (a)
-	case "robots:closed", "questions:closed", "task:closed":
+	case "inbox:created":
+		handleInboxCreated(ev, verbose) // handler (a2)
+	case "inbox:closed", "robots:closed", "questions:closed", "task:closed":
 		handleRequestClosed(ev, bead, verbose) // handler (b)
 	default:
 		if verbose {
@@ -152,7 +157,82 @@ func dispatchMechanic(id string, verbose bool) {
 	}
 }
 
-// ── Handler (b): request/question/task CLOSED → notify requester ───────────
+// ── Handler (a2): inbox bead CREATED → inbox-dispatch <id> ─────────────────
+// Mirrors handler (a) for the inbox store: the ticket is durable work, and
+// the `pi` zone routes to the persistent pi-inbox worker as a wake hint.
+
+func handleInboxCreated(ev RouteEvent, verbose bool) {
+	dispatchInbox(ev.ID, verbose)
+}
+
+// inboxIsPiZone mirrors inbox-dispatch's default routing: an inbox item with
+// no zone, zone:pi, or zone:default belongs to the shared worker. Explicit
+// specialized zones must not wake or get claimed by pi-inbox.
+func inboxIsPiZone(labels []string) bool {
+	for _, label := range labels {
+		if !strings.HasPrefix(label, "zone:") {
+			continue
+		}
+		zone := strings.TrimPrefix(label, "zone:")
+		return zone == "" || zone == "pi" || zone == "default"
+	}
+	return true
+}
+
+// inboxDispatchSentinelPath is the kill-switch sentinel file for the inbox
+// path: when it exists, the POLL path skips the spawn. Create with
+// `parlay inbox-dispatch off`, remove with `parlay inbox-dispatch on`.
+// Independent from the mechanic sentinel so pausing inbox dispatch does not
+// pause robots dispatch and vice versa.
+func inboxDispatchSentinelPath() string {
+	return filepath.Join(config.StateHome(), "inbox-dispatch.off")
+}
+
+// inboxDispatchOff returns true when inbox dispatch is disabled.
+// Precedence: PARLAY_INBOX_DISPATCH=off forces off (no sentinel needed);
+// a sentinel file disables even when PARLAY_INBOX_DISPATCH=on (the env
+// "on" value does NOT override an operator-set sentinel).
+func inboxDispatchOff() bool {
+	if strings.ToLower(strings.TrimSpace(os.Getenv("PARLAY_INBOX_DISPATCH"))) == "off" {
+		return true
+	}
+	_, err := os.Stat(inboxDispatchSentinelPath())
+	return err == nil
+}
+
+// dispatchInbox is the reusable inbox wake-up: run
+// `inbox-dispatch <id>`, which emits a coalescible INBOX_POKE rather than
+// assigning the ticket itself. Failure-isolated: never panics.
+func dispatchInbox(id string, verbose bool) {
+	if inboxDispatchOff() {
+		fmt.Fprintf(os.Stderr, "robots-watch: inbox dispatch is OFF, skipping %s\n", id)
+		return
+	}
+	cmd := exec.Command("inbox-dispatch", id)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+
+	var exitErr *exec.ExitError
+	if runErr != nil && !errors.As(runErr, &exitErr) {
+		fmt.Fprintf(os.Stderr, "robots-watch: inbox-dispatch not runnable for %s: %s\n", id, runErr.Error())
+		return
+	}
+
+	out := strings.TrimSpace(stdout.String() + stderr.String())
+	if runErr == nil {
+		suffix := ""
+		if verbose && out != "" {
+			suffix = " — " + out
+		}
+		fmt.Fprintf(os.Stderr, "robots-watch: dispatched inbox handler for %s%s\n", id, suffix)
+	} else {
+		fmt.Fprintf(os.Stderr, "robots-watch: inbox-dispatch %s exited %d: %s\n", id, exitErr.ExitCode(), out)
+	}
+}
+
+// ── Handler (b): inbox/request/question/task CLOSED → notify requester ─────
 // DELIVER: `parlay send --<channel> "<text>"` for each subscribed channel. A
 // monitor on that channel (e.g. firstmate on `mayor`) wakes and reads it. We
 // shell out to the `parlay` wrapper rather than post in-process on purpose:
@@ -165,29 +245,50 @@ func handleRequestClosed(ev RouteEvent, bead Bead, verbose bool) {
 		if verbose {
 			fmt.Fprintf(os.Stderr, "robots-watch: %s closed but no notify:<channel> label — no subscriber\n", ev.ID)
 		}
-		return
+	} else {
+		title := strings.TrimSpace(bead.Title)
+		text := fmt.Sprintf("✅ %s closed", ev.ID)
+		if title != "" {
+			text = fmt.Sprintf("✅ %s closed — %s", ev.ID, title)
+		}
+		for _, channel := range channels {
+			cmd := exec.Command("parlay", "send", "--"+channel, text)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			runErr := cmd.Run()
+
+			var exitErr *exec.ExitError
+			switch {
+			case runErr != nil && !errors.As(runErr, &exitErr):
+				fmt.Fprintf(os.Stderr, "robots-watch: notify '%s' of %s — parlay not runnable: %s\n", channel, ev.ID, runErr.Error())
+			case runErr != nil:
+				out := strings.TrimSpace(stdout.String() + stderr.String())
+				fmt.Fprintf(os.Stderr, "robots-watch: notify '%s' of %s exited %d: %s\n", channel, ev.ID, exitErr.ExitCode(), out)
+			default:
+				fmt.Fprintf(os.Stderr, "robots-watch: notified '%s' — %s closed\n", channel, ev.ID)
+			}
+		}
 	}
-	title := strings.TrimSpace(bead.Title)
-	text := fmt.Sprintf("✅ %s closed", ev.ID)
-	if title != "" {
-		text = fmt.Sprintf("✅ %s closed — %s", ev.ID, title)
-	}
-	for _, channel := range channels {
-		cmd := exec.Command("parlay", "send", "--"+channel, text)
+
+	// Closing an inbox item is also a worker wake-up. The bridge coalesces this
+	// with any creation pokes received during the current turn, so the next
+	// item is inspected only after the current item has completed.
+	if ev.Store == "inbox" && inboxIsPiZone(bead.Labels) && !inboxDispatchOff() {
+		poke := "INBOX_POKE v1: an inbox item completed; inspect the inbox for the next eligible item."
+		cmd := exec.Command("parlay", "send", "--pi-inbox", poke)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		runErr := cmd.Run()
-
-		var exitErr *exec.ExitError
-		switch {
-		case runErr != nil && !errors.As(runErr, &exitErr):
-			fmt.Fprintf(os.Stderr, "robots-watch: notify '%s' of %s — parlay not runnable: %s\n", channel, ev.ID, runErr.Error())
-		case runErr != nil:
-			out := strings.TrimSpace(stdout.String() + stderr.String())
-			fmt.Fprintf(os.Stderr, "robots-watch: notify '%s' of %s exited %d: %s\n", channel, ev.ID, exitErr.ExitCode(), out)
-		default:
-			fmt.Fprintf(os.Stderr, "robots-watch: notified '%s' — %s closed\n", channel, ev.ID)
+		if runErr := cmd.Run(); runErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s exited %d: %s\n", ev.ID, exitErr.ExitCode(), strings.TrimSpace(stdout.String()+stderr.String()))
+			} else {
+				fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s failed: %s\n", ev.ID, runErr)
+			}
+		} else if verbose {
+			fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poked after %s\n", ev.ID)
 		}
 	}
 }
