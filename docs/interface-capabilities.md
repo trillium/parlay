@@ -11,7 +11,7 @@ semantics"*, `09_ARCHITECTURE-GRILL.md`). Epic child task-4cfpv.16.
 
 Engine: `tools/cli/internal/capability` (pure, mirrors
 `internal/routing`). Live path: the chat server's SSE delivery layer
-(`packages/server/src/sse.ts` choke points). This document is the
+(`packages/go-server/internal/handlers/sse.go` choke points). This document is the
 normative contract; both implementations follow it.
 
 **Scope disambiguation:** this is the OUTPUT direction — what an enrolled
@@ -209,7 +209,7 @@ declaration decides who *receives*, never who may *send*.
    classification, the per-client `Decide(declaration, event)` gate with
    a reasoned decision, the connection registry, the recognition split
    for the `connected` echo. No I/O, no clock, no transport.
-2. **Live path: the TS chat server** (`packages/server`), which owns the
+2. **Live path: the Go chat server** (`packages/go-server`), which owns the
    panel's SSE connection today: parse+validate `?caps=`, registry entry
    on the `SSEClient`, gate at the broadcast choke points, suppression
    counters + declarations on `/api/chat/subscribers`.

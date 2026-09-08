@@ -146,12 +146,10 @@ package already sends `application/json`); if you are getting `403`, no header
 you can set will help, and the origin has to be allowed server-side.
 
 **The escape hatch is explicit opt-in, server-side.** Set
-`PARLAY_ALLOWED_ORIGINS` on the parlay server to a comma-separated list of
+`PARLAY_ALLOWED_ORIGINS` on the Go server to a comma-separated list of
 exact origins (the single value `*` disables the origin check entirely):
-
-```sh
-PARLAY_ALLOWED_ORIGINS="https://your-app.example.com" bun run start
-```
+deploy with the Go server's `install.sh --allowed-origins`, or set the
+`PARLAY_ALLOWED_ORIGINS` env var on a manually-launched server.
 
 There is no client-side equivalent, by design — the whole point is that the
 server decides. Full policy: `docs/api-contract.md` § Origin guard.

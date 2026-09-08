@@ -61,7 +61,7 @@ declares".)
 
 | Surface | Gets in via | Special-cased how | Posture it maps to |
 |---|---|---|---|
-| Web panel composer | `POST /api/chat/send`, `PUT /draft` | the *unmarked default*: no `from`, no `source` — absence is the captain's identity (`packages/server/src/router-messages.ts`) | `control` |
+| Web panel composer | `POST /api/chat/send`, `PUT /draft` | the *unmarked default*: no `from`, no `source` — absence is the captain's identity (`packages/go-server/internal/handlers/messaging.go`) | `control` |
 | Voice dictation (Talon → composer) | `POST /api/chat/eval` / `eval-push` | hard-coded phrase manifest (`tools/cli/internal/evalengine/default_commands.json`), device-keyed stream map | `control` |
 | Cursorless plugin RPC (Talon) | `POST /api/chat/plugin/cursorless/rpc` | plugin id `"cursorless"` hard-coded in the manifest list, the path switch, and the guard entry | `control` |
 | PAI **tool** tailer | `POST /api/chat/events` | `"tool_event"` sole member of the ingress allowlist (`events_ingress.go`) *and* of the Gas City bus dual-write list (`events.go` `busEmitEvents`); `tool_name === "Monitor"` special case for session enrollment | `observability` |
@@ -278,7 +278,7 @@ The prime rule: **enrollment must not widen the guarded surface, and a
 contract must not be able to ask it to.** Concretely, against each element
 of the boundary (CLAUDE.md "The security boundary"):
 
-**`GUARDED_CHAT_PATHS` / Go `GuardedPaths` — unchanged, unreferenced by
+**`GuardedPaths` — unchanged, unreferenced by
 data.** A contract's `delivery.route` must name a route from a closed table
 of ingress routes that already exist (v1: `POST /api/chat/events`,
 `POST /api/chat/message`, the plugin-RPC prefix). A contract naming any
@@ -363,7 +363,7 @@ mirror and canonical diverge. PR 3 follows it — canonical
 `contracts/sources/` at the repo root (validated by the `tools/cli`
 engine), a `go:embed` mirror inside `packages/go-server` with a sync test,
 and a minimal loader there that reads only what enforcement needs (names,
-posture, emits). The TS side (`packages/server`) keeps its producers
+posture, emits). The Go server (`packages/go-server`) keeps its producers
 unchanged; a package test pins each producer's hard-coded name to the
 canonical contract so drift is a red test, not a silent fork.
 
