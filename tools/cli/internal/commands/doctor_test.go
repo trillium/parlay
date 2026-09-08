@@ -436,8 +436,8 @@ func TestDoctorJSONSchemaShape(t *testing.T) {
 			t.Errorf("check %q has nil fixes (want [] at minimum)", c.ID)
 		}
 		for _, f := range c.Fixes {
-			if f.Healable {
-				t.Errorf("check %q has a healable fix — stage 1 must never mark healable:true", c.ID)
+			if f.Healable && !healWhitelisted(c.ID) {
+				t.Errorf("check %q has a healable fix that is NOT on the stage-3 whitelist (healWhitelisted) — doctor and parlay heal must never disagree", c.ID)
 			}
 		}
 	}

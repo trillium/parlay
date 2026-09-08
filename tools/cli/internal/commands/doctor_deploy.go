@@ -31,11 +31,13 @@
 //     reporting stale records and unrecorded sessions (the deferred check from
 //     the original deploy PR; see checkReconcile).
 //
-// Strictly read-only reporting: nothing here changes launchd state, restarts
-// a service, or writes anything beyond stdout. There are no heal verbs (that
-// is stage 3, deliberately deferred); every Fix is healable:false. Exit code
-// contract matches `parlay doctor`: exit 1 iff any check FAILed. --json emits
-// the same document schema "parlay.doctor/v1".
+// Strictly read-only reporting at the check level: nothing here changes
+// launchd state or restarts a service. Stage 3 (`parlay heal`, see heal.go)
+// is where the whitelisted deploy fixes execute — checks mark their
+// executable Fix entries healable:true via healWhitelisted, and the heal verb
+// runs them against the scratch/deployed instance with a re-verify loop. Exit
+// code contract matches `parlay doctor`: exit 1 iff any check FAILed. --json
+// emits the same document schema "parlay.doctor/v1".
 package commands
 
 import (
@@ -439,6 +441,7 @@ func checkLaunchdServices(st *doctorDeployState) (CheckResult, bool) {
 	lines := make([]textLine, 0, len(svcs))
 	verdicts := make([]verdict, 0, len(svcs))
 	evidence := map[string]any{"services": []any{}}
+	var fixes []Fix
 	svcList := make([]any, 0, len(svcs))
 	maxSev := vPass
 	for _, s := range svcs {
@@ -451,6 +454,9 @@ func checkLaunchdServices(st *doctorDeployState) (CheckResult, bool) {
 			rec["error"] = s.LoadErr
 			lines = append(lines, textLine{kind: "verdict", label: string(v),
 				text: fmt.Sprintf("%s (%s) — plist unparseable: %s", displayName(s), baseName(s.Plist), s.LoadErr), fix: "the plist is malformed; reinstall the service"})
+			fixes = append(fixes, Fix{
+				Summary: "plist is malformed; reinstall the service",
+			})
 			verdicts = append(verdicts, v)
 			maxSev = worst(maxSev, v)
 			svcList = append(svcList, rec)
@@ -473,6 +479,9 @@ func checkLaunchdServices(st *doctorDeployState) (CheckResult, bool) {
 			lines = append(lines, textLine{kind: "verdict", label: string(v),
 				text: fmt.Sprintf("%s (%s) — binary missing: %s", displayName(s), baseName(s.Plist), s.Bin),
 				fix:  fmt.Sprintf("the binary path no longer exists; rebuild/reinstall the service (ProgramArguments[0] = %s)", s.Bin)})
+			fixes = append(fixes, Fix{
+				Summary: fmt.Sprintf("binary path no longer exists; rebuild/reinstall the service (ProgramArguments[0] = %s)", s.Bin),
+			})
 			verdicts = append(verdicts, v)
 			maxSev = worst(maxSev, v)
 			svcList = append(svcList, rec)
@@ -498,6 +507,10 @@ func checkLaunchdServices(st *doctorDeployState) (CheckResult, bool) {
 			lines = append(lines, textLine{kind: "verdict", label: string(v),
 				text: fmt.Sprintf("%s (%s) — installed but NOT loaded (binary ok)", displayName(s), baseName(s.Plist)),
 				fix:  "start it: launchctl bootstrap gui/$(id -u) " + s.Plist})
+			fixes = append(fixes, Fix{
+				Summary:  "start it: launchctl bootstrap gui/$(id -u) " + s.Plist,
+				Healable: healWhitelisted("deploy-launchd"),
+			})
 			verdicts = append(verdicts, v)
 			maxSev = worst(maxSev, v)
 		}
@@ -518,7 +531,7 @@ func checkLaunchdServices(st *doctorDeployState) (CheckResult, bool) {
 		summary = fmt.Sprintf("%d com.parlay service(s) loaded with binaries present", len(svcs))
 	}
 	return CheckResult{ID: "deploy-launchd", Verdict: maxSev, Summary: summary,
-		Evidence: evidence, Lines: lines}, true
+		Evidence: evidence, Fixes: fixes, Lines: lines}, true
 }
 
 // displayName is the inventory label or a fallback derived from the plist.
@@ -569,6 +582,7 @@ func checkServiceHealth(st *doctorDeployState) (CheckResult, bool) {
 	verdicts := make([]verdict, 0, len(deployServices()))
 	svcList := make([]any, 0, len(deployServices()))
 	maxSev := vPass
+	var fixes []Fix
 	for _, s := range deployServices() {
 		rec := map[string]any{"name": s.Name, "addr": s.Addr}
 		port := addrPort(s.Addr)
@@ -588,6 +602,30 @@ func checkServiceHealth(st *doctorDeployState) (CheckResult, bool) {
 			text: fmt.Sprintf("%s %s — %s", s.Name, s.Addr, out.note), fix: ""})
 		verdicts = append(verdicts, out.verdict)
 		maxSev = worst(maxSev, out.verdict)
+		if out.verdict == vFail {
+			// Healable: restart the owning launchd service ("restart relay on
+			// dead socket"). Find the launchd svc whose plist also owns the
+			// addr's port, defaulting by name.
+			label := launchdLabelFor(st.svcs, s, port)
+			plist := ""
+			for _, s2 := range st.svcs {
+				if s2.Label == label {
+					plist = s2.Plist
+					break
+				}
+			}
+			var fixText string
+			if plist == "" {
+				fixText = fmt.Sprintf("restart the service (launchctl kickstart -k gui/$(id -u)/%s)", label)
+			} else {
+				fixText = fmt.Sprintf("restart the service (launchctl bootstrap gui/$(id -u) %s)", plist)
+			}
+			rec["fix"] = fixText
+			fixes = append(fixes, Fix{
+				Summary:  fixText,
+				Healable: healWhitelisted("deploy-service-health"),
+			})
+		}
 		svcList = append(svcList, rec)
 	}
 	evidence := map[string]any{"services": svcList}
@@ -603,7 +641,26 @@ func checkServiceHealth(st *doctorDeployState) (CheckResult, bool) {
 		summary = "all deploy services healthy"
 	}
 	return CheckResult{ID: "deploy-service-health", Verdict: maxSev, Summary: summary,
-		Evidence: evidence, Lines: lines}, true
+		Evidence: evidence, Fixes: fixes, Lines: lines}, true
+}
+
+// launchdLabelFor maps a failed deploy target to the launchd label that owns
+// it: whichever inventory entry's addr port matches the target's, else the
+// name-derived default.
+func launchdLabelFor(svcs []launchdService, s deployService, port int) string {
+	if port != 0 {
+		for _, s2 := range svcs {
+			if s2.Port == port {
+				return s2.Label
+			}
+		}
+	}
+	switch s.Name {
+	case "chat-server":
+		return "com.parlay.chat-server"
+	default:
+		return "com.parlay.eval-engine"
+	}
 }
 
 // probe implements the poll-until-deadline port + /health probe for one
@@ -918,9 +975,10 @@ var deployRuntimeInventory = func() (map[string]bool, error) {
 //     UNRECORDED SERVICE — WARN, carrying the session identity.
 //
 // A clean match in both directions is PASS. An unreadable source side (either
-// the registry or the inventory) is UNKNOWN, never FAIL. Diagnosis only:
-// reaping a stale session is `parlay sweep`'s job, so there are no fixes and
-// the verdict ceiling is WARN — this check never drives a sweep on its own.
+// the registry or the inventory) is UNKNOWN, never FAIL. Stale records carry a
+// healable fix — `parlay heal deploy-registry-reconcile` deregisters the
+// orphaned registry rows (registry-only mutation; alien live sessions stay
+// `parlay sweep`'s job).
 func checkReconcile(st *doctorDeployState) (CheckResult, bool) {
 	registry, rerr := deployAgentRegistry()
 	if rerr != nil {
@@ -973,6 +1031,13 @@ func checkReconcile(st *doctorDeployState) (CheckResult, bool) {
 		"stale_records":       stale,
 		"unrecorded_services": unrecorded,
 	}
+	var fixes []Fix
+	if len(stale) > 0 {
+		fixes = append(fixes, Fix{
+			Summary:  fmt.Sprintf("deregister %d stale registered record(s) (parlay agent deregister <agent-id> — registry row only; live sessions stay parlay sweep's job)", len(stale)),
+			Healable: healWhitelisted("deploy-registry-reconcile"),
+		})
+	}
 	summary := ""
 	switch maxSev {
 	case vWarn:
@@ -981,7 +1046,7 @@ func checkReconcile(st *doctorDeployState) (CheckResult, bool) {
 		summary = "agent registry and runtime service inventory agree in both directions"
 	}
 	return CheckResult{ID: "deploy-registry-reconcile", Verdict: maxSev, Summary: summary,
-		Evidence: evidence, Lines: lines}, true
+		Evidence: evidence, Fixes: fixes, Lines: lines}, true
 }
 
 // doctorDeployState threads the read-once launchd inventory between checks so
