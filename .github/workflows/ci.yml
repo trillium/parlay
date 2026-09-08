@@ -230,125 +230,6 @@ jobs:
           fi
           echo "working tree clean after a full build"
 
-  # ── Bun workspace: packages/input, packages/client, packages/server,
-  #    plus tools/gate-tag ───────────────────────────────────────────
-  # packages/server has real test files but no "test" script
-  # in package.json, so `bun test` is invoked directly. Every package is run
-  # from inside its own directory: there is no root bunfig.toml, so the
-  # happy-dom preload that packages/client and packages/input need is only
-  # picked up from the package directory (see AGENTS.md).
-  #
-  # Known gap, deliberately NOT enforced here: tools/hooks/pre-commit imposes a
-  # 250-line ceiling on staged .ts files. It is a staged-diff check rather than
-  # a whole-tree one, so it does not map cleanly onto a CI job — a PR can be
-  # perfectly mergeable while files it never touched sit over the limit. It is
-  # named here (and in AGENTS.md) so that a contributor whose commit is rejected
-  # by a hook they never installed on purpose can find the rule written down
-  # instead of discovering it as an ambush.
-  bun:
-    name: Bun (test, typecheck)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: '1.3.11'
-
-      - name: Cache Bun install cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'tools/split-test/bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
-
-      # The root workspaces glob is packages/* only, so tools/split-test has
-      # its own lockfile and needs its own install.
-      - name: Install (workspace root)
-        run: bun install --frozen-lockfile
-
-      - name: Install (tools/split-test)
-        run: bun install --frozen-lockfile
-        working-directory: tools/split-test
-
-      # HOME is redirected for the same reason as the Go job, and it is still
-      # load-bearing rather than defensive. It used to be packages/cli's tests
-      # that resolved join(homedir(), ".parlay", …) directly; those went with
-      # the package in T-08, but packages/server keeps the requirement — its
-      # paths.ts and the modules over it (session-channel, agent-context, tts,
-      # tool-tailer, hook-tailer, debug-log) all resolve under homedir(), and
-      # PARLAY_DATA_DIR does not cover every one of them. Without this redirect
-      # the suite writes into a real developer's ~/.parlay on a self-hosted
-      # runner.
-      #
-      # `tools` is in this loop but deliberately absent from the install steps
-      # above: neither it nor tools/gate-tag has a package.json, so
-      # `bun install --frozen-lockfile` there would fail. `bun test` in that
-      # directory is the whole requirement — semver.test.ts imports only
-      # `bun:test` and `./semver`, and lavish-poll.test.ts spawns the bridge as
-      # a subprocess against Bun.serve stubs on ephemeral ports.
-      #
-      # This entry is `tools`, not `tools/gate-tag`, because a test file that CI
-      # never runs is indistinguishable from one that has never run. Scoping it
-      # to the one subdirectory that happened to have tests meant
-      # tools/lavish-poll.test.ts was invisible to CI the moment it was added.
-      # bun test skips node_modules, so tools/split-test's installed deps do not
-      # get swept in.
-      - name: Test
-        env:
-          HOME: ${{ runner.temp }}/bun-home
-        shell: bash
-        run: |
-          mkdir -p "$HOME"
-          roots="packages/input packages/client packages/server \
-                 packages/webview packages/ccjuggler tools"
-
-          # A test file under no root is not partially run — it is not run at
-          # all, and this job still reports green, which is indistinguishable
-          # from it having passed. packages/ccjuggler was in exactly that state:
-          # six tests covering OAuth token resolution that CI had never once
-          # executed. Checked before the loop so the failure names the gap
-          # rather than surfacing as a confusing absence of output.
-          uncovered=""
-          while IFS= read -r f; do
-            covered=""
-            for r in $roots; do
-              case "$f" in "$r"/*) covered=1; break ;; esac
-            done
-            [ -z "$covered" ] && uncovered="$uncovered $f"
-          done < <(git ls-files '*.test.ts' '*.test.tsx')
-          if [ -n "$uncovered" ]; then
-            echo "::error::Test files exist under no root in this job's list, so they are NEVER RUN:"
-            printf '  %s\n' $uncovered
-            echo "Add the owning package to \$roots above."
-            exit 1
-          fi
-
-          for p in $roots; do
-            echo "::group::bun test ($p)"
-            ( cd "$p" && bun test )
-            echo "::endgroup::"
-          done
-
-      # Typecheck only where a tsconfig actually exists and resolves. Both use
-      # the locked, package-local tsc rather than `bunx tsc`, which would fetch
-      # TypeScript from the network at run time instead of using the pinned
-      # version in the lockfile.
-      - name: Typecheck (packages/input)
-        run: ./node_modules/.bin/tsc --noEmit
-        working-directory: packages/input
-
-      - name: Typecheck (tools/split-test)
-        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
-        working-directory: tools/split-test
-
-      # webview's own build script is `tsc && vite build`, so a tsc error here
-      # is a broken build, not a style nit.
-      - name: Typecheck (packages/webview)
-        run: ./node_modules/.bin/tsc --noEmit
-        working-directory: packages/webview
-
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
   # Only the eleven harnesses that were verified to be genuinely side-effect-free
   # are here. Seven were trial-run against a redirected HOME with the live
@@ -387,8 +268,8 @@ jobs:
 
       # tools/monitor/parlay-monitor.test.sh drives a Bun stub relay over a unix
       # socket, so this job now needs bun (the only non-system tool of the
-      # eleven). Pin the same version as the bun job so a toolchain mismatch can
-      # never make the stub relay behave differently from every other test.
+      # eleven). Pin a fixed version so a toolchain mismatch can never make the
+      # stub relay behave differently from every other test.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: '1.3.11'

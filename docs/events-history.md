@@ -1,6 +1,8 @@
 # Events / chat history (JSONL)
 
-**Code:** `packages/server/src/storage.ts` (Bun) and `packages/go-server/internal/store/store.go` (Go).
+**Code:** `packages/go-server/internal/store/store.go` (Go). The Bun
+implementation it replaced (`packages/server/src/storage.ts`) was deleted
+with the Bun→Go cutover.
 
 Chat history is an append-only JSON-Lines file, one `ChatMessage` per line —
 **not the same file on the two server implementations**, verified
@@ -15,8 +17,9 @@ Two other JSONL streams feed into chat history rather than being it:
 
 - **Hook firings** — `$PAI_DIR/MEMORY/OBSERVABILITY/hook-firings.jsonl`,
   written synchronously by Claude Code hooks
-  (`hooks/lib/parlay-announce.ts`). `packages/server/src/hook-tailer.ts`
-  tails it (1s poll, byte-offset tracked, restarts on truncation/rotation)
+  (`hooks/lib/parlay-announce.ts`). The Go hook-tailer
+  (`packages/go-server/internal/...`) tails it (1s poll, byte-offset
+  tracked, restarts on truncation/rotation)
   and turns each line into a `system_update` chat message, routed to the
   channel resolved from the firing's `session_id` or the shared `system`
   pseudo-tab if none is known.
@@ -24,7 +27,7 @@ Two other JSONL streams feed into chat history rather than being it:
   activity, same mechanism.
 
 Both tailers now push over HTTP to `PARLAY_HUB_URL`
-(`packages/server/src/hub-ingress.ts`) rather than broadcasting in-process —
+(the Go hub-ingress) rather than broadcasting in-process —
 see [`command-server.md`](command-server.md) for why that currently means
 tailed events only reach the panel if the Go server is also running as the
 hub. The ingress side of that HTTP call is a **allowlisted** event-name gate

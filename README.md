@@ -49,56 +49,37 @@ the host from a phone; a LAN address or any other private tunnel works the same 
 
 ## Quickstart (local only — no Pulse, no tailnet)
 
-Prereqs: [Bun](https://bun.sh) and [Go](https://go.dev) 1.26+ (the CLI is Go; `bin/parlay`
-builds it for you on first run).
+Prereqs: [Go](https://go.dev) 1.26+ (the CLI and server are both Go; `bin/parlay`
+builds the CLI for you on first run) and [Bun](https://bun.sh) for the client
+packages below — `bun install` also wires the repo's git hooks.
 
 ```sh
 git clone https://github.com/trillium/parlay && cd parlay
 bun install                                   # also wires the git hooks (core.hooksPath tools/hooks)
 ```
 
-**1. Start the server.** It listens on `:4242` and owns `/api/chat/*`:
+**1. Start the server.** It's `packages/go-server`, a single Go binary that listens on
+`:4242` (default `PARLAY_SERVER_ADDR=127.0.0.1:4242`) and owns `/api/chat/*`:
 
 ```sh
-cd packages/server && PARLAY_DATA_DIR=~/.parlay/data PAI_DIR=~/.parlay/pai-scratch bun run start
+go run ./packages/go-server/cmd/parlay-server
 ```
 
-Both variables in that command matter, and here is why.
+It persists state under `$PARLAY_STATE_HOME` (default `~/.parlay`) — messages/agents/
+drafts/settings/uploads live there. To keep a dev run fully isolated from live state:
 
-> **⚠️ `PARLAY_DATA_DIR` is not optional. Without it the server writes to — and can
-> destroy — existing state.** Unset, it does not use one directory; it writes to two
-> production locations:
->
-> - **`~/exchange`** — chat history, draft, settings, agent channels, uploads.
-> - **`$PAI_DIR/MEMORY/STATE`**, default **`~/.claude/PAI/MEMORY/STATE`** — the agent
->   registry (`parlay-agents.json`) and the session→channel map
->   (`parlay-session-channels.json`).
->
-> That second one is the dangerous half, because a Claude Code / PAI user already has
-> that directory: the server runs a prune sweep against that registry at boot, so
-> starting it unconfigured mutates a live registry rather than an empty one.
-> `packages/server/src/paths.ts` exists because of a real incident where exactly this
-> happened and two live chat channels were deleted. `PARLAY_DATA_DIR` relocates all
-> of it, flat, into the one directory you name.
+```sh
+go run ./packages/go-server/cmd/parlay-server -state-dir ~/.parlay/dev-data
+```
 
-`PAI_DIR` is pointed at an empty scratch directory for a second reason: it is both a
-write target and a read target. Besides the registry above, the server tails that tree
-for agent-activity events and re-posts every one of them over HTTP to `PARLAY_HUB_URL`
-(default `http://127.0.0.1:4242`) — so on a machine that has a real `~/.claude/PAI`,
-leaving `PAI_DIR` unset ships unrelated live agent turns to whatever is listening
-there. Setting both variables, as the command does, is what fully protects the real
-directory.
-
-That hub is the Go server (`packages/go-server`), not this one: with only the Bun
-server running, those posts hit routes it does not serve, so they are dropped with a
-rate-limited warning and hook/tool activity does not appear in the panel. Tailing
-itself never stops. See
-[`packages/server/README.md`](packages/server/README.md) for the full config surface.
+> **⚠️ The server reads and writes its persisted store from `~/.parlay` by default.**
+> If you're running it alongside a live install, point `-state-dir` (or
+> `PARLAY_STATE_HOME`) at a scratch directory so you don't collide with or clobber
+> existing state. The chat history, agent registry, drafts, settings and uploads all
+> live there.
 
 **2. Point the CLI at it**, in another shell. Every command from here on is written
-relative to the **root of the clone** — step 1 left the first shell inside
-`packages/server`, and a brand-new shell starts in your home directory, so `cd` to the
-clone first:
+relative to the **root of the clone**:
 
 ```sh
 cd /path/to/parlay                         # the directory you cloned into above
@@ -166,22 +147,21 @@ To reach it from your phone, expose the host — Tailscale, LAN IP, or a private
 tunnel — and export `PARLAY_SERVER` as that address instead of `localhost`.
 
 **The chat API is unauthenticated by design** (that is how the CLI and plain `curl`
-work — see the header of `packages/server/src/guard.ts`), so anything that can reach
-the port can post into a live agent's turn. Expose it only over a private network —
-a tailnet, a VPN, or a LAN you control — never a public tunnel or a port forwarded
-to the internet.
+work — see the origin guard in `packages/go-server/internal/guard`), so anything
+that can reach the port can post into a live agent's turn. Expose it only over a
+private network — a tailnet, a VPN, or a LAN you control — never a public tunnel or
+a port forwarded to the internet.
 
 ## Layout
 
-A [Bun](https://bun.sh) workspace monorepo, plus several standalone Go modules.
-This table is a newcomer's map of the parts you need first, not a complete index
-of every module in the repo:
+A [Bun](https://bun.sh) workspace monorepo for the client packages, plus standalone
+Go modules for the server and CLI. This table is a newcomer's map of the parts you
+need first, not a complete index of every module in the repo:
 
 | Package | What it is |
 |---|---|
-| `packages/server` | The Bun server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling. Runs standalone on `:4242`. |
+| `packages/go-server` | The Go server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling, drafts/settings. Runs standalone on `:4242` (`go run ./packages/go-server/cmd/parlay-server`). The contract it implements lives in [`docs/api-contract.md`](docs/api-contract.md). |
 | `tools/relay` | The standalone per-agent relay daemon — its own Go module, built by `tools/relay/build.sh`. Fans the server's `/api/chat/poll` feed out to enrolled agents; `parlay monitor`/`listen` need it unless you pass `--legacy-poll`. |
-| `packages/go-server` | An in-progress Go rewrite of the same HTTP/SSE surface. See [`docs/api-contract.md`](docs/api-contract.md). |
 | `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
@@ -203,10 +183,7 @@ flowchart LR
         panel["Panel\n(packages/client)"]
     end
 
-    subgraph server_side["Command/chat server — :4242"]
-        bun["packages/server (Bun)\ncurrently more complete"]
-        go["packages/go-server (Go)\nSSE hub, live-commands, in progress"]
-    end
+    server["Command/chat server — :4242\npackages/go-server (Go)"]
 
     hist["Events / history JSONL\nchat-history.jsonl · messages.jsonl"]
     registry["Agent registry & presence\nagents.json"]
@@ -215,26 +192,22 @@ flowchart LR
     launcher["Launcher\ntools/cli/internal/spawn"]
     agent["A spawned agent process\n(herdr terminal)"]
 
-    input -- "POST edits, evaluated by\nthe Go eval engine" --> bun
-    panel -- "SSE + REST" --> bun
-    panel -. "SSE hub moving here" .-> go
-    bun -- "hook/tool tailers POST\n(PARLAY_HUB_URL)" --> go
-    bun --> hist
-    go --> hist
-    bun --> registry
-    go --> registry
-    bun -- "/api/chat/poll" --> relay
+    input -- "POST edits, evaluated by\nthe Go eval engine" --> server
+    panel -- "SSE + REST" --> server
+    server --> hist
+    server --> registry
+    server -- "/api/chat/poll" --> relay
     relay -- "spool file, tail -F" --> monitor
     monitor --> agent
     launcher -- "spawns + registers" --> agent
     launcher -- "register-agent, hello" --> registry
-    agent -- "reply/say" --> bun
+    agent -- "reply/say" --> server
 ```
 
 | Part | What it does | Deep dive |
 |---|---|---|
 | **Input** | DOM wrapper that turns edits in a composer element into evaluated phrase-engine actions. | [`docs/input.md`](docs/input.md) |
-| **Command/chat server** | Owns `/api/chat/*` — two implementations coexist today (Bun is more complete; Go owns the newer SSE hub and live-command registry), with a real gap between them. | [`docs/command-server.md`](docs/command-server.md) |
+| **Command/chat server** | Owns `/api/chat/*` — a single Go implementation (`packages/go-server`), the sole server; the TS server it replaced was deleted with the Bun→Go cutover. | [`docs/command-server.md`](docs/command-server.md) |
 | **Events / history (JSONL)** | Append-only chat history, plus the hook/tool-activity tailers that feed it — two different files depending on which server wrote them. | [`docs/events-history.md`](docs/events-history.md) |
 | **Agent registry & presence** | Who is enrolled as a chat tab, and transient (in-memory-only) connection counts. | [`docs/agent-registry.md`](docs/agent-registry.md) |
 | **Monitor / listen** | How an enrolled agent actually receives messages — relay-backed by default, `--legacy-poll` as a no-relay fallback with a documented dead-tab gap. | [`docs/monitor.md`](docs/monitor.md) |
@@ -254,17 +227,18 @@ your running server alone — read its limits in [`examples/`](examples/) before
 ## Development
 
 ```sh
-cd packages/<name> && bun test    # a TS package (server/client/input), from inside it — see note below
-cd tools/cli && go test ./...     # the Go CLI
+cd packages/go-server && go test ./...     # the Go server
+cd packages/client && bun test             # a TS client package, from inside it — see note below
+cd tools/cli && go test ./...              # the Go CLI
 ```
 
 There is no root `bunfig.toml`, so `bun test` at the repo root does not load the
-happy-dom preload some packages need: DOM-touching suites fail there with
+happy-dom preload some client packages need: DOM-touching suites fail there with
 `ReferenceError: document is not defined` even though they pass in-package —
 always run a suite from inside its own package. CI
 (`.github/workflows/ci.yml`) runs on every pull request and on pushes to
-`main`, and does exactly that for the Go modules, the Bun packages, and the
-hermetic shell harnesses.
+`main`, and does exactly that for the Go modules, the Bun client packages, and
+the hermetic shell harnesses.
 
 Repo conventions worth knowing:
 

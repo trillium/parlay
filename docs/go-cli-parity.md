@@ -10,12 +10,13 @@ that tree's `index.ts` dispatch switch. `bin/parlay` builds and execs the Go
 binary for every verb; there is no TS fallback path left.
 
 Wiring: HTTP verbs speak `docs/api-contract.md` / `docs/api-contract.openapi.yaml`,
-which both `packages/server` (TS) and `packages/go-server` implement; the CLI
-targets whichever server `PARLAY_SERVER`/config points at. The go-server passed
-SSE golden parity (PRs #186/#188/#189/#192), so `listen`-class streaming verbs
-work against it unchanged. The contract's three `x-parlay-server: ts-only` ops
-(`POST/GET /api/debug/input-timing`, `GET /parlay-ui.js`) are browser/panel-facing
-and back **no CLI verb** — no verb needs the TS server.
+which `packages/go-server` implements; the CLI targets whatever server
+`PARLAY_SERVER`/config points at. The go-server passed SSE golden parity
+(PRs #186/#188/#189/#192), so `listen`-class streaming verbs work against it.
+The contract's `x-parlay-server: ts-only` ops (`POST/GET /api/debug/input-timing`,
+`GET /parlay-ui.js`) were browser/panel-facing routes on the retired
+`packages/server` and back **no CLI verb** — the TS server itself was deleted
+with the Bun→Go cutover, so nothing needs it.
 
 ## Verb table
 
