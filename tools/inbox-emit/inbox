@@ -1,0 +1,55 @@
+#!/bin/sh
+# inbox — brain-federation wrapper pinned to the inbox store, PLUS a create-emit
+# hook (inbox routing). On `inbox create`, after bd succeeds, append the new bead
+# id to a byte-offset-tailable events stream so a poll/tail daemon can dispatch
+# a handler with sub-~1s latency. EVERYTHING except the `create` subcommand is
+# byte-identical to the original wrapper (plain `exec bd "$@"`), so the emit hook
+# can only ever affect `inbox create` — never list/show/close/label/etc.
+#
+# Canonical source: tools/inbox-emit/inbox in the parlay repo, installed to
+# ~/.local/bin/inbox by tools/inbox-emit/install.sh (which backs up the original).
+# Edit it here, not the installed copy.
+#
+# Server-mode store on the shared Dolt sql-server (127.0.0.1:3307); the explicit
+# shared-server pins mirror the review/brain wrappers so bd never falls back to
+# embedded mode or mis-discovers a sibling database.
+export BEADS_DIR="/Users/trilliumsmith/data/inbox/.beads"
+export BD_NAME="inbox"
+export BRAIN_KNOWLEDGE_ROOT="/Users/trilliumsmith/data/inbox"
+export BRAIN_EXFIL_FLAT=1
+export BEADS_DOLT_SERVER_MODE=1
+export BEADS_DOLT_SERVER_HOST=127.0.0.1
+export BEADS_DOLT_SERVER_PORT=3307
+export BEADS_DOLT_SHARED_SERVER=1
+
+INBOX_EVENTS_FILE="${INBOX_EVENTS_FILE:-$HOME/data/inbox/events.jsonl}"
+
+if [ "$1" = "create" ]; then
+  # Capture stdout to scrape the new id and echo it back unchanged; stderr flows
+  # through normally. Command substitution strips trailing newlines, so re-add one.
+  out=$(bd "$@")
+  code=$?
+  printf '%s\n' "$out"
+  if [ "$code" -eq 0 ]; then
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # The creating agent is the only process that knows which channel should
+    # receive a close notification. Stamp the subscription on the bead before
+    # emitting it; absent PARLAY_AGENT_ID, creation remains successful but has
+    # no close-notification subscriber.
+    agent="${PARLAY_AGENT_ID:-}"
+    # Match bd's own "Created issue: inbox-XXX" line so ids inside a title/desc
+    # never trigger a false emit. Emit one line per created id (batch-safe).
+    printf '%s' "$out" | grep -oE 'Created issue: inbox-[a-z0-9]+' | sed 's/^Created issue: //' | while IFS= read -r id; do
+      [ -z "$id" ] && continue
+      if [ -n "$agent" ]; then
+        bd label add "$id" "notify:$agent" >/dev/null 2>&1 || true
+        printf '{"id":"%s","created_at":"%s","source":"inbox-create","agent":"%s"}\n' "$id" "$ts" "$agent" >> "$INBOX_EVENTS_FILE" 2>/dev/null || true
+      else
+        printf '{"id":"%s","created_at":"%s","source":"inbox-create"}\n' "$id" "$ts" >> "$INBOX_EVENTS_FILE" 2>/dev/null || true
+      fi
+    done
+  fi
+  exit "$code"
+fi
+
+exec bd "$@"
