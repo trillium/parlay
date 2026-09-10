@@ -57,17 +57,16 @@ Never commit, branch, or push from the primary checkout.
 // {{VAR}} → value substitutions
 // bin/parlay-spawn's load_template performs. The template is the single
 // source of truth; this function only supplies the substitution values.
-func composeStartupPrompt(server, agentID, name, color, setupBlock, prompt, dod string) string {
+func composeStartupPrompt(agentID, name, color, setupBlock, prompt, dod string) string {
 	// Single-quote each value for the shell, then render the whole thing as a
 	// quoted literal for the Monitor({}) call. A display name is arbitrary
 	// prose; inside plain double quotes `$(…)`, backticks and `$VAR` are live,
 	// so a name mentioning `$( )` got command-substituted the moment the agent
 	// pasted the printed line (robots-2h4n).
-	monitorCmd := fmt.Sprintf("PARLAY_SERVER=%s parlay listen --agent %s --name %s --color %s",
-		shellQuote(server), shellQuote(agentID), shellQuote(name), shellQuote(color))
+	monitorCmd := fmt.Sprintf("parlay listen --agent %s --name %s --color %s",
+		shellQuote(agentID), shellQuote(name), shellQuote(color))
 
 	values := map[string]string{
-		"PARLAY":           server,
 		"AGENT_ID":         agentID,
 		"NAME":             name,
 		"COLOR":            color,

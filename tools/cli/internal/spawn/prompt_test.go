@@ -29,7 +29,6 @@ import (
 // bash on that exotic edge. For every realistic spawn input (no apostrophes)
 // the two paths are byte-identical.
 func TestStartupPromptMatchesBashPath(t *testing.T) {
-	server := "http://localhost:4242"
 	agentID := "mc-x"
 	name := "hostile() $(x) \"quoted\" and value"
 	color := "#f97316"
@@ -37,7 +36,7 @@ func TestStartupPromptMatchesBashPath(t *testing.T) {
 	prompt := "Do the thing, then say done."
 	dod := "reply your result with 'reply \"<summary>\"' and run: parlay status done"
 
-	goOut := composeStartupPrompt(server, agentID, name, color, setupBlock, prompt, dod)
+	goOut := composeStartupPrompt(agentID, name, color, setupBlock, prompt, dod)
 
 	// Render the same template through bin/parlay-spawn's exact load_template
 	// algorithm (cat + per-{{VAR}} literal substitution), reading the same
@@ -67,9 +66,8 @@ load_template() {
 }
 shell_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 json_escape() { printf '%s' "$1" | jq -Rs .; }
-MONITOR_CMD_JSON=$(json_escape "PARLAY_SERVER=$(shell_quote "$PARLAY") parlay listen --agent $(shell_quote "$AGENT_ID") --name $(shell_quote "$NAME") --color $(shell_quote "$COLOR")")
+MONITOR_CMD_JSON=$(json_escape "parlay listen --agent $(shell_quote "$AGENT_ID") --name $(shell_quote "$NAME") --color $(shell_quote "$COLOR")")
 load_template "$1" \
-  "PARLAY=$PARLAY" \
   "AGENT_ID=$AGENT_ID" \
   "NAME=$NAME" \
   "COLOR=$COLOR" \
@@ -87,7 +85,6 @@ load_template "$1" \
 	// PATH and jq unresolvable.
 	cmd.Env = append(
 		[]string{"PATH=" + os.Getenv("PATH")},
-		"PARLAY="+server,
 		"AGENT_ID="+agentID,
 		"NAME="+name,
 		"COLOR="+color,
@@ -115,7 +112,7 @@ load_template "$1" \
 // `$VAR`, and a `"` broke out of the JS string literal.
 func TestComposeStartupPromptQuotesMonitorCommand(t *testing.T) {
 	hostile := "$( ) and `id` and $HOME and \"quoted\" and it's"
-	out := composeStartupPrompt("http://localhost:4242", "mc-x", hostile, "#f97316", "", "do the thing", "reply when done")
+	out := composeStartupPrompt("mc-x", hostile, "#f97316", "", "do the thing", "reply when done")
 
 	var line string
 	for _, l := range strings.Split(out, "\n") {
@@ -143,7 +140,7 @@ func TestComposeStartupPromptQuotesMonitorCommand(t *testing.T) {
 	}
 	// The other interpolated values are quoted too, so none of them can split
 	// or expand either.
-	for _, w := range []string{"--agent 'mc-x'", "--color '#f97316'", "PARLAY_SERVER='http://localhost:4242'"} {
+	for _, w := range []string{"--agent 'mc-x'", "--color '#f97316'"} {
 		if !strings.Contains(unq, w) {
 			t.Errorf("arm-command missing %q; got: %s", w, unq)
 		}

@@ -429,14 +429,13 @@ func claimShellQuote(s string) string {
 // never produce is an agent that reads as enrolled while no one is delivering to
 // it — the registered-but-deaf shape robots-dcag is named after.
 func claimBrief(agent, name, color, model string, task claimTask, silent bool) string {
-	server := config.ServerURL()
 	var b strings.Builder
 
 	idLine := fmt.Sprintf("id=%q, name=%q, color=%q", agent, name, color)
 	if model != "" {
 		idLine += fmt.Sprintf(", model=%q", model)
 	}
-	fmt.Fprintf(&b, "You are agent %s. Parlay panel: %s.\n\n", idLine, server)
+	fmt.Fprintf(&b, "You are agent %s.\n\n", idLine)
 
 	// One startup command: arm the persistent monitor. Memory is already
 	// recovered inline below (see the "Your memory" section), so a claiming
@@ -468,8 +467,8 @@ func claimBrief(agent, name, color, model string, task claimTask, silent bool) s
 		fmt.Fprintf(&b, "No monitor armed (--silent): nothing is streaming this channel, so %s will not\nreceive captain messages until a listener is armed for it separately.\nMemory is already recovered below.\n\n", agent)
 	} else {
 		b.WriteString("Arm your monitor — your one startup command (memory is already recovered below):\n")
-		monitorCmd := fmt.Sprintf("PARLAY_SERVER=%s parlay listen --agent %s --name %s --color %s --notify-safe",
-			claimShellQuote(server), claimShellQuote(agent), claimShellQuote(name), claimShellQuote(color))
+		monitorCmd := fmt.Sprintf("parlay listen --agent %s --name %s --color %s --notify-safe",
+			claimShellQuote(agent), claimShellQuote(name), claimShellQuote(color))
 		fmt.Fprintf(&b, "   Monitor({ command: %s, persistent: true })\n\n", strconv.Quote(monitorCmd))
 	}
 

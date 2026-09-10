@@ -91,6 +91,9 @@ S
 chmod +x "$STUB/curl" "$STUB/launchctl" "$STUB/getconf"
 
 # ── Harness ───────────────────────────────────────────────────────────────────
+# ensure-up is normally invoked by the CLI, which supplies the resolved server
+# target. Keep that contract explicit in this direct-script harness too.
+DEFAULT_SERVER="http://localhost:4242"
 # run <job-state> <health-at-offset-seconds|never> [extra ensure-up args...]
 # Resets recorded state, then runs ensure-up.sh under the redirected env.
 # Sets RC and captures stderr in $ROOT/out.
@@ -108,6 +111,7 @@ run() {
     PATH="$STUB:/usr/bin:/bin:/usr/sbin:/sbin" \
     HOME="$FAKE_HOME" \
     ROOT="$ROOT" \
+    PARLAY_SERVER="$DEFAULT_SERVER" \
     PARLAY_RELAY_HEALTH_WAIT="${WAIT:-1}" \
     PARLAY_RELAY_HEALTH_MAX_WAIT="${MAXWAIT:-20}" \
     PARLAY_RELAY_LOG_CAP_BYTES="${LOGCAP:-67108864}" \

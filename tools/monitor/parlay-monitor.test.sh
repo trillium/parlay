@@ -229,10 +229,13 @@ echo "A. server-scoped runtime dir (lib.sh)"
 
 canonical="$(unset PARLAY_RELAY_RUNTIME; parlay_relay_runtime_dir)"
 
-got="$(unset PARLAY_RELAY_RUNTIME; PARLAY_SERVER="" parlay_relay_scoped_runtime_dir)"
-[ "${got}" = "${canonical}" ] \
-  && ok "unset PARLAY_SERVER → canonical dir (${canonical})" \
-  || bad "unset PARLAY_SERVER should use the canonical dir" "got ${got}"
+if got="$(unset PARLAY_RELAY_RUNTIME PARLAY_SERVER; parlay_relay_scoped_runtime_dir 2>"${ROOT}/unset-server.err")"; then
+  bad "unset PARLAY_SERVER must not guess a runtime target" "got ${got}"
+else
+  grep -q "PARLAY_SERVER is required" "${ROOT}/unset-server.err" \
+    && ok "unset PARLAY_SERVER refuses without guessing a target" \
+    || bad "unset PARLAY_SERVER refusal does not explain the missing target" "$(cat "${ROOT}/unset-server.err")"
+fi
 
 got="$(unset PARLAY_RELAY_RUNTIME; PARLAY_SERVER="${DEFAULT_SERVER}" parlay_relay_scoped_runtime_dir)"
 [ "${got}" = "${canonical}" ] \
@@ -352,14 +355,18 @@ else
   bad "leak reopens when lib.sh is missing" "exit=${CODE} requests: $(tr '\n' ' ' <"${STUB_LOG}")"
 fi
 
-# B5. No PARLAY_SERVER set: nothing to compare against, behave as before.
+# B5. No PARLAY_SERVER set: the note-reader must refuse rather than guess.
 start_stub "${ROOT}/default-relay" "${DEFAULT_SERVER}" || exit 1
 run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "" "verify-agent"
 if grep -q "/register" "${STUB_LOG}"; then
-  ok "unset PARLAY_SERVER enrolls unchanged (no new failure mode)"
+  bad "unset PARLAY_SERVER enrolled by guessing a server" "${ERR}"
 else
-  bad "unset PARLAY_SERVER was blocked" "exit=${CODE} ${ERR}"
+  ok "unset PARLAY_SERVER refuses before enrollment"
 fi
+case "${ERR}" in
+  *"PARLAY_SERVER is required"*) ok "unset PARLAY_SERVER explains that the CLI must resolve the target" ;;
+  *) bad "unset PARLAY_SERVER refusal does not explain the missing target" "exit=${CODE} ${ERR}" ;;
+esac
 
 # ══ C. a slow /agents probe must never kill the monitor ══════════════════════
 # robots-dcag: the section-B probe was a bare `VAR=$(curl … | sed …)`, and under
