@@ -127,7 +127,7 @@ func Health(argv []string) {
 	if !subs.ok {
 		sick = true
 		fmt.Printf("FAIL  relay %s — %s\n", server, subs.err)
-		fmt.Printf("      fix: is Pulse running? curl %s/api/chat/subscribers\n", server)
+		fmt.Printf("      fix: is the Go server running? curl %s/api/chat/subscribers\n", server)
 	} else {
 		d := subs.data
 		clients, pollers, registered := 0, 0, 0
@@ -263,9 +263,9 @@ func checkServerReachable(st *doctorState) (CheckResult, bool) {
 		return singleLine("server-reachable", vPass, fmt.Sprintf("server reachable at %s", st.server), "",
 			map[string]any{"server_url": st.server, "url_source": string(st.src.Source)}), true
 	}
-	fix := "check Pulse/relay is up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
+	fix := "check the Go server and relay are up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
 	if st.src.Source != config.SourceDefault {
-		fix = fmt.Sprintf("check Pulse/relay is up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
+		fix = fmt.Sprintf("check the Go server and relay are up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
 	}
 	text := fmt.Sprintf("server unreachable at %s — %s", st.server, st.subs.err)
 	return singleLine("server-reachable", vFail, text, fix,

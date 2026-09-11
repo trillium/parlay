@@ -139,11 +139,11 @@ again it can be wired into `router.ts`/`index.ts` normally; see its header
 comment for the intended wiring.
 
 **`packages/client`'s `build.ts` has a live side effect**: every successful
-build POSTs to `http://127.0.0.1:31337/api/chat/reload`, and that port is the
-captain's real, live local Pulse server — not sandboxed per worktree. Running
+build POSTs to `http://127.0.0.1:4242/api/chat/reload`, which may be the
+captain's real local Go server — not sandboxed per worktree. Running
 `bun run build` / `bun build.ts` in `packages/client` from *any* environment
 that shares the host's network namespace (including disposable pool
-worktrees) force-reloads the captain's actual connected clients. The built
+worktrees) force-reloads the connected clients. The built
 bundle itself lands harmlessly in the invoking worktree's own `dist/` (and
 gitignored `pulse-agent.js`/`plugins/`), so this doesn't ship broken code —
 but it does interrupt whatever the captain is doing. Prefer `bun test` or a
@@ -195,6 +195,5 @@ is a live server other agents are talking to, and nothing in the pattern tells y
 which instance you matched. Tear a test server down by the thing that is unique to
 it: the port (`PARLAY_PORT=<45xxx>` in the match, or the listening pid) or its
 scratch `PARLAY_DATA_DIR` path. The same trap applies to the relay: `$TMPDIR/parlay/`
-is the host-wide shared runtime dir and a scoped test relay lives in a
-`srv-<hash>` subdirectory of it (see the robots-buu8 section below) — match the
-subdirectory, never the parent.
+is the host-wide canonical runtime dir. Use an explicit `$PARLAY_RELAY_RUNTIME`
+for tests and never sweep the canonical directory accidentally.

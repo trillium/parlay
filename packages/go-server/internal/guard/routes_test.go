@@ -222,7 +222,7 @@ func TestD7TheRestOfTheWriteSurfaceIsRefused(t *testing.T) {
 // registered agent id, which is what made the rest of the chain aimable.
 // Guarding it is the same mechanism, and costs its real callers nothing
 // because every one of them (parlay doctor, crew-state, the Go CLI, the
-// split-test probe) is a no-Origin HTTP client.
+// the Go CLI) is a no-Origin HTTP client.
 func TestD9SubscribersNoLongerLeaksIdentifiers(t *testing.T) {
 	base := newServer(t)
 

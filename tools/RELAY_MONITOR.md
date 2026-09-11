@@ -26,7 +26,7 @@ The server's poll is channel-scoped (one message per call, filtered by
 
 ## Wire contract
 
-### Upstream (relay → Pulse server)
+### Upstream (relay → Go server)
 
 ```
 GET {server}/api/chat/poll?after=<lastId>&channel=<agent>
@@ -41,12 +41,9 @@ channel-scoped poll auto-registers the agent server-side. Default server is
 ### Registry (monitor → relay, Unix control socket)
 
 Socket: `<runtime>/relay.sock`. `<runtime>` defaults to `$TMPDIR/parlay`
-(`/tmp/parlay` fallback) **for the default server only** — a relay is a
-per-runtime-dir singleton bound to one upstream server, so a non-default
-`$PARLAY_SERVER` resolves to its own `<runtime>/srv-<hash>` and gets its own
-relay. The monitor also reads `/agents` → `server` and refuses to `/register`
-against a relay bound elsewhere. See `monitor/NOTES.md` § Upstream-server scoping
-(robots-buu8) — without this, a sandbox enrolled into the live registry.
+(`/tmp/parlay` fallback), with `$PARLAY_RELAY_RUNTIME` available for hermetic
+tests. The relay is a single per-user process and every monitor enrolls through
+this canonical socket.
 
 | Route | Method | Body | Response |
 |-------|--------|------|----------|

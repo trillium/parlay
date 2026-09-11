@@ -8,7 +8,7 @@ This file is internal operating memory for AI agents working in this repository,
 
 Each of these has already caused a real incident on the captain's box.
 
-- **Never `pkill -f 'src/index.ts'`, `bun`, or `parlay`.** The production chat server runs as launchd job `com.parlay.chat-server` on that exact path. Kill test servers by port or pid. Same for `$TMPDIR/parlay/` — match the `srv-<hash>` subdirectory, never the parent. → [notes](docs/agent-notes/packages-server-is-a-standalone-bun.md)
+- **Never `pkill -f 'src/index.ts'`, `bun`, or `parlay`.** The production chat server runs as launchd job `com.parlay.chat-server` on that exact path. Kill test servers by port or pid. Keep test relay state in an explicit runtime dir rather than touching the canonical `$TMPDIR/parlay/`. → [notes](docs/agent-notes/packages-server-is-a-standalone-bun.md)
 - **Never run `bun run build` / `bun build.ts` in `packages/client` against a live server.** Its `build.ts` POSTs a reload beacon and force-reloads connected clients from any worktree. Use `bun test` or a scoped `bun build src/<file>.ts --outdir=<tmp>`.
 - **Never edit `~/.claude` from this repo.** Reading it to diagnose is fine.
 - **A `READY` gate is not evidence a review found nothing.** CodeRabbit posts findings it cannot attach to the diff as *"Outside diff range comments"* in the review BODY, where they create no thread — so `merge-gate`'s `unresolved-threads` check cannot see them and returns READY with a Major outstanding. Read the newest CodeRabbit review body, not just the thread list. (task-42qot PR B1: exactly this hid an in-place-rollback Major.)
