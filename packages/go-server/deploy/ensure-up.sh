@@ -43,11 +43,6 @@ log() { [ "${QUIET}" = 1 ] || echo "parlay-server ensure-up: $*" >&2; }
 ADDR="${PARLAY_SERVER_ADDR:-${PARLAY_GOSERVER_ADDR_DEFAULT}}"
 STATE_DIR="${PARLAY_STATE_HOME:-${PARLAY_GOSERVER_STATE_DEFAULT}}"
 
-if parlay_goserver_refuse_31337 "${ADDR}"; then
-  log "refusing addr ${ADDR} — :31337 is the captain's live production Pulse server"
-  exit 1
-fi
-
 # Fast path: already up, do nothing.
 if parlay_goserver_health_ok "${ADDR}"; then
   log "server already up"

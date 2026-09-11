@@ -260,17 +260,11 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'tools/split-test/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
 
-      # The root workspaces glob is packages/* only, so tools/split-test has
-      # its own lockfile and needs its own install.
       - name: Install (workspace root)
         run: bun install --frozen-lockfile
-
-      - name: Install (tools/split-test)
-        run: bun install --frozen-lockfile
-        working-directory: tools/split-test
 
       # HOME is redirected for the same reason as the Go job, and it is still
       # load-bearing rather than defensive. It used to be packages/cli's tests
@@ -282,8 +276,8 @@ jobs:
       # the suite writes into a real developer's ~/.parlay on a self-hosted
       # runner.
       #
-      # `tools` is in this loop but deliberately absent from the install steps
-      # above: neither it nor tools/gate-tag has a package.json, so
+      # `tools` is deliberately absent from the install steps above: neither
+      # it nor tools/gate-tag has a package.json, so
       # `bun install --frozen-lockfile` there would fail. `bun test` in that
       # directory is the whole requirement — semver.test.ts imports only
       # `bun:test` and `./semver`, and lavish-poll.test.ts spawns the bridge as
@@ -293,8 +287,6 @@ jobs:
       # never runs is indistinguishable from one that has never run. Scoping it
       # to the one subdirectory that happened to have tests meant
       # tools/lavish-poll.test.ts was invisible to CI the moment it was added.
-      # bun test skips node_modules, so tools/split-test's installed deps do not
-      # get swept in.
       - name: Test
         env:
           HOME: ${{ runner.temp }}/bun-home
@@ -338,10 +330,6 @@ jobs:
       - name: Typecheck (packages/input)
         run: ./node_modules/.bin/tsc --noEmit
         working-directory: packages/input
-
-      - name: Typecheck (tools/split-test)
-        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
-        working-directory: tools/split-test
 
       # webview's own build script is `tsc && vite build`, so a tsc error here
       # is a broken build, not a style nit.

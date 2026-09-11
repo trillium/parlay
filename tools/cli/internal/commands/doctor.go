@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -107,12 +106,6 @@ type healthSubscribersInfo struct {
 	History *healthHistory `json:"history,omitempty"`
 }
 
-type pulseHealthInfo struct {
-	Status *string  `json:"status"`
-	Uptime *float64 `json:"uptime"`
-	Pid    *int     `json:"pid"`
-}
-
 type engineHealthInfo struct {
 	OK       *bool `json:"ok"`
 	Protocol *int  `json:"protocol"`
@@ -134,7 +127,7 @@ func Health(argv []string) {
 	if !subs.ok {
 		sick = true
 		fmt.Printf("FAIL  relay %s — %s\n", server, subs.err)
-		fmt.Printf("      fix: is Pulse running? curl %s/api/chat/subscribers\n", server)
+		fmt.Printf("      fix: is the Go server running? curl %s/api/chat/subscribers\n", server)
 	} else {
 		d := subs.data
 		clients, pollers, registered := 0, 0, 0
@@ -157,26 +150,6 @@ func Health(argv []string) {
 			fmt.Printf("ok    memory — rss %sMB, heap %sMB; history %s msgs (%sKB)\n",
 				formatNumber(d.Memory.RssMB), formatNumber(d.Memory.HeapUsedMB), historyCount, historyKB)
 		}
-	}
-
-	// Pulse wrapper health (present when the relay runs inside Pulse on :31337).
-	pulse := tryJSON[pulseHealthInfo](server, "/api/pulse/health")
-	if pulse.ok {
-		up := ""
-		if pulse.data.Uptime != nil {
-			up = fmt.Sprintf(", up %smin", formatNumber(math.Round(*pulse.data.Uptime/60)))
-		}
-		status := "undefined"
-		if pulse.data.Status != nil {
-			status = *pulse.data.Status
-		}
-		pid := "undefined"
-		if pulse.data.Pid != nil {
-			pid = strconv.Itoa(*pulse.data.Pid)
-		}
-		fmt.Printf("ok    pulse — status %s, pid %s%s\n", status, pid, up)
-	} else {
-		fmt.Printf("--    pulse health endpoint not present (standalone relay) — %s\n", pulse.err)
 	}
 
 	engineRes := tryJSON[engineHealthInfo](engine, "/health")
@@ -290,9 +263,9 @@ func checkServerReachable(st *doctorState) (CheckResult, bool) {
 		return singleLine("server-reachable", vPass, fmt.Sprintf("server reachable at %s", st.server), "",
 			map[string]any{"server_url": st.server, "url_source": string(st.src.Source)}), true
 	}
-	fix := "check Pulse/relay is up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
+	fix := "check the Go server and relay are up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
 	if st.src.Source != config.SourceDefault {
-		fix = fmt.Sprintf("check Pulse/relay is up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
+		fix = fmt.Sprintf("check the Go server and relay are up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
 	}
 	text := fmt.Sprintf("server unreachable at %s — %s", st.server, st.subs.err)
 	return singleLine("server-reachable", vFail, text, fix,

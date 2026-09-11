@@ -19,12 +19,6 @@
   state directory (main.go's own -addr/-state-dir flags), not a per-user
   unix-socket runtime dir that needs resolving at launch time.
 
-  __ADDR__ must never be :31337 — that is the captain's live, currently
-  connected production Pulse server (see this repo's CLAUDE.md). install.sh
-  refuses to render this plist with that port, and the binary's own
-  refuseProductionPort (cmd/parlay-server/main.go) refuses to bind it even if
-  this file were hand-edited to say otherwise.
-
   launchd does not inherit the shell environment, so PARLAY_ALLOWED_ORIGINS
   (internal/guard's origin allow-list, see docs/api-contract.md § Origin
   guard) must be baked into EnvironmentVariables below to reach the

@@ -41,8 +41,8 @@ func TestRewriteConfiguredHostRewritesLocalhost(t *testing.T) {
 
 func TestRewriteConfiguredHostRewrites127001(t *testing.T) {
 	withHost(t, "macbook")
-	got := Rewrite("see http://127.0.0.1:31337/bar")
-	want := "see http://macbook:31337/bar"
+	got := Rewrite("see http://127.0.0.1:4242/bar")
+	want := "see http://macbook:4242/bar"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}

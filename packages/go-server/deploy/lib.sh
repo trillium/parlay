@@ -38,25 +38,12 @@ PARLAY_GOSERVER_OUT_LOG="${PARLAY_GOSERVER_LOG_DIR}/go-server.out.log"
 PARLAY_GOSERVER_ERR_LOG="${PARLAY_GOSERVER_LOG_DIR}/go-server.err.log"
 
 # ── Defaults (must match cmd/parlay-server/main.go's own coded defaults) ───────
-# main.go's defaultAddr — deliberately NOT :31337, the captain's live
-# production Pulse instance (see this repo's CLAUDE.md and main.go's own
-# refuseProductionPort, which enforces this at bind time too).
+# main.go's defaultAddr.
 PARLAY_GOSERVER_ADDR_DEFAULT="127.0.0.1:4242"
 # main.go's defaultStateHome().
 PARLAY_GOSERVER_STATE_DEFAULT="${HOME}/.parlay"
 # Unset/empty is guard.AllowedOriginList()'s own "no extra origins" default.
 PARLAY_GOSERVER_ALLOWED_ORIGINS_DEFAULT=""
-
-# parlay_goserver_refuse_31337 exits non-zero if addr targets port 31337, in
-# any host:port/[::1]:port/bare-port form. Belt-and-suspenders: the binary
-# itself refuses to bind that port (main.go's refuseProductionPort), but
-# failing fast here avoids even attempting the deploy.
-parlay_goserver_refuse_31337() {
-  case ":$1" in
-    *:31337) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 # parlay_goserver_domain prints the launchd user-domain target (gui/<uid>)
 # used by bootstrap/bootout/enable/print.

@@ -123,7 +123,7 @@ check_parlay_api() {
       -d "{\"id\":\"$id\",\"name\":\"Selftest\",\"color\":\"#888888\"}" >/dev/null 2>&1; then
     ok "Parlay register-agent API"
   else
-    bad "Parlay register-agent API" "POST $PARLAY/api/chat/register-agent failed — is Pulse running?"
+    bad "Parlay register-agent API" "POST $PARLAY/api/chat/register-agent failed — is the Go server running?"
   fi
 }
 

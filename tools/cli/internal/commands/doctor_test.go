@@ -34,7 +34,6 @@ func TestHealthAllOK(t *testing.T) {
 		"memory":     map[string]any{"rssMB": 45, "heapUsedMB": 20},
 		"history":    map[string]any{"count": 100, "approxKB": 12},
 	}))
-	mux.HandleFunc("/api/pulse/health", jsonHandler(t, map[string]any{"status": "ok", "uptime": 120.0, "pid": 999}))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -56,7 +55,6 @@ func TestHealthAllOK(t *testing.T) {
 	for _, want := range []string{
 		"ok    relay " + srv.URL + " — 2 client(s), 1 poller(s), 3 agent(s)",
 		"ok    memory — rss 45MB, heap 20MB; history 100 msgs (12KB)",
-		"ok    pulse — status ok, pid 999, up 2min",
 		"ok    eval-engine " + engineSrv.URL + " — protocol v3",
 	} {
 		if !strings.Contains(out, want) {

@@ -2,7 +2,7 @@
 //
 // Instead of N independent bun poll loops (one ~40MB process per agent), ONE
 // relay process holds one upstream long-poll loop per registered agent against
-// the Pulse chat server, and appends each inbound user message to that agent's
+// the Go chat server, and appends each inbound user message to that agent's
 // private spool file as a CHAT_MSG line. Each agent's `parlay monitor` then just
 // tails its spool file — a ~1.2MB `tail -F`, not a 40MB poller.
 //
@@ -39,7 +39,7 @@ func main() {
 	log.SetPrefix("relay: ")
 
 	var (
-		serverFlag  = flag.String("server", envOr("PARLAY_SERVER", defaultServer), "Pulse chat server base URL")
+		serverFlag  = flag.String("server", envOr("PARLAY_SERVER", defaultServer), "Parlay chat server base URL")
 		runtimeFlag = flag.String("runtime-dir", defaultRuntimeDir(), "directory for spool files and the control socket")
 		agentsFlag  = flag.String("agents", "", "comma-separated agent ids to register at startup (optional)")
 	)

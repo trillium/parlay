@@ -249,7 +249,7 @@ func TestReplayToParlayContinuesPastAFailedMessage(t *testing.T) {
 // `parlay lavish-import` takes no flags and no positionals. Before this check
 // existed, argv was read once by helpWanted and then dropped on the floor, so
 // `parlay lavish-import --dry-run` ran a REAL import into the live Parlay at
-// :31337 and reported success — a guessed safety flag doing precisely the
+// server and reported success — a guessed safety flag doing precisely the
 // opposite of safety. AGENTS.md states the rule this pins: a dropped flag is
 // not a degraded flag, it is a hard exit, because callers may be discarding it.
 func TestLavishImportRejectsArgumentsRatherThanIgnoringThem(t *testing.T) {

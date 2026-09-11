@@ -1,7 +1,7 @@
 # relay — central Parlay fan-out
 
 One Go process replaces N independent bun poll loops. It holds one upstream
-long-poll loop per registered agent against the Pulse chat server and appends
+long-poll loop per registered agent against the Go chat server and appends
 each inbound user message to that agent's private spool file. Each agent's
 `parlay monitor` just tails its spool.
 

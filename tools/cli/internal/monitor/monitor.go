@@ -316,9 +316,8 @@ func runScript(scriptArgs []string) {
 // then shelled out to parlay-monitor.sh whose ensure-up failed with "no relay
 // binary found" — leaving a permanently enrolled, deaf agent. PreflightRelay
 // runs parlay-monitor.sh --preflight, which walks the SAME setup guards a real
-// stream does — runtime-dir scoping (robots-buu8), ensure-up, the socket guard,
-// and the cross-server enroll refusal — but exits cleanly at the pre-enroll
-// point instead of registering. Call it BEFORE posting register-agent so a
+// stream does — ensure-up and the socket guard — but exits cleanly at the
+// pre-enroll point instead of registering. Call it BEFORE posting register-agent so a
 // missing relay is diagnosed before the agent is ever listed.
 //
 // It returns the child's exit code (0 = relay ready to stream <agent>). Exit

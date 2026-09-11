@@ -1,7 +1,7 @@
 // Spawns a REAL server process for this folder's integration tests, on a
 // scratch port with HOME, PARLAY_DATA_DIR, PAI_DIR and PARLAY_STATE_HOME
 // redirected into a temp dir — it never touches ~/exchange, ~/.parlay, or the
-// captain's live instance on :4242 (nor legacy Pulse on :31337). Not a
+// captain's live instance on :4242). Not a
 // .test.ts, so it is never collected as a suite.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs"

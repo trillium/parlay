@@ -52,7 +52,7 @@ parlay_relay_rotate_logs() {
   done
 }
 
-# ── Upstream Pulse server (relay's own default is the same) ────────────────────
+# ── Upstream Parlay server ─────────────────────────────────────────────────────
 PARLAY_RELAY_SERVER_DEFAULT="http://localhost:4242"
 
 # parlay_relay_runtime_dir prints the canonical per-user runtime dir the relay
@@ -180,74 +180,8 @@ parlay_relay_wait_health() {
         return 1                        # gone quiet and still not healthy
       fi
     fi
-    sleep 0.25
+    /bin/sleep 0.25
   done
-}
-
-# ── Upstream-server scoping (robots-buu8) ─────────────────────────────────────
-# A relay process is a per-runtime-dir singleton bound to exactly ONE upstream
-# Pulse server, chosen when it starts. Enrolling on a relay therefore registers
-# the agent against THAT relay's server — not against whatever $PARLAY_SERVER the
-# enrolling process happens to have set. Before this, a sandbox or test that ran
-# `PARLAY_SERVER=http://127.0.0.1:<scratch> parlay listen` enrolled through the
-# shared $TMPDIR/parlay relay (bound to production :31337) and its agent appeared
-# in the captain's LIVE registry — silent pollution with no error anywhere.
-#
-# The rule: the canonical runtime dir is RESERVED for the default server. Any
-# other target server gets its own runtime dir, and therefore its own relay.
-
-# parlay_relay_target_server prints the upstream server this process wants,
-# normalized without a trailing slash. The CLI resolves the server before it
-# invokes relay tooling; direct service launches receive it from their plist.
-# Do not guess here: an unset target must fail rather than enroll on another
-# server's relay.
-parlay_relay_target_server() {
-  if [ -z "${PARLAY_SERVER:-}" ]; then
-    echo "parlay relay: PARLAY_SERVER is required (invoke through parlay monitor/listen or provide the service target)" >&2
-    return 1
-  fi
-  printf '%s\n' "${PARLAY_SERVER%/}"
-}
-
-# parlay_relay_server_slug prints a short, filesystem-safe directory name for a
-# server URL: `srv-` plus 10 hex of its SHA-256.
-#
-# Hash-only, NOT a readable "http-127-0-0-1-45999-…" prefix, because a Unix
-# domain socket path is capped at 104 bytes (sun_path) on macOS. The canonical
-# runtime dir is already ~53 bytes ($TMPDIR is /var/folders/xx/<28 chars>/T), and
-# "/relay.sock" is 11 more — a readable slug blew straight past the cap and the
-# relay died with the deeply unhelpful "bind: invalid argument". 14 bytes leaves
-# ample headroom. The server URL is recoverable anyway: the relay reports it on
-# GET /agents, and parlay-monitor.sh drops a `server` marker file in the dir.
-parlay_relay_server_slug() {
-  local url="$1" hash
-  hash="$(printf '%s' "${url}" | { shasum -a 256 2>/dev/null || sha256sum; } | cut -c1-10)"
-  printf 'srv-%s\n' "${hash}"
-}
-
-# parlay_relay_scoped_runtime_dir prints the runtime dir to use for the target
-# server:
-#   1. explicit $PARLAY_RELAY_RUNTIME always wins — the caller pinned a dir.
-#   2. default server            → the canonical dir (shared production relay).
-#   3. any other PARLAY_SERVER   → <canonical>/srv-<hash>, its own relay.
-# Nesting under the canonical dir is deliberate and safe: the production relay's
-# spool-resume scan (main.go) skips subdirectories, and a scoped dir has no
-# `.chan` suffix, so it can never be mistaken for one of its spools.
-parlay_relay_scoped_runtime_dir() {
-  if [ -n "${PARLAY_RELAY_RUNTIME:-}" ]; then
-    printf '%s\n' "${PARLAY_RELAY_RUNTIME%/}"
-    return 0
-  fi
-  local server base
-  if ! server="$(parlay_relay_target_server)"; then
-    return 1
-  fi
-  base="$(parlay_relay_runtime_dir)"
-  if [ "${server}" = "${PARLAY_RELAY_SERVER_DEFAULT%/}" ]; then
-    printf '%s\n' "${base}"
-    return 0
-  fi
-  printf '%s/%s\n' "${base}" "$(parlay_relay_server_slug "${server}")"
 }
 
 # parlay_relay_sock_path_ok returns 0 if a control-socket path fits in sun_path.
@@ -257,46 +191,4 @@ parlay_relay_scoped_runtime_dir() {
 # check first and say what actually went wrong.
 parlay_relay_sock_path_ok() {
   [ "${#1}" -le 103 ]
-}
-
-# parlay_relay_reported_server prints the upstream server a live relay reports on
-# its control socket (GET /agents → {"agents":…,"server":…,"runtime":…}). Prints
-# nothing (and still returns 0) when no relay answers — callers distinguish
-# "unknown" from "mismatched" by testing for an empty string.
-#
-# The timeout is $PARLAY_RELAY_PROBE_TIMEOUT (default 15s), NOT the 2s used for
-# /health: /health is answered from a socket bound before any real work, but
-# /agents serializes the whole registry and grows with the fleet — on a
-# 269-agent box it routinely takes >2s, so a 2s cap timed out against a
-# perfectly healthy relay (robots-dcag). This helper always returns 0; every
-# caller must treat an empty result as "unknown", never as a failure to abort
-# on. See parlay-monitor.sh's probe for why that distinction is load-bearing
-# under `set -e`.
-parlay_relay_reported_server() {
-  local sock="${1:-}" body
-  [ -n "${sock}" ] && [ -S "${sock}" ] || return 0
-  body="$(curl -fsS --max-time "${PARLAY_RELAY_PROBE_TIMEOUT:-15}" \
-    --unix-socket "${sock}" http://relay/agents 2>/dev/null)" || return 0
-  printf '%s' "${body}" | sed -n 's/.*"server":"\([^"]*\)".*/\1/p'
-}
-
-# parlay_relay_installed_plist_server prints the PARLAY_SERVER baked into the
-# installed LaunchAgent plist — the server the launchd-supervised relay is
-# actually bound to, which is the only durable record of what `install.sh
-# --server` resolved to. Empty if there is no plist or no such key.
-parlay_relay_installed_plist_server() {
-  [ -e "${PARLAY_RELAY_PLIST}" ] || return 0
-  local out
-  out="$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PARLAY_SERVER" \
-    "${PARLAY_RELAY_PLIST}" 2>/dev/null)" || return 0
-  # PlistBuddy reports its failures ("Error Reading File: …", "Does Not Exist")
-  # on STDOUT, and can still exit 0 — so a bare capture hands the caller an error
-  # message where a URL belongs. ensure-up then compares that string against the
-  # wanted server, concludes the launchd relay serves something else, and quietly
-  # declines to use launchd at all (starting an unsupervised duplicate instead).
-  # Only ever emit something that actually looks like a server URL.
-  case "${out}" in
-    http://*|https://*) printf '%s\n' "${out}" ;;
-    *) return 0 ;;
-  esac
 }

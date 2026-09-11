@@ -110,7 +110,7 @@ export const GUARDED_CHAT_PATHS = new Set([
   // event to the panel, and a disk write, from a cross-origin CORS-simple
   // GET needing no preflight. Guarding it costs no real caller: every
   // poller in this repo (the relay, the Go and TS CLI monitors,
-  // tools/split-test, pages/chat/agent-notify.ts) is a no-Origin HTTP
+  // pages/chat/agent-notify.ts) is a no-Origin HTTP
   // client, and nothing in packages/client polls at all.
   "/api/chat/poll",
 ])
