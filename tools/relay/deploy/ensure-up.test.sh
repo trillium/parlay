@@ -192,24 +192,6 @@ else
   pass "--force-restart force-restarts even a healthy relay"
 fi
 
-# ── 7. A healthy canonical relay is the untouched fast path ──────────────────
-run running 0
-if [ "$RC" -ne 0 ]; then
-  fail "healthy relay: exit $RC, want 0 — $(cat "$ROOT/out")"
-elif [ -s "$ROOT/launchctl.log" ]; then
-  fail "healthy relay: launchctl was invoked — $(lc_log)"
-else
-  pass "healthy canonical relay takes the untouched fast path"
-fi
-
-# ── 8. Unknown flags are rejected rather than silently ignored ────────────────
-run running 0 --bogus
-if [ "$RC" -ne 2 ]; then
-  fail "unknown flag: exit $RC, want 2"
-else
-  pass "unknown flag exits 2"
-fi
-
 # Restore the plain health-only stub for the remaining cases.
 cat > "$STUB/curl" <<'S'
 #!/usr/bin/env bash

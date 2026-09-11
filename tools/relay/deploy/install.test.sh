@@ -38,7 +38,7 @@ else
 fi
 
 run --server "http://localhost:4242/"
-if [ "${RC}" -ne 1 ] && ! grep -q 'macOS-only' "${ROOT}/out"; then
+if [ "${RC}" -ne 1 ] || ! grep -q 'macOS-only' "${ROOT}/out"; then
   fail "default server handling changed unexpectedly (rc=${RC})"
 else
   pass "default server remains the canonical target"

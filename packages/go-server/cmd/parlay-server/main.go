@@ -1,5 +1,5 @@
-// Command parlay-server is the Go rewrite of packages/server, Pulse's
-// HTTP/SSE chat server. C0 laid the process skeleton, mux wiring, and
+// Command parlay-server is the Go implementation of the Parlay HTTP/SSE chat
+// server. C0 laid the process skeleton, mux wiring, and
 // storage layer (internal/store); C1 (internal/handlers) adds messaging,
 // the agent registry, and the legacy long-poll endpoint on top of it; C2
 // (also internal/handlers — see events.go) adds the SSE hub behind GET

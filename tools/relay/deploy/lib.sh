@@ -180,7 +180,7 @@ parlay_relay_wait_health() {
         return 1                        # gone quiet and still not healthy
       fi
     fi
-    sleep 0.25
+    /bin/sleep 0.25
   done
 }
 
