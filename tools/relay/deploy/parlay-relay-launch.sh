@@ -32,7 +32,11 @@ else
   BIN="${HERE}/parlay-relay"
 fi
 
-SERVER="${PARLAY_SERVER:-http://localhost:4242}"
+if [ -z "${PARLAY_SERVER:-}" ]; then
+  echo "parlay-relay-launch: PARLAY_SERVER is required (the service plist supplies the target)" >&2
+  exit 1
+fi
+SERVER="${PARLAY_SERVER%/}"
 
 mkdir -p "${RUNTIME}"
 

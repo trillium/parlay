@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
 // launcherFactory is overridden in tests to inject a mock Launcher instead
@@ -98,7 +100,7 @@ func spawnOne(opts SpawnOptions) error {
 		opts.Kind = "claude"
 	}
 
-	server := parlayServer()
+	server := config.ServerURL()
 
 	if opts.Mode == "branch" || opts.Mode == "pr" {
 		opts.WantWorktree = true
@@ -164,7 +166,7 @@ func spawnOne(opts SpawnOptions) error {
 		startupPrompt = composeClaimPrompt(opts.AgentID, opts.Claim, setupBlock)
 	} else {
 		dod := composeDoD(opts.Mode, opts.AgentID)
-		startupPrompt = composeStartupPrompt(server, opts.AgentID, opts.Name, opts.Color, setupBlock, opts.Prompt, dod)
+		startupPrompt = composeStartupPrompt(opts.AgentID, opts.Name, opts.Color, setupBlock, opts.Prompt, dod)
 	}
 
 	pretrustWorkdir(opts.Cwd)

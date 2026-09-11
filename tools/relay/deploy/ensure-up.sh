@@ -267,8 +267,7 @@ fi
 # ── Method 2: installed binary directly (unsupervised) ─────────────────────────
 if [ -z "${started}" ] && [ -x "${PARLAY_RELAY_LAUNCHER}" ] && [ -x "${PARLAY_RELAY_BIN}" ]; then
   log "no launchd agent — starting installed binary (unsupervised)"
-  PARLAY_SERVER="${PARLAY_SERVER:-${PARLAY_RELAY_SERVER_DEFAULT}}" \
-    nohup /bin/bash "${PARLAY_RELAY_LAUNCHER}" \
+  nohup /bin/bash "${PARLAY_RELAY_LAUNCHER}" \
       >>"${PARLAY_RELAY_OUT_LOG}" 2>>"${PARLAY_RELAY_ERR_LOG}" &
   disown 2>/dev/null || true
   started="binary"
@@ -281,8 +280,7 @@ if [ -z "${started}" ]; then
   if [ -x "${REPO_LAUNCHER}" ] && [ -x "${REPO_BIN}" ]; then
     log "no install — starting repo binary (dev fallback)"
     mkdir -p "${PARLAY_RELAY_LOG_DIR}"
-    PARLAY_SERVER="${PARLAY_SERVER:-${PARLAY_RELAY_SERVER_DEFAULT}}" \
-      nohup /bin/bash "${REPO_LAUNCHER}" \
+    nohup /bin/bash "${REPO_LAUNCHER}" \
         >>"${PARLAY_RELAY_OUT_LOG}" 2>>"${PARLAY_RELAY_ERR_LOG}" &
     disown 2>/dev/null || true
     started="repo"

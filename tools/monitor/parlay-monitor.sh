@@ -260,6 +260,14 @@ fi
 
 [ -n "$AGENT" ] || { echo "parlay-monitor: --agent <id> is required" >&2; usage; }
 
+# The CLI resolves the server before starting this note-reader. A direct
+# invocation must not fall back to a guessed/default target: doing so can put
+# the reader on a different server's registry.
+if [ -z "${PARLAY_SERVER:-}" ]; then
+  echo "parlay-monitor: PARLAY_SERVER is required; invoke via parlay monitor/listen" >&2
+  exit 1
+fi
+
 # ── Never die quietly before streaming starts (robots-dcag) ───────────────────
 # By the time this script runs, `parlay listen` has already registered and
 # announced the agent with Pulse. If we then exit without reaching the stream,

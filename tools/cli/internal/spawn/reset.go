@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
 const resetUsage = `Usage: parlay reset --reboot                    reboot a parlay panel agent (relaunch auto-derived from PARLAY_* env)
@@ -136,7 +138,7 @@ func runResetCommand(args []string) int {
 	receiptPath := filepath.Join(receiptDir, "reincarnations.log")
 	_ = os.MkdirAll(receiptDir, 0o755)
 
-	server := parlayServer()
+	server := config.ServerURL()
 	watcher := buildWatcherScript(claudePID, cmd, receiptPath, aid, server, opts.Reboot)
 
 	if opts.Dry {

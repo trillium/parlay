@@ -197,10 +197,16 @@ parlay_relay_wait_health() {
 # other target server gets its own runtime dir, and therefore its own relay.
 
 # parlay_relay_target_server prints the upstream server this process wants,
-# normalized without a trailing slash. Mirrors relay/main.go's -server default.
+# normalized without a trailing slash. The CLI resolves the server before it
+# invokes relay tooling; direct service launches receive it from their plist.
+# Do not guess here: an unset target must fail rather than enroll on another
+# server's relay.
 parlay_relay_target_server() {
-  local s="${PARLAY_SERVER:-${PARLAY_RELAY_SERVER_DEFAULT}}"
-  printf '%s\n' "${s%/}"
+  if [ -z "${PARLAY_SERVER:-}" ]; then
+    echo "parlay relay: PARLAY_SERVER is required (invoke through parlay monitor/listen or provide the service target)" >&2
+    return 1
+  fi
+  printf '%s\n' "${PARLAY_SERVER%/}"
 }
 
 # parlay_relay_server_slug prints a short, filesystem-safe directory name for a
@@ -233,7 +239,9 @@ parlay_relay_scoped_runtime_dir() {
     return 0
   fi
   local server base
-  server="$(parlay_relay_target_server)"
+  if ! server="$(parlay_relay_target_server)"; then
+    return 1
+  fi
   base="$(parlay_relay_runtime_dir)"
   if [ "${server}" = "${PARLAY_RELAY_SERVER_DEFAULT%/}" ]; then
     printf '%s\n' "${base}"

@@ -15,6 +15,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
 const spawnUsage = `Usage: parlay spawn <agent-id> <display-name> <hex-color> <initial-prompt> [--cwd PATH] [--focus]
@@ -71,7 +73,7 @@ Batch dispatch: when the first arg is an <id>=<repo> pair, every positional is
   treated as one and spawned. A failed pair is reported and skipped, the rest
   still launch, and the batch exits non-zero if any failed.
 
-Env: PARLAY_SERVER (default http://localhost:4242)
+Env: PARLAY_SERVER (optional server URL override; see 'parlay remote')
 `
 
 var kebabRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -81,13 +83,6 @@ func validateKebabSlug(id string) error {
 		return fmt.Errorf("agent-id must be a kebab-slug (got: %q)", id)
 	}
 	return nil
-}
-
-func parlayServer() string {
-	if v := os.Getenv("PARLAY_SERVER"); v != "" {
-		return v
-	}
-	return "http://localhost:4242"
 }
 
 // SpawnOptions is the fully-resolved set of parameters for one agent spawn,
@@ -430,7 +425,7 @@ func runEphemeralSpawn(args []string) int {
 		return 2
 	}
 
-	id, name, color, err := mintEphemeral(parlayServer(), opts.Cwd, opts.Model)
+	id, name, color, err := mintEphemeral(config.ServerURL(), opts.Cwd, opts.Model)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "parlay spawn: %v\n", err)
 		return 1
