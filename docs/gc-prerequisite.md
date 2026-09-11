@@ -85,6 +85,28 @@ tools/gc-build/build-gc.sh --cgo
 `PARLAY_GC` overrides where doctor (and later, the spawn path) looks for the
 binary; otherwise it is resolved from `PATH`.
 
+## herdr provider: the macOS socket symlink
+
+The scaffold city runs the **herdr** session provider
+(`city/city.toml [session]`). At the pin, the provider finds its
+session-server socket via Go's `os.UserConfigDir()` — which on macOS is
+`~/Library/Application Support`, **ignoring `XDG_CONFIG_HOME` entirely**
+(verified: Go 1.26.4 returns `~/Library/Application Support` with XDG both
+set and unset). herdr itself honors XDG and binds under `~/.config/herdr`,
+so without a bridge the provider dials a path no server ever binds and every
+`session new` fails with `herdr server for session "parlay" did not become
+ready` (proven 2026-09-08: server listening, socket present, 40/40 dials
+missed). The bridge is one symlink (machine-local, outside the repo):
+
+```sh
+ln -s ~/.config/herdr ~/Library/Application\ Support/herdr
+```
+
+Upstream fix belongs in gascity (`socketPath` should mirror herdr's own XDG
+resolution instead of `os.UserConfigDir`); until a pin bump carries it, this
+symlink is a prerequisite for the gc launcher on macOS. Requires herdr
+≥0.7.5 on `PATH` (this box: 0.9.0).
+
 ## Safety
 
 The Gas City supervisor is a **shared machine-wide singleton**

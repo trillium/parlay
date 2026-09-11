@@ -102,7 +102,8 @@ func detectEvents(prev StoreState, curr StoreState, store string, kinds []EventK
 // close-notification: a `notify:<channel>` label. This label IS the
 // lightweight SUBSCRIBE of decision-4zr — the bead names who to wake;
 // agent/channel knowledge stays in parlay. A bead with no notify: label has
-// no subscriber and is skipped.
+// no subscriber and is skipped. Inbox creates stamp this label from
+// PARLAY_AGENT_ID so inbox close events can notify their filer.
 func notifyChannels(labels []string) []string {
 	out := []string{}
 	for _, l := range labels {

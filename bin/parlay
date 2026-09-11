@@ -2,11 +2,29 @@
 # Wrapper: builds (when stale) and execs the Go CLI. Server resolution lives
 # in the CLI itself — PARLAY_SERVER env > `parlay remote set` config > coded
 # default http://localhost:4242 — so this wrapper deliberately exports
-# nothing: the Pulse-era forced export here overrode persisted config for
-# every caller (off-Pulse cutover, task-h9zk).
+# nothing in production mode: the Pulse-era forced export here overrode
+# persisted config for every caller (off-Pulse cutover, task-h9zk).
+#
+# MODE SPLIT (parlay vs parlay-dev):
+#   Two names point at this one script (symlinks ~/.local/bin/parlay and
+#   ~/.local/bin/parlay-dev). The invoked basename selects the mode:
+#     parlay      production/fleet mode — state in ~/.parlay, no env override.
+#                 Uses the live fleet server + fleet skills + fleet bin/.
+#     parlay-dev  development mode — PARLAY_STATE_HOME redirected to an
+#                 isolated ~/.parlay-dev so building/testing main NEVER
+#                 touches the live fleet state (robots-earr: a dev scrape
+#                 clobbered the fleet registration). Same checkout, isolated
+#                 runtime state.
+#   The fleets' skills/commands install separately via examples/fleet/install.sh
+#   into ~/.parlay/{skills,bin}. bin/parlay itself is product, not fleet.
+#
 # Resolve this script through any symlinks (e.g. ~/.local/bin/parlay -> repo bin/parlay),
 # then derive the CLI path from the repo location — never hardcode /Users/<name>, which
 # breaks for any other user/host (robots-su0j: mini3 runs as a different user).
+
+# Capture the invoked name BEFORE symlink resolution — the mode branches on it.
+INVOKED="$(basename "$0")"
+
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
@@ -14,6 +32,15 @@ while [ -L "$SOURCE" ]; do
   case "$SOURCE" in /*) ;; *) SOURCE="$DIR/$SOURCE" ;; esac
 done
 REPO="$(cd -P "$(dirname "$SOURCE")/.." >/dev/null 2>&1 && pwd)"
+
+# Development mode: isolate ALL persisted state away from the live fleet.
+# Does NOT touch PARLAY_SERVER — dev should still reach a server, but never
+# the one the fleet registers to by default. Leaving PARLAY_SERVER unset keeps
+# the coded default (:4242) for dev rather than any `parlay remote set` url
+# the fleet may have persisted into ~/.parlay/config.json — exactly the point.
+if [ "$INVOKED" = "parlay-dev" ]; then
+  export PARLAY_STATE_HOME="${PARLAY_STATE_HOME:-$HOME/.parlay-dev}"
+fi
 
 # Go rewrite of packages/cli (ticket B10, workstream B). Build the binary if
 # missing or stale (any tools/cli source newer than it), then exec it in

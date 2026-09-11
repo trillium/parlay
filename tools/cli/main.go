@@ -161,6 +161,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		robotswatch.CmdRobotsWatch(args)
 	case "robots-tail":
 		robotswatch.CmdRobotsTail(args)
+	case "inbox-tail":
+		robotswatch.CmdInboxTail(args)
 	case "claim":
 		commands.Claim(args)
 	case "launch":
@@ -171,6 +173,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.Idle(args)
 	case "mechanic":
 		commands.Mechanic(args)
+	case "inbox-dispatch":
+		commands.InboxDispatch(args)
 	case "eval":
 		commands.Eval(args)
 	case "merge-gate":

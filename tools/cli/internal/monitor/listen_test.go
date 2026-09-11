@@ -306,6 +306,31 @@ func TestCmdListenInvalidCapsJSONDiesBeforeAnyNetworkCall(t *testing.T) {
 	}
 }
 
+func TestCmdListenLegacyPollSkipsRelayPreflight(t *testing.T) {
+	startListenHarness(t)
+	monitorCalls := stubMonitor(t)
+	trapExit(t)
+	stubPreflight(t, config.ExitRuntime)
+
+	// Legacy poll is the documented no-relay path. A broken relay must not
+	// prevent direct HTTP enrollment and polling.
+	CmdListen([]string{"--agent", "brain-dev", "--legacy-poll"})
+
+	if len(*monitorCalls) != 1 {
+		t.Fatalf("monitor calls = %v, want one legacy-poll handoff", *monitorCalls)
+	}
+	want := []string{"--agent", "brain-dev", "--legacy-poll"}
+	got := (*monitorCalls)[0]
+	if len(got) != len(want) {
+		t.Fatalf("monitor args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("monitor args = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestCmdListenLegacyPollIsForwardedToMonitor(t *testing.T) {
 	startListenHarness(t)
 	monitorCalls := stubMonitor(t)
@@ -316,7 +341,7 @@ func TestCmdListenLegacyPollIsForwardedToMonitor(t *testing.T) {
 	want := []string{"--agent", "brain-dev", "--legacy-poll"}
 	got := (*monitorCalls)[0]
 	if len(got) != len(want) {
-		t.Fatalf("monitor args = %v, want %v", got, want)
+		t.Fatalf("monitor args = %v, want one legacy-poll handoff", *monitorCalls)
 	}
 	for i := range want {
 		if got[i] != want[i] {

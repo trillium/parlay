@@ -33,14 +33,15 @@ suspended_on_start = true
 port = 0
 
 [session]
-# Spawn seam (task-4cfpv.9, unit 5): parlay agents are detached headless
-# processes — no terminal pane to attach to — so the whole city runs the
-# subprocess session provider, never tmux. This is also what makes the spawn
-# path testable without a tmux server. NOTE (scope-spawn-lift R7): the
-# subprocess provider's Nudge is a silent no-op — any seam that steers a
-# session must gate on the provider's declared capabilities, never assume
-# injection works.
-provider = "subprocess"
+# Spawn seam (task-4cfpv.9, unit 5): parlay agents run as tabs in one shared
+# herdr session-server per city (one workspace per rig/town, one tab per
+# agent) — visible, attachable, and nudgeable via herdr's native agent
+# prompt, never detached headless processes. Requires herdr ≥0.7.5 on PATH
+# (internal/runtime/herdr at the pin; rewritten 2026-07-26). NOTE
+# (scope-spawn-lift R7): steering gates on the provider's declared
+# capabilities — the herdr provider reports interactive injection, the
+# subprocess provider's Nudge is a silent no-op.
+provider = "herdr"
 
 # ---------------------------------------------------------------------------
 # Deliberately ABSENT sections — each is owned by a specific epic child and

@@ -15,11 +15,12 @@
 //     appearing in GET /api/chat/subscribers. Emitted output, never elapsed
 //     time; the deadline below is a poll bound, not an assertion.
 //   - Report: on timeout, steering is routed through the gc-nudge capability
-//     gate (R7). On the subprocess provider that yields a typed refusal —
-//     structurally, this watchdog CANNOT re-prompt a session whose provider
-//     has no injection capability. On an injection-capable provider it
-//     delivers a short fixed kick (never the charter) via gc's verified
-//     nudge and reports gc's confirmation either way.
+//     gate (R7). On a provider with no injection capability that yields a
+//     typed refusal — structurally, this watchdog CANNOT re-prompt a session
+//     whose provider cannot inject. On an injection-capable provider (herdr,
+//     the scaffold's selection) it delivers a short fixed kick (never the
+//     charter) via gc's verified nudge and reports gc's confirmation
+//     either way.
 //
 // The JSON envelope is the charter-delivery record: the spawn watchdog's
 // watchdog appends it to the agent dir so "was the startup turn confirmed?"
@@ -51,7 +52,7 @@ const gcLivenessKick = "parlay liveness watchdog: your startup charter was deliv
 // gcLivenessResult is the typed --json envelope — the charter-delivery
 // record. Confirmed=true: the startup turn was observed from the agent's own
 // emitted registration. Otherwise Steer carries the capability-gated
-// steering outcome (a refusal on the subprocess provider).
+// steering outcome (a refusal on a provider with no injection capability).
 type gcLivenessResult struct {
 	OK        bool           `json:"ok"`
 	AgentID   string         `json:"agent_id"`

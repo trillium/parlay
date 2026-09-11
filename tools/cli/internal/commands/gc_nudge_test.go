@@ -25,9 +25,9 @@ func setCityProvider(t *testing.T, provider string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edited := strings.Replace(string(data), `provider = "subprocess"`, `provider = "`+provider+`"`, 1)
-	if edited == string(data) && provider != "subprocess" {
-		t.Fatalf("city.toml had no subprocess provider line to edit:\n%s", data)
+	edited := strings.Replace(string(data), `provider = "herdr"`, `provider = "`+provider+`"`, 1)
+	if edited == string(data) && provider != "herdr" {
+		t.Fatalf("city.toml had no herdr provider line to edit:\n%s", data)
 	}
 	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
@@ -112,6 +112,33 @@ func TestGCNudgeDelegatesForInjectionCapableProvider(t *testing.T) {
 	}
 }
 
+func TestGCNudgeDelegatesForHerdrProvider(t *testing.T) {
+	testsupport.TempStateHome(t)
+	cityDir := setCityProvider(t, "herdr")
+	gcOut := `{"schema_version":"1","ok":true,"session_id":"pa-123"}`
+	bin, rec := writeSpawnFakeGC(t, gcOut, 0)
+	t.Setenv("PARLAY_GC", bin)
+
+	res, err := gcNudgeRun("agent-x", "pa-123", "short kick")
+	if err != nil {
+		t.Fatalf("gcNudgeRun: %v", err)
+	}
+	if res.Refused || !res.OK {
+		t.Errorf("herdr provider should delegate and confirm, got %+v", res)
+	}
+	if res.Provider != "herdr" {
+		t.Errorf("provider = %q", res.Provider)
+	}
+	argv, readErr := os.ReadFile(filepath.Join(rec, "argv"))
+	if readErr != nil {
+		t.Fatalf("gc was never invoked: %v", readErr)
+	}
+	want := strings.Join([]string{"--city", cityDir, "session", "nudge", "pa-123", "short kick", "--json"}, "\n") + "\n"
+	if string(argv) != want {
+		t.Errorf("gc argv:\n%s\nwant:\n%s", argv, want)
+	}
+}
+
 func TestGCNudgeReportsUnconfirmedDelivery(t *testing.T) {
 	testsupport.TempStateHome(t)
 	setCityProvider(t, "tmux")
@@ -152,7 +179,7 @@ func TestCitySessionProviderReadsAuthoredValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if provider != "subprocess" {
-		t.Errorf("authored provider = %q, want subprocess", provider)
+	if provider != "herdr" {
+		t.Errorf("authored provider = %q, want herdr", provider)
 	}
 }

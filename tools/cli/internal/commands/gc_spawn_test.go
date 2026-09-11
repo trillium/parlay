@@ -72,14 +72,14 @@ func TestGCSpawnRunHappyPath(t *testing.T) {
 	if !strings.Contains(string(agentTOML), `PARLAY_SERVER = "http://localhost:14242"`) {
 		t.Errorf("agent.toml lacks PARLAY_SERVER env:\n%s", agentTOML)
 	}
-	// The city-level session provider is the subprocess provider (unit 5's
-	// test requirement: spawn-path tests run against the subprocess provider).
+	// The city-level session provider is the herdr provider (unit 5's test
+	// requirement: spawn-path tests run against the authored provider).
 	cityTOML, err := os.ReadFile(filepath.Join(res.CityDir, "city.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cityTOML), `provider = "subprocess"`) {
-		t.Errorf("city.toml does not select the subprocess session provider:\n%s", cityTOML)
+	if !strings.Contains(string(cityTOML), `provider = "herdr"`) {
+		t.Errorf("city.toml does not select the herdr session provider:\n%s", cityTOML)
 	}
 
 	// gc argv: --city <scaffold> session new parlay.<id> --json --no-attach.
