@@ -1,35 +1,20 @@
-# The relay is a per-runtime-dir singleton bound to ONE server — `PARLAY_SERVER` alone does not scope it (robots-buu8)
+# The relay is a per-user singleton on the canonical runtime dir (robots-buu8)
 
 <!-- Split out of AGENTS.md (the project's agent memory) to keep that
      file small enough to load every session. AGENTS.md carries the one-line
      rule; the full rationale lives here. -->
 
 
-Setting `PARLAY_SERVER` does **not** by itself keep a sandbox off production.
 `parlay listen` shells out to `tools/monitor/parlay-monitor.sh`, which enrolls
-over a relay's Unix control socket — and a relay process is a singleton per
-runtime dir, bound to whatever upstream server it was started with. On the
-captain's box the shared `$TMPDIR/parlay` relay is bound to production `:31337`,
-so enrolling there registered the agent in the captain's **live** registry no
-matter what `PARLAY_SERVER` said. Nothing hardcodes `31337` in the monitor or
-CLI; the leak was entirely via the shared daemon.
+over the relay's canonical Unix control socket. The relay is a single
+per-user process supervised by `com.parlay.relay`; hermetic tests may provide an
+explicit `$PARLAY_RELAY_RUNTIME`. `PARLAY_SERVER` selects the upstream for the
+CLI/server request, not a second relay runtime.
 
-The fix (`tools/relay/deploy/lib.sh`, `ensure-up.sh`, `parlay-monitor.sh`):
-the canonical runtime dir is reserved for the default server, any other
-`PARLAY_SERVER` gets `<canonical>/srv-<hash>` and its own relay, and the monitor
-reads the relay's own `GET /agents` → `server` and refuses to `POST /register`
-on a mismatch. Anything else in this repo that talks to the relay must reason
-about *which relay*, not just which `PARLAY_SERVER` — see
-`tools/monitor/NOTES.md` § Upstream-server scoping, and
-`tools/monitor/parlay-monitor.test.sh` for the reproduction.
-
-**Unix socket paths are capped at 104 bytes (`sun_path`), and macOS's `$TMPDIR`
-eats ~53 of them.** `/var/folders/xx/<28 chars>/T/parlay/relay.sock` leaves very
-little room — this is why scoped runtime dirs are named `srv-<10 hex>` and not
-something readable. Over the cap, `bind()` fails with `invalid argument`, which
-names neither the limit nor the path. Any new path under the relay runtime dir
-must budget against this; `parlay_relay_sock_path_ok` in `lib.sh` is the check.
-
+**Unix socket paths are capped at 104 bytes (`sun_path`).** The canonical
+`$TMPDIR/parlay/relay.sock` path stays within that limit; any new path under the
+relay runtime must budget against it using `parlay_relay_sock_path_ok` in
+`lib.sh`.
 
 ensure-up.sh used to `launchctl kickstart -k` on any failed health read. `-k`
 **kills** a running job, so it killed relays that were alive but mid-startup —

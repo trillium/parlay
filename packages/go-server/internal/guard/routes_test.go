@@ -4,7 +4,7 @@ package guard_test
 // server serves — the same handlers.Register/RegisterData wiring
 // cmd/parlay-server/main.go builds — behind a real httptest listener on a
 // random loopback port. It never touches ~/.parlay (the store is rooted at
-// t.TempDir()) or ports 31337/4242.
+// t.TempDir()) or port 4242.
 //
 // Every `403` below is a line that read `200` before this ticket: the
 // verification report drove exactly these requests cross-origin against this
@@ -535,7 +535,7 @@ func TestCrossOriginPollCannotRegisterAChannel(t *testing.T) {
 }
 
 // TestPollStillWorksForItsRealCallers is the other half: every poller in this
-// repo (the relay, both CLI monitors, tools/split-test) is a no-Origin HTTP
+// repo (the relay and both CLI monitors) is a no-Origin HTTP
 // client, and the panel would be same-origin. Guarding /poll must cost them
 // nothing.
 func TestPollStillWorksForItsRealCallers(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 // The bug this file exists to prevent, stated once:
 //
 // PR #115 fixed `parlay lavish-import --dry-run`, which accepted the flag,
-// dropped it, and performed a REAL import into the live Parlay at :31337. The
+// dropped it, and performed a REAL import into the live Parlay server. The
 // flag was never read. Nothing rejected it. AGENTS.md's rule — a dropped flag
 // is not a degraded flag, it is a hard exit — exists because of that incident.
 //

@@ -22,7 +22,7 @@
 ## Verify loop (run after each feature)
 1. `cd ~/pulse-pages/annotate && bun build.ts`
 2. Restart Pulse so the server change loads: `launchctl kickstart -k gui/$(id -u)/com.pai.pulse` (confirm it's the right label first via `launchctl list | grep pulse`).
-3. Verify in the real browser with **interceptor** (mandatory per house rule — never agent-browser): `interceptor open http://127.0.0.1:31337/chat-app/` and confirm the behavior. Screenshot as evidence.
+3. Verify in the real browser with **interceptor** (mandatory per house rule — never agent-browser): `interceptor open http://127.0.0.1:4242/chat-app/` and confirm the behavior. Screenshot as evidence.
 
 ---
 
@@ -68,7 +68,7 @@
 - Bare `http(s)://…` URLs → anchors.
 - **Escape first** (use `esc` from `config.ts`), then apply linkify on the escaped string so you don't create injection. Only allow `http:`/`https:` schemes.
 
-**AC:** A message containing `[Lavish](http://127.0.0.1:31337/lavish-proxy/session/abc)` and a bare URL both render as clickable, open in a new tab, and raw `<script>` in a message is still inert.
+**AC:** A message containing `[Lavish](http://127.0.0.1:4242/lavish-proxy/session/abc)` and a bare URL both render as clickable, open in a new tab, and raw `<script>` in a message is still inert.
 
 ## Feature 4 — Per-device SSE scoping
 **Why:** `/api/chat/navigate` and `/api/chat/reload` currently `broadcastToClients` to **every** SSE client, so a nav on the laptop also yanks the phone. Scope view-driving to one device.

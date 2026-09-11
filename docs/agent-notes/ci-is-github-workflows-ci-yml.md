@@ -13,9 +13,9 @@ green and 3 provably broken.
 
 Four parallel jobs, each pinned to action commit SHAs with `permissions:
 contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
-every module in `GO_MODULES`), **bun** (tests for `packages/{input,client,server,cli}` and
+every module in `GO_MODULES`), **bun** (tests for `packages/{input,client,server}` and
 `tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
-dependencies — plus typecheck for `packages/input` and `tools/split-test`),
+dependencies — plus typecheck for `packages/input`),
 **shell** (nine hermetic harnesses, preceded by a `git`/`jq`/`curl`/`python3`
 presence check so a binary missing from the rolling runner image fails the step
 instead of letting a harness skip itself green — `python3` is on that list
@@ -57,8 +57,8 @@ Four things worth knowing before editing it:
   `examples/bootstrap-sandbox.sh` (same class as the previous entry — it stands
   up a real `packages/server` fixture; it has also not been trial-run to the
   bar stated at the end of this bullet), and
-  `packages/client`'s `bun run build` (its `build.ts` POSTs to the captain's
-  live `:31337` — see the packages/client note above). Also not enforced:
+  `packages/client`'s `bun run build` (its `build.ts` POSTs to the configured
+  local server). Also not enforced:
   `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a
   staged-diff check, not a whole-tree one, so it does not map onto a CI job; it
   is named here so a contributor whose commit the hook rejects can find the

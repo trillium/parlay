@@ -39,7 +39,7 @@ func main() {
 	log.SetPrefix("relay: ")
 
 	var (
-		serverFlag  = flag.String("server", envOr("PARLAY_SERVER", defaultServer), "Pulse chat server base URL")
+		serverFlag  = flag.String("server", envOr("PARLAY_SERVER", defaultServer), "Parlay chat server base URL")
 		runtimeFlag = flag.String("runtime-dir", defaultRuntimeDir(), "directory for spool files and the control socket")
 		agentsFlag  = flag.String("agents", "", "comma-separated agent ids to register at startup (optional)")
 	)

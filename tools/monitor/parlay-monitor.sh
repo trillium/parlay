@@ -29,13 +29,9 @@
 #   consumers of the stream keep getting complete, unmodified lines.
 #
 # Env:
-#   PARLAY_SERVER          upstream parlay chat server to enroll against. Anything other
-#                          than the default (http://localhost:4242) gets its own
-#                          server-scoped runtime dir and relay, so a sandbox can
-#                          never enroll into the production registry (robots-buu8).
+#   PARLAY_SERVER          upstream Parlay chat server (resolved by the CLI).
 #   PARLAY_RELAY_RUNTIME   runtime dir holding relay.sock + <agent>.chan spools
-#                          (default: server-scoped; $TMPDIR/parlay for the default
-#                          server, $TMPDIR/parlay/by-server/<slug> otherwise)
+#                          (default: $TMPDIR/parlay)
 #   PARLAY_RELAY_SOCK      explicit control-socket path (default: <runtime>/relay.sock)
 #   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
 #   PARLAY_MONITOR_WATCH_INTERVAL  seconds between orphan checks (default 15)
@@ -54,13 +50,12 @@ Usage: parlay-monitor.sh --agent <id> [--notify-safe]
 Registers <id> with the parlay relay, then streams its channel's CHAT_MSG lines
 to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
 
-  --preflight     verify the relay is reachable and correctly scoped for <id>
-                  WITHOUT registering or streaming, then exit 0. This is the
-                  pre-enrollment probe 'parlay listen'/'parlay claim' run so a
-                  fresh-clone user (no relay binary) fails BEFORE the agent is
-                  registered-but-deaf (issue #173). Reuses the exact same setup
-                  guards as a real stream — runtime-dir scoping (robots-buu8),
-                  ensure-up, the socket guard, and the cross-server refusal.
+  --preflight     verify the canonical relay is reachable WITHOUT registering
+                  or streaming, then exit 0. This is the pre-enrollment probe
+                  'parlay listen'/'parlay claim' run so a fresh-clone user (no
+                  relay binary) fails BEFORE the agent is registered-but-deaf
+                  (issue #173). Reuses the exact same setup guards as a real
+                  stream — ensure-up and the socket guard.
   --notify-safe   cap each emitted line to a notification-safe budget and append
                   a "fetch full text" pointer (harness Monitor tools truncate long
                   lines mid-word; this makes that recoverable). Default off.
@@ -71,9 +66,8 @@ to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
                   runtime dir's readers.
 
 Env:
-  PARLAY_SERVER          upstream server; a non-default value gets its own
-                         server-scoped runtime dir + relay
-  PARLAY_RELAY_RUNTIME   runtime dir (default: server-scoped under \$TMPDIR/parlay)
+  PARLAY_SERVER          upstream server resolved by the CLI
+  PARLAY_RELAY_RUNTIME   runtime dir (default: \$TMPDIR/parlay)
   PARLAY_RELAY_SOCK      control socket path (default <runtime>/relay.sock)
   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
   PARLAY_MONITOR_WATCH_INTERVAL  seconds between orphan checks (default 15)
@@ -169,10 +163,9 @@ ps_row() {
 # pipe closes, the wrapper script then exits, and the CLI exits with its code.
 #
 # SCOPED BY RUNTIME DIR ON PURPOSE. An unscoped host-wide kill is not something
-# a test (or a sandbox, or a second server's relay) can be allowed to run — it
-# would reach the captain's live readers. The scope is the CANONICAL runtime dir
-# and the match is a prefix, so server-scoped relays nested under it
-# (<canonical>/srv-<hash>/) are still covered.
+# a test or sandbox can be allowed to run — it would reach readers outside the
+# test runtime. The scope is the configured runtime dir and the match is a
+# prefix.
 reap_readers() {
   local apply="$1" runtime="$2"
   local snapshot readers total orphans pid spool row parent pcmd cur orphan killed left
@@ -223,7 +216,7 @@ EOF
     return 0
   fi
   for pid in $killed; do kill "$pid" 2>/dev/null || true; done
-  sleep 1
+  /bin/sleep 1
   left=0
   for pid in $killed; do
     if kill -0 "$pid" 2>/dev/null; then
@@ -240,8 +233,7 @@ RELAY_LIB="$HERE/../relay/deploy/lib.sh"
 
 # --reap is a maintenance pass, not a stream: no agent, no relay, no enrollment.
 # It runs before any of the setup below so a host with no relay at all can still
-# be swept. Scope is the CANONICAL runtime dir (not the server-scoped one) so a
-# sweep covers every relay nested under it in one pass.
+# be swept. Scope is the configured canonical runtime dir.
 if [ "$REAP" = 1 ]; then
   if [ -r "$RELAY_LIB" ]; then
     # shellcheck source=../relay/deploy/lib.sh
@@ -260,17 +252,9 @@ fi
 
 [ -n "$AGENT" ] || { echo "parlay-monitor: --agent <id> is required" >&2; usage; }
 
-# The CLI resolves the server before starting this note-reader. A direct
-# invocation must not fall back to a guessed/default target: doing so can put
-# the reader on a different server's registry.
-if [ -z "${PARLAY_SERVER:-}" ]; then
-  echo "parlay-monitor: PARLAY_SERVER is required; invoke via parlay monitor/listen" >&2
-  exit 1
-fi
-
 # ── Never die quietly before streaming starts (robots-dcag) ───────────────────
 # By the time this script runs, `parlay listen` has already registered and
-# announced the agent with Pulse. If we then exit without reaching the stream,
+# announced the agent with the Go server. If we then exit without reaching the stream,
 # the panel shows a healthy agent whose event stream does not exist — it takes
 # no directives for the rest of the session and nothing says so. Any exit from
 # the setup phase therefore names itself, its code, and the consequence. `set
@@ -308,39 +292,17 @@ if ! printf '%s' "$AGENT" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
   exit 2
 fi
 
-# ── Resolve the runtime dir, SCOPED BY UPSTREAM SERVER (robots-buu8) ───────────
-# A relay is a per-runtime-dir singleton bound to ONE upstream server, so which
-# relay we enroll on decides which server's registry we land in — $PARLAY_SERVER
-# alone does not. Enrolling on the shared $TMPDIR/parlay relay (bound to
-# production :31337) while $PARLAY_SERVER points at a scratch server silently
-# registered the agent in the captain's LIVE registry.
-#
-# parlay_relay_scoped_runtime_dir reserves the canonical dir for the default
-# server and gives every other $PARLAY_SERVER its own dir (and thus its own
-# relay). Exported so ensure-up.sh and the relay launcher it starts resolve the
-# identical dir. An explicit $PARLAY_RELAY_RUNTIME still wins — a caller that
-# pinned a dir keeps it, and the mismatch guard below covers the rest.
+# ── Resolve the canonical relay runtime ───────────────────────────────────────
+# The CLI resolves the upstream server before starting this monitor. The relay
+# itself is a single canonical process, so every monitor uses the same runtime
+# directory; an explicit runtime override remains available for hermetic tests.
 if [ -r "$RELAY_LIB" ]; then
   # shellcheck source=../relay/deploy/lib.sh
   . "$RELAY_LIB"
 fi
-# Guarded on the helper, not just the file: a stale lib.sh would make this an
-# unresolved command, and under `set -e` that aborts the monitor outright.
-if command -v parlay_relay_scoped_runtime_dir >/dev/null 2>&1; then
-  RUNTIME="$(parlay_relay_scoped_runtime_dir)"
-  # Say so out loud. Scoping means this monitor is NOT on the shared relay, so if
-  # the target server is wrong or dead the agent goes quiet — that must be visible
-  # in the monitor's own stderr, not diagnosed later from an empty channel.
-  if [ -z "${PARLAY_RELAY_RUNTIME:-}" ] && [ "$RUNTIME" != "$(parlay_relay_runtime_dir)" ]; then
-    echo "parlay-monitor: PARLAY_SERVER=$(parlay_relay_target_server) is not the default" >&2
-    echo "parlay-monitor:   server — using a server-scoped relay at $RUNTIME" >&2
-    SCOPED=1
-  fi
-  export PARLAY_RELAY_RUNTIME="$RUNTIME"
+if command -v parlay_relay_runtime_dir >/dev/null 2>&1; then
+  RUNTIME="$(parlay_relay_runtime_dir)"
 else
-  # lib.sh missing or stale (older/partial checkout): keep the original
-  # resolution. The pre-enroll server check below still catches a cross-server
-  # enroll, so the leak stays closed even without scoping.
   RUNTIME="${PARLAY_RELAY_RUNTIME:-${TMPDIR:-/tmp}/parlay}"
 fi
 RUNTIME="${RUNTIME%/}"
@@ -358,33 +320,15 @@ if command -v parlay_relay_sock_path_ok >/dev/null 2>&1 \
   exit 1
 fi
 
-# Record which upstream server this scoped runtime dir belongs to. The dir name
-# is a hash (sun_path is tight), so this marker is what makes a stray scoped
-# relay identifiable by a human later. Not a .chan file, so no relay reads it.
-if [ "${SCOPED:-0}" = 1 ]; then
-  mkdir -p "$RUNTIME" 2>/dev/null || true
-  printf '%s\n' "$(parlay_relay_target_server)" >"$RUNTIME/server" 2>/dev/null || true
-fi
-
 # Ensure a relay is up before enrolling, so a monitor never dead-ends on a
 # missing relay. ensure-up is idempotent and concurrency-safe: it no-ops if the
-# relay already answers /health, otherwise it starts it (launchd if installed AND
-# it serves this runtime dir + server, else the binary) and waits for /health. It
-# respects PARLAY_RELAY_RUNTIME/SOCK via the same lib resolution, and honors
-# PARLAY_SERVER for the started relay.
+# canonical relay already answers /health, otherwise it starts the supervised
+# or development relay and waits for /health. It respects
+# PARLAY_RELAY_RUNTIME/SOCK via the same lib resolution.
 if [ -x "$ENSURE_UP" ]; then
   ENSURE_RC=0
   "$ENSURE_UP" || ENSURE_RC=$?
-  if [ "$ENSURE_RC" = 3 ]; then
-    # A relay IS up, bound to the wrong upstream server (robots-93xu). ensure-up
-    # already printed the mismatch and the repair; adding "install the relay"
-    # below would contradict it — a relay is precisely what is already running.
-    # The monitor's own pre-enroll guard is never reached: an exit-3 relay is a
-    # hard, fully-diagnosed mismatch between what the caller wants and what the
-    # relay serves, so nothing more to say. Exit 1 (not 3) because from the
-    # monitor's contract a relay is not up-and-bound and enrollment cannot happen.
-    exit 1
-  elif [ "$ENSURE_RC" != 0 ]; then
+  if [ "$ENSURE_RC" != 0 ]; then
     echo "parlay-monitor: relay is not up and could not be started" >&2
     echo "parlay-monitor: install the relay (tools/relay/deploy/install.sh) or start it manually" >&2
     exit 1
@@ -402,81 +346,16 @@ if [ ! -S "$SOCK" ]; then
   exit 1
 fi
 
-# ── Refuse to enroll on a relay bound to the wrong upstream server ────────────
-# Last line of defence for robots-buu8, and the one that holds even when the
-# scoping above is bypassed (explicit $PARLAY_RELAY_RUNTIME/$PARLAY_RELAY_SOCK,
-# a lib.sh-less checkout, or a relay someone started by hand). GET /agents is
-# read-only, so this runs BEFORE /register — a mismatch must abort without ever
-# touching the wrong registry. An unreachable/older relay reports nothing; that
-# is not a mismatch, so we proceed rather than hard-fail on unknown.
-#
-# THE PROBE MUST NEVER ABORT THE MONITOR (robots-dcag). This was written as a
-# bare `VAR=$(curl … | sed …)`, and under this script's `set -euo pipefail` a
-# failing command substitution in a plain assignment takes its own exit status
-# and kills the script — so a curl timeout (exit 28) ended the monitor HERE,
-# silently, three lines before the first "enrolling" message. `parlay listen`
-# registers and announces with Pulse before shelling out to this script, so the
-# panel showed the agent present and healthy while its event stream was dead:
-# registered-but-deaf for the rest of the session, receiving no directives.
-# `2>/dev/null` hid curl's own complaint; nothing else printed. Every probe
-# failure is now caught and reported, and an unknown answer only ever means
-# "could not verify", never "abort".
-if [ -n "${PARLAY_SERVER:-}" ]; then
-  WANT_SERVER="${PARLAY_SERVER%/}"
-  # 2s was also simply too tight: /agents serializes the whole registry, and on
-  # the captain's box (269 agents) it routinely answers in >2s, so the timeout
-  # was reached on a perfectly healthy relay. This is a one-shot startup probe,
-  # not a hot path — give it room, and let a caller tune it.
-  PROBE_TIMEOUT="${PARLAY_RELAY_PROBE_TIMEOUT:-15}"
-  RELAY_SERVER=""
-  PROBE_ERR=""
-  if command -v parlay_relay_reported_server >/dev/null 2>&1; then
-    # lib.sh's helper is already internally guarded (`|| return 0`), but keep the
-    # `|| true` anyway: this assignment must not be able to abort under set -e
-    # regardless of what a future/older lib.sh does inside.
-    RELAY_SERVER="$(parlay_relay_reported_server "$SOCK" 2>/dev/null || true)"
-  else
-    # lib.sh missing or stale: same probe inline, guarded the same way. The
-    # substitution's status is consumed by `||` so `set -e` never sees it.
-    PROBE_BODY="$(curl -fsS --max-time "$PROBE_TIMEOUT" --unix-socket "$SOCK" \
-      http://relay/agents 2>/dev/null)" || { PROBE_ERR=$?; PROBE_BODY=""; }
-    RELAY_SERVER="$(printf '%s' "$PROBE_BODY" \
-      | sed -n 's/.*"server":"\([^"]*\)".*/\1/p')"
-  fi
-  RELAY_SERVER="${RELAY_SERVER%/}"
-  # Say when the check could not be made. Proceeding unverified is the correct
-  # behaviour (an older relay does not report a server at all), but it must be
-  # visible — a silent skip is how a real mismatch would slip through later.
-  if [ -z "$RELAY_SERVER" ]; then
-    echo "parlay-monitor: relay at $SOCK did not report its upstream server" >&2
-    if [ -n "$PROBE_ERR" ]; then
-      echo "parlay-monitor:   (probe failed, curl exit $PROBE_ERR, ${PROBE_TIMEOUT}s timeout)" >&2
-    fi
-    echo "parlay-monitor:   proceeding unverified — cannot confirm it serves $WANT_SERVER" >&2
-  fi
-  if [ -n "$RELAY_SERVER" ] && [ "$RELAY_SERVER" != "$WANT_SERVER" ]; then
-    echo "parlay-monitor: refusing to enroll '$AGENT' — relay at $SOCK is bound to" >&2
-    echo "parlay-monitor:   $RELAY_SERVER but PARLAY_SERVER is $WANT_SERVER." >&2
-    echo "parlay-monitor: enrolling anyway would register this agent in the WRONG" >&2
-    echo "parlay-monitor:   server's registry (robots-buu8)." >&2
-    echo "parlay-monitor: unset PARLAY_RELAY_RUNTIME/PARLAY_RELAY_SOCK to get an" >&2
-    echo "parlay-monitor:   automatically server-scoped relay, or point them at a" >&2
-    echo "parlay-monitor:   runtime dir whose relay serves $WANT_SERVER." >&2
-    exit 1
-  fi
-fi
-
 # ── Preflight: exit before enroll, the relay is verified ready (issue #173) ──
-# At this point every guard above has passed: the runtime dir is scoped, the
-# relay is up (or was started by ensure-up), the socket exists, and a
-# cross-server enroll is impossible. `parlay listen`/`parlay claim` run this as a
+# At this point the relay is up (or was started by ensure-up) and the socket
+# exists. `parlay listen`/`parlay claim` run this as a
 # PRE-enrollment probe so a fresh-clone user (no relay binary, so ensure-up
 # failed above) exits with the diagnosis BEFORE the agent is registered — the
 # register+announce then discovering a dead relay is the registered-but-deaf
 # trap this closes. The stream path falls straight through to enroll below; only
 # --preflight stops here.
 if [ "$PREFLIGHT" = 1 ]; then
-  echo "parlay-monitor: preflight OK — relay is up and correctly scoped for '$AGENT'" >&2
+  echo "parlay-monitor: preflight OK — canonical relay is up for '$AGENT'" >&2
   exit 0
 fi
 
@@ -508,7 +387,7 @@ RELAY_SPOOL=$(printf '%s' "$REG" | sed -n 's/.*"spool":"\([^"]*\)".*/\1/p')
 # -F will pick the file up once it appears.
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   [ -e "$SPOOL" ] && break
-  sleep 0.1
+  /bin/sleep 0.1
 done
 
 echo "parlay-monitor: streaming '$AGENT' from $SPOOL" >&2
@@ -528,7 +407,7 @@ if [ -n "$(printf '%s' "$STALE_READERS" | tr -d '[:space:]')" ]; then
   echo "parlay-monitor:   evicting them — a channel gets exactly one reader, or a" >&2
   echo "parlay-monitor:   stale session is woken by messages meant for this one." >&2
   for _p in $STALE_READERS; do kill "$_p" 2>/dev/null || true; done
-  sleep 0.3
+  /bin/sleep 0.3
   for _p in $(readers_of "$SPOOL"); do kill -9 "$_p" 2>/dev/null || true; done
 fi
 
@@ -578,7 +457,7 @@ READER_PID=""
 for _ in 1 2 3 4 5; do
   READER_PID="$(readers_of "$SPOOL" "$$" | head -1 || true)"
   if [ -n "$READER_PID" ]; then break; fi
-  sleep 0.2
+  /bin/sleep 0.2
 done
 if [ -z "$READER_PID" ]; then
   echo "parlay-monitor: could not identify the reader process for '$AGENT' — it will" >&2
@@ -610,7 +489,7 @@ if [ -n "$READER_PID" ] && [ "${PARLAY_MONITOR_NO_ORPHAN_EXIT:-0}" != 1 ]; then
     trap - EXIT TERM INT HUP
     sup=$$ ; reader="$READER_PID" ; launcher="$PPID"
     while :; do
-      sleep "$WATCH_INTERVAL"
+      /bin/sleep "$WATCH_INTERVAL"
       kill -0 "$reader" 2>/dev/null || exit 0
       why=""
       if ! kill -0 "$sup" 2>/dev/null; then
@@ -624,7 +503,7 @@ if [ -n "$READER_PID" ] && [ "${PARLAY_MONITOR_NO_ORPHAN_EXIT:-0}" != 1 ]; then
       if [ -n "$why" ]; then
         echo "parlay-monitor: $why; stopping the reader for '$AGENT' (robots-3pvi)" >&2
         kill "$reader" 2>/dev/null || true
-        sleep 1
+        /bin/sleep 1
         kill -9 "$reader" 2>/dev/null || true
         exit 0
       fi

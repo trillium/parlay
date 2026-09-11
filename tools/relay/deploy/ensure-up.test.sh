@@ -27,11 +27,8 @@ pass() { printf 'ok: %s\n' "$1"; }
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pu.XXXXXX")"
 trap 'rm -rf "$ROOT"' EXIT
 
-# The runtime dir must be the CANONICAL one as lib.sh resolves it — i.e.
-# <getconf DARWIN_USER_TEMP_DIR>/parlay — not an arbitrary dir pinned via
-# $PARLAY_RELAY_RUNTIME. ensure-up's launchd-matching logic (robots-buu8) refuses
-# to use launchd for any *other* runtime dir, so pinning one made every launchd
-# case below fall through to "no relay binary found" and fail. We stub `getconf`
+# The runtime dir must be the canonical one as lib.sh resolves it — i.e.
+# <getconf DARWIN_USER_TEMP_DIR>/parlay. We stub `getconf`
 # instead (see $STUB/getconf), which redirects the canonical dir into $ROOT while
 # leaving the override unset — exactly the shape production runs in.
 RUNTIME="$ROOT/parlay"
@@ -160,7 +157,7 @@ fi
 # ── 4. The wait outlives its base budget while the relay is still working ─────
 # Health arrives at +5s with a 1s base budget. A fixed bound gives up; the
 # adaptive wait keeps going because the relay's log is still growing.
-( for _ in 1 2 3 4 5 6 7 8 9 10; do echo "relay: resumed agent from spool" >> "$ERR_LOG"; sleep 0.5; done ) &
+( for _ in 1 2 3 4 5 6 7 8 9 10; do echo "relay: resumed agent from spool" >> "$ERR_LOG"; /bin/sleep 0.5; done ) &
 LOGGER=$!
 WAIT=1 run running 5
 kill "$LOGGER" 2>/dev/null; wait "$LOGGER" 2>/dev/null
@@ -195,55 +192,22 @@ else
   pass "--force-restart force-restarts even a healthy relay"
 fi
 
-# ── 7. A healthy relay bound to the WRONG server is not "up" (robots-93xu) ────
-# /health proves a relay answers; it says nothing about which upstream server it
-# is bound to. Pre-fix the fast path returned 0 here — a false green that sent
-# the caller on to die at its own enroll guard with a success line above it.
-# The relay must NOT be restarted (it is a live singleton), and the exit code
-# must be the distinct 3 so callers can tell this from "no relay".
-cat > "$STUB/curl" <<'S'
-#!/usr/bin/env bash
-# /agents reports the server this relay is bound to; /health is always ok.
-for a in "$@"; do
-  case "$a" in
-    */agents) echo '{"agents":[],"server":"http://localhost:31337","runtime":"x"}'; exit 0 ;;
-  esac
-done
-echo '{"ok":true}'
-S
-chmod +x "$STUB/curl"
-run running 0
-if [ "$RC" -ne 3 ]; then
-  fail "wrong-server relay: exit $RC, want 3 ($(cat "$ROOT/out"))"
-elif [ -s "$ROOT/launchctl.log" ]; then
-  fail "wrong-server relay: it was restarted/kickstarted — $(lc_log)"
-elif ! grep -q "bound to http://localhost:31337" "$ROOT/out"; then
-  fail "wrong-server relay: message does not name the relay's actual server ($(cat "$ROOT/out"))"
-elif ! grep -q -- "install.sh --server http://localhost:4242" "$ROOT/out"; then
-  fail "wrong-server relay: message does not give the repair command ($(cat "$ROOT/out"))"
-else
-  pass "healthy-but-wrong-server relay exits 3, is left running, and names the repair"
-fi
-
-# ── 8. A healthy relay bound to the RIGHT server is still the fast path ────────
-# The guard must not become a blanket failure: same stub shape, matching server.
-cat > "$STUB/curl" <<'S'
-#!/usr/bin/env bash
-for a in "$@"; do
-  case "$a" in
-    */agents) echo '{"agents":[],"server":"http://localhost:4242/","runtime":"x"}'; exit 0 ;;
-  esac
-done
-echo '{"ok":true}'
-S
-chmod +x "$STUB/curl"
+# ── 7. A healthy canonical relay is the untouched fast path ──────────────────
 run running 0
 if [ "$RC" -ne 0 ]; then
-  fail "matching-server relay: exit $RC, want 0 — the guard is over-broad ($(cat "$ROOT/out"))"
+  fail "healthy relay: exit $RC, want 0 — $(cat "$ROOT/out")"
 elif [ -s "$ROOT/launchctl.log" ]; then
-  fail "matching-server relay: launchctl was invoked — $(lc_log)"
+  fail "healthy relay: launchctl was invoked — $(lc_log)"
 else
-  pass "matching server (trailing slash and all) still takes the untouched fast path"
+  pass "healthy canonical relay takes the untouched fast path"
+fi
+
+# ── 8. Unknown flags are rejected rather than silently ignored ────────────────
+run running 0 --bogus
+if [ "$RC" -ne 2 ]; then
+  fail "unknown flag: exit $RC, want 2"
+else
+  pass "unknown flag exits 2"
 fi
 
 # Restore the plain health-only stub for the remaining cases.

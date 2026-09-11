@@ -149,7 +149,7 @@ describe("live server: the panel and the CLI are unaffected", () => {
   })
 
   // The pollers this repo actually has — the relay, both CLI monitors,
-  // tools/split-test, pages/chat/agent-notify.ts — are all no-Origin HTTP
+  // pages/chat/agent-notify.ts — are all no-Origin HTTP
   // clients. Guarding /poll must leave them untouched.
   // Queue a message first so each poll below returns immediately instead of
   // holding its connection open for 30s.

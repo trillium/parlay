@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -107,12 +106,6 @@ type healthSubscribersInfo struct {
 	History *healthHistory `json:"history,omitempty"`
 }
 
-type pulseHealthInfo struct {
-	Status *string  `json:"status"`
-	Uptime *float64 `json:"uptime"`
-	Pid    *int     `json:"pid"`
-}
-
 type engineHealthInfo struct {
 	OK       *bool `json:"ok"`
 	Protocol *int  `json:"protocol"`
@@ -157,26 +150,6 @@ func Health(argv []string) {
 			fmt.Printf("ok    memory — rss %sMB, heap %sMB; history %s msgs (%sKB)\n",
 				formatNumber(d.Memory.RssMB), formatNumber(d.Memory.HeapUsedMB), historyCount, historyKB)
 		}
-	}
-
-	// Pulse wrapper health (present when the relay runs inside Pulse on :31337).
-	pulse := tryJSON[pulseHealthInfo](server, "/api/pulse/health")
-	if pulse.ok {
-		up := ""
-		if pulse.data.Uptime != nil {
-			up = fmt.Sprintf(", up %smin", formatNumber(math.Round(*pulse.data.Uptime/60)))
-		}
-		status := "undefined"
-		if pulse.data.Status != nil {
-			status = *pulse.data.Status
-		}
-		pid := "undefined"
-		if pulse.data.Pid != nil {
-			pid = strconv.Itoa(*pulse.data.Pid)
-		}
-		fmt.Printf("ok    pulse — status %s, pid %s%s\n", status, pid, up)
-	} else {
-		fmt.Printf("--    pulse health endpoint not present (standalone relay) — %s\n", pulse.err)
 	}
 
 	engineRes := tryJSON[engineHealthInfo](engine, "/health")

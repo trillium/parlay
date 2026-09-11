@@ -102,7 +102,7 @@ three-step. See `parlay help listen`.
 
 ## Footprint & scaling math
 
-Measured on this machine (`ps -o rss=`, macOS arm64, live server on :31337):
+Measured on this machine (`ps -o rss=`, macOS arm64, live server on :4242):
 
 | Component            | RSS (per process) | Instances |
 |----------------------|-------------------|-----------|

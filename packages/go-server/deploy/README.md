@@ -50,9 +50,7 @@ packages/go-server/deploy/install.sh --allowed-origins "https://tunnel.example.c
 binary/plist; it boots out the old agent, bootstraps + enables + kickstarts
 it in `gui/<uid>`, and finishes by polling `/health`. Listen address defaults
 to `127.0.0.1:4242` (matches `main.go`'s own coded default); state dir
-defaults to `~/.parlay`. **Refuses to deploy against `:31337`** — that is
-the captain's live production Pulse server (see this repo's `CLAUDE.md`) —
-both here and, redundantly, in the binary's own `refuseProductionPort`.
+defaults to `~/.parlay`.
 
 `--allowed-origins <comma,separated,origins>` (env `PARLAY_ALLOWED_ORIGINS`)
 bakes `internal/guard`'s origin allow-list into the rendered plist's

@@ -41,7 +41,7 @@ func helpWanted(cmd string, argv []string) bool {
 //
 // It exists because silently ignoring leftover argv is the shape that produced
 // the PR #115 bug: `parlay lavish-import --dry-run` performed a REAL import
-// into the live Parlay at :31337, because the flag was accepted, dropped, and
+// into the live Parlay server, because the flag was accepted, dropped, and
 // never looked at. A guessed safety flag did the opposite of safety.
 //
 // AGENTS.md states the rule this enforces: a dropped flag is not a degraded

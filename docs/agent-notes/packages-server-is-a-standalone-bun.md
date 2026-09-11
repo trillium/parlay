@@ -85,7 +85,7 @@ uuid plus every registered agent id, which is what made the rest aimable
 `/subscribers` was **guarded rather than redacted**: its only panel caller is
 same-origin (`packages/client/src/tab-online.ts`, a relative `fetch` for the
 per-tab online check), and every caller outside the panel (`parlay
-doctor`/`subscribers`/crew-state, the Go CLI, `tools/split-test`) is a
+doctor`/`subscribers`/crew-state, and the Go CLI) is a
 no-Origin HTTP client, so guarding costs them nothing. `GET /poll` was added
 for the same reason a round later — on the TS side it auto-registers an
 unknown `channel` in the agent registry, broadcasts `agent_register` and calls

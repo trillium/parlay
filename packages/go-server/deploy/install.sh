@@ -83,11 +83,6 @@ case "$(uname -s)" in
   *) echo "install.sh: launchd deployment is macOS-only (got $(uname -s))" >&2; exit 1 ;;
 esac
 
-if parlay_goserver_refuse_31337 "${ADDR}"; then
-  echo "install.sh: refusing --addr ${ADDR} — :31337 is the captain's live production Pulse server (see this repo's CLAUDE.md)" >&2
-  exit 1
-fi
-
 MODULE_DIR="$(cd "${HERE}/.." && pwd)"     # packages/go-server
 REPO_BIN="${MODULE_DIR}/parlay-server"
 REPO_ROOT="$(cd "${MODULE_DIR}/../.." && pwd)"

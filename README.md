@@ -272,7 +272,7 @@ Repo conventions worth knowing:
   `prepare` script runs `git config core.hooksPath tools/hooks`. `pre-commit`
   runs for everyone: it enforces the 250-line limit below and auto-bumps
   `PA_VERSION`. `post-commit`/`post-merge` rebuild and deliver the panel bundle
-  — a build plus a POST to a local Pulse server — and **do nothing at all unless
+  — a build plus a POST to the local server — and **do nothing at all unless
   you opt in**:
 
   ```sh
