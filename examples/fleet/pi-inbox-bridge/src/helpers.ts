@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export type ChatLine = {
@@ -18,6 +19,21 @@ export type BridgeMarker = {
 };
 
 export const STATE_TYPE = "parlay-pi-inbox-bridge";
+
+let workerPromptTemplate: string | undefined;
+
+/**
+ * Render the canonical worker poke from src/worker-prompt.md — the one
+ * file the bridge sends verbatim, so the terminal text has a single
+ * source of truth instead of living in code. Throws when unreadable;
+ * callers surface that as a failed worker turn, never a silent default.
+ */
+export function renderWorkerPrompt(store: string, channel: string): string {
+	if (workerPromptTemplate === undefined) {
+		workerPromptTemplate = readFileSync(new URL("./worker-prompt.md", import.meta.url), "utf8");
+	}
+	return workerPromptTemplate.split("{{store}}").join(store).split("{{channel}}").join(channel);
+}
 
 /** Parse the monitor's stable CHAT_MSG wire line without splitting message text on `|`. */
 export function parseChatLine(line: string): ChatLine | undefined {

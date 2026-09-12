@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	STATE_TYPE,
@@ -7,6 +8,7 @@ import {
 	notify,
 	parseChatLine,
 	parseInboxConnectArgs,
+	renderWorkerPrompt,
 	sessionIdentity,
 } from "./helpers";
 import { COLOR, configForStore, type StoreConfig } from "./config";
@@ -89,16 +91,7 @@ export default function (pi: ExtensionAPI): void {
 		workerTurnActive = true;
 		const cfg = sessionConfig();
 		try {
-			pi.sendUserMessage(
-				`Parlay ${cfg.store} worker poke. Process the ${cfg.store} serially until exhausted. ` +
-				"Repeated pokes are coalesced; do not wait for another reminder.\n\n" +
-				`For each next eligible open ${cfg.store} item (no zone, zone:pi, or zone:default; leave specialized zones alone): atomically claim it with \`${cfg.store} update <id> --claim --assignee ${cfg.channel}\`; ` +
-				"read its complete description; append dated, source-linked durable knowledge to the named project/record without overwriting prior context; " +
-				`then close it with a precise receipt using \`${cfg.store} close <id> --reason\`. ` +
-				"Only close after the knowledge record exists. After each close, immediately inspect the inbox again. " +
-				"Do not use handoff/park for normal item completion. Stop only when no eligible open item remains.",
-				{ deliverAs: "followUp" },
-			);
+			pi.sendUserMessage(renderWorkerPrompt(cfg.store, cfg.channel), { deliverAs: "followUp" });
 		} catch (error) {
 			workerTurnActive = false;
 			notify(ctx, `Could not start Parlay inbox worker: ${String(error)}`, "error");
