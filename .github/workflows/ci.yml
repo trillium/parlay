@@ -294,7 +294,8 @@ jobs:
         run: |
           mkdir -p "$HOME"
           roots="packages/input packages/client packages/server \
-                 packages/webview packages/ccjuggler tools"
+                 packages/webview packages/ccjuggler tools \
+                 examples/fleet/pi-inbox-bridge"
 
           # A test file under no root is not partially run — it is not run at
           # all, and this job still reports green, which is indistinguishable
