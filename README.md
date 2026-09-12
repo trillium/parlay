@@ -171,6 +171,44 @@ the port can post into a live agent's turn. Expose it only over a private networ
 a tailnet, a VPN, or a LAN you control — never a public tunnel or a port forwarded
 to the internet.
 
+## Fleet layer and `parlay-dev`
+
+The core product (`packages/*`, `tools/cli`, `bin/parlay`, the server) installs and
+runs as above. Separate from that is a **fleet layer** — the inbox tooling, the
+pi-inbox bridge, and the agent skills that the author's personal fleet runs. It is
+personal glue, deliberately kept out of `tools/` and `skills/` of the core repo; it
+lives instead under `examples/fleet/`.
+
+**Install the fleet layer** with one command (idempotent, reversible):
+
+```sh
+examples/fleet/install.sh             # install everything (or --status / --uninstall)
+```
+
+What it wires up:
+
+| Thing | Home | How |
+|---|---|---|
+| `inbox`, `inbox-dispatch` | `~/.local/bin/` | backup-then-copy via each tool's own `install.sh` |
+| pi-inbox bridge | `~/.pi/agent/extensions/parlay-pi-inbox/` | copied dir (so `./src` imports resolve) |
+| fleet skills (`inbox-handler`, `parlay-spawn`, `voice-command-consulting`) | `~/.claude/skills/<name>` | symlink to `examples/fleet/skills/<name>` (edits apply immediately) |
+
+**`parlay` vs `parlay-dev`** — one wrapper script (`bin/parlay`), two names:
+
+- `parlay` — production/fleet mode. State in `~/.parlay`, talks to the running server.
+- `parlay-dev` — development mode. Same checkout, but `PARLAY_STATE_HOME` is redirected
+  to `~/.parlay-dev` so building/testing `main` never touches live fleet state
+  (`config.json`, identity, scratchpads, spawn defaults).
+
+Both are symlinks to `bin/parlay`; the invoked basename selects. `parlay-dev` isolates
+**client-side** state only — it still reaches the same server (`:4242` by default). For
+a fully isolated dev environment, also point `PARLAY_SERVER` at a scratch server, since
+agent registration is server-side.
+
+**Fresh-checkout note:** `bin/parlay-dev` is a tracked symlink in the repo, so any
+checkout has it automatically; `~/.local/bin/parlay` and `~/.local/bin/parlay-dev` on
+a live host are created by the install step (see the wrapper header / install docs).
+
 ## Layout
 
 A [Bun](https://bun.sh) workspace monorepo, plus several standalone Go modules.
@@ -185,6 +223,7 @@ of every module in the repo:
 | `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
+| `examples/fleet` | The author's personal **fleet layer** — inbox dispatcher/emit, pi-inbox bridge, and the agent skills. Not core product; installs via `examples/fleet/install.sh`. |
 
 Agent-facing entry points live in `bin/` (`parlay`, `parlay-treehouse-guard`, …).
 

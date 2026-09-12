@@ -33,14 +33,15 @@ package gctemplate
 // store's own config (`bd config set types.custom ...` — the
 // `.beads/config.yaml` copy gc writes is not what create-validation reads).
 //
-// `dolt` and `tmux` must be on PATH. Everything lives under t.TempDir():
+// `dolt` and `herdr` (≥0.7.5) must be on PATH. Everything lives under t.TempDir():
 // the store, the scratch GC_HOME (supervisor redirected per contract §9.1 —
 // never the machine-wide one), and the city. gc's managed-dolt watchdog
 // reaps itself when the scope dir vanishes — but slowly (it polls on a
 // coarse interval), so the test also reaps any process whose command line
-// names its unique city dir, closes its session, and kills its exact tmux
-// session by name: the tmux server (socket "city", named after the city
-// dir) is per-user shared state.
+// names its unique city dir and closes its session via `session close`
+// (provider-owned teardown: the herdr provider closes the session's tab —
+// there is no tmux server to sweep, and herdr tabs are operator-visible,
+// unlike invisible subprocess orphans).
 
 import (
 	"encoding/json"
@@ -215,13 +216,10 @@ func TestSynthesisedTemplateStartsSession(t *testing.T) {
 			if _, _, err := runGC(60*time.Second, "session", "close", created.SessionID, "--json"); err != nil {
 				t.Logf("session close %s: %v", created.SessionID, err)
 			}
-			if created.SessionName != "" {
-				// tmux socket is named after the city dir; kill only our
-				// exact session in case close left the runtime behind.
-				kill := exec.Command("tmux", "-L", filepath.Base(res.Dir), "kill-session", "-t", "="+created.SessionName)
-				kill.Env = gcEnv
-				_ = kill.Run()
-			}
+			// No tmux-style fallback kill: `session close` is the
+			// provider-owned teardown and the herdr provider closes the
+			// session's tab itself. A stray tab stays visible in herdr
+			// rather than orphaned invisibly.
 		})
 	}
 	if err != nil || !created.OK {

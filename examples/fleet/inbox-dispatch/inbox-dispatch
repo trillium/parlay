@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# inbox-dispatch — deterministic inbox wake-up. It emits a coalescible worker
+# poke; the persistent Pi handler inspects and claims tickets itself. NO LLM in
+# this loop.
+#
+# This is the "wake the persistent worker" step, as a plain command. The event
+# trigger (inbox write -> call this) is the separate half:
+# either a daemon polling `inbox ready`/`inbox list` for new open tickets
+# (`parlay robots-watch`, which watches the inbox store), or the filing agent
+# calls this directly right after `inbox create`.
+#
+# Usage:
+#   inbox-dispatch <ticket-id> [<zone>]
+#   STORE=<store> inbox-dispatch <ticket-id> [<zone>]
+#
+# STORE-ATTACH: this dispatcher follows any brain federated store, not just
+# the inbox. The store resolves from (1) explicit STORE env, else (2) the id's
+# leading token (`task-abc` -> store `task`, backend wrapper `task`), else
+# `inbox`. The backend is `${INBOX_BIN:-${STORE_BIN:-$STORE}}`, so every store
+# wrapper already on PATH (`task`, `brain`, ...) works with no extra flags:
+#   inbox-dispatch task-abc          # task store, poke -> task-inbox channel
+#   STORE=task inbox-dispatch abc    # bare id against the task store
+# Per-store channels (`<store>-inbox`, poke `<STORE>_POKE v1`) keep workers
+# isolated; the inbox defaults (`pi-inbox`, `INBOX_POKE v1`) are byte-identical
+# to the pre-attach behavior so live listeners survive rollout.
+# Zone -> handler-agent routing lives in the table below. If no zone is given,
+# the inbox is routed to the serial pi-harness consumer. An explicit
+# `zone:<x>` may opt into another specialized handler, but inbox tickets never
+# use a per-ticket default agent.
+#
+# The `pi` zone is the pi-harness consumer: it routes to the single
+# `pi-inbox` channel, which a pi harness keeps a `parlay listen` poll loop on.
+# A ticket filed with a `zone:pi` label therefore arrives as a wake turn
+# ("INBOX_POKE v1") in that harness. The worker inspects and atomically claims
+# its own next ticket; the dispatcher never pushes ticket work into the prompt.
+#
+# CANONICAL SOURCE: this file lives at examples/fleet/inbox-dispatch/inbox-dispatch
+# in the parlay repo and is installed to ~/.local/bin/inbox-dispatch via
+# examples/fleet/inbox-dispatch/install.sh (matching the tools/mechanic-dispatch
+# convention). Edit it here, not the installed copy.
+set -euo pipefail
+
+# --- command seams (defaults; pre-set env wins) --------------------------------
+# Point these at stubs or temp-store wrappers in tests without PATH hacks, e.g.
+#   INBOX_BIN=/tmp/itest/bin/inbox inbox-dispatch inbox-abc
+# BEADS_DIR flows through to the store wrapper (which treats it as a default,
+# not a force), so dispatch needs no store flags of its own. INBOX_BIN/
+# STORE_BIN are honored explicitly; otherwise the backend is the resolved
+# store's own wrapper (set below, after STORE resolves from $STORE or the id).
+PARLAY_BIN="${PARLAY_BIN:-parlay}"
+HERDR_BIN="${HERDR_BIN:-herdr}"
+
+TICKET="${1:?usage: inbox-dispatch <ticket-id> [<zone>]}"
+ZONE="${2:-}"
+
+# --- store resolution (attach to any federated store) --------------------------
+# Explicit STORE wins; else the id's leading token (`task-abc` -> `task`);
+# bare ids with no dash fall back to `inbox`. The token must look like a store
+# name (lowercase lead); anything else is inbox, preserving the old behavior
+# where dashed bare ids simply failed the existence guard below.
+if [ -n "${STORE:-}" ]; then
+  _RESOLVED_STORE="$STORE"
+else
+  case "$TICKET" in
+    *-*) _maybe="${TICKET%%-*}" ;;
+    *) _maybe="" ;;
+  esac
+  case "$_maybe" in
+    [a-z][a-z0-9_]*) _RESOLVED_STORE="$_maybe" ;;
+    *) _RESOLVED_STORE="inbox" ;;
+  esac
+  unset _maybe
+fi
+STORE="$_RESOLVED_STORE"
+unset _RESOLVED_STORE
+# Backend wrapper: explicit INBOX_BIN (old seam) > STORE_BIN > store wrapper.
+BIN="${INBOX_BIN:-${STORE_BIN:-$STORE}}"
+# Serial worker identity per store; inbox keeps its historic `pi-inbox` so
+# live listeners and the `notify:` close path are untouched by rollout.
+if [ -z "${HANDLER:-}" ]; then
+  if [ "$STORE" = inbox ]; then HANDLER="pi-inbox"; else HANDLER="$STORE-inbox"; fi
+fi
+CHANNEL="${CHANNEL:-$HANDLER}"
+if [ -z "${POKE_PREFIX:-}" ]; then
+  POKE_PREFIX="$(printf '%s' "$STORE" | tr '[:lower:]' '[:upper:]')_POKE"
+fi
+if [ -z "${WORKER_NAME:-}" ]; then
+  if [ "$STORE" = inbox ]; then WORKER_NAME="PI Inbox";
+  else WORKER_NAME="$(printf '%s' "$STORE" | cut -c1 | tr '[:lower:]' '[:upper:]')$(printf '%s' "$STORE" | cut -c2-) Inbox"; fi
+fi
+
+# --- the ticket must exist (bad-id guard) -------------------------------------
+# A nonexistent id is NOT the same as a closed one. `inbox show <bad-id>` exits
+# nonzero and prints nothing, so masking it with `|| true` left TICKET_INFO empty,
+# fell straight through the closed/done case below, and dispatched anyway — the
+# fleet-wide "robots-aaa" bug class (robots-jl1a): a full agent + pane spawned
+# on `parlay claim <bad-id>`, which can never resolve. Fail LOUD and nonzero.
+if ! TICKET_INFO=$("$BIN" show "$TICKET" 2>/dev/null) || [ -z "$TICKET_INFO" ]; then
+  echo "abort: $TICKET does not exist in $STORE — refusing to dispatch" >&2
+  exit 1
+fi
+
+# --- skip tickets that are already resolved (manual/re-dispatch guard) ---------
+# The create-emit path only fires on new (open) tickets, but a manual or repeat
+# dispatch can target a ticket that was already closed/fixed. Never launch or wake
+# a handler for resolved work.
+STATUS_LINE=$(printf '%s' "${TICKET_INFO%%$'\n'*}" | sed $'s/\x1b\\[[0-9;]*m//g')
+case "$STATUS_LINE" in
+  *CLOSED\]*|*DONE\]*)
+    echo "skip: $TICKET is already closed — nothing to dispatch"
+    exit 0 ;;
+esac
+
+# --- resolve the store-qualified bead id --------------------------------------
+# `parlay spawn` runs in beads-required mode: every spawn must name an OPEN beads
+# work item via --bead, and it resolves the store from the id's leading token
+# (task-xxxx -> the `task` wrapper). The backend `show` accepts a bare id as
+# well as a qualified one, so read the canonical id back off the status line
+# rather than trusting the argument's shape; fall back to prefixing with the
+# resolved store only if the line carries no id.
+BEAD=$(printf '%s' "$STATUS_LINE" | grep -oE "${STORE}-[A-Za-z0-9_]+" | head -1 || true)
+if [ -z "$BEAD" ]; then
+  case "$TICKET" in
+    "$STORE"-*) BEAD="$TICKET" ;;
+    *)        BEAD="$STORE-$TICKET" ;;
+  esac
+fi
+
+# --- zone -> (agent-id, display, color, cwd) routing table --------------------
+# NOTE: a `case` map, not a bash-4 `declare -A`. macOS /bin/bash is 3.2, where
+# associative arrays are unsupported. Keep this lookup portable to bash 3.2.
+# The `pi` entry is a fixed serial channel; it is handled before any Herdr
+# liveness or workspace logic below.
+zone_entry() {
+  case "$1" in
+    beads)  echo "mechanic-beads|Beads Mechanic|#ef4444|$HOME/data/brain" ;;
+    herdr)  echo "shepherd|Shepherd|#10b981|$HOME/code/herdr-oss" ;;
+    parlay) echo "parlay-dev|Parlay Dev|#c084fc|$HOME/code/parlay" ;;
+    pi)     echo "$HANDLER|$WORKER_NAME|#38bdf8|$HOME" ;;
+    *)      echo "mechanic|Mechanic|#f97316|$HOME" ;;
+  esac
+}
+
+# --- resolve the zone from the ticket label if not passed --------------------
+if [ -z "$ZONE" ]; then
+  ZONE=$("$BIN" show "$TICKET" 2>/dev/null | grep -oE 'zone:[a-z0-9-]+' | head -1 | cut -d: -f2 || true)
+fi
+# The store is serial by default. Preserve explicit specialized zones, but never
+# create a per-ticket mc-<store>-* identity merely because a ticket lacks a zone.
+[ -z "$ZONE" ] && ZONE=pi
+[ "$ZONE" = default ] && ZONE=pi
+ENTRY="$(zone_entry "$ZONE")"
+IFS='|' read -r AGENT NAME COLOR CWD <<<"$ENTRY"
+
+# --- pi is a fixed serial channel, never a spawn target ----------------------
+# A Pi harness is not a Herdr agent, so `herdr agent get <handler>` cannot be
+# used as liveness proof and must never trigger `parlay spawn`. Every ticket is
+# sent to the one per-store channel; the worker claims one ticket at a time and
+# continues until the store is exhausted.
+if [ "$ZONE" = pi ]; then
+  echo "dispatch: ticket=$TICKET store=$STORE zone=pi -> handler=$HANDLER (serial poke)"
+  # This is a wake hint, not a ticket delivery. The worker reads its store and
+  # atomically claims the oldest available item. Repeated pokes are
+  # intentionally harmless and are coalesced by the Pi bridge.
+  exec "$PARLAY_BIN" send --"$CHANNEL" "$POKE_PREFIX v1: new $STORE work may be available. Run the serial $STORE worker ($BIN); claim and process exactly one next available item, then continue until the $STORE is exhausted."
+fi
+
+# --- worktree isolation decision ---------------------------------------------
+# A handler must never mutate a repo's PRIMARY checkout — it works in an
+# isolated git worktree that `parlay spawn` creates at <repo>/.worktrees/parlay-<id>
+# (treehouse if on PATH, else plain git worktree). We ask for it with --worktree,
+# which `parlay spawn` resolves against --cwd. Gate on git-repo-ness of CWD, NOT
+# a hardcoded zone list, so a future git-repo zone is isolated automatically.
+# The 'default'/~ and 'pi'/~ zones are deliberately left NON-ISOLATED
+# (triage-only): $HOME is not a repo, and passing --worktree would make
+# `parlay spawn` fail rather than create a bogus worktree.
+WORKTREE_ARG=""
+if [ "$ZONE" != default ] && [ "$ZONE" != pi ] && git -C "$CWD" rev-parse --show-toplevel >/dev/null 2>&1; then
+  WORKTREE_ARG="--worktree"
+fi
+
+echo "dispatch: ticket=$TICKET zone=$ZONE -> handler=$AGENT${WORKTREE_ARG:+ (isolated worktree)}"
+
+# --- resolve (or create) the shared per-store herdr workspace ------------------
+# Specialized handler launches land here, so their running/finished handlers
+# are visible in one place instead of scattered across whatever workspace
+# happened to be focused at dispatch time. The serial pi path returned above
+# never creates a Herdr workspace.
+resolve_store_workspace() {
+  local ws_id
+  ws_id=$("$HERDR_BIN" workspace list 2>/dev/null | jq -r --arg s "$STORE" '.result.workspaces[]? | select(.label==$s) | .workspace_id' | head -1)
+  if [ -z "$ws_id" ]; then
+    local json
+    json=$("$HERDR_BIN" workspace create --label "$STORE" --no-focus --cwd "$HOME" 2>/dev/null)
+    ws_id=$(printf '%s' "$json" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
+  fi
+  printf '%s' "$ws_id"
+}
+INBOX_WS="$(resolve_store_workspace)"
+
+# --- is the handler live? (deterministic) ------------------------------------
+# `herdr agent get <absent>` returns an error object (or empty), not agent info;
+# treat anything without a real agent_status as absent so a dead handler always
+# launches rather than silently getting a ticket dispatched into the void.
+RAW=$("$HERDR_BIN" agent get "$AGENT" 2>/dev/null || true)
+STATUS=$(printf '%s' "$RAW" | jq -r 'if (.result.agent.agent_status // "") != "" then .result.agent.agent_status else "absent" end' 2>/dev/null || true)
+[ -z "$STATUS" ] && STATUS=absent
+echo "liveness: $AGENT = $STATUS"
+
+# The ticket IS the task now: 'parlay claim <ticket>' hands the agent its
+# identity, enrolls it, and returns the ticket's own title/description as the
+# work. No task prose is duplicated here — it lives on the ticket.
+# (`parlay claim` resolves any store from the id's leading token, so
+# store-qualified ids need no claim-side change.)
+if [ "$STATUS" = "absent" ]; then
+  echo "-> handler is dead; launching via $PARLAY_BIN spawn (--claim $BEAD)${WORKTREE_ARG:+ in isolated worktree}"
+  exec "$PARLAY_BIN" spawn "$AGENT" "$NAME" "$COLOR" --claim "$BEAD" --bead "$BEAD" \
+    --cwd "$CWD" --model opus \
+    $WORKTREE_ARG \
+    ${INBOX_WS:+--workspace "$INBOX_WS"}
+else
+  echo "-> handler is live ($STATUS); handing it the ticket"
+  exec "$PARLAY_BIN" send --"$AGENT" "Claim your next ticket: run 'parlay claim $BEAD'."
+fi

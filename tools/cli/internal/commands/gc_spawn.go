@@ -23,12 +23,13 @@
 // subprocess launcher unsets (SUBPROCESS_ENV_UNSET), so a gc-launched agent
 // starts as clean as a subprocess-launched one.
 //
-// The city runs the subprocess session provider (city/city.toml [session]),
-// so `gc session new` starts a detached process directly — no tmux server,
-// no running supervisor required (proven by the unit-4 gated integration
-// test). The session bead gc mints on create is the agent record the
-// integration contract §6 talks about; this verb is the one seam that causes
-// it to exist.
+// The city runs the herdr session provider (city/city.toml [session]), so
+// `gc session new` starts the agent as a tab in the city's shared herdr
+// session-server — visible and attachable via herdr, with startup delivery
+// confirmed per internal/runtime/herdr (deliverStartupTurn). No tmux server,
+// no running gc supervisor required. The session bead gc mints on create is
+// the agent record the integration contract §6 talks about; this verb is the
+// one seam that causes it to exist.
 package commands
 
 import (

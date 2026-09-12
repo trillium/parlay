@@ -2,10 +2,11 @@ package commands
 
 // Gated end-to-end proof for spawn-lift units 5 and 7: the `parlay gc-spawn`
 // core launches a real Gas City session from a synthesised template, against
-// the SUBPROCESS session provider (city/city.toml [session] — the
-// task-4cfpv.9 requirement that spawn-path tests run without tmux), and a
-// stamped identity then resolves through the bead-backed directory — before
-// and after the session retires, each time from a fresh gc process.
+// the HERDR session provider (city/city.toml [session] — the task-4cfpv.9
+// requirement that spawn-path sessions run as tabs in the city's shared
+// herdr session-server, visible and attachable), and a stamped identity then
+// resolves through the bead-backed directory — before and after the session
+// retires, each time from a fresh gc process.
 //
 // Gate and store-bootstrap recipe are the same as unit 4's
 // internal/gctemplate/integration_test.go (its header comment is the full
@@ -16,11 +17,12 @@ package commands
 //	PARLAY_GC_INTEGRATION=1  \
 //	PARLAY_GC=<pinned gc>    \  # tools/gc-build/build-gc.sh
 //	PARLAY_BD=<upstream bd>  \
-//	go test ./internal/commands/ -run TestGCSpawnRunStartsSubprocessSession
+//	go test ./internal/commands/ -run TestGCSpawnRunStartsHerdrSession
 //
-// `dolt` must be on PATH. tmux is deliberately NOT required: if this test
-// only passes with a tmux server available, the subprocess-provider claim is
-// broken.
+// `dolt` and `herdr` (≥0.7.5) must be on PATH: the session starts as a tab
+// in the ambient herdr server, so a passing run leaves no trace only if
+// `session close` (in-test cleanup) tears the tab down — verify in herdr
+// if the run fails midway.
 
 import (
 	"os"
@@ -78,7 +80,7 @@ func reapByMarker(t *testing.T, marker string) {
 	t.Logf("processes matching %q survived the reap wait", marker)
 }
 
-func TestGCSpawnRunStartsSubprocessSession(t *testing.T) {
+func TestGCSpawnRunStartsHerdrSession(t *testing.T) {
 	if os.Getenv("PARLAY_GC_INTEGRATION") != "1" {
 		t.Skip("set PARLAY_GC_INTEGRATION=1 with PARLAY_GC (pinned gc: tools/gc-build/build-gc.sh) and PARLAY_BD (upstream bd; see internal/gctemplate/integration_test.go) to run")
 	}
@@ -154,7 +156,7 @@ func TestGCSpawnRunStartsSubprocessSession(t *testing.T) {
 
 	// The launch itself, through the verb's core — an inert command instead
 	// of a real claude (the bar is "the spawn path starts a session on the
-	// subprocess provider", not "an agent runs"). The probe dumps its own
+	// herdr provider", not "an agent runs"). The probe dumps its own
 	// environment to a file and then sleeps; sleep self-terminates even if
 	// every cleanup layer fails. The env dump is the emitted-output proof
 	// (never a timing assertion) that the provider really executed the
@@ -188,7 +190,7 @@ func TestGCSpawnRunStartsSubprocessSession(t *testing.T) {
 		t.Errorf("template = %q, want parlay.spawn-probe", res.Template)
 	}
 
-	// Subprocess-provider proof, from the probe's own emitted output. Two
+	// Herdr-provider proof, from the probe's own emitted output. Two
 	// earlier assertion strategies are structurally impossible here and must
 	// not come back: (a) `tmux -L <city-basename> list-sessions` — it
 	// false-positived on an ambient tmux socket coincidentally named "city",
@@ -199,7 +201,8 @@ func TestGCSpawnRunStartsSubprocessSession(t *testing.T) {
 	// survives for a later assertion. The probe's env dump is the artifact
 	// that does survive, and it proves the two things that matter: the
 	// template [env] reached the child (delivery through the provider), and
-	// TMUX is absent from it (the child is not inside any tmux pane).
+	// TMUX is absent from it (the child runs in a herdr pane, not tmux —
+	// herdr types non-kind commands as `exec /bin/sh -c <cmd>`).
 	deadline := time.Now().Add(60 * time.Second)
 	var dump []byte
 	for {
@@ -218,7 +221,7 @@ func TestGCSpawnRunStartsSubprocessSession(t *testing.T) {
 		t.Errorf("probe env is missing the template-delivered PARLAY_SERVER:\n%s", env)
 	}
 	if strings.Contains(env, "\nTMUX=") || strings.HasPrefix(env, "TMUX=") {
-		t.Errorf("probe env contains TMUX — the session ran inside a tmux pane, not on the subprocess provider:\n%s", env)
+		t.Errorf("probe env contains TMUX — the session ran inside a tmux pane, not a herdr pane:\n%s", env)
 	}
 
 	// Unit 7: bead-backed identity resolution against the REAL city. Stamp

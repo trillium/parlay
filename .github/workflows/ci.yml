@@ -294,7 +294,8 @@ jobs:
         run: |
           mkdir -p "$HOME"
           roots="packages/input packages/client packages/server \
-                 packages/webview packages/ccjuggler tools"
+                 packages/webview packages/ccjuggler tools \
+                 examples/fleet/pi-inbox-bridge"
 
           # A test file under no root is not partially run — it is not run at
           # all, and this job still reports green, which is indistinguishable
@@ -421,6 +422,7 @@ jobs:
           for t in bin/parlay-treehouse-guard.test.sh \
                    bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
+                   examples/fleet/inbox-dispatch/inbox-dispatch.test.sh \
                    tools/hooks/hooks.test.sh \
                    tools/monitor/parlay-monitor.test.sh; do
             echo "::group::$t"

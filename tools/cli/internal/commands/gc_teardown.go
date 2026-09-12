@@ -5,13 +5,14 @@
 // next").
 //
 // `gc session close` is supposed to stop the session's underlying process —
-// for the subprocess provider that means routing through a cross-process
-// control socket (gascity internal/runtime/subprocess.Provider.Stop, since
-// `gc session close` is always a separate CLI invocation from the one that
-// started the session). At the pinned commit that path can silently fail to
-// actually kill the child: it reparents to pid 1 and keeps running, and
-// nothing on either side notices the mismatch — an open parlay-side record
-// with a dead process, or a closed session with a live orphaned one.
+// the stop mechanism is provider-owned (the herdr provider closes the
+// session's tab; the subprocess provider routes through a cross-process
+// control socket since `gc session close` is always a separate CLI
+// invocation from the one that started the session). At the pinned commit
+// the detached-provider path can silently fail to actually kill the child:
+// it reparents to pid 1 and keeps running, and nothing on either side
+// notices the mismatch — an open parlay-side record with a dead process, or
+// a closed session with a live orphaned one.
 //
 // This verb does not trust that `gc session close` succeeded just because
 // it reported success (or fail loud just because it didn't — see below):

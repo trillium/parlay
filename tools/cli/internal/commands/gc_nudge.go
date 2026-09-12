@@ -52,6 +52,9 @@ const gcNudgeTimeout = 60 * time.Second
 //     nil doing nothing (internal/runtime/subprocess, R7).
 //   - tmux: yes — submitEnterAndConfirm types into the pane and confirms
 //     (ErrNudgeSubmitUnconfirmed on non-confirmation).
+//   - herdr: yes — native `agent prompt` against the bound pane
+//     (internal/runtime/herdr deliverNudge; startup turns additionally
+//     confirm via `agent prompt --wait`, gas-90h).
 //
 // Providers not listed here are treated as "cannot steer": failing toward
 // refusal is the whole point of the gate. Update alongside a pin bump, never
@@ -59,6 +62,7 @@ const gcNudgeTimeout = 60 * time.Second
 var gcProviderInjection = map[string]bool{
 	"subprocess": false,
 	"tmux":       true,
+	"herdr":      true,
 }
 
 // gcNudgeResult is the typed --json envelope. Refused=true is a REPORT, not
