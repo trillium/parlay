@@ -17,8 +17,8 @@ type FakeChild = {
 
 const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
 const killCalls: Array<string> = [];
-// The wire both children share: pushed lines reach every attached reader,
-// exactly like two tails on one channel. Each spawn still gets its OWN
+const spawned: Array<any> = [];
+// Shared wire: pushed lines reach all readers; each spawn keeps its own
 // child object so kills attribute to the right command.
 let wireOut: Readable;
 let wireErr: EventEmitter;
@@ -41,6 +41,7 @@ mock.module("node:child_process", () => ({
 		child.kill = () => {
 			killCalls.push(`${cmd} ${args.join(" ")}`);
 		};
+		spawned.push(child);
 		return child;
 	},
 }));
@@ -52,10 +53,11 @@ type Captured = {
 	events: Record<string, (...a: any[]) => void>;
 	sent: Array<{ msg: string; opts: any }>;
 	appended: Array<any>;
+	notices: Array<{ text: string; level: string }>;
 };
 
 function makeHarness(): { pi: any; captured: Captured; sessionCtx: any } {
-	const captured: Captured = { commands: {}, events: {}, sent: [], appended: [] };
+	const captured: Captured = { commands: {}, events: {}, sent: [], appended: [], notices: [] };
 	const entries: Array<any> = [];
 	const sessionCtx = {
 		sessionManager: {
@@ -64,8 +66,8 @@ function makeHarness(): { pi: any; captured: Captured; sessionCtx: any } {
 			getEntries: () => entries,
 		},
 		isIdle: () => true,
-		hasUI: false,
-		ui: { notify: () => {} },
+		hasUI: true,
+		ui: { notify: (text: string, level: string) => captured.notices.push({ text, level }) },
 	};
 	const pi = {
 		registerCommand: (name: string, def: any) => {
@@ -90,6 +92,7 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 beforeEach(() => {
 	spawnCalls.length = 0;
 	killCalls.length = 0;
+	spawned.length = 0;
 	wireOut = new Readable({ read() {} });
 	wireErr = new EventEmitter();
 	fakeChild = { stdout: wireOut };
@@ -183,7 +186,6 @@ describe("poke wakes a Pi agent (harness-mocked integration)", () => {
 		expect(killCalls.length).toBe(0);
 		await captured.commands["inbox-disconnect"].handler("", sessionCtx);
 		await tick();
-		// Listener + tailer both reaped through the shared kill path.
 		expect(killCalls.length).toBe(2);
 		expect(killCalls.join("\n")).toMatch(/listen/);
 		expect(killCalls.join("\n")).toMatch(/inbox-tail/);
@@ -198,6 +200,35 @@ describe("poke wakes a Pi agent (harness-mocked integration)", () => {
 		await captured.commands["inbox-disconnect"].handler("", sessionCtx);
 		await tick();
 		expect(killCalls.length).toBe(1);
+	});
+
+	test("takeover names the reaped pids so the old pane can disconnect", async () => {
+		const { pi, captured, sessionCtx } = makeHarness();
+		inboxBridge(pi);
+		await captured.commands["inbox-connect"].handler("", sessionCtx);
+		await tick();
+		wireErr.emit(
+			"data",
+			Buffer.from("parlay listen: 2 existing listener(s) for 'pi-inbox' (pid 1235, 92819) — ending them\n"),
+		);
+		await tick();
+		const texts = captured.notices.map((n) => n.text).join("\n");
+		expect(texts).toMatch(/Took over pi-inbox from pid 1235, 92819/);
+		expect(texts).toMatch(/\/inbox-disconnect in the old pane/);
+	});
+
+	test("a listener killed young backs off instead of hot-retrying", async () => {
+		const { pi, captured, sessionCtx } = makeHarness();
+		inboxBridge(pi);
+		await captured.commands["inbox-connect"].handler("", sessionCtx);
+		await tick();
+		const listener = spawned[0];
+		expect(listener).toBeDefined();
+		listener.onceHandlers["exit"](null, "SIGTERM"); // Someone else holds it.
+		await tick();
+		const texts = captured.notices.map((n) => n.text).join("\n");
+		expect(texts).toMatch(/backing off/);
+		expect(texts).toMatch(/another session may hold it/);
 	});
 
 	test("pokes arriving mid-turn coalesce into exactly one follow-up", async () => {

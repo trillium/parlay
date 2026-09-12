@@ -1,21 +1,17 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import * as readline from "node:readline";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	STATE_TYPE,
 	enabledInSession,
 	isInboxPoke,
-	killProcessGroup,
 	latestMarker,
 	notify,
 	parseChatLine,
 	parseInboxConnectArgs,
 	sessionIdentity,
 } from "./helpers";
-import { COLOR, configForStore, listenArgs, type StoreConfig } from "./config";
+import { COLOR, configForStore, type StoreConfig } from "./config";
 import { createWatcher } from "./tailer";
-
-const RESTART_DELAY_MS = 5_000;
+import { createListener } from "./listener";
 
 /**
  * Connect one interactive Pi pane to Parlay's serial per-store inbox channel
@@ -33,9 +29,7 @@ const RESTART_DELAY_MS = 5_000;
  */
 export default function (pi: ExtensionAPI): void {
 	let ctx: ExtensionContext | undefined;
-	let listener: ChildProcess | undefined;
 	let stopping = false;
-	let restartTimer: ReturnType<typeof setTimeout> | undefined;
 	let serverOverride = process.env.PARLAY_PI_INBOX_SERVER || process.env.PARLAY_SERVER;
 	let workerTurnActive = false;
 	let pokePending = false;
@@ -47,23 +41,40 @@ export default function (pi: ExtensionAPI): void {
 		return configForStore(store);
 	}
 
+	function childEnv(): NodeJS.ProcessEnv {
+		return { ...process.env, ...(serverOverride ? { PARLAY_SERVER: serverOverride } : {}) };
+	}
+
+	function active(): boolean {
+		return !!ctx && !stopping && enabledInSession(ctx);
+	}
+
+	function note(text: string, level: "info" | "warning" | "error" = "info"): void {
+		if (ctx) notify(ctx, text, level);
+	}
+
 	const watcher = createWatcher({
-		isActive: () => !!ctx && !stopping && enabledInSession(ctx),
+		isActive: active,
 		sessionConfig,
-		childEnv: () => ({ ...process.env, ...(serverOverride ? { PARLAY_SERVER: serverOverride } : {}) }),
-		notice: (text) => { if (ctx) notify(ctx, text, "warning"); },
+		childEnv,
+		notice: (text) => note(text, "warning"),
+	});
+
+	const listener = createListener({
+		isActive: active,
+		sessionConfig,
+		childEnv,
+		onLine: (line) => {
+			const message = parseChatLine(line);
+			if (!message || !isInboxPoke(message, sessionConfig().pokePrefix)) return;
+			requestWorkerTurn();
+		},
+		notice: (text, level) => note(text, level),
 	});
 
 	function stop(): void {
 		stopping = true;
-		if (restartTimer) {
-			clearTimeout(restartTimer);
-			restartTimer = undefined;
-		}
-		if (listener) {
-			killProcessGroup(listener);
-			listener = undefined;
-		}
+		listener.stop();
 		watcher.stop();
 	}
 
@@ -100,67 +111,10 @@ export default function (pi: ExtensionAPI): void {
 	}
 
 	function start(): void {
-		if (!ctx || listener || stopping) return;
-		if (restartTimer) {
-			clearTimeout(restartTimer);
-			restartTimer = undefined;
-		}
+		if (!ctx || stopping) return;
 		stopping = false;
-		const cfg = sessionConfig();
-
-		const [cmd, argv] = listenArgs(cfg);
-		const child = spawn(
-			cmd,
-			argv,
-			{
-				stdio: ["ignore", "pipe", "pipe"],
-				detached: true,
-				env: {
-					...process.env,
-					...(serverOverride ? { PARLAY_SERVER: serverOverride } : {}),
-				},
-			},
-		);
-		listener = child; watcher.start();
-		const childContext = ctx;
-
-		const stdout = child.stdout;
-		if (stdout) {
-			const lines = readline.createInterface({ input: stdout });
-			lines.on("line", (line) => {
-				const message = parseChatLine(line);
-				if (!message || !isInboxPoke(message, sessionConfig().pokePrefix)) return;
-				requestWorkerTurn();
-			});
-		}
-
-		let stderrText = "";
-		const stderr = child.stderr;
-		if (stderr) {
-			stderr.on("data", (chunk: Buffer) => {
-				stderrText = (stderrText + chunk.toString()).slice(-2_000);
-			});
-		}
-
-		child.once("error", (error) => {
-			// Keep the child reference until `exit`; Node normally emits both
-			// events for a failed spawn and the exit handler owns retry policy.
-			notify(childContext, `Parlay ${sessionConfig().store} listener failed: ${error.message}`, "error");
-		});
-		child.once("exit", (code, signal) => {
-			if (listener !== child) return;
-			listener = undefined;
-			if (stopping || !ctx || !enabledInSession(ctx)) return;
-			const detail = stderrText.trim().replace(/\s+/g, " ");
-			const diagnostic = detail.length > 1_000 ? `${detail.slice(0, 700)} … ${detail.slice(-250)}` : detail;
-			const suffix = diagnostic ? `: ${diagnostic}` : "";
-			notify(ctx, `Parlay ${sessionConfig().store} listener stopped (${signal || `exit ${code ?? "?"}`})${suffix}; retrying`, "warning");
-			restartTimer = setTimeout(() => {
-				restartTimer = undefined;
-				start();
-			}, RESTART_DELAY_MS);
-			restartTimer.unref?.();
-		});
+		listener.start();
+		watcher.start();
 	}
 
 	pi.registerCommand("inbox-connect", {

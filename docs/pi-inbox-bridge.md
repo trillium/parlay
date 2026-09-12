@@ -40,6 +40,9 @@ not make them compete for the channel. `/inbox-disconnect` removes the marker
 and terminates the listener and tail process groups together, so no stray
 tail survives disconnect. The bridge reconnects after an
 unexpected listener or tail exit while the session remains enabled.
+Takeover is definitive: the winning side names the reaped pids so the old
+pane can disconnect, and a repeatedly SIGTERM'd listener backs off
+instead of hot-retrying into a fight.
 
 The listener and the dispatcher must use the same `PARLAY_SERVER` value. If
 the Pi pane is launched with an explicit server override, preserve it when the
