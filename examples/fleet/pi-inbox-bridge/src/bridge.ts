@@ -13,25 +13,23 @@ import {
 	sessionIdentity,
 } from "./helpers";
 import { COLOR, configForStore, listenArgs, type StoreConfig } from "./config";
+import { createWatcher } from "./tailer";
 
 const RESTART_DELAY_MS = 5_000;
 
 /**
  * Connect one interactive Pi pane to Parlay's serial per-store inbox channel
- * (`pi-inbox` for the inbox store, `<store>-inbox` otherwise).
- *
- * This is opt-in per session: run `/inbox-connect [store]` in the pane that
- * should receive work (`/inbox-connect` alone means the inbox store, or
- * PARLAY_PI_INBOX_STORE when set). The choice is persisted in that Pi
- * session, so the same pane reconnects after a restart. No other Pi pane
+ * (`pi-inbox` for inbox, `<store>-inbox` otherwise). Opt-in per session:
+ * `/inbox-connect [store]` (bare means inbox, or PARLAY_PI_INBOX_STORE);
+ * the choice persists, so the pane reconnects after restart. No other pane
  * starts a listener.
  *
- * The child process is deliberately `parlay listen`, rather than a second
- * implementation of the Parlay protocol. It uses `--legacy-poll` so the pane
- * does not depend on a server-scoped relay, while listen's singleton guard
- * still makes this a takeover of any stale reader on the channel. CHAT_MSG lines are
- * converted into one worker wake turn. The worker, not the dispatcher, reads
- * and claims tickets from the attached store.
+ * Two supervised children live and die with the connection: `parlay listen`
+ * (channel reader; `--legacy-poll`, singleton takeover of stale readers;
+ * CHAT_MSG pokes become one worker wake turn) and `parlay <store>-tail`
+ * (the enrolled watcher following the store watch file; listener-only for
+ * stores with no shipped tail). The worker, not the dispatcher, reads and
+ * claims tickets from the attached store.
  */
 export default function (pi: ExtensionAPI): void {
 	let ctx: ExtensionContext | undefined;
@@ -49,6 +47,13 @@ export default function (pi: ExtensionAPI): void {
 		return configForStore(store);
 	}
 
+	const watcher = createWatcher({
+		isActive: () => !!ctx && !stopping && enabledInSession(ctx),
+		sessionConfig,
+		childEnv: () => ({ ...process.env, ...(serverOverride ? { PARLAY_SERVER: serverOverride } : {}) }),
+		notice: (text) => { if (ctx) notify(ctx, text, "warning"); },
+	});
+
 	function stop(): void {
 		stopping = true;
 		if (restartTimer) {
@@ -59,6 +64,7 @@ export default function (pi: ExtensionAPI): void {
 			killProcessGroup(listener);
 			listener = undefined;
 		}
+		watcher.stop();
 	}
 
 	function requestWorkerTurn(): void {
@@ -115,7 +121,7 @@ export default function (pi: ExtensionAPI): void {
 				},
 			},
 		);
-		listener = child;
+		listener = child; watcher.start();
 		const childContext = ctx;
 
 		const stdout = child.stdout;

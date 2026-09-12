@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach } from "bun:test";
-import { Readable } from "node:readable";
+import { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import { STATE_TYPE } from "./helpers";
 
@@ -16,25 +16,31 @@ type FakeChild = {
 };
 
 const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
-let fakeChild: FakeChild;
-
-function makeFakeChild(): FakeChild {
-	return {
-		stdout: new Readable({ read() {} }),
-		stderr: new EventEmitter(),
-		onceHandlers: {},
-		pid: undefined,
-	};
-}
+const killCalls: Array<string> = [];
+// The wire both children share: pushed lines reach every attached reader,
+// exactly like two tails on one channel. Each spawn still gets its OWN
+// child object so kills attribute to the right command.
+let wireOut: Readable;
+let wireErr: EventEmitter;
+let fakeChild: { stdout: Readable };
 
 mock.module("node:child_process", () => ({
 	spawn: (cmd: string, args: string[]) => {
 		spawnCalls.push({ cmd, args });
-		const child: any = fakeChild;
+		const child: any = {
+			stdout: wireOut,
+			stderr: wireErr,
+			onceHandlers: {},
+			// A real pid so killProcessGroup takes the group-kill path;
+			// process.kill(-pid) throws for it and falls through to child.kill.
+			pid: 999999,
+		};
 		child.once = (ev: string, cb: (...a: any[]) => void) => {
 			child.onceHandlers[ev] = cb;
 		};
-		child.kill = () => {};
+		child.kill = () => {
+			killCalls.push(`${cmd} ${args.join(" ")}`);
+		};
 		return child;
 	},
 }));
@@ -83,7 +89,10 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
 beforeEach(() => {
 	spawnCalls.length = 0;
-	fakeChild = makeFakeChild();
+	killCalls.length = 0;
+	wireOut = new Readable({ read() {} });
+	wireErr = new EventEmitter();
+	fakeChild = { stdout: wireOut };
 	for (const k of [
 		"PARLAY_PI_INBOX_STORE",
 		"PARLAY_PI_INBOX_CHANNEL",
@@ -98,7 +107,7 @@ describe("poke wakes a Pi agent (harness-mocked integration)", () => {
 	test("connect spawns the watcher reader for the store channel", async () => {
 		const { pi, captured, sessionCtx } = makeHarness();
 		inboxBridge(pi);
-		await pi.commands["inbox-connect"].handler("sandbox", sessionCtx);
+		await captured.commands["inbox-connect"].handler("sandbox", sessionCtx);
 		await tick();
 		expect(spawnCalls.length).toBe(1);
 		expect(spawnCalls[0].cmd).toBe("parlay");
@@ -110,10 +119,35 @@ describe("poke wakes a Pi agent (harness-mocked integration)", () => {
 		expect(captured.sent[0].msg).toMatch(/Parlay sandbox worker poke/);
 	});
 
+	test("bare connect attaches the inbox store on pi-inbox", async () => {
+		const { pi, captured, sessionCtx } = makeHarness();
+		inboxBridge(pi);
+		await captured.commands["inbox-connect"].handler("", sessionCtx);
+		await tick();
+		expect(spawnCalls.length).toBe(2);
+		expect(spawnCalls[0].args).toEqual(
+			expect.arrayContaining(["listen", "--agent", "pi-inbox"]),
+		);
+		// Second spawn enrolls the watcher: the store tail monitor.
+		expect(spawnCalls[1].cmd).toBe("parlay");
+		expect(spawnCalls[1].args).toEqual(["inbox-tail"]);
+		expect(captured.sent.length).toBe(1);
+		expect(captured.sent[0].msg).toMatch(/Parlay inbox worker poke/);
+		expect(captured.sent[0].msg).toMatch(/inbox update <id> --claim/);
+		captured.events["agent_end"]();
+		const baseline = captured.sent.length;
+		fakeChild.stdout.push(
+			"CHAT_MSG|m9|user|INBOX_POKE v1: new inbox work may be available.\n",
+		);
+		await tick();
+		expect(captured.sent.length).toBe(baseline + 1);
+		expect(captured.sent[baseline].msg).toMatch(/Parlay inbox worker poke/);
+	});
+
 	test("a SANDBOX_POKE line on the wire starts a worker turn", async () => {
 		const { pi, captured, sessionCtx } = makeHarness();
 		inboxBridge(pi);
-		await pi.commands["inbox-connect"].handler("sandbox", sessionCtx);
+		await captured.commands["inbox-connect"].handler("sandbox", sessionCtx);
 		await tick();
 		// Settle: end the connect-check turn so the agent is idle.
 		captured.events["agent_end"]();
@@ -130,7 +164,7 @@ describe("poke wakes a Pi agent (harness-mocked integration)", () => {
 	test("chatter and other-store pokes do not wake this worker", async () => {
 		const { pi, captured, sessionCtx } = makeHarness();
 		inboxBridge(pi);
-		await pi.commands["inbox-connect"].handler("sandbox", sessionCtx);
+		await captured.commands["inbox-connect"].handler("sandbox", sessionCtx);
 		await tick();
 		captured.events["agent_end"]();
 		const baseline = captured.sent.length;
@@ -140,10 +174,36 @@ describe("poke wakes a Pi agent (harness-mocked integration)", () => {
 		expect(captured.sent.length).toBe(baseline);
 	});
 
+	test("disconnect terminates the listener and the enrolled tail (no stray tails)", async () => {
+		const { pi, captured, sessionCtx } = makeHarness();
+		inboxBridge(pi);
+		await captured.commands["inbox-connect"].handler("", sessionCtx);
+		await tick();
+		expect(spawnCalls.length).toBe(2);
+		expect(killCalls.length).toBe(0);
+		await captured.commands["inbox-disconnect"].handler("", sessionCtx);
+		await tick();
+		// Listener + tailer both reaped through the shared kill path.
+		expect(killCalls.length).toBe(2);
+		expect(killCalls.join("\n")).toMatch(/listen/);
+		expect(killCalls.join("\n")).toMatch(/inbox-tail/);
+	});
+
+	test("stores without a shipped tail connect listener-only", async () => {
+		const { pi, captured, sessionCtx } = makeHarness();
+		inboxBridge(pi);
+		await captured.commands["inbox-connect"].handler("sandbox", sessionCtx);
+		await tick();
+		expect(spawnCalls.length).toBe(1);
+		await captured.commands["inbox-disconnect"].handler("", sessionCtx);
+		await tick();
+		expect(killCalls.length).toBe(1);
+	});
+
 	test("pokes arriving mid-turn coalesce into exactly one follow-up", async () => {
 		const { pi, captured, sessionCtx } = makeHarness();
 		inboxBridge(pi);
-		await pi.commands["inbox-connect"].handler("sandbox", sessionCtx);
+		await captured.commands["inbox-connect"].handler("sandbox", sessionCtx);
 		await tick();
 		// Still inside the connect-check turn: two pokes, no new turn yet.
 		const baseline = captured.sent.length;

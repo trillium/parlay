@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { configForStore, listenArgs } from "./config";
+import { configForStore, listenArgs, tailArgs } from "./config";
 import {
 	isInboxPoke,
 	parseChatLine,
@@ -58,6 +58,25 @@ describe("watcher spawn command", () => {
 		expect(args[1]).toEqual(
 			expect.arrayContaining(["listen", "--agent", "sandbox-inbox"]),
 		);
+	});
+});
+
+describe("watcher enrollment (tail monitor)", () => {
+	test("inbox store enrolls parlay inbox-tail", () => {
+		const args = tailArgs("inbox");
+		expect(args).not.toBeNull();
+		expect(args![0]).toBe("parlay");
+		expect(args![1]).toEqual(["inbox-tail"]);
+	});
+
+	test("robots store enrolls parlay robots-tail", () => {
+		const args = tailArgs("robots");
+		expect(args).not.toBeNull();
+		expect(args![1]).toEqual(["robots-tail"]);
+	});
+
+	test("stores without a shipped tail enroll nothing", () => {
+		expect(tailArgs("sandbox")).toBeNull();
 	});
 });
 

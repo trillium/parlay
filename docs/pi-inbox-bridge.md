@@ -23,8 +23,11 @@ when set); `/inbox-connect sandbox` attaches the sandbox store — channel,
 poke filter, and claim/close commands derive from the named store, and the
 choice persists in that session across restarts.
 
-That command persists an opt-in marker in the Pi session and starts one child
-`parlay listen --agent pi-inbox --legacy-poll`. The direct poll avoids requiring
+That command persists an opt-in marker in the Pi session and starts two children:
+`parlay listen --agent pi-inbox --legacy-poll` (the channel reader) and
+`parlay inbox-tail` (the enrolled watcher following the store's watch file;
+`parlay robots-tail` for the robots store, and listener-only for stores with
+no shipped tail). The direct poll avoids requiring
 a relay in the Pi pane; listen's singleton guard still takes over any older
 `pi-inbox` reader. Only `INBOX_POKE v1` messages become Pi turns. The bridge
 coalesces duplicate pokes and never queues one Pi turn per inbox item. The
@@ -34,8 +37,9 @@ no zone, `zone:pi`, or `zone:default`; specialized zones remain separate.
 
 The bridge is intentionally opt-in. Loading the extension in other panes does
 not make them compete for the channel. `/inbox-disconnect` removes the marker
-and terminates the listener process group. The bridge reconnects after an
-unexpected listener exit while the session remains enabled.
+and terminates the listener and tail process groups together, so no stray
+tail survives disconnect. The bridge reconnects after an
+unexpected listener or tail exit while the session remains enabled.
 
 The listener and the dispatcher must use the same `PARLAY_SERVER` value. If
 the Pi pane is launched with an explicit server override, preserve it when the
