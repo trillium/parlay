@@ -77,7 +77,11 @@ A message on the store channel is a `<STORE>_POKE`, not a ticket assignment. It 
 
 > There may be work. Inspect the attached store.
 
-Run the worker serially until the inbox is exhausted:
+Run the worker serially until the inbox is exhausted. The exact turn prompt
+the bridge sends lives in one file —
+`examples/fleet/pi-inbox-bridge/src/worker-prompt.md` (`{{store}}` /
+`{{channel}}` placeholders) — so the terminal text and this procedure cannot
+drift apart; correct the file, not a copy:
 
 1. Select the oldest eligible open item in the attached store with no zone, `zone:pi`, or
    `zone:default`; leave explicitly specialized zones alone.
