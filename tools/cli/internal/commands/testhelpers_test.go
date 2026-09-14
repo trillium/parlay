@@ -38,6 +38,13 @@ func TestMain(m *testing.M) {
 		return
 	}
 	_ = os.Setenv(config.SpawnAccountEnv, "")
+	// robots-94ce: `parlay launch` now consults beads-required mode before
+	// dispatching, so an exported PARLAY_SPAWN_BEADS_REQUIRED on the
+	// developer's shell would send every launch test down the mint branch
+	// (and, where `task` is on PATH, mint a REAL bead). Neutralize it here
+	// like the spawn account above; tests that need the required branch stub
+	// launchBeadsRequired explicitly.
+	_ = os.Setenv("PARLAY_SPAWN_BEADS_REQUIRED", "")
 	os.Exit(m.Run())
 }
 

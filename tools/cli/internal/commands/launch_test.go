@@ -434,3 +434,117 @@ func TestLaunchOmitsAccountWhenNoneConfigured(t *testing.T) {
 		t.Errorf("spawner argv = %q, want no --account flag at all", argv)
 	}
 }
+
+// launchBeadFixture isolates HOME/state-home like launchAccountFixture and
+// additionally stubs the three beads-required seams: the mode flag, the
+// closed-bead oracle, and the tracking-bead mint. The mint stub records
+// whether it ran and returns mintID (or mintErr).
+func launchBeadFixture(t *testing.T, beadsRequired bool, boundItem string, boundClosed bool, mintID string, mintErr error) (*[]string, *bool) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PARLAY_STATE_HOME", filepath.Join(home, ".parlay"))
+	writeIdentityFixture(t, home, "agent-a", "Agent A", "#ff0000", "/work/a", "")
+	seen := withRecordedSpawn(t)
+
+	origRequired := launchBeadsRequired
+	launchBeadsRequired = func() bool { return beadsRequired }
+	t.Cleanup(func() { launchBeadsRequired = origRequired })
+
+	origOracle := boundWorkItemClosed
+	boundWorkItemClosed = func(string) (string, bool) { return boundItem, boundClosed }
+	t.Cleanup(func() { boundWorkItemClosed = origOracle })
+
+	minted := false
+	origMint := launchCreateBead
+	launchCreateBead = func(agentID, name string) (string, error) {
+		minted = true
+		if mintErr != nil {
+			return "", mintErr
+		}
+		return mintID, nil
+	}
+	t.Cleanup(func() { launchCreateBead = origMint })
+
+	return seen, &minted
+}
+
+// robots-94ce: an explicit --bead must reach the spawn pipeline untouched —
+// the whole defect was launch never forwarding one.
+func TestLaunchForwardsExplicitBead(t *testing.T) {
+	seen, minted := launchBeadFixture(t, true, "", false, "task-mint", nil)
+
+	captureStderr(t, func() { Launch([]string{"agent-a", "--bead", "task-explicit"}) })
+	argv := spawnArgvString(t, seen)
+	if !strings.Contains(argv, "--bead\x00task-explicit") {
+		t.Errorf("spawner argv = %q, want --bead task-explicit forwarded", argv)
+	}
+	if *minted {
+		t.Errorf("explicit --bead must not mint a tracking bead")
+	}
+}
+
+// robots-94ce: --force must reach the pipeline too — launch parsed it for
+// its own closed-bead gate but dropped it, so a forced relaunch still died
+// in the pipeline's beadGate.
+func TestLaunchForwardsForce(t *testing.T) {
+	seen, minted := launchBeadFixture(t, true, "task-closed", true, "task-mint", nil)
+
+	captureStderr(t, func() { Launch([]string{"agent-a", "--force"}) })
+	argv := spawnArgvString(t, seen)
+	if !strings.Contains(argv, "--force") {
+		t.Errorf("spawner argv = %q, want --force forwarded", argv)
+	}
+	if strings.Contains(argv, "--bead") {
+		t.Errorf("spawner argv = %q, --force must not also bind a bead", argv)
+	}
+	if *minted {
+		t.Errorf("--force must not mint a tracking bead")
+	}
+}
+
+// robots-94ce: an still-OPEN bound item is reused — minting a second tracking
+// bead alongside live work would orphan the original lifecycle binding.
+func TestLaunchReusesOpenBoundItem(t *testing.T) {
+	seen, minted := launchBeadFixture(t, true, "task-bound", false, "task-mint", nil)
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	argv := spawnArgvString(t, seen)
+	if !strings.Contains(argv, "--bead\x00task-bound") {
+		t.Errorf("spawner argv = %q, want the open bound item reused", argv)
+	}
+	if *minted {
+		t.Errorf("an open bound item must suppress the mint")
+	}
+}
+
+// robots-94ce: with no bound item and beads-required on, launch mints a
+// tracking bead and threads it through — the ghost-recovery path working
+// with no extra flags.
+func TestLaunchMintsTrackingBeadWhenRequired(t *testing.T) {
+	seen, minted := launchBeadFixture(t, true, "", false, "task-minted", nil)
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	argv := spawnArgvString(t, seen)
+	if !strings.Contains(argv, "--bead\x00task-minted") {
+		t.Errorf("spawner argv = %q, want the minted tracking bead forwarded", argv)
+	}
+	if !*minted {
+		t.Errorf("beads-required with no bound item must mint a tracking bead")
+	}
+}
+
+// With beads-required off and no bound item, launch dispatches exactly as
+// before — no bead, no mint.
+func TestLaunchNoMintWhenNotRequired(t *testing.T) {
+	seen, minted := launchBeadFixture(t, false, "", false, "task-mint", nil)
+
+	captureStderr(t, func() { Launch([]string{"agent-a"}) })
+	argv := spawnArgvString(t, seen)
+	if strings.Contains(argv, "--bead") {
+		t.Errorf("spawner argv = %q, want no --bead when beads-required is off", argv)
+	}
+	if *minted {
+		t.Errorf("beads-required off must not mint a tracking bead")
+	}
+}
