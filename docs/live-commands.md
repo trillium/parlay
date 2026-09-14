@@ -259,7 +259,8 @@ mitigation below is about bounding damage rather than establishing identity.
   application/json`** (415 otherwise). A cross-origin CORS *simple* request can
   only send `text/plain`, `form-urlencoded`, or `multipart`; anything else must
   preflight, and this server answers no preflight. That is the same mechanism
-  `packages/server/src/guard.ts` uses for the Bun server's mutating chat
+  `packages/go-server/internal/guard/guard.go` uses for the Go server's
+  mutating chat
   routes. It is CSRF-shaped, not authentication: a local process can still
   report whatever it likes, which bounds forgery to "something already running
   on this machine" — the thing the view claims to describe anyway.
