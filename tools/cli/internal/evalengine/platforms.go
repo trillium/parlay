@@ -52,11 +52,13 @@ var herdrVerbs = map[string]bool{
 }
 
 // platformRegistry is the closed set of known surfaces. "parlay" is the full
-// surface (every action verb + every handler); "herdr" is the text-input surface.
+// surface (every action verb + every handler); "herdr" is the text-input surface
+// plus the submit handler, so dictated line-enders arm the same server-owned
+// countdown on Herdr voice boxes (task-ev0ny) as on the Parlay panel.
 // A command scoped to a platform not in this map is rejected at load.
 var platformRegistry = map[string]platformDef{
 	"parlay": {verbs: actionVerbs, handlers: handlerRegistry},
-	"herdr":  {verbs: herdrVerbs, handlers: map[string]bool{}},
+	"herdr":  {verbs: herdrVerbs, handlers: map[string]bool{"submit": true}},
 }
 
 // effectivePlatforms is the surfaces a command targets: its explicit `platforms`, or

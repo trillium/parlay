@@ -80,9 +80,9 @@ func TestPlatformScopedManifestValidation(t *testing.T) {
 			{"id":"c","phrases":["go {page}"],"mode":"whole","priority":1,"platforms":["parlay","herdr"],
 			 "emit":{"kind":"sequence","actions":[{"verb":"navigate","args":{"url":"{page}"}}]}}]}`, true},
 
-		{"herdr submit handler is REJECTED (no handlers on herdr)", `{"schema":"parlay.commands/v1","version":"v","commands":[
+		{"herdr submit handler is valid (line-ender auto-submit, task-ev0ny)", `{"schema":"parlay.commands/v1","version":"v","commands":[
 			{"id":"c","phrases":["go"],"mode":"trailing","priority":1,"platforms":["herdr"],
-			 "emit":{"kind":"handler","handler":"submit"}}]}`, true},
+			 "emit":{"kind":"handler","handler":"submit"}}]}`, false},
 
 		{"unknown platform is REJECTED", `{"schema":"parlay.commands/v1","version":"v","commands":[
 			{"id":"c","phrases":["wipe"],"mode":"whole","priority":1,"platforms":["atari2600"],

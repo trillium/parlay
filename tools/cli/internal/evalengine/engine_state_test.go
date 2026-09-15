@@ -44,8 +44,8 @@ func TestChannelSelectModeBypassesVoiceGate(t *testing.T) {
 func TestVoiceGateCancelsArmedSubmit(t *testing.T) {
 	// Arm a submit with voice on, then a voice-off pass must cancel it.
 	e, fires := collectFires(t)
-	eval(e, "hello bravely", 1, nil)
-	r := e.Eval(EvalRequest{StreamID: "test", Version: 2, Text: "hello bravely", VoiceEnabled: false})
+	eval(e, "hello submit", 1, nil)
+	r := e.Eval(EvalRequest{StreamID: "test", Version: 2, Text: "hello submit", VoiceEnabled: false})
 	if !hasVerb(r, "cancelTimer") {
 		t.Fatalf("voice-off must cancel armed submit; got %v", verbs(r))
 	}
@@ -223,11 +223,11 @@ func TestConcurrentStreamsIsolated(t *testing.T) {
 		wg.Add(2)
 		go func(v int64) {
 			defer wg.Done()
-			e.Eval(EvalRequest{StreamID: "alpha", Version: v, Text: "alpha bravely", VoiceEnabled: true})
+			e.Eval(EvalRequest{StreamID: "alpha", Version: v, Text: "alpha submit", VoiceEnabled: true})
 		}(int64(i + 1))
 		go func(v int64) {
 			defer wg.Done()
-			e.Eval(EvalRequest{StreamID: "beta", Version: v, Text: "beta gravely", VoiceEnabled: true})
+			e.Eval(EvalRequest{StreamID: "beta", Version: v, Text: "beta submit that", VoiceEnabled: true})
 		}(int64(i + 1))
 	}
 	wg.Wait()
@@ -238,12 +238,12 @@ func TestConcurrentStreamsIsolated(t *testing.T) {
 	// Each stream should have fired at most once (last-arm wins after re-arms),
 	// and whatever fired must carry that stream's own tail — never the other's.
 	for _, tl := range tails["alpha"] {
-		if tl != "bravely" {
+		if tl != "submit" {
 			t.Fatalf("alpha stream fired with foreign tail %q", tl)
 		}
 	}
 	for _, tl := range tails["beta"] {
-		if tl != "gravely" {
+		if tl != "submit that" {
 			t.Fatalf("beta stream fired with foreign tail %q", tl)
 		}
 	}
@@ -261,7 +261,7 @@ func TestConcurrentStalePathUnderRace(t *testing.T) {
 	var fires int32
 	e.onSubmit = func(string, int64, int64, string, string, string) { atomic.AddInt32(&fires, 1) }
 	for i := int64(1); i <= 200; i++ {
-		eval(e, "spam bravely", i, nil)
+		eval(e, "spam send it", i, nil)
 	}
 	time.Sleep(1300 * time.Millisecond)
 	// Exactly one fire survives (the final arm); all earlier arms were superseded.

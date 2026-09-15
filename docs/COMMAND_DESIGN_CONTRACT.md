@@ -177,7 +177,7 @@ vocabulary splits into per-surface subsets:
 | platform | implements |
 |----------|------------|
 | `parlay` | every action verb + every handler (the full visual surface) |
-| `herdr`  | the text-input verbs — `clear`, `setText`, `submitNow`, `noop`, `showHint`, `clearHint` — and NO handlers yet |
+| `herdr`  | the text-input verbs — `clear`, `setText`, `submitNow`, `noop`, `showHint`, `clearHint`, `replaceRange` — plus the `submit` handler, so dictated line-enders (`send it` / `submit` / `submit that`) arm the same server-owned verify hold on Herdr voice boxes (task-ev0ny) |
 
 Validation on every load: every platform a command targets must be registered, and
 every verb/handler it emits must be in that platform's set. A `herdr`-scoped command

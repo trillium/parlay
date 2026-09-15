@@ -36,7 +36,7 @@ func hasVerb(r EvalResponse, v string) bool {
 
 func TestVoiceGate(t *testing.T) {
 	e := NewEngine()
-	r := e.Eval(EvalRequest{StreamID: "s", Version: 1, Text: "hello bravely", VoiceEnabled: false})
+	r := e.Eval(EvalRequest{StreamID: "s", Version: 1, Text: "hello submit", VoiceEnabled: false})
 	if r.Fired != "" {
 		t.Fatalf("voice off must not fire any command; fired=%q", r.Fired)
 	}
@@ -212,7 +212,7 @@ func TestPriorityOrderStopSpeechBeatsSubmit(t *testing.T) {
 
 func TestSubmitArmsServerTimer(t *testing.T) {
 	e := NewEngine()
-	r := eval(e, "send this message bravely", 1, nil)
+	r := eval(e, "send this message submit", 1, nil)
 	if r.Fired != "submit" {
 		t.Fatalf("trailing trigger word should arm submit, got %q (%v)", r.Fired, verbs(r))
 	}
@@ -242,7 +242,7 @@ func TestSubmitFiresServerSideAndCallsBack(t *testing.T) {
 		}{streamID, tail, platform, base})
 		mu.Unlock()
 	}
-	eval(e, "ship it bravely", 7, nil)
+	eval(e, "ship it submit that", 7, nil)
 	// The server-owned timer is 1000ms; wait past it.
 	time.Sleep(1200 * time.Millisecond)
 	mu.Lock()
@@ -250,8 +250,8 @@ func TestSubmitFiresServerSideAndCallsBack(t *testing.T) {
 	if len(fires) != 1 {
 		t.Fatalf("expected exactly 1 server-side submit fire, got %d", len(fires))
 	}
-	if fires[0].tail != "bravely" {
-		t.Fatalf("fire should carry the matched tail 'bravely', got %q", fires[0].tail)
+	if fires[0].tail != "submit that" {
+		t.Fatalf("fire should carry the matched tail 'submit that', got %q", fires[0].tail)
 	}
 	if fires[0].base != 7 {
 		t.Fatalf("fire should carry armed baseVersion 7, got %d", fires[0].base)
@@ -272,8 +272,8 @@ func TestSubmitSelfCancelsWhenTailChanges(t *testing.T) {
 		mu.Unlock()
 	}
 	// Arm, then the very next pass the tail no longer matches → server cancels.
-	eval(e, "hello bravely", 1, nil)
-	r := eval(e, "hello bravely and more typing", 2, nil)
+	eval(e, "hello submit", 1, nil)
+	r := eval(e, "hello submit and more typing", 2, nil)
 	if !hasVerb(r, "cancelTimer") {
 		t.Fatalf("tail change should emit cancelTimer; got %v", verbs(r))
 	}
@@ -295,7 +295,7 @@ func TestStaleRequestVersionDropped(t *testing.T) {
 	e := NewEngine()
 	eval(e, "current text", 10, nil)
 	// A late-arriving request with an older version is dropped (last-write-wins).
-	r := eval(e, "old text bravely", 3, nil)
+	r := eval(e, "old text submit", 3, nil)
 	if r.Fired != "" {
 		t.Fatalf("stale-version request should not fire; got %q", r.Fired)
 	}
@@ -315,7 +315,7 @@ func TestSeqMonotonic(t *testing.T) {
 
 func TestEvalTimeMeasured(t *testing.T) {
 	e := NewEngine()
-	r := eval(e, "some text to evaluate bravely", 1, nil)
+	r := eval(e, "some text to evaluate submit", 1, nil)
 	if r.EngineEvalNs <= 0 {
 		t.Fatalf("engine eval time must be measured and positive, got %d", r.EngineEvalNs)
 	}
@@ -527,9 +527,9 @@ func TestSubmitRearmResetsCountdown(t *testing.T) {
 	e.onSubmit = func(string, int64, int64, string, string, string) { mu.Lock(); fires++; mu.Unlock() }
 	// Arm at t=0, re-arm at t=600ms (still trailing trigger) → only ONE fire,
 	// and it should be ~1000ms after the RE-arm, not the first arm.
-	eval(e, "draft one bravely", 1, nil)
+	eval(e, "draft one send it", 1, nil)
 	time.Sleep(600 * time.Millisecond)
-	eval(e, "draft two bravely", 2, nil) // re-arm
+	eval(e, "draft two send it", 2, nil) // re-arm
 	time.Sleep(700 * time.Millisecond)   // 700ms after re-arm: should NOT have fired yet
 	mu.Lock()
 	early := fires

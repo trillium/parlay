@@ -126,6 +126,95 @@ func TestRelayReturnsEngineEnvelope(t *testing.T) {
 	}
 }
 
+// A Herdr voice box's text-change event (task-ev0ny direction 1) must reach
+// the engine with its platform intact: without the passthrough the relay
+// silently evaluated every Herdr box as a Parlay panel, so a dictated
+// line-ender could never arm the Herdr-scoped submit handler.
+func TestRelayForwardsHerdrPlatformToEngine(t *testing.T) {
+	resetStreamTable(t)
+	fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("engine got undecodable request: %v", err)
+		}
+		if got["platform"] != "herdr" {
+			t.Errorf("engine saw platform %v, want herdr", got["platform"])
+		}
+		if got["text"] != "order more oat milk submit" {
+			t.Errorf("engine saw text %v, want the full box text", got["text"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"v":1,"streamId":"herdr-box-7","seq":1,"baseVersion":3,"actions":[{"verb":"armTimer"}],"engineEvalNs":42,"fired":"submit"}`))
+	})
+
+	rec := postEval(t, newHub(newBroker()), `{"device":"herdr-dev","streamId":"herdr-box-7","version":3,"text":"order more oat milk submit","voiceEnabled":true,"platform":"herdr"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	actions, ok := resp["actions"].([]any)
+	if !ok || len(actions) != 1 {
+		t.Fatalf("submit arm actions not passed through: %+v", resp)
+	}
+	if got, _ := actions[0].(map[string]any)["verb"].(string); got != "armTimer" {
+		t.Errorf("expected the armed submit's armTimer action, got %+v", actions[0])
+	}
+}
+
+// Mode and commands ride the same passthrough as platform: a regression that
+// drops either from engineReq must fail. Asserts the fake engine receives the
+// exact values the caller sent (CodeRabbit Minor on PR #287).
+func TestRelayForwardsModeAndCommandsToEngine(t *testing.T) {
+	resetStreamTable(t)
+	fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("engine got undecodable request: %v", err)
+		}
+		if got["mode"] != "channel-select" {
+			t.Errorf("engine saw mode %v, want channel-select", got["mode"])
+		}
+		cmds, ok := got["commands"].(map[string]any)
+		if !ok || cmds["schema"] != "parlay.commands/v1" {
+			t.Errorf("engine saw commands %v, want the exact override payload", got["commands"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"v":1,"streamId":"eval-d1-main","seq":1,"baseVersion":1,"actions":[],"engineEvalNs":7}`))
+	})
+
+	rec := postEval(t, newHub(newBroker()), `{"device":"d1","text":"mayor","mode":"channel-select","commands":{"schema":"parlay.commands/v1"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// Callers that omit platform/mode/commands must evaluate exactly as before:
+// the relay sends no such keys, so the engine falls back to its defaults.
+func TestRelayOmitsUnsetPlatformModeCommands(t *testing.T) {
+	resetStreamTable(t)
+	fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("engine got undecodable request: %v", err)
+		}
+		for _, k := range []string{"platform", "mode", "commands"} {
+			if _, present := got[k]; present {
+				t.Errorf("engine saw %q=%v for a caller that sent none", k, got[k])
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"v":1,"streamId":"eval-d1-main","seq":1,"baseVersion":1,"actions":[],"engineEvalNs":7}`))
+	})
+
+	rec := postEval(t, newHub(newBroker()), `{"device":"d1","text":"hi"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
 // The stream table is keyed by caller-supplied ids on an API with no
 // authentication, so it must not grow without bound.
 func TestStreamTableIsBounded(t *testing.T) {
