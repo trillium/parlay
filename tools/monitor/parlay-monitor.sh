@@ -360,22 +360,59 @@ if [ "$PREFLIGHT" = 1 ]; then
 fi
 
 # 1. Enroll: POST /register {"agent":"<id>"} to the relay over its Unix socket.
-#    Idempotent server-side — re-running is safe. The relay creates the spool and
+#    Idempotent per caller — re-running is safe. The relay creates the spool and
 #    starts (or reuses) the upstream poll loop for this channel.
+#
+#    Per-caller identity: the first enroll for an id mints an owner token that
+#    only this channel's holder may re-present. It is persisted as
+#    <runtime>/<agent>.token (0600) and replayed as an Authorization header on
+#    every enroll, so a stranger's enroll can never take over this channel
+#    (the relay answers 409 + an audit line instead).
+TOKEN_FILE="$RUNTIME/$AGENT.token"
+SAVED_TOKEN=""
+if [ -f "$TOKEN_FILE" ]; then
+  SAVED_TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+fi
 echo "parlay-monitor: enrolling '$AGENT' via $SOCK" >&2
-REG=$(curl -s --unix-socket "$SOCK" \
-  -X POST "http://relay/register" \
-  -H "Content-Type: application/json" \
-  --data "{\"agent\":\"$AGENT\"}") || {
-    echo "parlay-monitor: enroll request failed (is the relay running?)" >&2
-    exit 1
-  }
+if [ -n "$SAVED_TOKEN" ]; then
+  REG=$(curl -s --unix-socket "$SOCK" \
+    -X POST "http://relay/register" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $SAVED_TOKEN" \
+    --data "{\"agent\":\"$AGENT\"}") || {
+      echo "parlay-monitor: enroll request failed (is the relay running?)" >&2
+      exit 1
+    }
+else
+  REG=$(curl -s --unix-socket "$SOCK" \
+    -X POST "http://relay/register" \
+    -H "Content-Type: application/json" \
+    --data "{\"agent\":\"$AGENT\"}") || {
+      echo "parlay-monitor: enroll request failed (is the relay running?)" >&2
+      exit 1
+    }
+fi
 
 # Confirm the relay accepted us. The response is {"ok":true,...} or {"error":...}.
+# A 409 means another caller owns this channel's token: report whose token file
+# would fix it rather than the raw relay error alone.
 case "$REG" in
   *'"ok":true'*) : ;;
+  *'owned by another caller'*)
+    echo "parlay-monitor: relay rejected enroll: channel '$AGENT' is owned by another caller." >&2
+    echo "parlay-monitor:   enroll with that caller's token ($RUNTIME/$AGENT.token), or retire the channel first." >&2
+    exit 1 ;;
   *) echo "parlay-monitor: relay rejected enroll: $REG" >&2; exit 1 ;;
 esac
+
+# First claim mints the owner token: persist it (0600) so every later enroll
+# replays it. Without this file the next enroll is a stranger's and gets 409.
+MINTED_TOKEN=$(printf '%s' "$REG" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+if [ -n "$MINTED_TOKEN" ]; then
+  printf '%s' "$MINTED_TOKEN" > "$TOKEN_FILE" 2>/dev/null && chmod 600 "$TOKEN_FILE" 2>/dev/null || {
+    echo "parlay-monitor: WARNING: cannot persist owner token to $TOKEN_FILE — next enroll will be rejected (409)." >&2
+  }
+fi
 
 # The relay returns the authoritative spool path; prefer it so the monitor and
 # relay never disagree on the location. Fall back to the computed path.

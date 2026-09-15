@@ -510,3 +510,34 @@ func TestTheDebugSubtreeIsGuardedBeforeItsHandlerExists(t *testing.T) {
 		t.Error("/api/debug/ is keyed by device id and must be guarded before the port lands")
 	}
 }
+
+// The eval delegation half of the voice hot path (phase-2 voice identity,
+// task-9nldh): POST /api/chat/eval relays keystrokes to the compiled engine,
+// so a foreign page must never drive it. The GuardedPaths entry (pinned by
+// TestInFlightPortsAreGuardedBeforeTheirHandlersExist) is what puts it inside
+// Wrap's boundary; this test proves the refusal actually fires end to end.
+func TestWrapRefusesCrossOriginEval(t *testing.T) {
+	// A hostile page driving the eval relay: refused before the handler.
+	rec := httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/eval", "https://evil.example.com", "application/json"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin eval status = %d, want 403", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "reached the handler") {
+		t.Fatal("a refused eval request must never reach the handler")
+	}
+
+	// The engine relay itself posts server-to-server with no Origin: passes.
+	rec = httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/eval", "", "application/json"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("no-origin eval status = %d, want 200", rec.Code)
+	}
+
+	// The phone over the LAN: passes.
+	rec = httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/eval", "http://192.168.1.42:4242", "application/json"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("lan-origin eval status = %d, want 200", rec.Code)
+	}
+}

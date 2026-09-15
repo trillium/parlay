@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,9 +38,23 @@ func (r *relay) controlMux() http.Handler {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST only"})
 			return
 		}
-		agent, err := decodeAgentBody(req)
+		agent, token, err := decodeAgentBody(req)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		// Per-caller identity: a live channel is bound to the token that
+		// claimed it. A re-register without (or with the wrong) token is a
+		// takeover attempt — 409 plus an audit line, never a silent
+		// re-registration under a stranger.
+		result, newToken, err := r.claimOwner(agent, token)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cannot mint owner token"})
+			return
+		}
+		if result == claimConflict {
+			r.audit(auditRegisterDenied, callerFP(token), agent)
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "agent " + strconv.Quote(agent) + " is owned by another caller (present its owner token)"})
 			return
 		}
 		spool, err := r.register(agent)
@@ -47,7 +62,14 @@ func (r *relay) controlMux() http.Handler {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "agent": agent, "spool": spool})
+		resp := map[string]any{"ok": true, "agent": agent, "spool": spool}
+		if result == claimMinted {
+			// Handed out exactly once: persist it as
+			// <runtime>/<agent>.token and replay it on every enroll.
+			resp["token"] = newToken
+		}
+		r.audit(auditRegister, callerFP(effectiveToken(token, newToken)), agent)
+		writeJSON(w, http.StatusOK, resp)
 	})
 
 	mux.HandleFunc("/unregister", func(w http.ResponseWriter, req *http.Request) {
@@ -55,35 +77,77 @@ func (r *relay) controlMux() http.Handler {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST only"})
 			return
 		}
-		agent, err := decodeAgentBody(req)
+		agent, token, err := decodeAgentBody(req)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+		// Only the owning caller may retire a live channel. Unknown ids
+		// stay token-free (idempotent no-op, found:false) — there is
+		// nothing to protect yet.
+		if !r.checkOwner(agent, token) {
+			r.audit(auditUnregisterDenied, callerFP(token), agent)
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "agent " + strconv.Quote(agent) + " is owned by another caller (present its owner token)"})
+			return
+		}
 		found := r.unregister(agent)
+		if found {
+			r.releaseOwner(agent)
+		}
+		r.audit(auditUnregister, callerFP(token), agent)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "agent": agent, "found": found})
+	})
+
+	mux.HandleFunc("/audit", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET only"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"entries": r.readAudit(auditLimit(req.URL.Query().Get("limit")))})
 	})
 
 	return mux
 }
 
-// decodeAgentBody extracts and validates the {"agent":"<id>"} field.
-func decodeAgentBody(req *http.Request) (string, error) {
+// callerFP is the audit-safe form of a presented raw token: fingerprint its
+// hash, or "none" when the caller sent nothing.
+func callerFP(rawToken string) string {
+	if strings.TrimSpace(rawToken) == "" {
+		return "none"
+	}
+	return tokenFingerprint(ownerHash(rawToken))
+}
+
+// effectiveToken resolves which raw token identifies a /register caller for
+// the audit line: the presented one, or the just-minted one on first claim.
+func effectiveToken(presented, minted string) string {
+	if strings.TrimSpace(presented) != "" {
+		return presented
+	}
+	return minted
+}
+
+// decodeAgentBody extracts and validates the {"agent":"<id>"} field, plus the
+// caller's optional owner token — an "Authorization: Bearer <token>" header
+// first, then a {"token":...} body field. Returns agent, token ("" when the
+// caller sent none), error.
+func decodeAgentBody(req *http.Request) (string, string, error) {
 	var body struct {
 		Agent string `json:"agent"`
+		Token string `json:"token"`
 	}
 	dec := json.NewDecoder(io.LimitReader(req.Body, 4096))
 	if err := dec.Decode(&body); err != nil {
-		return "", fmt.Errorf("bad JSON body: %w", err)
+		return "", "", fmt.Errorf("bad JSON body: %w", err)
 	}
 	agent := strings.TrimSpace(body.Agent)
 	if agent == "" {
-		return "", errors.New("agent id is required")
+		return "", "", errors.New("agent id is required")
 	}
 	if !validAgentID(agent) {
-		return "", fmt.Errorf("invalid agent id %q (want kebab-slug)", agent)
+		return "", "", fmt.Errorf("invalid agent id %q (want kebab-slug)", agent)
 	}
-	return agent, nil
+	return agent, bearerToken(req.Header.Get("Authorization"), body.Token), nil
 }
 
 // listenControl binds the Unix domain control socket, removing any stale socket
