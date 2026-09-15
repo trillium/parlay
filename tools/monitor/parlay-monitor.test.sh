@@ -456,8 +456,13 @@ if [ -f "${F_TOKEN}" ] && [ "$(cat "${F_TOKEN}")" = "stub-owner-token-token-agen
 else
   bad "owner token not persisted" "file=${F_TOKEN}"
 fi
-# stat differs macOS/Linux; the fallback covers CI either way.
-F_MODE="$(stat -f %Lp "${F_TOKEN}" 2>/dev/null || stat -c %a "${F_TOKEN}" 2>/dev/null || echo "?")"
+# stat's format flags differ macOS/Linux — and Linux `stat -f` succeeds with
+# filesystem info instead of failing, so a `||` fallback never fires there.
+# Switch on uname explicitly.
+case "$(uname -s)" in
+  Darwin) F_MODE="$(stat -f %Lp "${F_TOKEN}")" ;;
+  *)      F_MODE="$(stat -c %a "${F_TOKEN}")" ;;
+esac
 [ "${F_MODE}" = "600" ] \
   && ok "owner token file is 0600" \
   || bad "owner token file mode is ${F_MODE}, want 600"
