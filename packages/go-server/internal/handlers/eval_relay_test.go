@@ -164,6 +164,33 @@ func TestRelayForwardsHerdrPlatformToEngine(t *testing.T) {
 	}
 }
 
+// Mode and commands ride the same passthrough as platform: a regression that
+// drops either from engineReq must fail. Asserts the fake engine receives the
+// exact values the caller sent (CodeRabbit Minor on PR #287).
+func TestRelayForwardsModeAndCommandsToEngine(t *testing.T) {
+	resetStreamTable(t)
+	fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("engine got undecodable request: %v", err)
+		}
+		if got["mode"] != "channel-select" {
+			t.Errorf("engine saw mode %v, want channel-select", got["mode"])
+		}
+		cmds, ok := got["commands"].(map[string]any)
+		if !ok || cmds["schema"] != "parlay.commands/v1" {
+			t.Errorf("engine saw commands %v, want the exact override payload", got["commands"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"v":1,"streamId":"eval-d1-main","seq":1,"baseVersion":1,"actions":[],"engineEvalNs":7}`))
+	})
+
+	rec := postEval(t, newHub(newBroker()), `{"device":"d1","text":"mayor","mode":"channel-select","commands":{"schema":"parlay.commands/v1"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
 // Callers that omit platform/mode/commands must evaluate exactly as before:
 // the relay sends no such keys, so the engine falls back to its defaults.
 func TestRelayOmitsUnsetPlatformModeCommands(t *testing.T) {
