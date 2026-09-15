@@ -37,8 +37,6 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
 
-const gcSpawnTypesCustom = "molecule,convoy,message,event,gate,merge-request,agent,role,rig,session,spec,convergence,step"
-
 // reapByMarker TERM-kills every process whose command line contains marker (a
 // unique per-test temp path) — same safely-scoped sweep as unit 4's test,
 // never a name-pattern pkill. It then waits (bounded) for the kills to land:
@@ -107,13 +105,18 @@ func TestGCSpawnRunStartsHerdrSession(t *testing.T) {
 	t.Setenv("BD_NAME", "")
 	t.Setenv("PARLAY_GC", gc)
 
-	// Materialize first (idempotent — gcSpawnRun re-runs it) so the store can
-	// be bootstrapped in the city before the launch.
+	// Materialize first (idempotent — gcSpawnRun re-runs it) so the reaper
+	// has the city dir. The store bootstrap itself is gcSpawnRun's job now
+	// (ensureCityStore, same recipe unit 4's test documents): this test
+	// deliberately does NOT pre-bootstrap, proving the verb joins a fresh
+	// store on its own. PARLAY_BD must name the UPSTREAM bd — the fork
+	// fails the verb's own probe loudly (see resolveUpstreamBD).
 	scaffold, err := cityscaffold.Materialize()
 	if err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
 	t.Cleanup(func() { reapByMarker(t, strings.TrimPrefix(scaffold.Dir, "/private")) })
+	t.Setenv("PARLAY_BD", bd)
 
 	home, err := gcSpawnHome()
 	if err != nil {
@@ -131,32 +134,12 @@ func TestGCSpawnRunStartsHerdrSession(t *testing.T) {
 		return string(out), stderr.String(), err
 	}
 
-	// Store bootstrap, exactly the unit-4 recipe: `gc beads health` first for
-	// its managed-dolt side effect (its exit status is noise with a CGO-free
-	// bd), then upstream bd joins the recorded server.
-	if hout, herr, err := runGC(300*time.Second, "beads", "health"); err != nil {
-		t.Logf("gc beads health bootstrap exited non-zero (expected with a CGO-free bd): %v\n%s\nstderr:\n%s", err, hout, herr)
-	}
-	portBytes, err := os.ReadFile(filepath.Join(scaffold.Dir, ".beads", "dolt-server.port"))
-	if err != nil {
-		t.Fatalf("gc beads health did not record the managed dolt port: %v", err)
-	}
-	port := strings.TrimSpace(string(portBytes))
-	runBD := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command(bd, args...)
-		cmd.Dir = scaffold.Dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("bd %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-	}
-	runBD("init", "--prefix", "pa", "--server", "--server-port", port, "--non-interactive")
-	runBD("config", "set", "types.custom", gcSpawnTypesCustom)
-	runBD("list", "--json")
-
 	// The launch itself, through the verb's core — an inert command instead
 	// of a real claude (the bar is "the spawn path starts a session on the
-	// herdr provider", not "an agent runs"). The probe dumps its own
+	// herdr provider", not "an agent runs"). gcSpawnRun bootstraps the
+	// city store itself (ensureCityStore, the unit-4 recipe): nothing here
+	// pre-joins the store, so a fresh TempStateHome proves the verb heals
+	// the previously-fatal unbootstrapped case on its own. The probe dumps its own
 	// environment to a file and then sleeps; sleep self-terminates even if
 	// every cleanup layer fails. The env dump is the emitted-output proof
 	// (never a timing assertion) that the provider really executed the

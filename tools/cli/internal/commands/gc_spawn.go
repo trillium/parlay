@@ -110,6 +110,15 @@ func gcSpawnEnv(home string) []string {
 	return append(env, "GC_HOME="+home)
 }
 
+// gcSpawnEnvWithBD builds the gc child environment for the spawn path:
+// gcSpawnEnv plus the validated upstream bd's directory FIRST on PATH
+// (so gc's internal bd shell-outs hit upstream, never the captain's fork)
+// and /usr/sbin for lsof. Only the spawn path owns bd resolution, so only
+// it arranges this — the other gc verbs keep plain gcSpawnEnv.
+func gcSpawnEnvWithBD(home, bdPath string) []string {
+	return withBDOnPath(gcSpawnEnv(home), bdPath, nil)
+}
+
 // gcSpawnRun is the testable core: synthesise, then start. Returns the
 // result envelope or an error that already names the fix.
 func gcSpawnRun(spec gctemplate.LaunchSpec) (gcSpawnResult, error) {
@@ -137,11 +146,26 @@ func gcSpawnRun(spec gctemplate.LaunchSpec) (gcSpawnResult, error) {
 		return res, err
 	}
 
+	// The city scaffold is inert files until its bead store is joined — a
+	// `session new` against an unbootstrapped store dies before emitting
+	// typed JSON (the empty-stdout failure). Resolve the upstream bd first
+	// (the fork refusal lives here at the tool boundary), bootstrap the
+	// store (idempotent: a joined store costs one `bd list` plus a config
+	// set), then hand the validated bd to the gc child's PATH.
+	bdBin, err := resolveUpstreamBD()
+	if err != nil {
+		return res, err
+	}
+	gcEnv := gcSpawnEnvWithBD(home, bdBin)
+	if _, err := ensureCityStore(scaffold.Dir, bin, home, bdBin, gcEnv); err != nil {
+		return res, err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), gcSpawnTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "--city", scaffold.Dir, "session", "new", "parlay."+spec.ID, "--json", "--no-attach")
 	cmd.Dir = home
-	cmd.Env = gcSpawnEnv(home)
+	cmd.Env = gcEnv
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, runErr := cmd.Output()
@@ -177,7 +201,7 @@ func GCSpawn(argv []string) {
 	}
 	r := args.Parse("gc-spawn", argv, []string{"--json"}, []string{
 		"--name", "--color", "--prompt-file", "--cwd", "--model",
-		"--account", "--server", "--start-command",
+		"--account", "--server", "--start-command", "--kind",
 	})
 	asJSON := r.Bool("--json")
 	if len(r.Positionals) < 1 {
@@ -193,6 +217,7 @@ func GCSpawn(argv []string) {
 	spec.Account, _ = r.String("--account")
 	spec.Server, _ = r.String("--server")
 	spec.StartCommand, _ = r.String("--start-command")
+	spec.Kind, _ = r.String("--kind")
 	// Positionals after the id are args for --start-command (the inert-command
 	// verification escape hatch, same as the LaunchSpec field it feeds).
 	spec.Args = r.Positionals[1:]

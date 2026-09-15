@@ -36,6 +36,12 @@ type LaunchSpec struct {
 	Prompt string
 	Cwd    string
 	Model  string
+	// Kind is the agent harness to launch ("claude" or "pi"). Empty
+	// means "claude" — the spawn pipeline normalises it before the gc
+	// launcher ever sees the spec, and Synthesize defaults it the same way
+	// so a direct gc-spawn invocation without --kind keeps rendering the
+	// claude template byte-for-byte.
+	Kind string
 	// Account is the ccjuggler account the agent should run under. It rides
 	// along as env for the session (the spawn path's account resolution reads
 	// it); synthesis must not resolve tokens itself.
@@ -62,6 +68,44 @@ type LaunchSpec struct {
 
 var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
+// gcKinds names the harnesses the synthesiser (and the gc launcher above
+// it) knows how to start. Anything else is a loud refusal, not a guessed
+// command line — a harness launched with the wrong flags is a broken
+// agent, and the spawn pipeline's kind-agnostic launchers (herdr,
+// subprocess) are the escape hatch for the rest.
+var gcKinds = []string{"claude", "pi"}
+
+// kindStart renders the provider command for one kind: the executable, the
+// launch argv, and the prompt delivery mode (the "arg"/"flag"/"none"
+// vocabulary of the pinned gc's internal/config/provider.go — the default
+// delivery appends the rendered startup prompt as a quoted argv suffix,
+// which both harnesses accept positionally). claude gets the YOLO flag set
+// the herdr and subprocess launchers pass; every other kind gets only an
+// explicit --model and relies on its own config for permissions/fallback —
+// the same per-kind split as agentStartArgs in internal/spawn (which pi
+// must satisfy twice over: it takes its own --model flag, never claude's
+// --dangerously-skip-permissions/--fallback-model/--strict-mcp-config set).
+func kindStart(kind, model string) (start string, args []string, promptMode string, err error) {
+	if kind == "" {
+		kind = "claude"
+	}
+	switch kind {
+	case "claude":
+		args = []string{"--dangerously-skip-permissions"}
+		if model != "" {
+			args = append(args, "--model", model)
+		}
+		return "claude", args, "arg", nil
+	case "pi":
+		if model != "" {
+			args = append(args, "--model", model)
+		}
+		return "pi", args, "arg", nil
+	default:
+		return "", nil, "", fmt.Errorf("unsupported gc kind %q (supported: %s) — use herdr or --subprocess", kind, strings.Join(gcKinds, ", "))
+	}
+}
+
 // Synthesize renders the agent template for spec: a map of file paths
 // relative to the pack root (agents/<id>/...) to file contents.
 func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
@@ -69,11 +113,9 @@ func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
 		return nil, fmt.Errorf("launch spec id %q is not a valid Gas City session identifier ([A-Za-z0-9][A-Za-z0-9_-]*)", spec.ID)
 	}
 
-	start := "claude"
-	promptMode := "arg"
-	args := []string{"--dangerously-skip-permissions"}
-	if spec.Model != "" {
-		args = append(args, "--model", spec.Model)
+	start, args, promptMode, err := kindStart(spec.Kind, spec.Model)
+	if err != nil {
+		return nil, err
 	}
 	if spec.StartCommand != "" {
 		start = spec.StartCommand

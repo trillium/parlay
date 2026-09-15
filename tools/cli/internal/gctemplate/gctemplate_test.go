@@ -29,6 +29,17 @@ var minimalSpec = LaunchSpec{
 	Prompt: "",
 }
 
+var piSpec = LaunchSpec{
+	ID:     "spark-helper",
+	Name:   "Spark Helper",
+	Color:  "#7dd3fc",
+	Prompt: "Summarise the repo status.",
+	Cwd:    "/Users/example/code/foo",
+	Kind:   "pi",
+	Model:  "opencode-go/muse-spark-1.3-contributor",
+	Server: "http://localhost:14242",
+}
+
 var update = os.Getenv("GCTEMPLATE_UPDATE") == "1"
 
 func TestGolden(t *testing.T) {
@@ -38,6 +49,7 @@ func TestGolden(t *testing.T) {
 	}{
 		{"full", fullSpec},
 		{"minimal", minimalSpec},
+		{"pi", piSpec},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -79,6 +91,72 @@ func TestGolden(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestKindStartPerKind(t *testing.T) {
+	// claude keeps the YOLO flag set the herdr/subprocess launchers pass.
+	start, args, mode, err := kindStart("claude", "opus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != "claude" || mode != "arg" {
+		t.Errorf("claude start = (%q, %q), want (claude, arg)", start, mode)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--dangerously-skip-permissions", "--model opus"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("claude args %q lack %q", args, want)
+		}
+	}
+
+	// Empty kind defaults to claude (byte-identical goldens above prove it).
+	if start, _, _, err := kindStart("", ""); err != nil || start != "claude" {
+		t.Errorf("empty kind = (%q, %v), want (claude, nil)", start, err)
+	}
+
+	// pi takes its own --model flag, never claude's YOLO set.
+	start, args, mode, err = kindStart("pi", "opencode-go/muse-spark-1.3-contributor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != "pi" || mode != "arg" {
+		t.Errorf("pi start = (%q, %q), want (pi, arg)", start, mode)
+	}
+	if len(args) != 2 || args[0] != "--model" || args[1] != "opencode-go/muse-spark-1.3-contributor" {
+		t.Errorf("pi args = %q, want [--model opencode-go/muse-spark-1.3-contributor]", args)
+	}
+
+	// pi without a model launches bare (its own config decides).
+	if _, args, _, err := kindStart("pi", ""); err != nil || len(args) != 0 {
+		t.Errorf("pi without model = (%q, %v), want ([], nil)", args, err)
+	}
+
+	// Unknown harnesses refuse loudly instead of launching with guessed flags.
+	if _, _, _, err := kindStart("opencode", ""); err == nil || !strings.Contains(err.Error(), `"opencode"`) {
+		t.Errorf("opencode kind should refuse naming the kind, got: %v", err)
+	}
+}
+
+func TestSynthesizePiRendersPiCommand(t *testing.T) {
+	files, err := Synthesize(piSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toml := string(files["agents/spark-helper/agent.toml"])
+	for _, want := range []string{
+		`pi --model opencode-go/muse-spark-1.3-contributor`,
+		`prompt_mode = "arg"`,
+		`process_names = ["pi"]`,
+	} {
+		if !strings.Contains(toml, want) {
+			t.Errorf("pi agent.toml missing %q:\n%s", want, toml)
+		}
+	}
+	for _, banned := range []string{"--dangerously-skip-permissions", "--fallback-model", "--strict-mcp-config", "claude"} {
+		if strings.Contains(toml, banned) {
+			t.Errorf("pi agent.toml must not contain claude surface %q:\n%s", banned, toml)
+		}
 	}
 }
 

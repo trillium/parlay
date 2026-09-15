@@ -48,7 +48,7 @@ func TestSpawnOneSubprocessLauncherNeverTouchesHerdr(t *testing.T) {
 	}
 }
 
-func TestSpawnOneGCLauncherRejectsNonClaudeKind(t *testing.T) {
+func TestSpawnOneGCLauncherRejectsUnsupportedKind(t *testing.T) {
 	refuseHerdr(t)
 	t.Setenv("PARLAY_SPAWN_LAUNCHER", "gc")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,10 +61,80 @@ func TestSpawnOneGCLauncherRejectsNonClaudeKind(t *testing.T) {
 		return runNamedSpawn([]string{"nope-gc-z2", "Nope GC", "#c084fc", "brief", "--model", "sonnet", "--kind", "opencode"})
 	})
 	if rc != 1 {
-		t.Errorf("gc launcher + non-claude kind should refuse (rc=1), got rc=%d; output:\n%s", rc, out)
+		t.Errorf("gc launcher + unsupported kind should refuse (rc=1), got rc=%d; output:\n%s", rc, out)
 	}
-	if !strings.Contains(out, "gc launcher only supports --kind claude") {
+	if !strings.Contains(out, "gc launcher only supports --kind claude or pi") {
 		t.Errorf("expected the gc kind-refusal message; output:\n%s", out)
+	}
+}
+
+// writeFakeParlayGCSpawn drops a `parlay` stand-in that records its argv
+// and answers `gc-spawn --json` with a canned envelope, proving the gc
+// launcher's shell-out wiring (kind forwarding especially) without any
+// real gc, city, or store.
+func writeFakeParlayGCSpawn(t *testing.T) (bindir, argvFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	argvFile = filepath.Join(dir, "argv")
+	bin := filepath.Join(dir, "parlay")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" >> \"" + argvFile + "\"\n" +
+		"printf '%s\\n' '---' >> \"" + argvFile + "\"\n" +
+		"printf '%s\\n' '{\"session_id\":\"pa-fake\",\"city_dir\":\"/tmp/fake-city\"}'\n" +
+		"exit 0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, argvFile
+}
+
+func TestSpawnOneGCLauncherForwardsPiKind(t *testing.T) {
+	refuseHerdr(t)
+	t.Setenv("PARLAY_SPAWN_LAUNCHER", "gc")
+	bindir, argvFile := writeFakeParlayGCSpawn(t)
+	t.Setenv("PATH", bindir+":"+os.Getenv("PATH"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-gc-pi", "Nope GC Pi", "#c084fc", "brief", "--model", "sonnet", "--kind", "pi"})
+	})
+	if rc != 0 {
+		t.Fatalf("gc launcher + pi kind should succeed against the fake, got rc=%d; output:\n%s", rc, out)
+	}
+	argv, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("fake parlay never ran: %v", err)
+	}
+	if !strings.Contains(string(argv), "--kind\npi") {
+		t.Errorf("gc-spawn shell-out must forward --kind pi; argv:\n%s", argv)
+	}
+}
+
+func TestSpawnOneGCLauncherRefusesPane(t *testing.T) {
+	refuseHerdr(t)
+	t.Setenv("PARLAY_SPAWN_LAUNCHER", "gc")
+	bindir, _ := writeFakeParlayGCSpawn(t)
+	t.Setenv("PATH", bindir+":"+os.Getenv("PATH"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	// --pane with gc used to silently launch detached, dropping the pane
+	// target. It must refuse loudly instead.
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-gc-pane", "Nope GC Pane", "#c084fc", "brief", "--model", "sonnet", "--pane", "pane-caller-42"})
+	})
+	if rc != 1 {
+		t.Errorf("gc launcher + --pane should refuse (rc=1), got rc=%d; output:\n%s", rc, out)
+	}
+	if !strings.Contains(out, "--pane is not supported with the gc launcher") {
+		t.Errorf("expected the --pane refusal message; output:\n%s", out)
 	}
 }
 

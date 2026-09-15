@@ -85,6 +85,28 @@ tools/gc-build/build-gc.sh --cgo
 `PARLAY_GC` overrides where doctor (and later, the spawn path) looks for the
 binary; otherwise it is resolved from `PATH`.
 
+## The bd half: the city store needs an upstream bd
+
+`gc` alone is not enough to launch: the city scaffold parlay materialises
+is inert files until its bead store is bootstrapped, and the bootstrap
+needs an **upstream** `bd` matching the gc pin's vendored beads library
+version — the captain's bd fork (`~/.local/bin/bd`, `1.2.2+brain`) speaks a
+diverged store schema and fails both directions. Full evidence and the
+working recipe:
+[`docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md`](agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md).
+
+`parlay gc-spawn` owns this end to end: it resolves the bd (`PARLAY_BD`
+wins, else first on `PATH`), refuses a missing or forked bd loudly with the
+install pointer (`CGO_ENABLED=0 go install
+github.com/steveyegge/beads/cmd/bd@<version from gascity go.mod>`), joins
+the store idempotently (`gc beads health` for the managed-dolt side
+effect → `bd init --prefix pa --server --server-port <recorded>` →
+`bd config set types.custom …` → `bd list`), and puts the validated bd
+first on the gc child's `PATH` so gc's own shell-outs agree. A
+`session new` against an unbootstrapped store used to die before emitting
+typed JSON (empty stdout); the verb now bootstraps before launching, so
+that failure mode is closed at the seam rather than documented around it.
+
 ## herdr provider: the macOS socket symlink
 
 The scaffold city runs the **herdr** session provider
