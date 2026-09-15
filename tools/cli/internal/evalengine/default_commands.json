@@ -183,10 +183,11 @@
     },
     {
       "id": "submit",
-      "phrases": ["bravely", "gravely", "briefly", "lap"],
+      "phrases": ["send it", "submit", "submit that"],
       "mode": "trailing",
       "priority": 30,
-      "description": "End a message with this word to auto-send it after 1s",
+      "platforms": ["parlay", "herdr"],
+      "description": "End a dictated line with this phrase to auto-submit it after a 1s verify hold",
       "emit": {
         "kind": "handler",
         "handler": "submit",
