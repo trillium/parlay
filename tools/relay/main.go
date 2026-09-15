@@ -14,10 +14,18 @@
 //	              : CHAT_MSG|<id>|<role>|<text>|from:<sender>\n (agent→agent messages, 5th field)
 //	Spool path    : {runtime-dir}/<agent>.chan       (runtime-dir defaults to $TMPDIR/parlay)
 //	Control socket : Unix domain socket at {runtime-dir}/relay.sock
-//	  POST /register {"agent":"<id>"}     → {"ok":true,"agent":"<id>","spool":"<path>"}   (idempotent)
+//	  POST /register {"agent":"<id>"}     → {"ok":true,"agent":"<id>","spool":"<path>","token":"<owner>"}   (idempotent per caller)
 //	  POST /unregister {"agent":"<id>"}   → {"ok":true}
 //	  GET  /agents                        → {"agents":[...],"server":"...","runtime":"..."}
 //	  GET  /health                        → {"ok":true}
+//	  GET  /audit?limit=N                 → {"entries":[...]} (who/what/target/when JSONL tail)
+//
+// Per-caller identity: the first /register for an id mints an owner token
+// (returned once — persist as {runtime-dir}/<agent>.token); re-registering
+// or unregistering a live channel requires it (Authorization: Bearer or
+// {"token":...}), or the call is 409/403 + an audit line. Ownership persists
+// in {runtime-dir}/owners.json across restarts and releases on /unregister.
+// See relay_identity.go and relay_audit.go.
 //
 // Exit codes: 0 clean shutdown (SIGINT/SIGTERM), 1 fatal startup error.
 package main
@@ -61,6 +69,7 @@ func main() {
 		client: &http.Client{},
 		loops:  make(map[string]*agentLoop),
 	}
+	r.loadOwners()
 
 	// Register any startup agents before serving so they are live immediately.
 	// Bounded by the flag's own size, so this cannot delay the bind below.

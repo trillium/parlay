@@ -34,23 +34,45 @@ domain **control socket** at `<runtime>/relay.sock`:
 
 | Route | Method | Body | Response |
 |-------|--------|------|----------|
-| `/register`   | POST | `{"agent":"<id>"}` | `{"ok":true,"agent":"<id>","spool":"<path>"}` |
-| `/unregister` | POST | `{"agent":"<id>"}` | `{"ok":true,"agent":"<id>"}` |
+| `/register`   | POST | `{"agent":"<id>"}` (+ owner token, see below) | `{"ok":true,"agent":"<id>","spool":"<path>"}` (+ `"token"` on first claim) |
+| `/unregister` | POST | `{"agent":"<id>"}` (+ owner token) | `{"ok":true,"agent":"<id>","found":true/false}` |
 | `/agents`     | GET  | — | `{"agents":[...],"server":"...","runtime":"..."}` |
 | `/health`     | GET  | — | `{"ok":true}` |
+| `/audit`      | GET  | `?limit=N` (default 100, max 1000) | `{"entries":[{"ts","actor","action","agent"}]}` |
 
-`register` is **idempotent**: a second register of a live agent returns its
-existing spool and does not start a second loop. Agent ids must be kebab-slugs
-(`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤128 chars) — enforced so a spool path can never
-escape the runtime dir.
+`register` is **idempotent per caller**: a second register presenting the same
+owner token returns the existing spool and does not start a second loop.
+Agent ids must be kebab-slugs (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤128 chars) —
+enforced so a spool path can never escape the runtime dir.
+
+**Per-caller identity.** The first `/register` for an id mints a random owner
+token, returned once in the response (`"token"`). Re-registering or
+unregistering that id requires it — as an `Authorization: Bearer <token>`
+header or a `{"token":"<token>"}` body field — or the call is rejected
+(409 on register, 403 on unregister) and the denial is audit-logged. Only
+the token hash is stored (`<runtime>/owners.json`, 0600, survives restarts);
+raw tokens are never logged. A successful `/unregister` releases ownership
+so the id is claimable again. Internal registrations (startup `-agents`,
+spool resume) never mint or check. `parlay-monitor.sh` persists its token as
+`<runtime>/<agent>.token` and replays it on every enroll.
+
+**Audit log.** Every `/register` and `/unregister` outcome — success and
+denial — appends one JSON line to `<runtime>/audit.log` with who (`actor`:
+owner-token fingerprint, never the raw token), what (`action`: `register` |
+`unregister` | `register-denied` | `unregister-denied`), target (`agent`),
+and when (`ts`, RFC3339 UTC).
 
 Talk to it with curl:
 
 ```sh
 SOCK="$TMPDIR/parlay/relay.sock"
 curl -s --unix-socket "$SOCK" -X POST http://relay/register   -d '{"agent":"main-agent"}'
+# → {"ok":true,...,"token":"<owner>"} — save it:
+TOKEN="<owner>"
+curl -s --unix-socket "$SOCK" -X POST http://relay/register   -d '{"agent":"main-agent"}' -H "Authorization: Bearer $TOKEN"
 curl -s --unix-socket "$SOCK"          http://relay/agents
-curl -s --unix-socket "$SOCK" -X POST http://relay/unregister -d '{"agent":"main-agent"}'
+curl -s --unix-socket "$SOCK"          http://relay/audit?limit=5
+curl -s --unix-socket "$SOCK" -X POST http://relay/unregister -d "{\"agent\":\"main-agent\",\"token\":\"$TOKEN\"}"
 ```
 
 ## Spool files

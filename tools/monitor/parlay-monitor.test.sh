@@ -119,7 +119,7 @@ Bun.serve({
   unix: sock,
   async fetch(req) {
     const path = new URL(req.url).pathname
-    appendFileSync(log, `${req.method} ${path}\n`)
+    appendFileSync(log, `${req.method} ${path} auth=${req.headers.get("authorization") ?? ""}\n`)
     if (path === "/health") return Response.json({ ok: true })
     if (path === "/agents") {
       if (agentsDelayMs > 0)
@@ -130,7 +130,9 @@ Bun.serve({
       const body = (await req.json()) as { agent: string }
       const spool = join(runtime, `${body.agent}.chan`)
       writeFileSync(spool, "")
-      return Response.json({ ok: true, agent: body.agent, spool })
+      // Identity-aware relay: mint a deterministic owner token per agent so
+      // the harness can assert the monitor persists and replays it.
+      return Response.json({ ok: true, agent: body.agent, spool, token: `stub-owner-token-${body.agent}` })
     }
     return Response.json({ error: "not found" }, { status: 404 })
   },
@@ -433,6 +435,40 @@ if [ -e "${STUB_RUNTIME}/preflight-agent.chan" ]; then
   bad "preflight created a spool"
 else
   ok "preflight created no spool"
+fi
+
+# F. owner-token persistence and replay (task-9nldh): the first enroll saves
+# the minted token beside the spool, and every later enroll replays it, so a
+# stranger's enroll can never take over the channel.
+echo
+echo "F. owner-token persistence and replay (task-9nldh)"
+
+# F1. A first enroll persists the minted owner token (0600) next to the spool.
+f_runtime="${ROOT}/f-relay"
+start_stub "${f_runtime}" "http://127.0.0.1:45005" || exit 1
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45005" "token-agent"
+[ "${CODE}" = "running" ] \
+  && ok "enroll reaches streaming against an identity-aware relay" \
+  || bad "enroll should reach streaming" "exit=${CODE}: ${ERR}"
+F_TOKEN="${STUB_RUNTIME}/token-agent.token"
+if [ -f "${F_TOKEN}" ] && [ "$(cat "${F_TOKEN}")" = "stub-owner-token-token-agent" ]; then
+  ok "enroll persists the minted owner token"
+else
+  bad "owner token not persisted" "file=${F_TOKEN}"
+fi
+# stat differs macOS/Linux; the fallback covers CI either way.
+F_MODE="$(stat -f %Lp "${F_TOKEN}" 2>/dev/null || stat -c %a "${F_TOKEN}" 2>/dev/null || echo "?")"
+[ "${F_MODE}" = "600" ] \
+  && ok "owner token file is 0600" \
+  || bad "owner token file mode is ${F_MODE}, want 600"
+
+# F2. A second enroll replays the saved token as a Bearer header.
+: >"${STUB_LOG}"
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45005" "token-agent"
+if grep -q "POST /register auth=Bearer stub-owner-token-token-agent" "${STUB_LOG}"; then
+  ok "re-enroll replays the saved owner token"
+else
+  bad "re-enroll did not replay the owner token" "$(cat "${STUB_LOG}")"
 fi
 
 echo
