@@ -96,7 +96,7 @@ func TestResolveStoreBDMissingNamesRecipe(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal without bd")
 	}
-	for _, want := range []string{"bd not found", "PARLAY_BD", "pinned-gc-speaks-upstream-bd-not-the-fork.md"} {
+	for _, want := range []string{"bd not found", "PARLAY_BD", "gc-store-schema-generation.md"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should contain %q, got: %v", want, err)
 		}
