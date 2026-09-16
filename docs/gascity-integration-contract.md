@@ -24,14 +24,29 @@ the claim above.
 ## 1. The pinned Gas City ref
 
 ```
-github.com/gastownhall/gascity @ ac6c9c6853fcfc3b7cde4be1847f2431d3f93865
-git describe: v1.4.0-681-gac6c9c685   (the tag `edge` also points at this commit)
+github.com/gastownhall/gascity @ 9700d9a48fb35a2063e1fcb9ee49ab664df26de0
+git describe: n/a (no tag at this commit; `edge` points at 7b09fbb3) — a
+source build reports `dev`
 ```
 
-Re-pinned 2026-08-30 by task-4cfpv.18 from `7c817e064` (`v1.4.0-504-g7c817e064`, the P0
-pin), 177 commits behind. The spec change between the two pins was **purely additive** — one
-new event type, `order.suppressed`, with its payload and typed-envelope schemas; the path
-set, operations, and every pre-existing schema are unchanged.
+Re-pinned 2026-09-15 by task-svq1q from `ac6c9c685` (`v1.4.0-681-gac6c9c685`,
+the task-4cfpv.18 pin), to upstream main's head that date. Reason: the new
+pin vendors `github.com/steveyegge/beads v1.3.0-rc.2`, whose store schema
+carries `row_lock` again — the old pin's lib queried it but brain-base
+(v1.2.2, zero `row_lock` references) stores lack it, so no brain-joined
+city could start a session. Proven live on mini1: gc@9700d9a +
+current brain bd (`1.2.2+brain`) runs the full recipe (health → init
+--server → config set → list) and `session new` returns `ok:true`
+(evidence: `docs/agent-notes/gc-main-brain-probe.md`). No brain rebase was
+needed. Seam verification for the move: `internal/config/provider.go` and
+`internal/config/resolve.go` are byte-identical between pins (the
+start_command escape hatch and prompt_mode vocabulary our template relies
+on are unchanged); `cmd/gc/prompt_delivery.go` gains only an
+oversized-prompt nudge fallback (100KB raw / 128KB quoted — our prompts are
+orders of magnitude smaller); the `session new --json` envelope keys
+(`ok/session_id/session_name/template`) confirmed live, not by grep. Full
+line-number-citation refresh of §§4–10 is DEFERRED (flagged §14): only the
+seams parlay invokes were re-verified.
 
 **Never pin the captain's local checkout.** `~/code/gascity` is on the local branch
 `progname/monolith` at `1e5229b6d`, which sits on merge `16f072610` ("take upstream for all
@@ -49,7 +64,7 @@ Never `git fetch` into `~/code/gascity` — it is read-only.
 # Materialise the pinned ref without touching ~/code/gascity.
 SCRATCH="${SCRATCH:-$(mktemp -d)}"
 git clone https://github.com/gastownhall/gascity "$SCRATCH/gcbuild"
-git -C "$SCRATCH/gcbuild" checkout ac6c9c685
+git -C "$SCRATCH/gcbuild" checkout 9700d9a48fb35a2063e1fcb9ee49ab664df26de0
 
 cd "$SCRATCH/gcbuild"
 export PKG_CONFIG_PATH=/opt/homebrew/opt/icu4c@77/lib/pkgconfig
@@ -100,9 +115,9 @@ Set all four variables above. `CGO_ENABLED=0` is the alternative and also works.
 git ls-remote https://github.com/gastownhall/gascity refs/heads/main
 ```
 
-As of 2026-08-30 this returns **`ac6c9c6853fcfc3b7cde4be1847f2431d3f93865`** — the current
+As of 2026-09-15 this returns **`9700d9a48fb35a2063e1fcb9ee49ab664df26de0`** — the current
 pin IS upstream main's head. The local remote-tracking ref in `~/code/gascity` remains
-**stale** at `7c817e064` (dated 2026-08-20), so never trust it for drift.
+**stale**, so never trust it for drift.
 
 `git ls-remote` is the write-free drift check — it queries the remote and writes nothing
 locally, unlike `git fetch`. Use it, not `fetch`, while `~/code/gascity` is read-only.
@@ -123,7 +138,8 @@ different way.
 | `~/.local/bin/gc` → `~/go/bin/gc` (**first on PATH**) | `0.15.1.trillium` | **neither — `gc beads` has only `city` and `health`** |
 | `/opt/homebrew/bin/gc` | `dev` | not probed |
 | `~/code/gascity/gc` (in-tree prebuilt, Jul 20) | `1.1.1` | yes |
-| `ac6c9c685` built from source (**the pin**) | `1.4.1` (`git describe`: `v1.4.0-681-gac6c9c685`) | yes |
+| `9700d9a` built from source (**the pin**) | `dev` (no tag at this commit) | yes |
+| `ac6c9c685` built from source (the prior pin) | `1.4.1` (`git describe`: `v1.4.0-681-gac6c9c685`) | yes |
 | `7c817e064` built from source (the prior pin) | `dev` (`git describe`: `v1.4.0-504-g7c817e064`) | yes |
 | `1e5229b6d` (captain's local HEAD) | none — does not build (`git describe`: `v1.4.0-511-g1e5229b6d`) | does not build |
 
@@ -187,11 +203,12 @@ are affected, and they are affected badly: an interactive `gc supervisor stop` r
 
 ```
 path:    third_party/gascity/openapi.json
-source:  internal/api/openapi.json @ ac6c9c685
-sha256:  81a02774fd620ef382d6ba2fa5ab8a0ce5bedc7601970817edccfeb5cdef97db
-bytes:   1388872   (1.32 MiB)
-licence: MIT — third_party/gascity/LICENSE, copied verbatim from LICENSE @ ac6c9c685
+source:  internal/api/openapi.json @ 9700d9a
+sha256:  a2a9a3072840d8cabb1891fc00ced5f556c37499404b29b544e03a2d6a828352
+bytes:   1412213   (1.35 MiB)
+licence: MIT — third_party/gascity/LICENSE, copied verbatim from LICENSE @ 9700d9a
          sha256 8bab40f7557b5ed6936f146436bb10d07f7688c1b1cb83e009ef0376565e31dc
+         (licence text byte-identical to the prior pin's copy)
 ```
 
 Re-check with:
@@ -1199,6 +1216,11 @@ which this document adopts:
 
 - **Moving the pin (§1) requires re-running the build verification and re-recording the
   sha256 (§3).** Both, together, in the same PR.
+- **2026-09-15 (task-svq1q) re-pin scoping precedent:** the pin moved for a
+  seam-level reason (beads schema vs brain), so only the seams parlay invokes
+  were re-verified (§1 records which); the full line-number-citation refresh
+  of §§4–10 is deferred to the next unit that touches those sections. A
+  deferred refresh must be flagged HERE with its date, never left silent.
 - **§9.3's symmetry table is a snapshot of two separate code paths.** Re-read both functions
   whenever the pin moves.
 - **§13 is not a changelog.** When a row stops being a discrepancy — because the report was

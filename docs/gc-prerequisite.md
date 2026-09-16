@@ -13,10 +13,14 @@ any seam code.)
 The pinned Gas City commit lives in [`third_party/gascity/PIN`](../third_party/gascity/PIN):
 
 ```
-7c817e0640fae801631043005f1d54b17ce3e97c   (short: 7c817e064, git describe: v1.4.0-504)
+9700d9a48fb35a2063e1fcb9ee49ab664df26de0   (short: 9700d9a, upstream main as of 2026-09-15)
 ```
 
-That is genuine upstream `main` as of 2026-08-20 and builds clean.
+That is genuine upstream `main` as of 2026-09-15 and builds clean. Re-pinned
+from `ac6c9c685` by task-svq1q: the new pin vendors beads `v1.3.0-rc.2`,
+which is what lets a brain-joined city store start sessions (the old pin's
+lib queried a `row_lock` column brain-base stores lack — evidence:
+[`agent-notes/gc-main-brain-probe.md`](agent-notes/gc-main-brain-probe.md)).
 **Never pin — or build — the captain's local `~/code/gascity` HEAD**: it is the
 local branch `progname/monolith`, which does not compile. Full evidence and
 the re-pin procedure: [`gascity-integration-contract.md`](gascity-integration-contract.md) §1.
@@ -84,6 +88,41 @@ tools/gc-build/build-gc.sh --cgo
 
 `PARLAY_GC` overrides where doctor (and later, the spawn path) looks for the
 binary; otherwise it is resolved from `PATH`.
+
+## The bd half: the city store needs the brain bd
+
+`gc` alone is not enough to launch: the city scaffold parlay materialises
+is inert files until its bead store is bootstrapped, and the bootstrap is
+owned end to end by `parlay gc-spawn`: it resolves the bd (`PARLAY_BD`
+wins, else first on `PATH` — the brain binary, `trillium/brain`), refuses a
+missing or broken bd loudly, joins the store idempotently (`gc beads
+health` for the managed-dolt side effect → `bd init --prefix pa --server
+--server-port <recorded>` → `bd config set types.custom …` → `bd list`),
+and puts the resolved bd first on the gc child's `PATH` so gc's own
+shell-outs agree. A `session new` against an unbootstrapped store used to
+die before emitting typed JSON (empty stdout); the verb now bootstraps
+before launching, so that failure mode is closed at the seam rather than
+documented around it.
+
+This holds since the task-svq1q re-pin (gc@9700d9a, beads `v1.3.0-rc.2`
+generation): a brain-joined city starts sessions end to end, proven live in
+[`agent-notes/gc-main-brain-probe.md`](agent-notes/gc-main-brain-probe.md).
+Under the old pin the fork's schema diverged and upstream was required —
+that history and the upstream-build fallback recipe live in
+[`agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md`](agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md).
+
+## Agents operate on family stores directly
+
+The city store holds only runtime/transport beads (sessions, convoys,
+messages). Agent work state lives in the brain family: every synthesised
+template stamps `BEADS_ACTOR=parlay-<id>` (derived, never caller-supplied)
+and teaches the store conventions — read-wide via `brain search`, write to
+the shared `parlay` family store (`~/data/parlay/.beads`, provisioned once
+with `brain stores create parlay --no-wrapper`; no wrapper, so the name
+never collides with this CLI, addressed explicitly per invocation via
+`BEADS_DIR=…`), never exporting `BEADS_DIR` (gc's own bd shell-outs must
+keep resolving the city-local store), and never writing runtime handles
+(session IDs, ports, PIDs, panes) where the sync can reach them.
 
 ## herdr provider: the macOS socket symlink
 

@@ -513,14 +513,27 @@ type gcSpawnResult struct {
 
 // spawnViaGC routes the launch through Gas City's session runtime via the
 // `parlay gc-spawn` verb, mirroring bin/parlay-spawn lines 1457-1487.
-// Strictly opt-in and claude-kind only.
+// Strictly opt-in; the template synthesiser decides which kinds it can
+// start (claude, pi) and refuses the rest loudly at both layers.
 func spawnViaGC(opts SpawnOptions, server, promptFile string) (sessionID, cityDir string, err error) {
-	if opts.Kind != "claude" {
-		return "", "", fmt.Errorf("the gc launcher only supports --kind claude for now (got %q) — use herdr or --subprocess", opts.Kind)
+	// In-place mode has no meaning here: a gc session starts detached in
+	// the city's shared herdr session-server, never in the caller's pane.
+	// The old code silently dropped the pane target and launched detached
+	// anyway — refuse loudly instead so no operator mistakes the detached
+	// session for their own pane coming alive.
+	if opts.Pane != "" {
+		return "", "", fmt.Errorf("--pane is not supported with the gc launcher (gc sessions start detached in the city's session server) — use herdr or --subprocess for in-place mode")
+	}
+	switch opts.Kind {
+	case "claude", "pi":
+		// Supported: forwarded below and rendered per-kind by the template.
+	default:
+		return "", "", fmt.Errorf("the gc launcher only supports --kind claude or pi for now (got %q) — use herdr or --subprocess", opts.Kind)
 	}
 
 	args := []string{"gc-spawn", opts.AgentID,
 		"--name", opts.Name, "--color", opts.Color, "--cwd", opts.Cwd,
+		"--kind", opts.Kind,
 		"--prompt-file", promptFile, "--server", server, "--json"}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)

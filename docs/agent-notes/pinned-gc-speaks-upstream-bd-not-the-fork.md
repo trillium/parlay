@@ -1,5 +1,14 @@
 # The pinned gc speaks upstream bd — the captain's bd fork cannot back a gc city
 
+> **Superseded for the current pin (task-svq1q, 2026-09-15):** since the
+> re-pin to gascity main `9700d9a`, the brain binary (`trillium/brain`) IS
+> the bead store behind gc cities. Current behavior lives in
+> [`../gc-prerequisite.md`](../gc-prerequisite.md) ("The bd half", "Agents
+> operate on family stores directly"), [`gc-main-brain-probe.md`](gc-main-brain-probe.md),
+> and `tools/cli/internal/commands/gc_store.go`. What follows is the history
+> of the old pin's fork divergence plus the upstream-build fallback recipe,
+> which still applies when brain is unavailable.
+
 Discovered while landing spawn-lift unit 4 (epic task-4cfpv.9), building the
 gated integration test that proves `gc session new` starts a session from a
 parlay-synthesised template.
