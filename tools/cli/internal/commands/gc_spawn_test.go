@@ -154,7 +154,7 @@ func TestGCSpawnRunSurfacesNonJSONFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for non-JSON gc output")
 	}
-	for _, want := range []string{"typed JSON", "store not bootstrapped", "integration_test.go"} {
+	for _, want := range []string{"typed JSON", "store not bootstrapped", "gc-store-schema-generation.md"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should contain %q, got: %v", want, err)
 		}
