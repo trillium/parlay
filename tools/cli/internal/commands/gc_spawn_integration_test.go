@@ -10,13 +10,13 @@ package commands
 //
 // Gate and store-bootstrap recipe are the same as unit 4's
 // internal/gctemplate/integration_test.go (its header comment is the full
-// rationale — managed dolt server first via `gc beads health`, then an
-// UPSTREAM bd joins that server; the captain's bd fork speaks a different
-// schema and must never be used here):
+// rationale — managed dolt server first via `gc beads health`, then the
+// brain bd (trillium/brain) joins that server; the upstream build is only
+// the fallback when brain is unavailable):
 //
 //	PARLAY_GC_INTEGRATION=1  \
 //	PARLAY_GC=<pinned gc>    \  # tools/gc-build/build-gc.sh
-//	PARLAY_BD=<upstream bd>  \
+//	PARLAY_BD=<brain bd>  \
 //	go test ./internal/commands/ -run TestGCSpawnRunStartsHerdrSession
 //
 // `dolt` and `herdr` (≥0.7.5) must be on PATH: the session starts as a tab
@@ -80,7 +80,7 @@ func reapByMarker(t *testing.T, marker string) {
 
 func TestGCSpawnRunStartsHerdrSession(t *testing.T) {
 	if os.Getenv("PARLAY_GC_INTEGRATION") != "1" {
-		t.Skip("set PARLAY_GC_INTEGRATION=1 with PARLAY_GC (pinned gc: tools/gc-build/build-gc.sh) and PARLAY_BD (upstream bd; see internal/gctemplate/integration_test.go) to run")
+		t.Skip("set PARLAY_GC_INTEGRATION=1 with PARLAY_GC (pinned gc: tools/gc-build/build-gc.sh) and PARLAY_BD (brain bd; upstream build is the fallback; see internal/gctemplate/integration_test.go) to run")
 	}
 	gc := os.Getenv("PARLAY_GC")
 	bd := os.Getenv("PARLAY_BD")
@@ -97,7 +97,7 @@ func TestGCSpawnRunStartsHerdrSession(t *testing.T) {
 		t.Fatalf("EvalSymlinks(%s): %v", state, err)
 	}
 	t.Setenv("PARLAY_STATE_HOME", canon)
-	// gc's bd shell-outs must hit the upstream binary first; /usr/sbin for
+	// gc's bd shell-outs must hit the resolved brain binary first; /usr/sbin for
 	// lsof. Ambient store context is dropped by gcSpawnEnv for the gc child,
 	// but bd runs directly from this test, so clear it here too.
 	t.Setenv("PATH", filepath.Dir(bd)+":/usr/sbin:"+os.Getenv("PATH"))
@@ -109,8 +109,10 @@ func TestGCSpawnRunStartsHerdrSession(t *testing.T) {
 	// has the city dir. The store bootstrap itself is gcSpawnRun's job now
 	// (ensureCityStore, same recipe unit 4's test documents): this test
 	// deliberately does NOT pre-bootstrap, proving the verb joins a fresh
-	// store on its own. PARLAY_BD must name the UPSTREAM bd — the fork
-	// fails the verb's own probe loudly (see resolveUpstreamBD).
+	// store on its own. PARLAY_BD must name the brain bd (trillium/brain;
+	// upstream build is the fallback) — an unrunnable binary fails the
+	// verb's own probe loudly, and the bootstrap is the arbiter of
+	// capability (see resolveStoreBD).
 	scaffold, err := cityscaffold.Materialize()
 	if err != nil {
 		t.Fatalf("Materialize: %v", err)
