@@ -2,7 +2,7 @@
 # build-gc.sh — build the pinned Gas City `gc` binary from source.
 #
 # The pin lives in third_party/gascity/PIN (full commit sha; currently
-# ac6c9c685, upstream main as of 2026-08-30). Never build the captain's local
+# 9700d9a, upstream main as of 2026-09-15). Never build the captain's local
 # ~/code/gascity HEAD: that branch (progname/monolith) does not compile — see
 # docs/gascity-integration-contract.md §1 for the verified evidence.
 #

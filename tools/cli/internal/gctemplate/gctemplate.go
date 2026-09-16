@@ -127,6 +127,17 @@ func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
 	if spec.Name != "" {
 		env["PARLAY_AGENT_NAME"] = spec.Name
 	}
+	// BEADS_ACTOR stamps every bead the agent writes through the brain
+	// binary (task-svq1q: agents operate on family stores directly). It is
+	// derived, never caller-supplied, so an agent cannot impersonate a human
+	// or another agent: the parlay.<id> session namespace and the actor
+	// namespace agree by construction, and family-wide search can enumerate
+	// everything one agent wrote. Non-secret — it rides the template env
+	// like every other pair here.
+	env["BEADS_ACTOR"] = "parlay-" + spec.ID
+	if spec.Name != "" {
+		env["PARLAY_AGENT_NAME"] = spec.Name
+	}
 	if spec.Color != "" {
 		env["PARLAY_AGENT_COLOR"] = spec.Color
 	}
@@ -198,6 +209,28 @@ func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
 	p.WriteString(", running as a Gas City session.\n")
 	p.WriteString("Enroll with the parlay relay first: run `parlay doctor`, then arm your\n")
 	p.WriteString("channel with `parlay listen --agent " + spec.ID + "` via your harness Monitor.\n")
+	// Agent bead-store conventions (task-svq1q: agents operate on family
+	// stores directly — the city store holds only runtime/transport beads).
+	// Read-wide: `brain search` queries every family store. Write-narrow:
+	// your work beads go to the `parlay` family store, addressed explicitly
+	// per invocation (never export BEADS_DIR — gc's own bd shell-outs must
+	// keep resolving the city-local store):
+	//
+	//   BEADS_DIR=$HOME/data/parlay/.beads bd create --type task "…"
+	//
+	// Every write carries your actor stamp automatically (BEADS_ACTOR in
+	// your environment); to act on a claimed ticket in another store, name
+	// that store explicitly. Never write runtime handles to family stores —
+	// no session IDs, ports, PIDs, or herdr panes; reference ticket IDs.
+	// Those handles stay city-local, where the sync never reaches.
+	p.WriteString("\n## Bead store\n\n")
+	p.WriteString("You share the brain family of bead stores with your operator.\n")
+	p.WriteString("Read anywhere: `brain search <terms>` queries every store.\n")
+	p.WriteString("Write your work beads to the `parlay` store, addressed explicitly:\n")
+	p.WriteString("\n    BEADS_DIR=$HOME/data/parlay/.beads bd create --type task \"…\"\n\n")
+	p.WriteString("Your writes are stamped with your actor automatically — never override it.\n")
+	p.WriteString("Never write runtime handles (session IDs, ports, PIDs, panes) to family\n")
+	p.WriteString("stores; reference ticket IDs instead.\n")
 	if spec.Prompt != "" {
 		p.WriteString("\n## Task\n\n")
 		p.WriteString(spec.Prompt)

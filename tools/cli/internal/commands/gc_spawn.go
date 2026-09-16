@@ -111,10 +111,11 @@ func gcSpawnEnv(home string) []string {
 }
 
 // gcSpawnEnvWithBD builds the gc child environment for the spawn path:
-// gcSpawnEnv plus the validated upstream bd's directory FIRST on PATH
-// (so gc's internal bd shell-outs hit upstream, never the captain's fork)
-// and /usr/sbin for lsof. Only the spawn path owns bd resolution, so only
-// it arranges this — the other gc verbs keep plain gcSpawnEnv.
+// gcSpawnEnv plus the resolved bd's directory FIRST on PATH
+// (so gc's internal bd shell-outs hit the same binary that bootstrapped
+// the store) and /usr/sbin for lsof. Only the spawn path owns bd
+// resolution, so only it arranges this — the other gc verbs keep plain
+// gcSpawnEnv.
 func gcSpawnEnvWithBD(home, bdPath string) []string {
 	return withBDOnPath(gcSpawnEnv(home), bdPath, nil)
 }
@@ -148,11 +149,11 @@ func gcSpawnRun(spec gctemplate.LaunchSpec) (gcSpawnResult, error) {
 
 	// The city scaffold is inert files until its bead store is joined — a
 	// `session new` against an unbootstrapped store dies before emitting
-	// typed JSON (the empty-stdout failure). Resolve the upstream bd first
-	// (the fork refusal lives here at the tool boundary), bootstrap the
+	// typed JSON (the empty-stdout failure). Resolve the brain bd first
+	// (a broken binary dies here at the tool boundary), bootstrap the
 	// store (idempotent: a joined store costs one `bd list` plus a config
-	// set), then hand the validated bd to the gc child's PATH.
-	bdBin, err := resolveUpstreamBD()
+	// set), then hand the resolved bd to the gc child's PATH.
+	bdBin, err := resolveStoreBD()
 	if err != nil {
 		return res, err
 	}

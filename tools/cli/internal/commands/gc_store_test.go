@@ -14,7 +14,7 @@ import (
 )
 
 const fakeUpstreamVersion = "bd version 1.1.0 (dev)"
-const fakeForkVersion = "bd version 1.2.2+brain. (36433a3aa: 36433a3aa5e4)"
+const fakeBrainVersion = "bd version 1.2.2+brain. (36433a3aa: 36433a3aa5e4)"
 
 // writeFakeBD drops an executable bd stand-in dispatching on $1, controlled
 // by env: FAKE_BD_VERSION (version output), FAKE_BD_LOG (appended "$@" per
@@ -78,21 +78,21 @@ func writeFakeGCWithHealth(t *testing.T, sessionStdout string, exitCode int) (bi
 	return bin, log
 }
 
-func TestResolveUpstreamBDPrefersEnv(t *testing.T) {
+func TestResolveStoreBDPrefersEnv(t *testing.T) {
 	bin, _ := fakeBDEnv(t, fakeUpstreamVersion, "0")
-	got, err := resolveUpstreamBD()
+	got, err := resolveStoreBD()
 	if err != nil {
-		t.Fatalf("resolveUpstreamBD: %v", err)
+		t.Fatalf("resolveStoreBD: %v", err)
 	}
 	if got != bin {
-		t.Errorf("resolveUpstreamBD = %s, want PARLAY_BD %s", got, bin)
+		t.Errorf("resolveStoreBD = %s, want PARLAY_BD %s", got, bin)
 	}
 }
 
-func TestResolveUpstreamBDMissingNamesRecipe(t *testing.T) {
+func TestResolveStoreBDMissingNamesRecipe(t *testing.T) {
 	t.Setenv("PARLAY_BD", "")
 	t.Setenv("PATH", t.TempDir()) // no bd anywhere
-	_, err := resolveUpstreamBD()
+	_, err := resolveStoreBD()
 	if err == nil {
 		t.Fatal("expected a refusal without bd")
 	}
@@ -103,39 +103,31 @@ func TestResolveUpstreamBDMissingNamesRecipe(t *testing.T) {
 	}
 }
 
-func TestResolveUpstreamBDRefusesFork(t *testing.T) {
-	bin, _ := fakeBDEnv(t, fakeForkVersion, "0")
-	_, err := resolveUpstreamBD()
-	if err == nil {
-		t.Fatal("expected a refusal for the fork")
-	}
-	for _, want := range []string{"fork", bin, "upstream"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should contain %q, got: %v", want, err)
+func TestResolveStoreBDAcceptsBrain(t *testing.T) {
+	// Since the task-svq1q re-pin the brain binary IS the expected bd —
+	// the old fork refusal is gone (proven unnecessary live; the bootstrap
+	// below is the arbiter). Both version strings must resolve cleanly.
+	for _, version := range []string{fakeBrainVersion, fakeUpstreamVersion} {
+		bin, _ := fakeBDEnv(t, version, "0")
+		got, err := resolveStoreBD()
+		if err != nil {
+			t.Errorf("resolveStoreBD (%s): %v", version, err)
+		}
+		if got != bin {
+			t.Errorf("resolveStoreBD = %s, want %s", got, bin)
 		}
 	}
 }
 
-func TestBdProbeFork(t *testing.T) {
-	upstream, _ := fakeBDEnv(t, fakeUpstreamVersion, "0")
-	if bdProbeFork(upstream) {
-		t.Error("upstream bd must not probe as fork")
+func TestBdProbeRunnable(t *testing.T) {
+	bin, _ := fakeBDEnv(t, fakeBrainVersion, "0")
+	if err := bdProbeRunnable(bin); err != nil {
+		t.Errorf("runnable bd must probe clean: %v", err)
 	}
-	// fakeBDEnv re-sets PARLAY_BD; resolveUpstreamBD would now see the fork
-	// binary — that is exactly the wiring under test, keep it.
-	forkDir := t.TempDir()
-	fork := filepath.Join(forkDir, "bd")
-	if err := os.WriteFile(fork, []byte("#!/bin/sh\nprintf '%s\\n' '"+fakeForkVersion+"'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_ = upstream
-	t.Setenv("PARLAY_BD", fork)
-	t.Setenv("FAKE_BD_VERSION", fakeForkVersion)
-	if !bdProbeFork(fork) {
-		t.Error("fork bd must probe as fork")
-	}
-	if bdProbeFork(filepath.Join(t.TempDir(), "no-such-binary")) {
-		t.Error("un-runnable binary must not probe as fork (its failure surfaces downstream)")
+	if err := bdProbeRunnable(filepath.Join(t.TempDir(), "no-such-binary")); err == nil {
+		t.Error("un-runnable binary must fail the probe (its failure surfaces here, not downstream)")
+	} else if !strings.Contains(err.Error(), "does not run") {
+		t.Errorf("probe error must say the binary does not run, got: %v", err)
 	}
 }
 

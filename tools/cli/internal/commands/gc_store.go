@@ -16,21 +16,22 @@
 //     Its exit status is noise (a CGO-free bd cannot answer the
 //     embedded-mode ping the probe ends with), so only the port file is
 //     checked.
-//  2. upstream `bd init --prefix pa --server --server-port <port>` joins
-//     gc's server — never a bd-owned one (`--proxied-server` first
+//  2. `bd init --prefix pa --server --server-port <port>` joins gc's
+//     server — never a bd-owned one (`--proxied-server` first
 //     deterministically deadlocks later, see the note above).
 //  3. `bd config set types.custom ...` registers gc's session bead types
 //     in the store's own config (the .beads/config.yaml copy gc writes is
 //     not what create-validation reads).
 //  4. one `bd list` to settle first contact, then `session new` works.
 //
-// The bd MUST be upstream: the captain's bd fork (≈1.2.2+brain) speaks a
-// different store schema and fails both directions (missing row_lock column
-// one way, missing issue_prefix the other), so this file refuses the fork
-// loudly at the tool boundary instead of letting `session new` die
-// Garcia-style downstream. Resolution is $PARLAY_BD first, else PATH — and
-// the gc child environment is arranged so gc's own bd shell-outs hit that
-// same upstream binary first.
+// The bd is the brain binary (trillium/brain): since the task-svq1q re-pin
+// (gc@9700d9a, beads v1.3.0-rc.2 generation) a brain-joined city starts
+// sessions end to end — proven live in
+// docs/agent-notes/gc-main-brain-probe.md, which also records why the OLD
+// pin needed upstream instead. Resolution is $PARLAY_BD first, else PATH —
+// and the gc child environment is arranged so gc's own bd shell-outs hit
+// that same binary first. No version gate here: the bootstrap below is the
+// arbiter, and a bd that cannot init or list fails loudly with its output.
 //
 // ensureCityStore is idempotent: when `bd list` already succeeds the store
 // is joined and only the (cheap, idempotent) types registration re-runs.
@@ -47,15 +48,19 @@ import (
 )
 
 // gcBeadTypesCustom mirrors the custom bead types gc's own bootstrap
-// configures; without them registered via `bd config set` the upstream bd
-// CLI refuses `bd create --type session` with "invalid issue type".
+// configures; without them registered via `bd config set` the bd CLI
+// refuses `bd create --type session` with "invalid issue type".
 const gcBeadTypesCustom = "molecule,convoy,message,event,gate,merge-request,agent,role,rig,session,spec,convergence,step"
 
-// bdInstallFix names the remedy for a missing or forked bd. The version is
-// deliberately NOT pinned here — it must match the vendored beads library
-// at the gc pin (third_party/gascity/PIN's go.mod), which moves when the pin
-// moves; the note carries the exact recipe.
-const bdInstallFix = "install an upstream bd matching the gc pin's vendored beads version (CGO_ENABLED=0 go install github.com/steveyegge/beads/cmd/bd@<version from gascity go.mod>) and put it first on PATH (PARLAY_BD overrides the lookup) — see docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md"
+// bdInstallFix names the remedy for a missing or broken bd. The gc launcher
+// expects the brain binary (trillium/brain — PARLAY_BD overrides the lookup,
+// else first `bd` on PATH); any bd that completes the bootstrap below works,
+// and the bootstrap itself is the arbiter — a bd that cannot init or list
+// the city store fails there with its own output attached, never silently.
+// For a from-scratch upstream build see
+// docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md (its recipe
+// still applies when brain is unavailable).
+const bdInstallFix = "install the brain bd (trillium/brain) and put it first on PATH (PARLAY_BD overrides the lookup) — see docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md for the upstream-build fallback"
 
 // bdTimeout bounds each direct bd invocation. First store contact may wake
 // a proxied dolt; 120s is headroom, not an expectation.
@@ -79,36 +84,33 @@ func bdResolve() (path, source string) {
 	return p, "PATH"
 }
 
-// bdProbeFork reports whether the bd at path is the captain's fork. The
-// fork stamps its version with a +brain suffix (e.g. "1.2.2+brain"), which
-// upstream builds never carry — a short, documented marker, not a schema
-// probe. An un-runnable binary is NOT a fork (that surfaces as its own
-// error downstream); false here means "no evidence of fork".
-func bdProbeFork(path string) bool {
+// bdProbeRunnable reports whether the bd at path executes (`bd version`
+// exits 0). A binary that cannot run must die here at the tool boundary
+// with its own output attached, never inside the bootstrap as a mystery.
+func bdProbeRunnable(path string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "version")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("bd at %s does not run: %v\n%s", path, err, out)
 	}
-	return strings.Contains(strings.ToLower(string(out)), "brain")
+	return nil
 }
 
-// resolveUpstreamBD resolves the bd binary the gc launcher needs
-// ($PARLAY_BD wins, else PATH) and refuses the captain's fork loudly: the
-// fork's diverged store schema fails both directions against a gc city, so
-// a forked bd must die here at the tool boundary, never inside
-// `session new` as an empty-stdout mystery. Missing bd names the install
-// recipe (bdInstallFix); the version is deliberately left to the linked
-// note, which tracks the gc pin's vendored beads version.
-func resolveUpstreamBD() (path string, err error) {
-	bdBin, bdSource := bdResolve()
+// resolveStoreBD resolves the bd binary the gc launcher bootstraps with
+// ($PARLAY_BD wins, else PATH). Since the task-svq1q re-pin (gc@9700d9a,
+// beads v1.3.0-rc.2 generation) the brain binary IS the expected bd — the
+// old fork refusal is gone, proven unnecessary live
+// (docs/agent-notes/gc-main-brain-probe.md). Any runnable bd is accepted;
+// the bootstrap below is the arbiter of capability, and a bd that cannot
+// init or list fails there loudly with its own output attached.
+func resolveStoreBD() (path string, err error) {
+	bdBin, _ := bdResolve()
 	if bdBin == "" {
-		return "", fmt.Errorf("bd not found (PARLAY_BD unset, none on PATH) — the gc launcher needs an upstream bd to bootstrap the city store: %s", bdInstallFix)
+		return "", fmt.Errorf("bd not found (PARLAY_BD unset, none on PATH) — the gc launcher needs the brain bd to bootstrap the city store: %s", bdInstallFix)
 	}
-	if bdProbeFork(bdBin) {
-		return "", fmt.Errorf("bd at %s (from %s) is the fork, which cannot back a gc city store (diverged schema) — %s", bdBin, bdSource, bdInstallFix)
+	if err := bdProbeRunnable(bdBin); err != nil {
+		return "", err
 	}
 	return bdBin, nil
 }
@@ -116,7 +118,7 @@ func resolveUpstreamBD() (path string, err error) {
 // cityStoreEnv builds the environment for bd invocations made directly by
 // this process (init/config/list): the current env minus ambient store
 // context that could redirect the store (BEADS_DIR/BD_NAME — the same drop
-// the gated tests do), with the upstream bd's directory and /usr/sbin
+// the gated tests do), with the resolved bd's directory and /usr/sbin
 // (lsof, which `gc init` requires and sandboxed PATHs often lack) ensured
 // on PATH.
 func cityStoreEnv(bdPath string) []string {
@@ -163,7 +165,7 @@ func withBDOnPath(env []string, bdPath string, scrub []string) []string {
 	return out
 }
 
-// runBD runs the upstream bd at path with args in cityDir, returning
+// runBD runs bd at path with args in cityDir, returning
 // combined output. A non-zero exit is an error carrying the output.
 func runBD(bdPath, cityDir string, env []string, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -179,7 +181,7 @@ func runBD(bdPath, cityDir string, env []string, timeout time.Duration, args ...
 }
 
 // storeHealthy reports whether the city store is already joined: an
-// upstream `bd list` in the city dir exits 0. Output is discarded — this is
+// `bd list` in the city dir exits 0. Output is discarded — this is
 // a readiness probe, and its failure IS the signal to bootstrap.
 func storeHealthy(bdPath, cityDir string, env []string) bool {
 	_, err := runBD(bdPath, cityDir, env, bdTimeout, "list", "--json")
@@ -194,12 +196,12 @@ func storeHealthy(bdPath, cityDir string, env []string) bool {
 // Fast path: `bd list` already succeeds — the store is joined, so only the
 // types registration re-runs (idempotent; a store bootstrapped by an older
 // recipe may lack gc's session types). Slow path: `gc beads health` for
-// the managed-dolt side effect (exit status tolerated), upstream `bd init`
+// the managed-dolt side effect (exit status tolerated), `bd init`
 // against the recorded port (skipped when .beads/metadata.json already
 // exists — re-init of a joined store is at best an error), types
 // registration, then a settling `bd list` that MUST succeed.
 //
-// bdBin arrives pre-validated from resolveUpstreamBD (gcSpawnRun owns the
+// bdBin arrives pre-validated from resolveStoreBD (gcSpawnRun owns the
 // resolution so the validated binary is also the one gcSpawnEnv puts first
 // on the gc child's PATH). Returns bdBin for that same wiring.
 func ensureCityStore(cityDir, gcBin, home, bdBin string, gcEnvForHealth []string) (string, error) {

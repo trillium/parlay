@@ -230,18 +230,20 @@ func TestGCSpawnRunRejectsUnknownKind(t *testing.T) {
 	}
 }
 
-func TestGCSpawnRunRefusesForkBD(t *testing.T) {
+func TestGCSpawnRunAcceptsBrainBD(t *testing.T) {
 	testsupport.TempStateHome(t)
 	bin, _ := writeSpawnFakeGC(t, fakeSessionNewOK, 0)
 	t.Setenv("PARLAY_GC", bin)
-	_, _ = fakeBDEnv(t, fakeForkVersion, "0")
+	// The brain binary is the expected bd since the re-pin — a
+	// brain-versioned bd must launch cleanly, never refuse.
+	_, _ = fakeBDEnv(t, fakeBrainVersion, "0")
 
-	_, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
-	if err == nil {
-		t.Fatal("expected a refusal for the forked bd")
+	res, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
+	if err != nil {
+		t.Fatalf("gcSpawnRun with brain bd: %v", err)
 	}
-	if !strings.Contains(err.Error(), "fork") {
-		t.Errorf("refusal must name the fork, got: %v", err)
+	if !res.OK {
+		t.Fatalf("result = %+v", res)
 	}
 }
 

@@ -191,7 +191,7 @@ func TestStartCommandOverrideDisablesPromptArg(t *testing.T) {
 	}
 	toml := string(files["agents/inert/agent.toml"])
 	for _, want := range []string{
-		`start_command = "/usr/bin/env PARLAY_AGENT_ID=inert /bin/sleep 300"`,
+		`start_command = "/usr/bin/env BEADS_ACTOR=parlay-inert PARLAY_AGENT_ID=inert /bin/sleep 300"`,
 		`prompt_mode = "none"`,
 		`process_names = ["sleep"]`,
 		"suspended = true",
@@ -229,7 +229,7 @@ func TestStartCommandArgsAreShellQuoted(t *testing.T) {
 	// metacharacters are single-quoted, and the arg with spaces, quotes, and
 	// metacharacters rides inside single quotes with the embedded single
 	// quotes escaped the way gc's shellquote round-trips them.
-	want := `start_command = "/usr/bin/env PARLAY_AGENT_ID=quoted 'PARLAY_AGENT_NAME=Quoted Probe' PARLAY_SERVER=http://localhost:14242 /bin/sh -c 'echo '\\''hi there'\\'' > /tmp/x; exec sleep 300'"`
+	want := `start_command = "/usr/bin/env BEADS_ACTOR=parlay-quoted PARLAY_AGENT_ID=quoted 'PARLAY_AGENT_NAME=Quoted Probe' PARLAY_SERVER=http://localhost:14242 /bin/sh -c 'echo '\\''hi there'\\'' > /tmp/x; exec sleep 300'"`
 	if !strings.Contains(toml, want) {
 		t.Errorf("agent.toml missing %s\ngot:\n%s", want, toml)
 	}
