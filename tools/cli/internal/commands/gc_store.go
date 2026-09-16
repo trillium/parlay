@@ -69,7 +69,7 @@ const gcBeadTypesCustom = "molecule,convoy,message,event,gate,merge-request,agen
 // docs/agent-notes/gc-store-schema-generation.md. For a from-scratch
 // upstream build see docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md
 // (its recipe still applies when brain is unavailable).
-const bdInstallFix = "install the brain bd (trillium/brain) and put it first on PATH (PARLAY_BD overrides the lookup) — see docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md for the upstream-build fallback"
+const bdInstallFix = "install a bd that can read the city store's schema generation (PARLAY_BD overrides the lookup): brain (trillium/brain) for a store brain created, or an upstream bd at the store's generation for a pre-existing store — see docs/agent-notes/gc-store-schema-generation.md"
 
 // bdTimeout bounds each direct bd invocation. First store contact may wake
 // a proxied dolt; 120s is headroom, not an expectation.
@@ -119,7 +119,7 @@ func bdProbeRunnable(path string) error {
 func resolveStoreBD() (path string, err error) {
 	bdBin, _ := bdResolve()
 	if bdBin == "" {
-		return "", fmt.Errorf("bd not found (PARLAY_BD unset, none on PATH) — the gc launcher needs the brain bd to bootstrap the city store: %s", bdInstallFix)
+		return "", fmt.Errorf("bd not found (PARLAY_BD unset, none on PATH) — the gc launcher needs a bd that can read the city store: %s", bdInstallFix)
 	}
 	if err := bdProbeRunnable(bdBin); err != nil {
 		return "", err
