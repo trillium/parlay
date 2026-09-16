@@ -135,9 +135,6 @@ func Synthesize(spec LaunchSpec) (map[string][]byte, error) {
 	// everything one agent wrote. Non-secret — it rides the template env
 	// like every other pair here.
 	env["BEADS_ACTOR"] = "parlay-" + spec.ID
-	if spec.Name != "" {
-		env["PARLAY_AGENT_NAME"] = spec.Name
-	}
 	if spec.Color != "" {
 		env["PARLAY_AGENT_COLOR"] = spec.Color
 	}

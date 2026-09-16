@@ -1,5 +1,12 @@
 # gc@main + brain probe: the path to brain as THE bead store (2026-09-15, mini1)
 
+> **Landed (task-svq1q):** the §3 items marked "NOT done here" are done —
+> gc re-pinned to `9700d9a` ([contract](../gascity-integration-contract.md)),
+> the bootstrap accepts brain (`tools/cli/internal/commands/gc_store.go`),
+> and agents work the shared `parlay` family store
+> ([prerequisite](../gc-prerequisite.md)). This note remains the live-probe
+> evidence behind those decisions.
+
 Task-svq1q asked for brain (trillium/brain, the federated bead store) as THE
 bead store behind parlay's gc launcher. This note records the live probes
 that decide the design. Base: parlay origin/main `fd56dd0`, work branch
