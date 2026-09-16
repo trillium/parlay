@@ -111,6 +111,19 @@ Under the old pin the fork's schema diverged and upstream was required —
 that history and the upstream-build fallback recipe live in
 [`agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md`](agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md).
 
+### A pre-existing store pins its schema generation — match the bd to the store
+
+The pin never-migrates caveat above is load-bearing for **existing** stores:
+a city store's schema version is fixed by whatever first bootstrap it, and
+`parlay gc-spawn` resolves `PARLAY_BD` (else first `bd` on `PATH`) to operate
+it. Brain (`1.2.2+brain`, knows schema up to v56) matches only a store brain
+itself created; a store bootstrapped earlier by a different generation (this
+box's live city, v59, created by upstream bd v1.1.0) is refused by brain
+(`schema version mismatch: database is at v59, binary knows up to v56`) and
+needs `PARLAY_BD` pointed at an upstream bd built at the store's generation.
+Full evidence, the repair recipe, and the live-state record:
+[`agent-notes/gc-store-schema-generation.md`](agent-notes/gc-store-schema-generation.md).
+
 ## Agents operate on family stores directly
 
 The city store holds only runtime/transport beads (sessions, convoys,

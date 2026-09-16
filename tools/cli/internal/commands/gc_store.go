@@ -28,10 +28,16 @@
 // (gc@9700d9a, beads v1.3.0-rc.2 generation) a brain-joined city starts
 // sessions end to end — proven live in
 // docs/agent-notes/gc-main-brain-probe.md, which also records why the OLD
-// pin needed upstream instead. Resolution is $PARLAY_BD first, else PATH —
-// and the gc child environment is arranged so gc's own bd shell-outs hit
-// that same binary first. No version gate here: the bootstrap below is the
-// arbiter, and a bd that cannot init or list fails loudly with its output.
+// pin needed upstream instead. That holds when brain itself created the
+// store. The pin never auto-migrates a shared server store, so a PRE-EXISTING
+// city pinned at an older schema generation (e.g. this box's live store, v59,
+// created by upstream bd at @v1.1.1-0.20260805093327) needs $PARLAY_BD at
+// that generation, not brain — see
+// docs/agent-notes/gc-store-schema-generation.md. Resolution is $PARLAY_BD
+// first, else PATH — and the gc child environment is arranged so gc's own bd
+// shell-outs hit that same binary first. No version gate here: the bootstrap
+// below is the arbiter, and a bd that cannot init or list fails loudly with
+// its output.
 //
 // ensureCityStore is idempotent: when `bd list` already succeeds the store
 // is joined and only the (cheap, idempotent) types registration re-runs.
@@ -57,9 +63,12 @@ const gcBeadTypesCustom = "molecule,convoy,message,event,gate,merge-request,agen
 // else first `bd` on PATH); any bd that completes the bootstrap below works,
 // and the bootstrap itself is the arbiter — a bd that cannot init or list
 // the city store fails there with its own output attached, never silently.
-// For a from-scratch upstream build see
-// docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md (its recipe
-// still applies when brain is unavailable).
+// For a PRE-EXISTING store pinned at an older schema generation the brain
+// binary is wrong (it refuses the store's version); set PARLAY_BD to an
+// upstream bd built at the store's generation — see
+// docs/agent-notes/gc-store-schema-generation.md. For a from-scratch
+// upstream build see docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md
+// (its recipe still applies when brain is unavailable).
 const bdInstallFix = "install the brain bd (trillium/brain) and put it first on PATH (PARLAY_BD overrides the lookup) — see docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md for the upstream-build fallback"
 
 // bdTimeout bounds each direct bd invocation. First store contact may wake
@@ -99,11 +108,14 @@ func bdProbeRunnable(path string) error {
 
 // resolveStoreBD resolves the bd binary the gc launcher bootstraps with
 // ($PARLAY_BD wins, else PATH). Since the task-svq1q re-pin (gc@9700d9a,
-// beads v1.3.0-rc.2 generation) the brain binary IS the expected bd — the
-// old fork refusal is gone, proven unnecessary live
-// (docs/agent-notes/gc-main-brain-probe.md). Any runnable bd is accepted;
-// the bootstrap below is the arbiter of capability, and a bd that cannot
-// init or list fails there loudly with its own output attached.
+// beads v1.3.0-rc.2 generation) the brain binary is the expected bd for a
+// store brain itself created — the old fork refusal is gone, proven
+// unnecessary live (docs/agent-notes/gc-main-brain-probe.md). A pre-existing
+// store pinned at an older schema generation still needs $PARLAY_BD at that
+// generation (the pin never auto-migrates a shared server store; see
+// docs/agent-notes/gc-store-schema-generation.md). Any runnable bd is
+// accepted; the bootstrap below is the arbiter of capability, and a bd that
+// cannot init or list fails there loudly with its own output attached.
 func resolveStoreBD() (path string, err error) {
 	bdBin, _ := bdResolve()
 	if bdBin == "" {
