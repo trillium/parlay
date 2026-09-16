@@ -1,0 +1,3 @@
+Parlay {{store}} worker poke. Process the {{store}} serially until exhausted. Repeated pokes are coalesced; do not wait for another reminder.
+
+For each next eligible open {{store}} item (no zone, zone:pi, or zone:default; leave specialized zones alone): atomically claim it with `{{store}} update <id> --claim --assignee {{channel}}`; read its complete description; append dated, source-linked durable knowledge to the named project/record without overwriting prior context; then close it with a precise receipt using `{{store}} close <id> --reason`. Only close after the knowledge record exists. After each close, immediately inspect the inbox again. Do not use handoff/park for normal item completion. Stop only when no eligible open item remains.

@@ -4,6 +4,7 @@ import {
 	isInboxPoke,
 	parseChatLine,
 	parseInboxConnectArgs,
+	renderWorkerPrompt,
 } from "./helpers";
 
 // RED: the agent connects to the parlay watcher.
@@ -34,6 +35,21 @@ describe("/inbox-connect arg parsing (connect section)", () => {
 	test("garbage is a usage error, not a silent default", () => {
 		expect(parseInboxConnectArgs("nope!").error).toMatch(/Usage/);
 		expect(parseInboxConnectArgs("a b").error).toMatch(/one store only/);
+	});
+});
+
+describe("canonical worker prompt (single source of truth)", () => {
+	test("renders store and channel with no leftover placeholders", () => {
+		const msg = renderWorkerPrompt("sandbox", "sandbox-inbox");
+		expect(msg).toMatch(/Parlay sandbox worker poke/);
+		expect(msg).toMatch(/sandbox update <id> --claim --assignee sandbox-inbox/);
+		expect(msg).not.toMatch(/\{\{/);
+	});
+
+	test("inbox rendering matches the historic terminal text", () => {
+		const msg = renderWorkerPrompt("inbox", "pi-inbox");
+		expect(msg).toMatch(/Parlay inbox worker poke/);
+		expect(msg).toMatch(/inbox update <id> --claim --assignee pi-inbox/);
 	});
 });
 
