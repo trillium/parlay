@@ -89,11 +89,11 @@ tools/gc-build/build-gc.sh --cgo
 `PARLAY_GC` overrides where doctor (and later, the spawn path) looks for the
 binary; otherwise it is resolved from `PATH`.
 
-## The bd half: the city store needs the brain bd
+## The bd half: the city store needs a bd that can read it
 
 `gc` alone is not enough to launch: the city scaffold parlay materialises
 is inert files until its bead store is bootstrapped, and the bootstrap is
-owned end to end by `parlay gc-spawn`: it resolves the bd (`PARLAY_BD`
+owned end to end by `parlay gc-spawn`: it resolves a bd (`PARLAY_BD`
 wins, else first on `PATH` — the brain binary, `trillium/brain`), refuses a
 missing or broken bd loudly, joins the store idempotently (`gc beads
 health` for the managed-dolt side effect → `bd init --prefix pa --server
@@ -105,8 +105,13 @@ before launching, so that failure mode is closed at the seam rather than
 documented around it.
 
 This holds since the task-svq1q re-pin (gc@9700d9a, beads `v1.3.0-rc.2`
-generation): a brain-joined city starts sessions end to end, proven live in
+generation): a city store bootstrapped by the resolving bd starts sessions
+end to end, proven live for the brain bd in
 [`agent-notes/gc-main-brain-probe.md`](agent-notes/gc-main-brain-probe.md).
+That brain match is not universal — it holds only for a store brain itself
+created; a store bootstrapped at another generation needs a bd built at
+that generation (this section below, fully evidenced in
+[`agent-notes/gc-store-schema-generation.md`](agent-notes/gc-store-schema-generation.md)).
 Under the old pin the fork's schema diverged and upstream was required —
 that history and the upstream-build fallback recipe live in
 [`agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md`](agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md).
