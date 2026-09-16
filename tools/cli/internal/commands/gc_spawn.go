@@ -179,7 +179,7 @@ func gcSpawnRun(spec gctemplate.LaunchSpec) (gcSpawnResult, error) {
 		Error       string `json:"error"`
 	}
 	if jsonErr := json.Unmarshal(out, &created); jsonErr != nil {
-		return res, fmt.Errorf("gc session new (%s, from %s) did not emit typed JSON (run err: %v): stdout %q, stderr %q — if the city's bead store is not bootstrapped yet, see the recipe in tools/cli/internal/gctemplate/integration_test.go (brain bd required — check the brain binary/PARLAY_BD; upstream-build fallback: docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md)", bin, source, runErr, strings.TrimSpace(string(out)), strings.TrimSpace(stderr.String()))
+		return res, fmt.Errorf("gc session new (%s, from %s) did not emit typed JSON (run err: %v): stdout %q, stderr %q — if the city's bead store is not bootstrapped yet, see the recipe in docs/agent-notes/gc-store-schema-generation.md (the bd must match the store's schema generation — point PARLAY_BD at a bd that can read it)", bin, source, runErr, strings.TrimSpace(string(out)), strings.TrimSpace(stderr.String()))
 	}
 	res.SessionID = created.SessionID
 	res.SessionName = created.SessionName
