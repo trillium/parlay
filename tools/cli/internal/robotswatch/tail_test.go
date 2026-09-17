@@ -65,6 +65,26 @@ func TestReadNewLinesRestartsFromZeroOnTruncation(t *testing.T) {
 	}
 }
 
+func TestReadNewLinesHoldsTornTrailingFragment(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "events.jsonl")
+	mustWriteFile(t, f, `{"id":"robots-aaa"}`+"\n"+`{"id":"robots-half"`)
+	lines, offset := readNewLines(f, 0)
+	// Only the complete line; the torn fragment stays below the offset.
+	if !reflect.DeepEqual(lines, []string{`{"id":"robots-aaa"}`}) {
+		t.Fatalf("got %v", lines)
+	}
+	// Completing the line emits it whole, exactly once.
+	mustAppendFile(t, f, `,"created_at":"x"}`+"\n")
+	lines, offset = readNewLines(f, offset)
+	if !reflect.DeepEqual(lines, []string{`{"id":"robots-half","created_at":"x"}`}) {
+		t.Fatalf("got %v", lines)
+	}
+	if lines, _ := readNewLines(f, offset); len(lines) != 0 {
+		t.Fatalf("expected no re-emit, got %v", lines)
+	}
+}
+
 func TestReadNewLinesOnMissingFileIsNoop(t *testing.T) {
 	lines, offset := readNewLines(filepath.Join(t.TempDir(), "nope-does-not-exist.jsonl"), 5)
 	if len(lines) != 0 || offset != 5 {
