@@ -38,6 +38,7 @@ func TestGCSpawnRunHappyPath(t *testing.T) {
 	state := testsupport.TempStateHome(t)
 	bin, rec := writeSpawnFakeGC(t, fakeSessionNewOK, 0)
 	t.Setenv("PARLAY_GC", bin)
+	bdBin, _ := fakeBDEnv(t, fakeUpstreamVersion, "0")
 	// Ambient context that must NOT leak into the child.
 	t.Setenv("GC_HOME", "/somewhere/else")
 	t.Setenv("GC_CITY", "/other/city")
@@ -92,7 +93,9 @@ func TestGCSpawnRunHappyPath(t *testing.T) {
 		t.Errorf("gc argv:\n%s\nwant:\n%s", argv, wantArgv)
 	}
 
-	// Child env: parlay-owned GC_HOME, ambient + nesting markers scrubbed.
+	// Child env: parlay-owned GC_HOME, ambient + nesting markers scrubbed,
+	// upstream bd dir first on PATH (so gc's own bd shell-outs agree with
+	// the bootstrap's binary choice).
 	envBytes, err := os.ReadFile(filepath.Join(rec, "env"))
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +108,13 @@ func TestGCSpawnRunHappyPath(t *testing.T) {
 	for _, banned := range []string{"GC_CITY=", "BEADS_DIR=", "CLAUDECODE=", "CLAUDE_CODE_ENTRYPOINT="} {
 		if strings.Contains(env, banned) {
 			t.Errorf("child env leaks %s", banned)
+		}
+	}
+	for _, kv := range strings.Split(env, "\n") {
+		if k, v, _ := strings.Cut(kv, "="); k == "PATH" {
+			if !strings.HasPrefix(v, filepath.Dir(bdBin)+string(os.PathListSeparator)) {
+				t.Errorf("child PATH must start with the upstream bd dir, got %q", v)
+			}
 		}
 	}
 
@@ -122,7 +132,8 @@ func TestGCSpawnRunHappyPath(t *testing.T) {
 func TestGCSpawnRunRefusesWithoutGC(t *testing.T) {
 	testsupport.TempStateHome(t)
 	t.Setenv("PARLAY_GC", "")
-	t.Setenv("PATH", t.TempDir()) // nothing named gc on PATH
+	t.Setenv("PATH", t.TempDir())                 // nothing named gc on PATH
+	_, _ = fakeBDEnv(t, fakeUpstreamVersion, "0") // gc refusal fires first; bd must not mask it
 
 	_, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
 	if err == nil {
@@ -137,6 +148,7 @@ func TestGCSpawnRunSurfacesNonJSONFailure(t *testing.T) {
 	testsupport.TempStateHome(t)
 	bin, _ := writeSpawnFakeGC(t, "panic: store not bootstrapped", 1)
 	t.Setenv("PARLAY_GC", bin)
+	_, _ = fakeBDEnv(t, fakeUpstreamVersion, "0")
 
 	_, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
 	if err == nil {
@@ -154,6 +166,7 @@ func TestGCSpawnRunSurfacesTypedRefusal(t *testing.T) {
 	refusal := `{"schema_version":"1","ok":false,"error":"template parlay.probe-x not found"}`
 	bin, _ := writeSpawnFakeGC(t, refusal, 1)
 	t.Setenv("PARLAY_GC", bin)
+	_, _ = fakeBDEnv(t, fakeUpstreamVersion, "0")
 
 	res, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
 	if err == nil {
@@ -164,6 +177,91 @@ func TestGCSpawnRunSurfacesTypedRefusal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "template parlay.probe-x not found") {
 		t.Errorf("error should carry gc's own message, got: %v", err)
+	}
+}
+
+func TestGCSpawnRunPiKindRendersPiTemplate(t *testing.T) {
+	state := testsupport.TempStateHome(t)
+	bin, _ := writeSpawnFakeGC(t, fakeSessionNewOK, 0)
+	t.Setenv("PARLAY_GC", bin)
+	_, _ = fakeBDEnv(t, fakeUpstreamVersion, "0")
+
+	res, err := gcSpawnRun(gctemplate.LaunchSpec{
+		ID:     "spark-x",
+		Kind:   "pi",
+		Model:  "opencode-go/muse-spark-1.3-contributor",
+		Server: "http://localhost:14242",
+	})
+	if err != nil {
+		t.Fatalf("gcSpawnRun (pi kind): %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("result = %+v", res)
+	}
+	agentTOML, err := os.ReadFile(filepath.Join(state, "gascity", "city", "packs", "parlay", "agents", "spark-x", "agent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`pi --model opencode-go/muse-spark-1.3-contributor`,
+		`process_names = ["pi"]`,
+	} {
+		if !strings.Contains(string(agentTOML), want) {
+			t.Errorf("pi agent.toml missing %q:\n%s", want, agentTOML)
+		}
+	}
+	if strings.Contains(string(agentTOML), "--dangerously-skip-permissions") {
+		t.Errorf("pi template must not carry claude YOLO flags:\n%s", agentTOML)
+	}
+}
+
+func TestGCSpawnRunRejectsUnknownKind(t *testing.T) {
+	testsupport.TempStateHome(t)
+	bin, _ := writeSpawnFakeGC(t, fakeSessionNewOK, 0)
+	t.Setenv("PARLAY_GC", bin)
+	_, _ = fakeBDEnv(t, fakeUpstreamVersion, "0")
+
+	_, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x", Kind: "opencode"})
+	if err == nil {
+		t.Fatal("expected a refusal for an unknown gc kind")
+	}
+	if !strings.Contains(err.Error(), `"opencode"`) {
+		t.Errorf("refusal must name the kind, got: %v", err)
+	}
+}
+
+func TestGCSpawnRunAcceptsBrainBD(t *testing.T) {
+	testsupport.TempStateHome(t)
+	bin, _ := writeSpawnFakeGC(t, fakeSessionNewOK, 0)
+	t.Setenv("PARLAY_GC", bin)
+	// The brain binary is the expected bd since the re-pin — a
+	// brain-versioned bd must launch cleanly, never refuse.
+	_, _ = fakeBDEnv(t, fakeBrainVersion, "0")
+
+	res, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
+	if err != nil {
+		t.Fatalf("gcSpawnRun with brain bd: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestGCSpawnRunRefusesMissingBD(t *testing.T) {
+	testsupport.TempStateHome(t)
+	bin, _ := writeSpawnFakeGC(t, fakeSessionNewOK, 0)
+	t.Setenv("PARLAY_GC", bin)
+	t.Setenv("PARLAY_BD", "")
+	// PATH carries the real world (fork first) — neutralise it so no bd
+	// resolves at all.
+	t.Setenv("PATH", t.TempDir())
+
+	_, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
+	if err == nil {
+		t.Fatal("expected a refusal without bd")
+	}
+	if !strings.Contains(err.Error(), "bd not found") {
+		t.Errorf("refusal must name the missing bd, got: %v", err)
 	}
 }
 

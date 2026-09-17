@@ -53,6 +53,14 @@ type relayTiming struct {
 }
 
 // evalRequest is the request shape for POST /api/chat/eval.
+//
+// This is the text-change event shape every voice box posts on change
+// (task-ev0ny): the box/session id (streamId), the full current text, a
+// per-box monotonic version, plus which surface the box belongs to
+// (platform: "parlay" default, "herdr" for Herdr voice boxes). Platform,
+// mode, and commands pass through to the engine verbatim so a Herdr box's
+// dictated line-ender reaches the submit handler instead of being dropped
+// at the relay; omitting them preserves the Parlay-panel behavior exactly.
 type evalRequest struct {
 	StreamID string `json:"streamId"`
 	Version  int    `json:"version"`
@@ -65,6 +73,9 @@ type evalRequest struct {
 	VoiceEnabled bool                `json:"voiceEnabled"`
 	Device       string              `json:"device"`
 	Tabs         []map[string]string `json:"tabs"`
+	Platform     string              `json:"platform,omitempty"`
+	Mode         string              `json:"mode,omitempty"`
+	Commands     json.RawMessage     `json:"commands,omitempty"`
 }
 
 // streamDeviceMap holds streamId → deviceId mappings. This allows the eval-push
@@ -149,7 +160,9 @@ func handleEval(hub *Hub) http.HandlerFunc {
 		// (which arrives on /eval-push with only a streamId) can be routed back.
 		rememberStream(req.StreamID, req.Device)
 
-		// Build the request to send to the eval engine
+		// Build the request to send to the eval engine. Platform/mode/commands
+		// ride along only when the caller names them, so existing Parlay-panel
+		// callers (which send none) evaluate exactly as before.
 		engineReq := map[string]interface{}{
 			"streamId":     req.StreamID,
 			"version":      req.Version,
@@ -158,6 +171,15 @@ func handleEval(hub *Hub) http.HandlerFunc {
 			"reason":       req.Reason,
 			"voiceEnabled": req.VoiceEnabled,
 			"tabs":         req.Tabs,
+		}
+		if req.Platform != "" {
+			engineReq["platform"] = req.Platform
+		}
+		if req.Mode != "" {
+			engineReq["mode"] = req.Mode
+		}
+		if len(req.Commands) > 0 {
+			engineReq["commands"] = req.Commands
 		}
 
 		// Relay to the eval engine

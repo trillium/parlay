@@ -119,4 +119,8 @@ type relay struct {
 	mu     sync.Mutex
 	loops  map[string]*agentLoop
 	closed bool // set once shutdown begins; blocks new registrations
+
+	// owners binds each registered agent id to its caller's owner-token
+	// hash (relay_identity.go). Nil until loadOwners/first claim fills it.
+	owners map[string]string
 }

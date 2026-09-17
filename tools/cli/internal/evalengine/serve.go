@@ -104,12 +104,36 @@ func Serve(addrFlag, pushURLFlag string) {
 		log.Printf("  manifest source: embedded default")
 	}
 
+	mux := newEvalMux(engine, push)
+
+	log.Printf("parlay-eval-engine (compiled Go) listening on http://%s", addr)
+	log.Printf("  push URL: %s", pushURL)
+	log.Printf("  commands: %d compiled", len(engine.commands))
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Fatalf("listen failed: %v", err)
+	}
+}
+
+// newEvalMux builds the engine's HTTP routes. Split from Serve so tests can
+// drive the handlers over httptest without binding a port.
+func newEvalMux(engine *Engine, push *PushClient) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// POST /eval — the hot path. Body: EvalRequest. Returns EvalResponse.
 	mux.HandleFunc("/eval", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		// Origin gate (phase-2 voice identity, task-9nldh): a browser page
+		// posting cross-origin is rejected. Server-side callers (the
+		// go-server relay, curl) send no Origin and pass through — same
+		// rule as the go-server guard's OriginAllowed.
+		if !evalOriginAllowed(r) {
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]any{"error": "origin not allowed"})
 			return
 		}
 		var req EvalRequest
@@ -147,12 +171,7 @@ func Serve(addrFlag, pushURLFlag string) {
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "protocol": ProtocolVersion})
 	})
 
-	log.Printf("parlay-eval-engine (compiled Go) listening on http://%s", addr)
-	log.Printf("  push URL: %s", pushURL)
-	log.Printf("  commands: %d compiled", len(engine.commands))
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("listen failed: %v", err)
-	}
+	return mux
 }
 
 func envOr(k, def string) string {
