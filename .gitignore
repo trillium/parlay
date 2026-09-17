@@ -37,3 +37,7 @@ packages/go-server/parlay-server
 # in place writes a .gc/ state dir — that is a bug (see city/README.md), but
 # committing that live state would be worse, so it is ignored as a backstop.
 city/.gc/
+
+# Agent runtime output (parlay listener capture, pi task logs). Untracked
+# harness files trip the no-mistakes clean-tree gate; ignored as a backstop.
+.pi/
