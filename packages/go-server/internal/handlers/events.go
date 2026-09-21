@@ -132,10 +132,20 @@ var busEmitEvents = map[string]bool{
 const sseClientBuffer = 64
 
 // sseHeartbeatInterval is how often a `GET /events` connection gets a
-// comment-only keep-alive line. Same reasoning as poll.go's
-// defaultPollTimeout: sit comfortably under common reverse-proxy/idle-
-// connection timeouts so a quiet channel doesn't get silently dropped.
-const sseHeartbeatInterval = 25 * time.Second
+// comment-only keep-alive line. It must sit comfortably under the tightest
+// idle-connection budget on the client path: the phone's DOWN stream was
+// observed cycling sse-open/sse-drop every ~11s (herdr-web.log), so a
+// quiet stream must see traffic well before that — 5s gives better than 2x
+// margin, at the cost of one ~15-byte comment per client per 5s. The prior
+// 25s value could never fire under that budget: an idle stream was reaped
+// before its first keepalive, and the phone reconnected in a loop that never
+// survived the 1s verify hold plus delivery. Same defect class as the
+// Bun.serve 10s-idle wedge (task-2nwlw): the keepalive has to beat the
+// killer, not just exist.
+//
+// A var (not const) so the keepalive regression test can shrink it without
+// waiting out the production interval; production code never mutates it.
+var sseHeartbeatInterval = 5 * time.Second
 
 // sseEvent is one named, JSON-encodable event queued for a connected client.
 type sseEvent struct {
