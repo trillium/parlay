@@ -249,3 +249,37 @@ func TestPresenceMapPayloadMarksActivePollersOnline(t *testing.T) {
 		t.Errorf("presenceMapPayload = %+v, want no entry for an untouched channel", got)
 	}
 }
+
+// TestSSEHeartbeatIntervalUnderIdleKillBudget pins the keepalive interval
+// below the observed idle-drop budget: the phone's DOWN stream cycled
+// sse-open/sse-drop every ~11s (herdr-web.log), so an interval at or above
+// that budget means an idle stream is reaped before its first keepalive and
+// the client reconnects in a loop that never survives delivery. 8s keeps
+// better than 1s margin under the ~11s floor while leaving room to lengthen
+// the interval later without reintroducing the loop. Fails on the old 25s
+// value.
+func TestSSEHeartbeatIntervalUnderIdleKillBudget(t *testing.T) {
+	const budget = 8 * time.Second // observed ~11s drop cycle, minus margin
+	if sseHeartbeatInterval >= budget {
+		t.Errorf("sseHeartbeatInterval = %s, want under %s (idle streams die at ~11s with no traffic)", sseHeartbeatInterval, budget)
+	}
+}
+
+// TestHandleEventsEmitsKeepaliveWhenIdle proves the keepalive wiring: an
+// idle stream (no broadcasts) still gets comment-only frames. It shrinks the
+// interval rather than waiting out the production 5s, so the suite stays
+// fast; the value assertion above is what guards the production interval.
+func TestHandleEventsEmitsKeepaliveWhenIdle(t *testing.T) {
+	old := sseHeartbeatInterval
+	sseHeartbeatInterval = 20 * time.Millisecond
+	t.Cleanup(func() { sseHeartbeatInterval = old })
+
+	st := newTestStore(t)
+	rec, stop := runEvents(t, st, newHub(newBroker()))
+	time.Sleep(150 * time.Millisecond) // several shrunk-interval keepalives land
+	stop()
+
+	if body := rec.Body.String(); !strings.Contains(body, ": keep-alive") {
+		t.Errorf("idle stream body has no keep-alive comment; got:\n%s", body)
+	}
+}
