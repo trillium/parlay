@@ -321,6 +321,12 @@ func TestHandleEventsHoldsIdleStreamPastKillBudget(t *testing.T) {
 		t.Fatal("idle stream handler returned before 13s: the server ended an idle stream itself")
 	default:
 	}
+	// Nothing on the recorder is safe to touch until the handler has
+	// returned: httptest.ResponseRecorder is not synchronized, and even
+	// the t=0 header writes have no happens-before edge to this goroutine
+	// until done closes (CI runs -race).
+	cancel()
+	<-done
 	if got := rec.Header().Get("X-Accel-Buffering"); got != "no" {
 		t.Errorf("X-Accel-Buffering = %q, want %q (buffering proxies would hold keepalives)", got, "no")
 	}
