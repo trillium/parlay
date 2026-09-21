@@ -715,7 +715,22 @@ Query params:
 
 Connect burst, in order: `connected`, `history`, `agents`,
 `agent_presence`, `presence_map`, then `commands` (live-command snapshot).
-Keepalive comment frame every 25s (`: keep-alive`).
+Keepalive comment frame every 5s (`: keep-alive`), plus
+`X-Accel-Buffering: no` so buffering proxies cannot hold the keepalives.
+The 5s cadence sits under the tightest idle budget observed on the client
+path (the phone's down stream cycled open/drop every ~11s with the old 25s
+interval, which could never fire before the reap) with >2x margin, and
+likewise beats minute-scale NAT/DERP idle timeouts — an idle stream must
+see traffic well before any of those fire.
+
+Reconnect/resume contract: on any error the client closes and reconnects
+with exponential backoff (1s → doubling, capped 30s), passing `after=`
+with the last `message` id it holds so `history` in the connect burst is
+the delta, not a full replay. `message` frames are the resume cursor
+(`input_action` envelopes carry no id); dedup by message id regardless,
+since the delta can overlap what the client already holds. The
+`parlay-input` owned SSE (`packages/input/src/parlay-input/sse.ts`)
+implements the same contract for hosts without a shared subscription.
 
 | Event | Payload | Notes |
 |---|---|---|

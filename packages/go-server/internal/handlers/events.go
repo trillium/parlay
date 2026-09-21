@@ -605,6 +605,13 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
+		// X-Accel-Buffering is honored by nginx and several other
+		// buffering reverse proxies (and ignored elsewhere): without it a
+		// proxy in front of this server can hold the 5s keepalive comments
+		// until its buffer fills, leaving the client on an effectively idle
+		// stream that the transit path then reaps. Belt-and-suspenders next
+		// to the explicit Flush below.
+		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 
 		after := query.Get("after")
