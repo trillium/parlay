@@ -84,6 +84,54 @@ writes out of scope): add an org MCP server pointing at
 server's tool prefix. Auth: agents outside loopback present their
 `registration_token`. Removable afterwards by deleting the org server entry.
 
+## 2b. Jungle downstream registration (delivery target, verified live)
+
+The pilot is registered as a Jungle downstream — same pattern as the existing
+`beads-bridge` streamable_http entry:
+
+```sh
+mcpjungle register --name agent-mail-pilot --url http://127.0.0.1:18765/mcp \
+  --description "Reversible pilot: mcp_agent_mail fork (task-2qo8v)." \
+  --registry http://100.74.138.74:8338   # tailnet; loopback :8338 refuses
+# reverse: mcpjungle deregister agent-mail-pilot --registry http://100.74.138.74:8338
+```
+
+Handshake proof (raw MCP against the gateway, stdlib client):
+
+- `mcpjungle list tools` → all **41 `agent-mail-pilot__*`** tools
+  (`send_message`, `fetch_inbox`, `acknowledge_message`, `reply_message`,
+  `register_agent`, `fetch_topic`, `mark_message_read`, …), all `[ENABLED]`.
+- `POST http://100.74.138.74:8338/mcp` `initialize` →
+  `MCPJungle Proxy MCP server`; `tools/list` → **235 tools, 41 mail**.
+- Boundary kept: the `firstmate` tool group is doorway-only by design
+  (`firstmate_mcp`, 101 tools, nothing else) — mail serves through the gateway
+  root `/mcp`, never through the firstmate group. No firstmate_mcp tool in
+  the mail path (constraint held).
+
+Known interop gap — `mcpjungle invoke` fails on the direct registration
+(`connection reset by peer`; `uvicorn … RuntimeError: Response content longer
+than Content-Length` in the pilot log). Root-caused to HTTP keep-alive
+connection reuse in the fork's stack, proven by isolation:
+
+- Direct MCP with a fresh connection per request (Python `urllib`): all 41
+  tools listable, every `tools/call` succeeds.
+- Identical bytes over a reused keep-alive connection (Go client, same
+  initialize → notification → `tools/call` sequence): response corrupts,
+  connection killed. With `req.Close = true` (fresh conn per request):
+  succeeds.
+- Via a buffering MITM (fresh upstream conn per request): Jungle `invoke`
+  of `health_check` succeeds end-to-end (MITM deregistered afterwards).
+- Suspect: the fork's `BaseHTTPMiddleware` chain
+  (`SecurityAndRateLimitMiddleware` / `BearerAuthMiddleware`,
+  `src/mcp_agent_mail/http.py:667,736`) re-chunking a buffered body while
+  the inner Content-Length stands. `serve-http` exposes no keep-alive knob
+  (`uvicorn.run` called with host/port/log_level only).
+
+So: registration + discovery + gateway handshake are green; **tool execution
+through Jungle awaits a fork fix** (keep-alive handling in the HTTP stack,
+or a `timeout_keep_alive` deploy knob). Filed here as follow-up, not fixed in
+pilot scope.
+
 ## 3. Proof evidence (2026-09-24, host-local)
 
 Full loop `pilot-alpha → pilot-beta → ack → reply → alpha fetch → ack`
@@ -158,8 +206,9 @@ brain-only deltas separately.
 - Heaviest footprint (~175 MB, 459 deps incl. litellm/redis-client/tiktoken —
   none exercised by the pilot). If footprint ever blocks adoption, fallback
   order per prior report: mailbox-mcp (simplest) then bridge-wrap (E).
-- HTTP-only transport (no stdio) — fine for Coder org servers and pi HTTP
-  entries, rules out stdio-only harnesses.
+- HTTP + stdio transports exist (`serve-http`, `serve-stdio`); the pilot used
+  HTTP — fine for Coder org servers and pi HTTP entries, stdio covers
+  stdio-only harnesses.
 
 ## 7. Reversibility / teardown (pilot-only, nothing fleet-wide)
 
