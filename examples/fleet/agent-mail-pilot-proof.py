@@ -57,10 +57,22 @@ def inbox_messages(payload):
     sys.exit(1)
 
 
+def message_id(msg):
+    mid = msg.get("id") if isinstance(msg, dict) else None
+    if not mid:
+        print(f"INBOX ERROR: message missing id: {json.dumps(msg)[:300]}")
+        sys.exit(1)
+    return mid
+
+
 rid = 100
 init = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                           "clientInfo": {"name": "pilot-proof", "version": "1"}}, rid)
-print("INIT server:", init["result"]["serverInfo"])
+info = init.get("result", {}).get("serverInfo") if isinstance(init, dict) else None
+if info is None:
+    print(f"INIT ERROR: unexpected initialize shape: {json.dumps(init)[:500]}")
+    sys.exit(1)
+print("INIT server:", info)
 rid += 1
 # notifications/initialized (no response expected)
 try:
@@ -90,7 +102,7 @@ msgs0 = inbox_messages(inbox)
 if not msgs0:
     print("INBOX ERROR: beta inbox empty before ack")
     sys.exit(1)
-msg_id = msgs0[0]["id"]
+msg_id = message_id(msgs0[0])
 
 ack = call_tool("acknowledge_message", {"project_key": PROJECT, "agent_name": "pilot-beta",
                                         "message_id": msg_id}, rid); rid += 1
@@ -118,7 +130,7 @@ if not msgs:
     print("INBOX ERROR: alpha inbox empty, expected beta reply")
     sys.exit(1)
 ack2 = call_tool("acknowledge_message", {"project_key": PROJECT, "agent_name": "pilot-alpha",
-                                         "message_id": msgs[0]["id"]}, rid); rid += 1
+                                         "message_id": message_id(msgs[0])}, rid); rid += 1
 print("ACK2:", json.dumps(ack2)[:300])
 if not (isinstance(ack2, dict) and ack2.get("acknowledged")):
     print(f"ACK ERROR: reply not acknowledged: {json.dumps(ack2)[:300]}")
