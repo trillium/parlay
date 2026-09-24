@@ -56,7 +56,10 @@ value for the session. Do not run a second standalone `parlay listen
 The bridge does not claim, close, or rewrite inbox beads. It only converts a
 wake hint into one worker turn. The Pi worker is responsible for atomically
 claiming the next item with `inbox update <id> --claim`, propagating durable
-knowledge, closing the item, and remaining alive for the next poke. A closed
+knowledge, closing the item, and remaining alive for the next poke. If an item
+is actionable, the worker launches it immediately; if it cannot be launched,
+it notes why in the bead and creates the appropriate record in the other
+stores. A closed
 item is normal completion, not a reason to park the shared worker.
 
 ## Store-attach (any federated store)

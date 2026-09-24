@@ -51,6 +51,12 @@ describe("canonical worker prompt (single source of truth)", () => {
 		expect(msg).toMatch(/Parlay inbox worker poke/);
 		expect(msg).toMatch(/inbox update <id> --claim --assignee pi-inbox/);
 	});
+
+	test("prompt states the launch-or-record rule plainly", () => {
+		const msg = renderWorkerPrompt("inbox", "pi-inbox");
+		expect(msg).toMatch(/If the item is actionable, launch it immediately/);
+		expect(msg).toMatch(/note why in the bead and create the appropriate record in the other stores/);
+	});
 });
 
 describe("store → watcher channel mapping", () => {
