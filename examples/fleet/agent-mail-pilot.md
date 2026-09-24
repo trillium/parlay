@@ -132,6 +132,17 @@ through Jungle awaits a fork fix** (keep-alive handling in the HTTP stack,
 or a `timeout_keep_alive` deploy knob). Filed here as follow-up, not fixed in
 pilot scope.
 
+### Fix applied (task-3b3oh, 2026-09-24, host-local, reversible)
+
+`agent-mail-keepalive-proxy.py` (this directory) implements the deploy-side
+workaround: `127.0.0.1:18766` → `127.0.0.1:18765` with a fresh upstream
+`Connection: close` per request and correct Content-Length re-framing.
+Jungle's `agent-mail-pilot` URL points at the proxy (`:18766/mcp`); the
+backend itself was never restarted or modified. Verified live: `mcpjungle
+invoke agent-mail-pilot__health_check` green plus a full gateway
+send→fetch→ack hello-world loop (transcript on bead `task-3b3oh`).
+Teardown: `kill <proxy pid>`, then re-register straight at `:18765/mcp`.
+
 ## 3. Proof evidence (2026-09-24, host-local)
 
 Full loop `pilot-alpha → pilot-beta → ack → reply → alpha fetch → ack`
