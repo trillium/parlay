@@ -57,16 +57,30 @@ export function startTail(
 			stderrText = (stderrText + chunk.toString()).slice(-2_000);
 		});
 	}
+	let done = false;
+	const finish = (exit: TailExit): void => {
+		if (done) return;
+		done = true;
+		onExit(exit);
+	};
 	child.once("error", (error: Error) => {
-		onExit({ detail: `spawn failed: ${error.message}`, code: null, signal: null });
+		finish({ detail: `spawn failed: ${error.message}`, code: null, signal: null });
 	});
+	let exitCode: number | null | undefined;
+	let exitSignal: NodeJS.Signals | null | undefined;
 	child.once("exit", (code, signal) => {
+		exitCode = code ?? null;
+		exitSignal = signal ?? null;
+	});
+	child.once("close", (code, signal) => {
 		const detail = stderrText.trim().replace(/\s+/g, " ");
 		const suffix = detail ? `: ${detail}` : "";
-		onExit({
-			detail: `stopped (${signal || `exit ${code ?? "?"}`})${suffix}`,
-			code: code ?? null,
-			signal: signal ?? null,
+		const resolvedCode = code ?? exitCode ?? null;
+		const resolvedSignal = signal ?? exitSignal ?? null;
+		finish({
+			detail: `stopped (${resolvedSignal || `exit ${resolvedCode ?? "?"}`})${suffix}`,
+			code: resolvedCode,
+			signal: resolvedSignal,
 		});
 	});
 	return child;

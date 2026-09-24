@@ -93,11 +93,12 @@ describe("watcher exit policy (stale CLI vs real crash)", () => {
 		// Fake timers first so the retry window below is fully observable.
 		jest.useFakeTimers();
 		try {
+			tail.onceHandlers["exit"](2, null);
 			wireErr.emit(
 				"data",
 				Buffer.from(`parlay: unknown command or flag "inbox-tail" — run 'parlay help' for usage\n`),
 			);
-			tail.onceHandlers["exit"](2, null);
+			tail.onceHandlers["close"](2, null);
 			const texts = captured.notices.map((n) => n.text).join("\n");
 			expect(texts).toMatch(/tail monitor unavailable/);
 			expect(texts).toMatch(/listener-only/);
@@ -120,6 +121,7 @@ describe("watcher exit policy (stale CLI vs real crash)", () => {
 		try {
 			wireErr.emit("data", Buffer.from("inbox-tail: pass failed (continuing): boom\n"));
 			spawned[1].onceHandlers["exit"](1, null);
+			spawned[1].onceHandlers["close"](1, null);
 			const texts = captured.notices.map((n) => n.text).join("\n");
 			expect(texts).toMatch(/tail monitor stopped \(exit 1\).*; retrying/);
 			jest.advanceTimersByTime(6_000);
