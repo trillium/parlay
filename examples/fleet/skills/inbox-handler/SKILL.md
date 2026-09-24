@@ -90,7 +90,9 @@ drift apart; correct the file, not a copy:
 3. Read its complete description and propagate the finding into the named
    durable project/record as a dated, source-linked learning note. Append; do
    not overwrite stale context. Do not invent adoption, productivity, or
-   completion claims.
+   completion claims. If the item is actionable, launch it immediately. If it
+   cannot be launched, note why in the bead and create the appropriate record
+   in the other stores.
 4. Close it only after the knowledge record exists:
    `<store> close <id> --reason "knowledge: <destination>; source: <id>; ..."`.
 5. Recheck the store immediately and repeat until no eligible item remains.
