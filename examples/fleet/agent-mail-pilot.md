@@ -18,7 +18,7 @@
 `git ls-remote` upstream HEAD == fork HEAD, no divergence).**
 It is the only candidate proven live end-to-end on this host, and the only
 one with git-auditable durability plus per-recipient ack state. Honest costs:
-heaviest ops weight of the five, no server-side redelivery timer, HTTP-only.
+heaviest ops weight of the five, no server-side redelivery timer, HTTP-first (pilot used HTTP; stdio via serve-stdio available).
 
 Scorecard (criteria = brief + brain-compat addendum; §4 letters from the prior report):
 
