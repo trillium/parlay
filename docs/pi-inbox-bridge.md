@@ -27,7 +27,9 @@ That command persists an opt-in marker in the Pi session and starts two children
 `parlay listen --agent pi-inbox --legacy-poll` (the channel reader) and
 `parlay inbox-tail` (the enrolled watcher following the store's watch file;
 `parlay robots-tail` for the robots store, and listener-only for stores with
-no shipped tail). The direct poll avoids requiring
+no shipped tail — or when the installed parlay predates the tail subcommand,
+in which case the watcher reports once and stays listener-only with no retry).
+The direct poll avoids requiring
 a relay in the Pi pane; listen's singleton guard still takes over any older
 `pi-inbox` reader. Only `INBOX_POKE v1` messages become Pi turns. The bridge
 coalesces duplicate pokes and never queues one Pi turn per inbox item. The
@@ -39,7 +41,10 @@ The bridge is intentionally opt-in. Loading the extension in other panes does
 not make them compete for the channel. `/inbox-disconnect` removes the marker
 and terminates the listener and tail process groups together, so no stray
 tail survives disconnect. The bridge reconnects after an
-unexpected listener or tail exit while the session remains enabled.
+unexpected listener or tail exit while the session remains enabled, except when
+the tail exit proves the installed parlay predates the tail subcommand (usage
+exit 2 with "unknown command or flag"): that downgrades to listener-only with one
+notice telling the operator to update parlay, and schedules no retry.
 Takeover is definitive: the winning side names the reaped pids so the old
 pane can disconnect, and a repeatedly SIGTERM'd listener backs off
 instead of hot-retrying into a fight.
