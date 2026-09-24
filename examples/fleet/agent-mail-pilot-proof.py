@@ -29,13 +29,32 @@ def call_tool(name, args, rid):
     if "error" in out:
         print(f"TOOL {name} ERROR: {json.dumps(out['error'])[:500]}")
         sys.exit(1)
-    res = out["result"]
-    # content[0].text holds JSON string
-    text = res["content"][0]["text"] if res.get("content") else json.dumps(res)
+    res = out.get("result", out)
+    content = res.get("content") if isinstance(res, dict) else None
+    if content:
+        try:
+            text = content[0]["text"]
+        except (KeyError, IndexError, TypeError):
+            print(f"TOOL {name} ERROR: unexpected result shape: {json.dumps(res)[:500]}")
+            sys.exit(1)
+    else:
+        text = json.dumps(res)
     try:
         return json.loads(text)
-    except (json.JSONDecodeError, KeyError):
+    except json.JSONDecodeError:
         return text
+
+
+def inbox_messages(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("data", "result"):
+            items = payload.get(key)
+            if isinstance(items, list):
+                return items
+    print(f"INBOX ERROR: unexpected inbox shape: {json.dumps(payload)[:500]}")
+    sys.exit(1)
 
 
 rid = 100
@@ -67,15 +86,25 @@ print("SENT:", json.dumps(sent)[:400])
 inbox = call_tool("fetch_inbox", {"project_key": PROJECT, "agent_name": "pilot-beta",
                                   "unread_only": True, "include_bodies": True}, rid); rid += 1
 print("INBOX beta:", json.dumps(inbox)[:600])
-msg_id = inbox[0]["id"] if isinstance(inbox, list) else inbox["data"][0]["id"]
+msgs0 = inbox_messages(inbox)
+if not msgs0:
+    print("INBOX ERROR: beta inbox empty before ack")
+    sys.exit(1)
+msg_id = msgs0[0]["id"]
 
 ack = call_tool("acknowledge_message", {"project_key": PROJECT, "agent_name": "pilot-beta",
                                         "message_id": msg_id}, rid); rid += 1
 print("ACK:", json.dumps(ack)[:300])
+if not (isinstance(ack, dict) and ack.get("acknowledged")):
+    print(f"ACK ERROR: message not acknowledged: {json.dumps(ack)[:300]}")
+    sys.exit(1)
 
 inbox2 = call_tool("fetch_inbox", {"project_key": PROJECT, "agent_name": "pilot-beta",
                                    "unread_only": True}, rid); rid += 1
 print("INBOX beta after ack (expect []):", json.dumps(inbox2)[:200])
+if inbox_messages(inbox2):
+    print(f"ACK ERROR: beta inbox not empty after ack: {json.dumps(inbox2)[:300]}")
+    sys.exit(1)
 
 reply = call_tool("reply_message", {"project_key": PROJECT, "sender_name": "pilot-beta",
                                     "message_id": msg_id, "body_md": "pong from beta"}, rid); rid += 1
@@ -84,8 +113,14 @@ print("REPLY:", json.dumps(reply)[:400])
 inbox3 = call_tool("fetch_inbox", {"project_key": PROJECT, "agent_name": "pilot-alpha",
                                    "unread_only": True, "include_bodies": True}, rid); rid += 1
 print("INBOX alpha:", json.dumps(inbox3)[:600])
-msgs = inbox3 if isinstance(inbox3, list) else inbox3.get("data", inbox3.get("result", []))
+msgs = inbox_messages(inbox3)
+if not msgs:
+    print("INBOX ERROR: alpha inbox empty, expected beta reply")
+    sys.exit(1)
 ack2 = call_tool("acknowledge_message", {"project_key": PROJECT, "agent_name": "pilot-alpha",
                                          "message_id": msgs[0]["id"]}, rid); rid += 1
 print("ACK2:", json.dumps(ack2)[:300])
+if not (isinstance(ack2, dict) and ack2.get("acknowledged")):
+    print(f"ACK ERROR: reply not acknowledged: {json.dumps(ack2)[:300]}")
+    sys.exit(1)
 print("PILOT LOOP COMPLETE")
