@@ -142,13 +142,31 @@ inbox3 = call_tool("fetch_inbox", {"project_key": PROJECT, "agent_name": "pilot-
                                    "unread_only": True, "include_bodies": True}, rid); rid += 1
 print("INBOX alpha:", json.dumps(inbox3)[:600])
 msgs = inbox_messages(inbox3)
-if not msgs:
-    print("INBOX ERROR: alpha inbox empty, expected beta reply")
+if len(msgs) != 1:
+    print(f"INBOX ERROR: expected exactly one reply for alpha, got {len(msgs)}: {json.dumps(inbox3)[:300]}")
+    sys.exit(1)
+reply_mid = None
+if isinstance(reply, dict):
+    reply_mid = reply.get("id") or reply.get("message_id")
+    if not reply_mid:
+        for k in ("message", "reply", "data", "result"):
+            n = reply.get(k)
+            if isinstance(n, dict) and (n.get("id") or n.get("message_id")):
+                reply_mid = n.get("id") or n.get("message_id")
+                break
+if reply_mid and message_id(msgs[0]) != reply_mid:
+    print(f"INBOX ERROR: alpha inbox head does not match reply: {json.dumps(msgs[0])[:300]} vs {json.dumps(reply)[:300]}")
     sys.exit(1)
 ack2 = call_tool("acknowledge_message", {"project_key": PROJECT, "agent_name": "pilot-alpha",
                                          "message_id": message_id(msgs[0])}, rid); rid += 1
 print("ACK2:", json.dumps(ack2)[:300])
 if not (isinstance(ack2, dict) and ack2.get("acknowledged")):
     print(f"ACK ERROR: reply not acknowledged: {json.dumps(ack2)[:300]}")
+    sys.exit(1)
+inbox4 = call_tool("fetch_inbox", {"project_key": PROJECT, "agent_name": "pilot-alpha",
+                                   "unread_only": True}, rid); rid += 1
+print("INBOX alpha after ack (expect []):", json.dumps(inbox4)[:200])
+if inbox_messages(inbox4):
+    print(f"ACK ERROR: alpha inbox not empty after ack: {json.dumps(inbox4)[:300]}")
     sys.exit(1)
 print("PILOT LOOP COMPLETE")
