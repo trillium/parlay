@@ -213,6 +213,7 @@ brain-only deltas separately.
 ## 7. Reversibility / teardown (pilot-only, nothing fleet-wide)
 
 ```sh
+mcpjungle deregister agent-mail-pilot --registry http://100.74.138.74:8338
 kill <serve-http pid>   # pilot ran as one process on 127.0.0.1:18765
 rm -rf /tmp/mailpilot   # server data, sqlite, git archive, proof scripts
 ```
