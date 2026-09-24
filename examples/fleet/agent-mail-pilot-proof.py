@@ -30,13 +30,23 @@ def call_tool(name, args, rid):
         print(f"TOOL {name} ERROR: {json.dumps(out['error'])[:500]}")
         sys.exit(1)
     res = out.get("result", out)
-    content = res.get("content") if isinstance(res, dict) else None
-    if content:
-        try:
-            text = content[0]["text"]
-        except (KeyError, IndexError, TypeError):
-            print(f"TOOL {name} ERROR: unexpected result shape: {json.dumps(res)[:500]}")
-            sys.exit(1)
+    if isinstance(res, dict):
+        content = res.get("content")
+        if isinstance(content, list) and content:
+            try:
+                text = content[0]["text"]
+            except (KeyError, IndexError, TypeError):
+                print(f"TOOL {name} ERROR: unexpected result shape: {json.dumps(res)[:500]}")
+                sys.exit(1)
+        elif isinstance(content, list):
+            # Empty content list: server returned no payload rows
+            # (e.g. an empty inbox). Prefer the structured result when present.
+            sc = res.get("structuredContent")
+            if isinstance(sc, dict) and "result" in sc:
+                return sc["result"]
+            return []
+        else:
+            text = json.dumps(res)
     else:
         text = json.dumps(res)
     try:
@@ -49,6 +59,12 @@ def inbox_messages(payload):
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
+        # MCP envelope passthrough (e.g. empty content list): unwrap first.
+        sc = payload.get("structuredContent")
+        if isinstance(sc, dict):
+            inner = sc.get("result")
+            if isinstance(inner, list):
+                return inner
         for key in ("data", "result"):
             items = payload.get(key)
             if isinstance(items, list):

@@ -168,6 +168,7 @@ kill <serve-http pid>   # pilot ran as one process on 127.0.0.1:18765
 rm -rf /tmp/mailpilot   # server data, sqlite, git archive, proof scripts
 ```
 
-No repo files outside this branch's doc + proof script. No Coder org config
+No repo files outside this branch's doc + proof script (plus a `__pycache__/`
+ignore line in `.gitignore`). No Coder org config
 was created. No firstmate surfaces were touched. To re-run: §2 + 
 `python3 agent-mail-pilot-proof.py` (adjust `BASE`/port at the top).
