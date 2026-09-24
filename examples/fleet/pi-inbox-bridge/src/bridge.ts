@@ -25,8 +25,9 @@ import { createListener } from "./listener";
  * Two supervised children live and die with the connection: `parlay listen`
  * (channel reader; `--legacy-poll`, singleton takeover of stale readers;
  * CHAT_MSG pokes become one worker wake turn) and `parlay <store>-tail`
- * (the enrolled watcher following the store watch file; listener-only for
- * stores with no shipped tail). The worker, not the dispatcher, reads and
+ * (the enrolled watcher following the store watch file; listener-only when
+ * the store ships no tail or the installed parlay predates it). The worker,
+ * not the dispatcher, reads and
  * claims tickets from the attached store.
  */
 export default function (pi: ExtensionAPI): void {
