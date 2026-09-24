@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { configForStore, listenArgs, tailArgs } from "./config";
+import { isTailUnsupportedExit } from "./tailer";
 import {
 	isInboxPoke,
 	parseChatLine,
@@ -99,6 +100,23 @@ describe("watcher enrollment (tail monitor)", () => {
 
 	test("stores without a shipped tail enroll nothing", () => {
 		expect(tailArgs("sandbox")).toBeNull();
+	});
+});
+
+describe("stale-CLI tail detection (robots-7scg)", () => {
+	test("usage exit 2 with 'unknown command or flag' means the CLI predates the tail", () => {
+		expect(
+			isTailUnsupportedExit(2, `stopped (exit 2): parlay: unknown command or flag "inbox-tail" — run 'parlay help' for usage`),
+		).toBe(true);
+	});
+
+	test("a real crash (non-2 exit) stays retriable", () => {
+		expect(isTailUnsupportedExit(1, "stopped (exit 1): boom")).toBe(false);
+		expect(isTailUnsupportedExit(null, "stopped (SIGTERM)")).toBe(false);
+	});
+
+	test("exit 2 without the unknown-command text stays retriable", () => {
+		expect(isTailUnsupportedExit(2, "stopped (exit 2): bad flag --frobnicate")).toBe(false);
 	});
 });
 

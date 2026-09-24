@@ -13,10 +13,28 @@ import { tailArgs } from "./config";
  * only and is drained (never parsed) so backpressure can never stall a
  * dispatch; unexpected exits report through onExit for retry-or-notify.
  */
+/** Structured tail-child exit: detail is the human line, code/signal drive retry policy. */
+export type TailExit = {
+	detail: string;
+	code: number | null;
+	signal: NodeJS.Signals | null;
+};
+
+/**
+ * True when the installed parlay predates the store tail subcommand: the
+ * CLI reports usage exit 2 with "unknown command or flag" (robots-7scg:
+ * production parlay was built before inbox-tail landed in #283). Retrying
+ * that invocation can never succeed until parlay is updated, so the
+ * watcher must downgrade to listener-only instead of hot-looping forever.
+ */
+export function isTailUnsupportedExit(code: number | null, detail: string): boolean {
+	return code === 2 && /unknown command or flag/.test(detail);
+}
+
 export function startTail(
 	store: string,
 	env: NodeJS.ProcessEnv,
-	onExit: (detail: string) => void,
+	onExit: (exit: TailExit) => void,
 ): ChildProcess | null {
 	const cmd = tailArgs(store);
 	if (!cmd) return null;
@@ -40,12 +58,16 @@ export function startTail(
 		});
 	}
 	child.once("error", (error: Error) => {
-		onExit(`spawn failed: ${error.message}`);
+		onExit({ detail: `spawn failed: ${error.message}`, code: null, signal: null });
 	});
 	child.once("exit", (code, signal) => {
 		const detail = stderrText.trim().replace(/\s+/g, " ");
 		const suffix = detail ? `: ${detail}` : "";
-		onExit(`stopped (${signal || `exit ${code ?? "?"}`})${suffix}`);
+		onExit({
+			detail: `stopped (${signal || `exit ${code ?? "?"}`})${suffix}`,
+			code: code ?? null,
+			signal: signal ?? null,
+		});
 	});
 	return child;
 }
@@ -83,11 +105,21 @@ export function createWatcher(deps: WatcherDeps): {
 			timer = undefined;
 		}
 		const store = deps.sessionConfig().store;
-		const child = startTail(store, deps.childEnv(), (detail) => {
+		const child = startTail(store, deps.childEnv(), (exit) => {
 			if (tail !== child) return;
 			tail = undefined;
 			if (!deps.isActive()) return;
-			deps.notice(`Parlay ${store} tail monitor ${detail}; retrying`);
+			if (isTailUnsupportedExit(exit.code, exit.detail)) {
+				// The installed parlay has no `<store>-tail` yet: a retry
+				// would crash-loop forever, so stay listener-only and say
+				// how to get the fast path back. No timer is scheduled.
+				deps.notice(
+					`Parlay ${store} tail monitor unavailable (${exit.detail}): the installed parlay predates ` +
+						`\`parlay ${store}-tail\`; update parlay, staying listener-only with no retry.`,
+				);
+				return;
+			}
+			deps.notice(`Parlay ${store} tail monitor ${exit.detail}; retrying`);
 			timer = setTimeout(() => {
 				timer = undefined;
 				start();
