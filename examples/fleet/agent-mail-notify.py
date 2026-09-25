@@ -9,7 +9,16 @@ poked twice for the same mail. When the signal disappears (fetched),
 the state entry is cleared and the seat becomes re-armable.
 
 Seat -> Parlay-listener mapping lives OUTSIDE the repo (pane ids are
-ephemeral): a JSON file {"ChartreuseTower": "some-pane-id", ...}.
+ephemeral): a JSON file mapping each seat to its owner's pane AND that
+pane's poke prefix, e.g.
+  {"ChartreuseTower": {"pane": "some-pane-id", "poke": "INBOX_POKE"}}
+A bare string value ({"ChartreuseTower": "some-pane-id"}) means the
+default INBOX_POKE prefix. The prefix is load-bearing, not cosmetic:
+the pi-inbox-bridge wakes a pane ONLY on wire lines starting with
+`<POKE> v1:` (isInboxPoke) - a poke without the pane's own prefix is
+parsed as chatter and the worker never wakes. That mismatch was the
+broken wake-agent surface: the first version of this script sent a
+prefix-less human-readable line and connected panes slept through mail.
 Seats missing from the map are logged, never broadcast, never guessed.
 
 Run (host-local, reversible):
@@ -66,6 +75,25 @@ def iter_signals(signals_root):
                 continue
 
 
+DEFAULT_POKE = "INBOX_POKE"
+
+
+def resolve_target(entry):
+    """Map entry -> (pane_id or None, poke prefix).
+
+    Accepts {"pane": ..., "poke": ...} objects (preferred: the pane's
+    own connected-store prefix) and bare pane-id strings (default prefix).
+    Anything else is unmapped: log, never guess.
+    """
+    if isinstance(entry, dict):
+        pane = entry.get("pane")
+        poke = entry.get("poke") or DEFAULT_POKE
+        return (pane or None, poke)
+    if isinstance(entry, str) and entry:
+        return entry, DEFAULT_POKE
+    return None, DEFAULT_POKE
+
+
 def poke(pane_id, text):
     r = subprocess.run(
         ["parlay", "send", "--agent", pane_id, text],
@@ -96,10 +124,11 @@ def main():
             last = state.get(key, 0)
             if mtime <= last:
                 continue  # already poked for this mail
+            pane_id, poke_prefix = resolve_target(seat_map.get(seat))
             ok, detail = poke(
                 pane_id,
-                f"\U0001f4eb agent-mail waiting for {seat} "
-                f"(project {slug}): fetch_inbox unread_only=true, then acknowledge.",
+                f"{poke_prefix} v1: agent-mail for {seat} (project {slug}) "
+                f"- fetch_inbox unread_only=true, then acknowledge.",
             )
             print(f"poke {seat} -> {pane_id}: {'sent' if ok else 'FAILED ' + detail}",
                   flush=True)
