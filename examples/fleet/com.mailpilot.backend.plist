@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/tmp/mailpilot/fork/.venv/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HTTP_HOST</key>
+		<string>127.0.0.1</string>
+		<key>HTTP_PORT</key>
+		<string>18765</string>
+		<key>STORAGE_ROOT</key>
+		<string>/tmp/mailpilot/pilot-data/mailbox</string>
+		<key>DATABASE_URL</key>
+		<string>sqlite+aiosqlite:////tmp/mailpilot/pilot-data/storage.sqlite3</string>
+		<key>NOTIFICATIONS_ENABLED</key>
+		<string>true</string>
+		<key>NOTIFICATIONS_SIGNALS_DIR</key>
+		<string>/tmp/mailpilot/pilot-data/signals</string>
+		<key>LOG_RICH_ENABLED</key>
+		<string>false</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.mailpilot.backend</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/tmp/mailpilot/fork/.venv/bin/python</string>
+		<string>-m</string>
+		<string>mcp_agent_mail.cli</string>
+		<string>serve-http</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/mailpilot/launchd.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/mailpilot/launchd.out.log</string>
+	<key>WorkingDirectory</key>
+	<string>/tmp/mailpilot/fork</string>
+</dict>
+</plist>
