@@ -104,10 +104,13 @@ def mail_home():
 
 
 def poke(pane_id, text):
-    r = subprocess.run(
-        ["parlay", "send", "--agent", pane_id, text],
-        capture_output=True, text=True, timeout=60,
-    )
+    try:
+        r = subprocess.run(
+            ["parlay", "send", "--agent", pane_id, text],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"{type(e).__name__}: {e}"[:200]
     return r.returncode == 0, (r.stderr or r.stdout).strip()[:200]
 
 
