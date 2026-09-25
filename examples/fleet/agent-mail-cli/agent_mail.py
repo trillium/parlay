@@ -83,7 +83,7 @@ class Client:
                 sid = resp.headers.get("Mcp-Session-Id")
                 if sid:
                     self._session["Mcp-Session-Id"] = sid
-                raw = resp.read().decode()
+                raw = resp.read().decode(errors="replace")
         except urllib.error.HTTPError as e:
             try:
                 detail = e.read().decode(errors="replace")[:200]
@@ -155,6 +155,9 @@ class Client:
             err = out["error"]
             raise MailError("%s: %s" % (tool, err.get("message", err)
                                           if isinstance(err, dict) else err))
+        if not isinstance(out, dict):
+            raise MailError("bad response from %s: %s" % (
+                self.endpoint, json.dumps(out, default=str)[:200]))
         result = out.get("result", out)
         if isinstance(result, dict) and result.get("isError"):
             payload = _extract_payload(result)
