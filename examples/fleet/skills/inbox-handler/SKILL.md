@@ -57,7 +57,7 @@ queueing. (Proven on `sandbox-inbox`: first dispatch refused, enrollment via
 `SANDBOX_POKE`.)
 
 This registers the store channel, announces, and blocks in the poll loop. The Pi
-bridge turns only that store's `<STORE>_POKE v1` messages into worker wakes; ordinary chat and
+bridge turns only poke messages into wakes — that store's `<STORE>_POKE v1` selects the store worker prompt, while `MAIL_POKE v1:` mail wakes select the separate agent-mail prompt (see `examples/fleet/agent-mail-runbook.md`); ordinary chat and
 close notifications are not work assignments.
 
 Relay/server scoping matters: the relay is bound to one server URL, and

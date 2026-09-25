@@ -31,7 +31,7 @@ no shipped tail — or when the installed parlay predates the tail subcommand,
 in which case the watcher reports once and stays listener-only with no retry).
 The direct poll avoids requiring
 a relay in the Pi pane; listen's singleton guard still takes over any older
-`pi-inbox` reader. Only `INBOX_POKE v1` messages become Pi turns. The bridge
+`pi-inbox` reader. Only poke messages become Pi turns: `INBOX_POKE v1` (or the attached store's `<STORE>_POKE v1`) selects the store worker prompt, while a `MAIL_POKE v1:` agent-mail wake injects the separate mail prompt (`examples/fleet/pi-inbox-bridge/src/mail-prompt.md`) — never the reverse (wire contract: `examples/fleet/agent-mail-runbook.md`). The bridge
 coalesces duplicate pokes and never queues one Pi turn per inbox item. The
 worker inspects the inbox store, claims one item at a time, records durable
 knowledge, closes it, and repeats until exhaustion. It only claims items with
