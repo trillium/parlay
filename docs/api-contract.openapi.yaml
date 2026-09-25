@@ -1001,6 +1001,82 @@ paths:
           description: Evaluating model unreachable (TS).
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
 
+  /api/chat/remote-input/submit:
+    post:
+      operationId: remoteInputSubmit
+      x-parlay-server: go-only
+      summary: Enqueue accepted text for Talon injection (202 queued, not done)
+      description: >
+        Intake for the remote-input injection control plane. Full contract
+        owned by docs/remote-input.md. Guarded (GuardedPaths). Terminal
+        outcome arrives via GET status or the remote_input_result SSE event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device, text]
+              properties:
+                device: { type: string }
+                text: { type: string }
+                app: { type: string }
+                windowTitle: { type: string }
+                trigger: { type: string }
+      responses:
+        "202":
+          description: Queued; poll status or wait for the SSE event.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: string, description: "Submission id (ri-N)." }
+                  status: { const: queued }
+        "400":
+          description: device/text required, or invalid JSON body.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+
+  /api/chat/remote-input/status:
+    get:
+      operationId: remoteInputStatus
+      x-parlay-server: go-only
+      summary: Poll one submission's latest Outcome (404 unknown id)
+      description: >
+        Returns the latest Outcome for id. Terminal status:
+        injected | focus_failed | inject_failed; transient: queued |
+        injecting. Guarded (GuardedPaths). Full contract owned by
+        docs/remote-input.md.
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Latest Outcome for the submission.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, device, status]
+                properties:
+                  id: { type: string }
+                  device: { type: string }
+                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed] }
+                  focus: { enum: [verified, not_required, skipped] }
+                  injectAttempted: { type: boolean }
+                  preserveText: { type: boolean }
+                  stripTrigger: { type: boolean }
+                  error: { type: string }
+        "400":
+          description: id required.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+        "404":
+          description: Unknown submission id.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+
   /api/chat/pages:
     get:
       operationId: pages
@@ -1147,6 +1223,7 @@ paths:
         - reload
         - navigate
         - input_action
+        - remote_input_result
         - device_cmd
         - pages_patch
         - cursorless_rpc
