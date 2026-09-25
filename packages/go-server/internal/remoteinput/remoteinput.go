@@ -21,13 +21,17 @@
 package remoteinput
 
 // Statuses a submission moves through. Terminal states are Injected,
-// FocusFailed, and InjectFailed; Queued and Injecting are transient.
+// FocusFailed, InjectFailed, and DryRunPassed; Queued and Injecting are
+// transient. DryRunPassed is deliberately distinct from Injected so a
+// reader that only understands "injected" never mistakes a dry run
+// (nothing typed) for a real injection and clears state it should keep.
 const (
 	StatusQueued       = "queued"
 	StatusInjecting    = "injecting"
 	StatusInjected     = "injected"
 	StatusFocusFailed  = "focus_failed"
 	StatusInjectFailed = "inject_failed"
+	StatusDryRunPassed = "dry_run_passed"
 )
 
 // FocusMode records what the focus gate did for a submission.
@@ -46,6 +50,10 @@ type Submission struct {
 	App         string `json:"app,omitempty"`
 	WindowTitle string `json:"windowTitle,omitempty"`
 	Trigger     string `json:"trigger,omitempty"`
+	// DryRun performs the real focus request plus real verification
+	// and reports what would be inserted, typing nothing. It proves
+	// the success leg without touching the live machine.
+	DryRun bool `json:"dryRun,omitempty"`
 }
 
 // Outcome is the per-submission result reported back to Parlay. Parlay
@@ -60,13 +68,18 @@ type Outcome struct {
 	PreserveText    bool   `json:"preserveText,omitempty"`
 	StripTrigger    bool   `json:"stripTrigger,omitempty"`
 	Error           string `json:"error,omitempty"`
+	// DryRun marks an outcome that typed nothing; WouldInsert carries
+	// the exact bytes that would have been inserted.
+	DryRun      bool   `json:"dryRun,omitempty"`
+	WouldInsert string `json:"wouldInsert,omitempty"`
 }
 
 // Terminal reports whether no further transition is possible.
 func (o Outcome) Terminal() bool {
 	return o.Status == StatusInjected ||
 		o.Status == StatusFocusFailed ||
-		o.Status == StatusInjectFailed
+		o.Status == StatusInjectFailed ||
+		o.Status == StatusDryRunPassed
 }
 
 // SubmitRequest is the POST /api/chat/remote-input/submit wire shape.
@@ -76,6 +89,7 @@ type SubmitRequest struct {
 	App         string `json:"app,omitempty"`
 	WindowTitle string `json:"windowTitle,omitempty"`
 	Trigger     string `json:"trigger,omitempty"`
+	DryRun      bool   `json:"dryRun,omitempty"`
 }
 
 // SubmitResponse is the 202 answer: the submission is queued, not done.

@@ -568,7 +568,9 @@ summary here).
 ### `POST /api/chat/remote-input/submit`
 Enqueue accepted text for injection. Request:
 `{ "device": "string (required)", "text": "string (required)",
-"app"?: "…", "windowTitle"?: "…", "trigger"?: "…" }`.
+"app"?: "…", "windowTitle"?: "…", "trigger"?: "…", "dryRun"?: true }`
+(`?dryRun=1` forces the same mode without touching the body; dry-run runs
+the real focus + verification and reports `wouldInsert`, typing nothing).
 Response: **202** `{ "id": "ri-N", "status": "queued" }` (queued, not
 done — the terminal outcome arrives via status poll or the
 `remote_input_result` SSE event). Errors: **400** `device`/`text` missing;
@@ -577,8 +579,10 @@ done — the terminal outcome arrives via status poll or the
 ### `GET /api/chat/remote-input/status?id=ri-N`
 Poll one submission's latest `Outcome` (200) or **404** unknown id
 (evicted or never submitted). Terminal `status`: `injected` |
-`focus_failed` | `inject_failed`; transient: `queued` | `injecting`.
-Parlay clears shared input state only on `injected`; on `focus_failed` it
+`focus_failed` | `inject_failed` | `dry_run_passed` (dry-run success:
+real focus + verification, nothing typed, `wouldInsert` carries the exact
+bytes); transient: `queued` | `injecting`.
+Parlay clears shared input state only on `injected` (never on `dry_run_passed`); on `focus_failed` it
 preserves the text and strips `trigger`. **400** `id` missing; **405**
 non-GET.
 
@@ -774,7 +778,7 @@ implements the same contract for hosts without a shared subscription.
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `tts_event` | `{ "id", "role": "tts_event", "type", "device", …, "ts" }` | TTS lifecycle fan-out from `POST /tts-event`. |
-| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"? }`) | Terminal remote-input outcomes only (`injected`/`focus_failed`/`inject_failed`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
+| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
 | `lavish_session` | `{ "key", "file", "proxyUrl", "status" }` | Embedded-workspace card upsert. **Producer routes not wired** — see below. |
 | `reload` | *(none)* | `location.reload()`. |
 | `navigate` | `{ "url", "openDrawer" }` | Workspace navigation. Gated by capability declarations. |
