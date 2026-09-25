@@ -94,7 +94,7 @@ func (t *REPLTalon) FocusApp(name string) error {
 	return err
 }
 
-// FocusWindow asks the first window with a matching title to take focus.
+// FocusWindow asks the window with the exactly matching title (case-insensitive) to take focus.
 func (t *REPLTalon) FocusWindow(title string) error {
 	q, _ := json.Marshal(strings.ToLower(title))
 	_, err := t.runSnippet(fmt.Sprintf(`[w.focus() for w in ui.windows() if w.title.lower() == %s]`, string(q)))

@@ -46,8 +46,8 @@ busy-wait); one target computer (the Mac running this server + Talon).
 | Transport | `~/.talon/.venv/bin/repl` (stdin Python → stdout result); `TALON_REPL_PATH` overrides (mirrors `talon_mcp/tools/lib/repl.ts`) |
 | CLI surface | `bun run ~/.talon/talon_mcp/tools/cli.ts {status,repl,mimic,…}` |
 | Insert | `actions.insert(<json-quoted str>)` — one call, literal, no paste split (MVP) |
-| Focus | match in `ui.apps()` → `App.focus()`; or match `ui.windows()` title → `Window.focus()` |
-| Verify | `ui.active_app().name` / focused window title; one read after a 300 ms settle sleep **in our process** — never `actions.sleep` polling on Talon's main thread (brain-15l95) |
+| Focus | exact case-insensitive match in `ui.apps()` → `App.focus()`; or exact case-insensitive match on `ui.windows()` title → `Window.focus()` |
+| Verify | `ui.active_app().name` / focused window title must equal the requested target exactly (case-insensitive); one read after a 300 ms settle sleep **in our process** — never `actions.sleep` polling on Talon's main thread (brain-15l95) |
 | Verified live | `callable(actions.insert/key)` → True; `ui.apps/active_app/windows` live; `App.focus`/`Window.focus` exist; `1+1`→`2`, `print` round-trip ok; Talon running |
 
 ## Manual proof (runnable — firstmate, not yet run end-to-end)
