@@ -150,11 +150,17 @@ func (s *Service) process(sub Submission) {
 	if errText := s.focusGate(sub); errText != "" {
 		// Focus failure: inject NOTHING, preserve the text, and tell
 		// Parlay to strip the line-ender trigger so it cannot auto-retry.
-		s.setOutcome(Outcome{
+		o := Outcome{
 			ID: sub.ID, Device: sub.Device, Status: StatusFocusFailed,
 			InjectAttempted: false, PreserveText: true,
 			StripTrigger: sub.Trigger != "", Error: errText,
-		})
+		}
+		if sub.DryRun {
+			o.DryRun = true
+			o.WouldInsert = sub.Text
+			o.StripTrigger = false
+		}
+		s.setOutcome(o)
 		return
 	}
 

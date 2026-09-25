@@ -41,7 +41,7 @@ func TestDryRunFocusFailureInjectsNothing(t *testing.T) {
 	svc := NewService(fake, 0, nil)
 	defer svc.Stop()
 
-	id := svc.Submit(Submission{Device: "d1", Text: "keep me", App: "Terminal", DryRun: true})
+	id := svc.Submit(Submission{Device: "d1", Text: "keep me", App: "Terminal", Trigger: "go", DryRun: true})
 	o := waitOutcome(t, svc, id)
 
 	if o.Status != StatusFocusFailed {
@@ -52,6 +52,15 @@ func TestDryRunFocusFailureInjectsNothing(t *testing.T) {
 	}
 	if !o.PreserveText {
 		t.Fatalf("focus failure must preserve text: %+v", o)
+	}
+	if !o.DryRun {
+		t.Fatalf("dry-run failure must flag dryRun: %+v", o)
+	}
+	if o.WouldInsert != "keep me" {
+		t.Fatalf("wouldInsert = %q, want %q", o.WouldInsert, "keep me")
+	}
+	if o.StripTrigger {
+		t.Fatalf("dry-run failure must not strip trigger: %+v", o)
 	}
 }
 
