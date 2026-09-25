@@ -4,10 +4,13 @@ import {
 	STATE_TYPE,
 	enabledInSession,
 	isInboxPoke,
+	isMailPoke,
 	latestMarker,
 	notify,
 	parseChatLine,
 	parseInboxConnectArgs,
+	parseMailPoke,
+	renderMailPrompt,
 	renderWorkerPrompt,
 	sessionIdentity,
 } from "./helpers";
@@ -35,7 +38,8 @@ export default function (pi: ExtensionAPI): void {
 	let stopping = false;
 	let serverOverride = process.env.PARLAY_PI_INBOX_SERVER || process.env.PARLAY_SERVER;
 	let workerTurnActive = false;
-	let pokePending = false;
+	let pokePending: null | "mail" | "store" = null;
+	let pendingMailPoke: string | undefined;
 
 	/** This pane's store: connect-arg marker wins, then env, then inbox. */
 	function sessionConfig(): StoreConfig {
@@ -69,8 +73,15 @@ export default function (pi: ExtensionAPI): void {
 		childEnv,
 		onLine: (line) => {
 			const message = parseChatLine(line);
-			if (!message || !isInboxPoke(message, sessionConfig().pokePrefix)) return;
-			requestWorkerTurn();
+			if (!message) return;
+			// Mail wakes are distinguishable by design: MAIL_POKE selects
+				// the mail prompt, a store-prefixed poke the store prompt.
+			if (isMailPoke(message)) {
+				requestWorkerTurn("mail", message.text);
+				return;
+			}
+			if (!isInboxPoke(message, sessionConfig().pokePrefix)) return;
+			requestWorkerTurn("store");
 		},
 		notice: (text, level) => note(text, level),
 	});
@@ -81,26 +92,41 @@ export default function (pi: ExtensionAPI): void {
 		watcher.stop();
 	}
 
-	function requestWorkerTurn(): void {
+	function renderMailPromptFor(pokeText?: string): string {
+		const parsed = pokeText ? parseMailPoke(pokeText) : undefined;
+		return renderMailPrompt(parsed?.seat, parsed?.project);
+	}
+
+	function requestWorkerTurn(kind: "mail" | "store", pokeText?: string): void {
 		if (!ctx || !enabledInSession(ctx)) return;
 		if (workerTurnActive || !ctx.isIdle()) {
-			// Do not enqueue one Pi turn per poke. One pending bit is enough:
-			// the worker rechecks the durable inbox after its current turn.
-			pokePending = true;
+			// Do not enqueue one Pi turn per poke. One pending wake is
+				// enough; the worker rechecks the durable source after its
+				// current turn. Mail is the priority lane: a mail poke
+				// upgrades a pending store wake, never the reverse.
+			if (kind === "mail") {
+				pokePending = "mail";
+				if (pokeText) pendingMailPoke = pokeText;
+			} else {
+				pokePending = pokePending ?? "store";
+			}
 			return;
 		}
 		workerTurnActive = true;
 		const cfg = sessionConfig();
 		try {
-			pi.sendUserMessage(renderWorkerPrompt(cfg.store, cfg.channel), { deliverAs: "followUp" });
+			pi.sendUserMessage(
+				kind === "mail" ? renderMailPromptFor(pokeText) : renderWorkerPrompt(cfg.store, cfg.channel),
+				{ deliverAs: "followUp" },
+			);
 		} catch (error) {
 			workerTurnActive = false;
-			notify(ctx, `Could not start Parlay inbox worker: ${String(error)}`, "error");
+			notify(ctx, `Could not start Parlay ${kind === "mail" ? "mail" : "inbox"} worker: ${String(error)}`, "error");
 		}
 	}
 
 	function scheduleWorkerCheck(): void {
-		const timer = setTimeout(() => requestWorkerTurn(), 0);
+		const timer = setTimeout(() => requestWorkerTurn("store"), 0);
 		timer.unref?.();
 	}
 
@@ -173,8 +199,11 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("agent_end", () => {
 		workerTurnActive = false;
 		if (pokePending) {
-			pokePending = false;
-			queueMicrotask(requestWorkerTurn);
+			const kind = pokePending;
+			const pokeText = pendingMailPoke;
+			pokePending = null;
+			pendingMailPoke = undefined;
+			queueMicrotask(() => requestWorkerTurn(kind, pokeText));
 		}
 	});
 
@@ -182,7 +211,8 @@ export default function (pi: ExtensionAPI): void {
 		ctx = sessionCtx;
 		stopping = false;
 		workerTurnActive = false;
-		pokePending = false;
+		pokePending = null;
+		pendingMailPoke = undefined;
 		const marker = latestMarker(sessionCtx);
 		if (marker?.server) serverOverride = marker.server;
 		if (enabledInSession(sessionCtx)) {

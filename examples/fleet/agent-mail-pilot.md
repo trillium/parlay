@@ -47,10 +47,10 @@ Config — every knob the pilot touched is env (see `src/mcp_agent_mail/config.p
 ```sh
 HTTP_HOST=127.0.0.1            # default; set to tailnet IP for remote agents
 HTTP_PORT=18765                # default 8765; pilot used 18765 to avoid clashes
-STORAGE_ROOT=/tmp/mailpilot/pilot-data/mailbox        # git archive root
-DATABASE_URL='sqlite+aiosqlite:////tmp/mailpilot/pilot-data/storage.sqlite3'
+STORAGE_ROOT=$MAIL_HOME/pilot-data/mailbox        # git archive root ($MAIL_HOME=$HOME/data/agent-mail; pilot ran under /tmp, since superseded)
+DATABASE_URL='sqlite+aiosqlite:///$MAIL_HOME/pilot-data/storage.sqlite3'
 NOTIFICATIONS_ENABLED=true
-NOTIFICATIONS_SIGNALS_DIR=/tmp/mailpilot/pilot-data/signals
+NOTIFICATIONS_SIGNALS_DIR=$MAIL_HOME/pilot-data/signals
 uv run python -m mcp_agent_mail.cli serve-http
 ```
 
@@ -61,7 +61,7 @@ MCP endpoint: `POST http://127.0.0.1:18765/mcp` with
 
 Tool call sequence for one bidirectional loop (all verified):
 
-1. `ensure_project(human_key="/tmp/mailpilot/pilot-work")` — key must be an
+1. `ensure_project(human_key="$MAIL_HOME/pilot-work")` — key must be an
    absolute path-like string; need not exist on disk. Returns `{id, slug, …}`.
 2. `register_agent(project_key, name, program, model)` — note the param is
    **`name`**, not `agent_name`. Returns identity incl. `registration_token`.
@@ -131,6 +131,17 @@ So: registration + discovery + gateway handshake are green; **tool execution
 through Jungle awaits a fork fix** (keep-alive handling in the HTTP stack,
 or a `timeout_keep_alive` deploy knob). Filed here as follow-up, not fixed in
 pilot scope.
+
+### Fix applied (task-3b3oh, 2026-09-24, host-local, reversible)
+
+`agent-mail-keepalive-proxy.py` (this directory) implements the deploy-side
+workaround: `127.0.0.1:18766` → `127.0.0.1:18765` with a fresh upstream
+`Connection: close` per request and correct Content-Length re-framing.
+Jungle's `agent-mail-pilot` URL points at the proxy (`:18766/mcp`); the
+backend itself was never restarted or modified. Verified live: `mcpjungle
+invoke agent-mail-pilot__health_check` green plus a full gateway
+send→fetch→ack hello-world loop (transcript on bead `task-3b3oh`).
+Teardown: `kill <proxy pid>`, then re-register straight at `:18765/mcp`.
 
 ## 3. Proof evidence (2026-09-24, host-local)
 
@@ -215,7 +226,7 @@ brain-only deltas separately.
 ```sh
 mcpjungle deregister agent-mail-pilot --registry http://100.74.138.74:8338
 kill <serve-http pid>   # pilot ran as one process on 127.0.0.1:18765
-rm -rf /tmp/mailpilot   # server data, sqlite, git archive, proof scripts
+rm -rf "$MAIL_HOME"   # server data, sqlite, git archive, proof scripts (pilot ran under an ephemeral tmp dir)
 ```
 
 No repo files outside this branch's doc + proof script (plus a `__pycache__/`
