@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""agent-mail: command-line client for agent mail (MCP tool group).
+
+Seat identity is explicit: project key, seat name and the optional
+registration token come from flags or environment, never guessed:
+
+  AGENT_MAIL_ENDPOINT  group MCP URL (default: 127.0.0.1:8338 …/agent-mail/mcp)
+  AGENT_MAIL_PROJECT   project key (e.g. /path/to/work or a registered key)
+  AGENT_MAIL_SEAT      this caller's seat/agent name
+  AGENT_MAIL_TOKEN     registration bearer token (needed off-loopback)
+
+Every failure exits non-zero with a one-line stderr error naming the
+endpoint tried. Read verbs take --json for scripts; default is human.
+"""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from agent_mail import Client, DEFAULT_ENDPOINT, MailError
+
+
+def _client(args):
+    return Client(endpoint=args.endpoint, token=args.token or None,
+                  timeout=args.timeout)
+
+
+def _body(args):
+    if args.body is not None:
+        return args.body
+    if args.body_file:
+        with open(args.body_file) as f:
+            return f.read()
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    raise MailError("no body: pass --body, --body-file, or pipe stdin")
+
+
+def _need(args, *names):
+    missing = [n for n in names if not getattr(args, n)]
+    if missing:
+        raise MailError("missing %s (or set %s)" % (
+            " ".join("--" + n.replace("_", "-") for n in missing),
+            ", ".join("AGENT_MAIL_" + n.upper() for n in missing)))
+
+
+def _emit(data, args, fmt):
+    if args.json:
+        print(json.dumps(data, indent=2, default=str))
+    else:
+        print(fmt(data))
+
+
+def fmt_inbox(msgs):
+    if not msgs:
+        return "(empty)"
+    lines = []
+    for m in msgs:
+        mid = m.get("id", "?")
+        lines.append("[%s] from %s: %s" % (
+            mid, m.get("from", m.get("sender_name", "?")),
+            m.get("subject", "(no subject)")))
+        if m.get("body_md"):
+            lines.append("  %s" % m["body_md"][:300])
+        elif m.get("body"):
+            lines.append("  %s" % str(m["body"])[:300])
+    return "\n".join(lines)
+
+
+def fmt_seats(rows):
+    if not rows:
+        return "(no seats)"
+    lines = []
+    for r in rows:
+        if isinstance(r, dict):
+            name = r.get("name", r.get("agent_name", r.get("to")))
+            lines.append(name or json.dumps(r, default=str))
+        else:
+            lines.append(str(r))
+    return "\n".join(lines)
+
+
+def cmd_inbox(args):
+    _need(args, "project", "seat")
+    _emit(_client(args).inbox(args.project, args.seat,
+                              unread_only=not args.all, token=args.token),
+          args, fmt_inbox)
+
+
+def cmd_send(args):
+    _need(args, "project", "seat", "to", "subject")
+    to = [t.strip() for s in args.to for t in s.split(",") if t.strip()]
+    if not to:
+        raise MailError("missing --to (or set a non-empty value)")
+    data = _client(args).send(args.project, args.seat, to, args.subject,
+                              _body(args), token=args.token)
+    _emit(data, args, lambda d: "sent: %s" % _sent_id(d))
+
+
+def cmd_reply(args):
+    _need(args, "project", "seat", "message_id")
+    data = _client(args).reply(args.project, args.seat, args.message_id,
+                               _body(args), token=args.token)
+    _emit(data, args, lambda d: "replied: %s" % (
+        d.get("id", d.get("message_id", json.dumps(d, default=str)))
+        if isinstance(d, dict) else d))
+
+
+def cmd_ack(args):
+    _need(args, "project", "seat", "message_id")
+    data = _client(args).ack(args.project, args.seat, args.message_id,
+                             token=args.token)
+    _emit(data, args, lambda d: "acked %s: %s" % (
+        args.message_id, d.get("acknowledged", d) if isinstance(d, dict) else d))
+
+
+def cmd_seats(args):
+    _need(args, "project", "seat")
+    _emit(_client(args).seats(args.project, args.seat, token=args.token),
+          args, fmt_seats)
+
+
+def cmd_status(args):
+    data = _client(args).status()
+    def fmt(d):
+        s = d.get("status", d) if isinstance(d, dict) else d
+        return "ok (%s via %s as %s)" % (s, args.endpoint,
+                                         args.seat or "no seat")
+    _emit(data, args, fmt)
+
+
+def _sent_id(d):
+    if not isinstance(d, dict):
+        return d
+    if d.get("id") or d.get("message_id"):
+        return d.get("id", d.get("message_id"))
+    try:
+        return d["deliveries"][0]["payload"]["id"]
+    except (KeyError, IndexError, TypeError):
+        return json.dumps(d, default=str)
+
+
+def build_parser():
+    json_parent = argparse.ArgumentParser(add_help=False)
+    # SUPPRESS so a verb-level --json never clobbers the global one.
+    json_parent.add_argument("--json", action="store_true",
+                             default=argparse.SUPPRESS)
+    p = argparse.ArgumentParser(prog="agent-mail",
+                                description="read and send agent mail")
+    p.add_argument("--endpoint", default=os.environ.get(
+        "AGENT_MAIL_ENDPOINT", DEFAULT_ENDPOINT))
+    p.add_argument("--project", default=os.environ.get("AGENT_MAIL_PROJECT"))
+    p.add_argument("--seat", "--agent", dest="seat",
+                   default=os.environ.get("AGENT_MAIL_SEAT"))
+    p.add_argument("--token", default=os.environ.get("AGENT_MAIL_TOKEN"))
+    p.add_argument("--timeout", type=float,
+                   default=float(os.environ.get("AGENT_MAIL_TIMEOUT", "20")))
+    p.add_argument("--json", action="store_true", help="script output")
+    sub = p.add_subparsers(dest="verb", required=True)
+    for name in ("inbox", "unread"):
+        s = sub.add_parser(name, parents=[json_parent], help="list unread mail for this seat")
+        s.add_argument("--all", action="store_true", help="include read mail")
+        s.set_defaults(func=cmd_inbox)
+    s = sub.add_parser("send", parents=[json_parent], help="send to seats in the pool")
+    s.add_argument("--to", action="append", help="recipient seat (repeatable)")
+    s.add_argument("--subject")
+    s.add_argument("--body")
+    s.add_argument("--body-file")
+    s.set_defaults(func=cmd_send)
+    s = sub.add_parser("reply", parents=[json_parent], help="reply to a message id")
+    s.add_argument("--id", dest="message_id", help="message id")
+    s.add_argument("--body")
+    s.add_argument("--body-file")
+    s.set_defaults(func=cmd_reply)
+    for name in ("seats", "agents"):
+        s = sub.add_parser(name, parents=[json_parent], help="list the pool's registered agents")
+        s.set_defaults(func=cmd_seats)
+    s = sub.add_parser("ack", parents=[json_parent], help="acknowledge a message id")
+    s.add_argument("--id", dest="message_id", help="message id")
+    s.set_defaults(func=cmd_ack)
+    s = sub.add_parser("status", parents=[json_parent], help="cheap reachability check")
+    s.set_defaults(func=cmd_status)
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    try:
+        args.func(args)
+    except MailError as e:
+        print("agent-mail: error: %s" % e, file=sys.stderr)
+        return 1
+    except BrokenPipeError:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
