@@ -211,13 +211,27 @@ func (s *Service) focusGate(sub Submission) string {
 	return ""
 }
 
-// matchName tolerates exact, case-insensitive, and substring agreement so
-// "Terminal" matches the app's canonical name but "Code" never matches
-// "Visual Studio Code" by accident in the wrong direction: either side
-// containing the other (case-insensitive) counts.
+// matchName requires exact agreement (case-insensitive) so focus
+// verifies only when Talon actually focused the requested target.
 func matchName(have, want string) bool {
-	h, w := strings.ToLower(have), strings.ToLower(want)
-	return h == w || strings.Contains(h, w) || strings.Contains(w, h)
+	h, w := normalizeName(have), normalizeName(want)
+	if w == "" || h == "" {
+		return false
+	}
+	return h == w
+}
+
+// normalizeName trims surrounding space and one layer of REPL repr
+// quotes, then folds case for comparison.
+func normalizeName(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		first, last := s[0], s[len(s)-1]
+		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+		}
+	}
+	return strings.ToLower(s)
 }
 
 // sleepSettle is a var so tests run with zero delay.

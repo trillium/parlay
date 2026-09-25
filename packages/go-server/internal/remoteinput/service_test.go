@@ -136,6 +136,38 @@ func TestFocusSuccessInjects(t *testing.T) {
 	}
 }
 
+func TestSubstringAppNameDoesNotVerify(t *testing.T) {
+	fake := &FakeTalon{ActiveAppName: "Visual Studio Code", StickyActive: true}
+	svc := NewService(fake, 0, nil)
+	defer svc.Stop()
+
+	id := svc.Submit(Submission{Device: "d1", Text: "wrong app", App: "Code"})
+	o := waitOutcome(t, svc, id)
+
+	if o.Status != StatusFocusFailed {
+		t.Fatalf("expected focus_failed, got %+v", o)
+	}
+	if len(fake.Inserts) != 0 {
+		t.Fatalf("substring app match injected %d texts", len(fake.Inserts))
+	}
+}
+
+func TestEmptyWindowReadDoesNotVerify(t *testing.T) {
+	fake := &FakeTalon{StickyWindow: true}
+	svc := NewService(fake, 0, nil)
+	defer svc.Stop()
+
+	id := svc.Submit(Submission{Device: "d1", Text: "nowhere", WindowTitle: "Scratch"})
+	o := waitOutcome(t, svc, id)
+
+	if o.Status != StatusFocusFailed {
+		t.Fatalf("expected focus_failed, got %+v", o)
+	}
+	if len(fake.Inserts) != 0 {
+		t.Fatalf("empty window read injected %d texts", len(fake.Inserts))
+	}
+}
+
 func TestInsertFailurePreservesTextWithoutStrip(t *testing.T) {
 	fake := &FakeTalon{InsertErr: ErrInsertTransport}
 	svc := NewService(fake, 0, nil)

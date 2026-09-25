@@ -27,7 +27,9 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub) {
 		remoteinput.NewREPLTalon(),
 		remoteinput.DefaultSettleDelay,
 		func(o remoteinput.Outcome) {
-			hub.broadcastToDevice(o.Device, remoteInputEvent, o)
+			if o.Terminal() {
+				hub.broadcastToDevice(o.Device, remoteInputEvent, o)
+			}
 		},
 	)
 	mux.HandleFunc("/api/chat/remote-input/submit", handleRemoteInputSubmit(svc))

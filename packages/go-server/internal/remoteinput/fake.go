@@ -23,6 +23,10 @@ type FakeTalon struct {
 	// becoming active), simulating a focus request the OS did not honor.
 	StickyActive bool
 
+	// StickyWindow disables FocusWindow's cooperative effect, leaving
+	// the focused title as scripted (e.g. empty when nothing focused).
+	StickyWindow bool
+
 	// Recorded calls, in order.
 	FocusAppCalls    []string
 	FocusWindowCalls []string
@@ -62,7 +66,9 @@ func (f *FakeTalon) FocusWindow(title string) error {
 	if f.FocusAppErr != nil {
 		return f.FocusAppErr
 	}
-	f.WindowTitle = title
+	if !f.StickyWindow {
+		f.WindowTitle = title
+	}
 	return nil
 }
 
