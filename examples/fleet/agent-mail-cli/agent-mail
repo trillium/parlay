@@ -68,7 +68,7 @@ def fmt_inbox(msgs):
             mid, m.get("from", m.get("sender_name", "?")),
             m.get("subject", "(no subject)")))
         if m.get("body_md"):
-            lines.append("  %s" % m["body_md"][:300])
+            lines.append("  %s" % str(m["body_md"])[:300])
         elif m.get("body"):
             lines.append("  %s" % str(m["body"])[:300])
     return "\n".join(lines)
