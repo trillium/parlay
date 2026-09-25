@@ -1023,6 +1023,13 @@ paths:
                 app: { type: string }
                 windowTitle: { type: string }
                 trigger: { type: string }
+                dryRun: { type: boolean, description: "Real focus + verification, nothing typed; ?dryRun=1 forces the same mode." }
+      parameters:
+        - name: dryRun
+          in: query
+          required: false
+          schema: { type: string }
+          description: "dryRun=1 or true forces dry-run mode without touching the body."
       responses:
         "202":
           description: Queued; poll status or wait for the SSE event.
@@ -1045,9 +1052,9 @@ paths:
       summary: Poll one submission's latest Outcome (404 unknown id)
       description: >
         Returns the latest Outcome for id. Terminal status:
-        injected | focus_failed | inject_failed; transient: queued |
-        injecting. Guarded (GuardedPaths). Full contract owned by
-        docs/remote-input.md.
+        injected | focus_failed | inject_failed | dry_run_passed;
+        transient: queued | injecting. Guarded (GuardedPaths). Full
+        contract owned by docs/remote-input.md.
       parameters:
         - name: id
           in: query
@@ -1064,12 +1071,14 @@ paths:
                 properties:
                   id: { type: string }
                   device: { type: string }
-                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed] }
+                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed, dry_run_passed] }
                   focus: { enum: [verified, not_required] }
                   injectAttempted: { type: boolean }
                   preserveText: { type: boolean }
                   stripTrigger: { type: boolean }
                   error: { type: string }
+                  dryRun: { type: boolean }
+                  wouldInsert: { type: string }
         "400":
           description: id required.
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }

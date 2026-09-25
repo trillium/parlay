@@ -27,12 +27,17 @@ in the repo references Talon, so no parallel front end was built.
  "focus": "verified", "injectAttempted": true}
 ```
 
-Terminal `status`: `injected` | `focus_failed` | `inject_failed`.
+Terminal `status`: `injected` | `focus_failed` | `inject_failed` |
+`dry_run_passed` (dry-run: real focus + real verification, nothing typed).
 Transient: `queued` | `injecting`. Every terminal outcome also fans out
 as the device-scoped SSE event `remote_input_result` carrying the same
 Outcome — that event is the clear signal: Parlay clears shared state
-**only** on `injected`; on `focus_failed` it preserves the text and
-strips `trigger` (the line-ender phrase) so it cannot auto-retry.
+**only** on `injected` (never on `dry_run_passed`); on `focus_failed` it preserves the text and
+strips `trigger` (the line-ender phrase) so it cannot auto-retry (a dry-run
+`focus_failed` keeps `dryRun: true`, reports `wouldInsert`, and does not
+strip `trigger`). A dry-run submit sets `"dryRun": true` (or `?dryRun=1`)
+and its success outcome carries `dryRun: true` plus `wouldInsert` with the
+exact bytes that would have been inserted.
 
 Semantics (from project-1ayr): text injects literally, multiline, in
 order; focus completes first — inject only on focus success; a busy
@@ -43,7 +48,7 @@ busy-wait); one target computer (the Mac running this server + Talon).
 
 | Item | Value |
 |---|---|
-| Transport | `~/.talon/.venv/bin/repl` (stdin Python → stdout result); `TALON_REPL_PATH` overrides (mirrors `talon_mcp/tools/lib/repl.ts`) |
+| Transport | `~/.talon/.venv/bin/repl` (stdin Python → stdout+stderr merged result); `TALON_REPL_PATH` overrides (mirrors `talon_mcp/tools/lib/repl.ts`) |
 | CLI surface | `bun run ~/.talon/talon_mcp/tools/cli.ts {status,repl,mimic,…}` |
 | Insert | `actions.insert(<json-quoted str>)` — one call, literal, no paste split (MVP) |
 | Focus | exact case-insensitive match in `ui.apps()` → `App.focus()`; or exact case-insensitive match on `ui.windows()` title → `Window.focus()` |
@@ -51,7 +56,7 @@ busy-wait); one target computer (the Mac running this server + Talon).
 | Verified live | `callable(actions.insert/key)` → True; `ui.apps/active_app/windows` live; `App.focus`/`Window.focus` exist; `1+1`→`2`, `print` round-trip ok; Talon running |
 | `talon_mcp` CLI caveat | `talon-cli repl <code>` returns `{"success":true,"output":""}` for EVERY call (even `print("x")`): `tools/lib/repl.ts` captures stdout only, but current repl.py writes all results to stderr. Re-verify any adapter claim via the raw repl (`~/.talon/.venv/bin/repl`); the parlay adapter merges both streams so it is unaffected. Fix belongs to the talon_mcp repo, not parlay |
 
-## Manual proof (runnable — firstmate, not yet run end-to-end)
+## Manual proof (background — legs split into Proof status below)
 
 Proven in this change: everything except the final keystroke-delivery
 leg (tests: literal multiline, FIFO order, focus-failure typing,
