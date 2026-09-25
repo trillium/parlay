@@ -34,7 +34,6 @@ const (
 const (
 	FocusVerified    = "verified"     // target focused and verified active
 	FocusNotRequired = "not_required" // no app/window target given; injected as-is
-	FocusSkipped     = "skipped"      // reserved: accessibility-degraded path
 )
 
 // Submission is one accepted-input unit from Parlay. Text injects
