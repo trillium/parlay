@@ -30,8 +30,11 @@ def _body(args):
     if args.body is not None:
         return args.body
     if args.body_file:
-        with open(args.body_file) as f:
-            return f.read()
+        try:
+            with open(args.body_file) as f:
+                return f.read()
+        except (OSError, UnicodeError) as e:
+            raise MailError("cannot read body file %s: %s" % (args.body_file, e))
     if not sys.stdin.isatty():
         return sys.stdin.read()
     raise MailError("no body: pass --body, --body-file, or pipe stdin")
@@ -154,8 +157,7 @@ def build_parser():
     p.add_argument("--seat", "--agent", dest="seat",
                    default=os.environ.get("AGENT_MAIL_SEAT"))
     p.add_argument("--token", default=os.environ.get("AGENT_MAIL_TOKEN"))
-    p.add_argument("--timeout", type=float,
-                   default=float(os.environ.get("AGENT_MAIL_TIMEOUT", "20")))
+    p.add_argument("--timeout", type=float, default=_env_timeout())
     p.add_argument("--json", action="store_true", help="script output")
     sub = p.add_subparsers(dest="verb", required=True)
     for name in ("inbox", "unread"):
@@ -184,9 +186,17 @@ def build_parser():
     return p
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
+def _env_timeout():
+    raw = os.environ.get("AGENT_MAIL_TIMEOUT", "20")
     try:
+        return float(raw)
+    except ValueError:
+        raise MailError("bad AGENT_MAIL_TIMEOUT %r: must be a number" % raw)
+
+
+def main(argv=None):
+    try:
+        args = build_parser().parse_args(argv)
         args.func(args)
     except MailError as e:
         print("agent-mail: error: %s" % e, file=sys.stderr)

@@ -84,6 +84,14 @@ class Client:
                 if sid:
                     self._session["Mcp-Session-Id"] = sid
                 raw = resp.read().decode()
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode(errors="replace")[:200]
+            except (OSError, ValueError):
+                detail = ""
+            detail = (": %s" % detail) if detail.strip() else ""
+            raise MailError("cannot reach %s: HTTP %s%s" % (
+                self.endpoint, e.code, detail))
         except urllib.error.URLError as e:
             raise MailError("cannot reach %s: %s" % (self.endpoint, e.reason
                              if hasattr(e, "reason") else e))
@@ -91,7 +99,10 @@ class Client:
             raise MailError("cannot reach %s: %s" % (self.endpoint, e))
         for line in raw.splitlines():
             if line.startswith("data: "):
-                return json.loads(line[len("data: "):])
+                try:
+                    return json.loads(line[len("data: "):])
+                except ValueError:
+                    continue
         try:
             return json.loads(raw)
         except ValueError:
@@ -144,7 +155,13 @@ class Client:
             err = out["error"]
             raise MailError("%s: %s" % (tool, err.get("message", err)
                                           if isinstance(err, dict) else err))
-        payload = _extract_payload(out.get("result", out))
+        result = out.get("result", out)
+        if isinstance(result, dict) and result.get("isError"):
+            payload = _extract_payload(result)
+            text = payload if isinstance(payload, str) else json.dumps(
+                payload, default=str)
+            raise MailError("%s: %s" % (tool, text[:300]))
+        payload = _extract_payload(result)
         if isinstance(payload, str) and payload.startswith("Error"):
             raise MailError("%s: %s" % (tool, payload[:300]))
         return payload
