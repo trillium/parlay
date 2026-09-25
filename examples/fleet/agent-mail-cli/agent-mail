@@ -60,6 +60,9 @@ def fmt_inbox(msgs):
         return "(empty)"
     lines = []
     for m in msgs:
+        if not isinstance(m, dict):
+            lines.append(str(m))
+            continue
         mid = m.get("id", "?")
         lines.append("[%s] from %s: %s" % (
             mid, m.get("from", m.get("sender_name", "?")),
