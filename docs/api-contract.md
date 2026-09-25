@@ -48,7 +48,8 @@ are kept so a caller can tell a retained-forever quirk from a regression.
   - *Status-error*: `unregister` / `DELETE /agents/:id` (400/404),
     `POST /message` (400), `poll` (410), `eval` engine failures (502),
     `eval-push` (400/404), invalid `?caps=` (400), `tts/validate-splits`
-    (400/502) return a **non-2xx with `{"error": "…"}`**.
+    (400/502), `remote-input/submit` (400) and `remote-input/status`
+    (400/404) return a **non-2xx with `{"error": "…"}`**.
 - **Malformed JSON body**: the Go server returns **400
   `{"error": "invalid JSON body"}`** on every JSON route uniformly
   (`decodeJSON`).
@@ -557,6 +558,32 @@ implementation returns a placeholder evaluation (`verdict: "unknown"`,
 
 ---
 
+## Remote input
+
+The Mac-side injection control plane: accepted text → real keystrokes via
+Talon. Full contract (wire shapes, focus-first semantics, Talon adapter,
+manual proof): [`docs/remote-input.md`](./remote-input.md) (which owns it —
+summary here).
+
+### `POST /api/chat/remote-input/submit`
+Enqueue accepted text for injection. Request:
+`{ "device": "string (required)", "text": "string (required)",
+"app"?: "…", "windowTitle"?: "…", "trigger"?: "…" }`.
+Response: **202** `{ "id": "ri-N", "status": "queued" }` (queued, not
+done — the terminal outcome arrives via status poll or the
+`remote_input_result` SSE event). Errors: **400** `device`/`text` missing;
+**405** non-POST. Both routes are in the guard's `GuardedPaths`.
+
+### `GET /api/chat/remote-input/status?id=ri-N`
+Poll one submission's latest `Outcome` (200) or **404** unknown id
+(evicted or never submitted). Terminal `status`: `injected` |
+`focus_failed` | `inject_failed`; transient: `queued` | `injecting`.
+Parlay clears shared input state only on `injected`; on `focus_failed` it
+preserves the text and strips `trigger`. **400** `id` missing; **405**
+non-GET.
+
+---
+
 ## Pages, plugins, version, UI bundle
 
 ### `GET /api/chat/pages`
@@ -747,6 +774,7 @@ implements the same contract for hosts without a shared subscription.
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `tts_event` | `{ "id", "role": "tts_event", "type", "device", …, "ts" }` | TTS lifecycle fan-out from `POST /tts-event`. |
+| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"? }`) | Terminal remote-input outcomes only (`injected`/`focus_failed`/`inject_failed`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
 | `lavish_session` | `{ "key", "file", "proxyUrl", "status" }` | Embedded-workspace card upsert. **Producer routes not wired** — see below. |
 | `reload` | *(none)* | `location.reload()`. |
 | `navigate` | `{ "url", "openDrawer" }` | Workspace navigation. Gated by capability declarations. |

@@ -192,6 +192,14 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/tts/validate-splits":   true, // origin check only, see jsonExemptPaths
 	"/api/chat/tts-event":             true, // broadcasts a tts_event frame carrying a device uuid
 	"/api/chat/debug-log":             true, // appends client console errors to a log file on disk
+
+	// Remote-input intake (task-57ltl): POST enqueues accepted text for
+	// injection as real keystrokes on the target Mac via Talon; GET polls
+	// the per-submission outcome. Mutating by the file's own rule — what
+	// the handler DOES, regardless of method — so both land here. JSON
+	// bodies, so no jsonExemptPaths entry.
+	"/api/chat/remote-input/submit": true,
+	"/api/chat/remote-input/status": true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
