@@ -1,23 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- TEMPLATE: replace every @MAIL_HOME@ with the durable mail root
+     ($HOME/data/agent-mail — see agent-mail.env.template) before loading,
+     e.g. sed "s|@MAIL_HOME@|$HOME/data/agent-mail|g". Never load a copy
+     pointing at /tmp: the pilot's /tmp pool and mesh were lost on reboot.
+     Do NOT load/unload this unit yourself: launchd cutover is
+     firstmate-primary-only (see agent-mail-runbook.md). -->
 <dict>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/tmp/mailpilot/fork/.venv/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>@MAIL_HOME@/fork/.venv/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 		<key>HTTP_HOST</key>
 		<string>127.0.0.1</string>
 		<key>HTTP_PORT</key>
 		<string>18765</string>
 		<key>STORAGE_ROOT</key>
-		<string>/tmp/mailpilot/pilot-data/mailbox</string>
+		<string>@MAIL_HOME@/pilot-data/mailbox</string>
 		<key>DATABASE_URL</key>
-		<string>sqlite+aiosqlite:////tmp/mailpilot/pilot-data/storage.sqlite3</string>
+		<string>sqlite+aiosqlite:///@MAIL_HOME@/pilot-data/storage.sqlite3</string>
 		<key>NOTIFICATIONS_ENABLED</key>
 		<string>true</string>
 		<key>NOTIFICATIONS_SIGNALS_DIR</key>
-		<string>/tmp/mailpilot/pilot-data/signals</string>
+		<string>@MAIL_HOME@/pilot-data/signals</string>
 		<key>LOG_RICH_ENABLED</key>
 		<string>false</string>
 	</dict>
@@ -27,7 +33,7 @@
 	<string>com.mailpilot.backend</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/tmp/mailpilot/fork/.venv/bin/python</string>
+		<string>@MAIL_HOME@/fork/.venv/bin/python</string>
 		<string>-m</string>
 		<string>mcp_agent_mail.cli</string>
 		<string>serve-http</string>
@@ -35,10 +41,10 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>/tmp/mailpilot/launchd.err.log</string>
+	<string>@MAIL_HOME@/launchd.err.log</string>
 	<key>StandardOutPath</key>
-	<string>/tmp/mailpilot/launchd.out.log</string>
+	<string>@MAIL_HOME@/launchd.out.log</string>
 	<key>WorkingDirectory</key>
-	<string>/tmp/mailpilot/fork</string>
+	<string>@MAIL_HOME@/fork</string>
 </dict>
 </plist>

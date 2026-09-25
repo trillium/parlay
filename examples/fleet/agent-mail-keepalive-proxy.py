@@ -15,7 +15,7 @@ itself is untouched.
 
 Run (host-local, reversible):
     nohup python3 agent-mail-keepalive-proxy.py \
-      > /tmp/mailpilot/keepalive-proxy.log 2>&1 &
+      > "$MAIL_HOME/keepalive-proxy.log" 2>&1 &
 Teardown (reverse):
     kill <proxy pid>   # then re-register Jungle straight at :18765/mcp
 Jungle registration (via the proxy):

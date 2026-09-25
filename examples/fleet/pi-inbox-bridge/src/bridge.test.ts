@@ -3,8 +3,11 @@ import { configForStore, listenArgs, tailArgs } from "./config";
 import { isTailUnsupportedExit } from "./tailer";
 import {
 	isInboxPoke,
+	isMailPoke,
 	parseChatLine,
 	parseInboxConnectArgs,
+	parseMailPoke,
+	renderMailPrompt,
 	renderWorkerPrompt,
 } from "./helpers";
 
@@ -134,5 +137,47 @@ describe("poke recognition on the wire", () => {
 		expect(isInboxPoke(other!, "SANDBOX_POKE")).toBe(false);
 		const chatter = parseChatLine("CHAT_MSG|m2|user|hello there");
 		expect(isInboxPoke(chatter!, "SANDBOX_POKE")).toBe(false);
+	});
+});
+
+describe("mail poke recognition and prompt selection", () => {
+	test("MAIL_POKE wakes the mail path, never the store path", () => {
+		const msg = parseChatLine(
+			"CHAT_MSG|m9|user|MAIL_POKE v1: agent-mail for ChartreuseTower (project pool) - fetch_inbox unread_only=true, then acknowledge.",
+		);
+		expect(msg).toBeDefined();
+		expect(isMailPoke(msg!)).toBe(true);
+		expect(isInboxPoke(msg!, "SANDBOX_POKE")).toBe(false);
+	});
+
+	test("store pokes and chatter are not mail pokes", () => {
+		const store = parseChatLine("CHAT_MSG|m1|user|SANDBOX_POKE v1: new work.");
+		expect(isMailPoke(store!)).toBe(false);
+		const chatter = parseChatLine("CHAT_MSG|m2|user|hello there");
+		expect(isMailPoke(chatter!)).toBe(false);
+	});
+
+	test("mail poke parses seat and project for the prompt", () => {
+		expect(
+			parseMailPoke(
+				"MAIL_POKE v1: agent-mail for ChartreuseTower (project pool) - fetch_inbox unread_only=true, then acknowledge.",
+			),
+		).toEqual({ seat: "ChartreuseTower", project: "pool" });
+		expect(parseMailPoke("MAIL_POKE v1: hello")).toBeUndefined();
+	});
+
+	test("mail prompt carries MCP verbs, seat, and no store verbs", () => {
+		const msg = renderMailPrompt("ChartreuseTower", "pool");
+		expect(msg).toMatch(/fetch_inbox/);
+		expect(msg).toMatch(/acknowledge_message/);
+		expect(msg).toMatch(/ChartreuseTower/);
+		expect(msg).not.toMatch(/--claim/);
+		expect(msg).not.toMatch(/\{\{/);
+	});
+
+	test("mail prompt degrades gracefully without seat/project", () => {
+		const msg = renderMailPrompt(undefined, undefined);
+		expect(msg).toMatch(/fetch_inbox/);
+		expect(msg).not.toMatch(/\{\{/);
 	});
 });

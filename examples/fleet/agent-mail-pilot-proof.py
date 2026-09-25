@@ -1,10 +1,11 @@
 """Pilot proof: complete send-receive-ack loop between two test agents over MCP Streamable HTTP."""
 import json
+import os
 import sys
 import urllib.request
 
 BASE = "http://127.0.0.1:18765/mcp"  # pilot server; adjust host/port to match serve-http
-PROJECT = "/tmp/mailpilot/pilot-work"  # absolute path-like project key; need not exist on disk
+PROJECT = os.path.expanduser("~/data/agent-mail/pilot-work")  # absolute path-like project key; need not exist on disk
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
 SESSION = {}
 

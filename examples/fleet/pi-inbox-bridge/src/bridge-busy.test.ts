@@ -7,6 +7,8 @@ import { STATE_TYPE } from "./helpers";
 // a poke arriving while Pi reports busy (!isIdle, outside any worker
 // turn) must queue exactly one pending wake and inject it at the next
 // turn-end boundary — never start a turn early, never drop it.
+// A MAIL_POKE coalesces the same way but injects the mail prompt (MCP
+// verbs), and upgrades a pending store wake — never the reverse.
 //
 // Self-contained harness (own child_process mock + idle flag); the
 // connect/listen/tail contract itself is covered in bridge-connect.test.ts,
@@ -107,6 +109,39 @@ describe("busy Pi queues the poke until the turn-end boundary", () => {
 		await tick();
 		expect(captured.sent.length).toBe(baseline + 1);
 		expect(captured.sent[baseline].msg).toMatch(/Parlay sandbox worker poke/);
+		expect(captured.sent[baseline].opts).toEqual(
+			expect.objectContaining({ deliverAs: "followUp" }),
+		);
+	});
+});
+
+describe("busy Pi coalesces a mail poke to one mail wake at the boundary", () => {
+	test("mail poke while busy defers; turn-end injects the mail prompt once", async () => {
+		const { pi, captured, sessionCtx } = makeHarness();
+		inboxBridge(pi);
+		await captured.commands["inbox-connect"].handler("sandbox", sessionCtx);
+		await tick();
+		captured.events["agent_end"]();
+		await tick();
+		// Pi goes busy outside any worker turn: pokes queue, none send.
+		// The later store poke must not downgrade the pending mail wake.
+		idle = false;
+		const baseline = captured.sent.length;
+		wireOut.push(
+			"CHAT_MSG|m8|user|MAIL_POKE v1: agent-mail for ChartreuseTower (project pool) - fetch_inbox unread_only=true, then acknowledge.\n",
+		);
+		wireOut.push("CHAT_MSG|m9|user|SANDBOX_POKE v1: more store work.\n");
+		await tick();
+		expect(captured.sent.length).toBe(baseline);
+		// Turn-end boundary, idle again: exactly one injection, mail prompt.
+		idle = true;
+		captured.events["agent_end"]();
+		await tick();
+		expect(captured.sent.length).toBe(baseline + 1);
+		expect(captured.sent[baseline].msg).toMatch(/agent-mail poke/);
+		expect(captured.sent[baseline].msg).toMatch(/fetch_inbox/);
+		expect(captured.sent[baseline].msg).toMatch(/ChartreuseTower/);
+		expect(captured.sent[baseline].msg).not.toMatch(/--claim/);
 		expect(captured.sent[baseline].opts).toEqual(
 			expect.objectContaining({ deliverAs: "followUp" }),
 		);

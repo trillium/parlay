@@ -9,20 +9,22 @@ poked twice for the same mail. When the signal disappears (fetched),
 the state entry is cleared and the seat becomes re-armable.
 
 Seat -> Parlay-listener mapping lives OUTSIDE the repo (pane ids are
-ephemeral): a JSON file mapping each seat to its owner's pane AND that
-pane's poke prefix, e.g.
-  {"ChartreuseTower": {"pane": "some-pane-id", "poke": "INBOX_POKE"}}
-A bare string value ({"ChartreuseTower": "some-pane-id"}) means the
-default INBOX_POKE prefix. The prefix is load-bearing, not cosmetic:
-the pi-inbox-bridge wakes a pane ONLY on wire lines starting with
-`<POKE> v1:` (isInboxPoke) - a poke without the pane's own prefix is
-parsed as chatter and the worker never wakes. That mismatch was the
-broken wake-agent surface: the first version of this script sent a
-prefix-less human-readable line and connected panes slept through mail.
+ephemeral): a JSON file mapping each seat to its owner's pane, e.g.
+  {"ChartreuseTower": {"pane": "some-pane-id"}}
+A bare string value ({"ChartreuseTower": "some-pane-id"}) means the same.
+A legacy "poke" key in the object form is accepted but IGNORED: every wake
+emits the distinct MAIL_POKE prefix so the pi-inbox-bridge routes it to the
+agent-mail prompt (MCP verbs), never the bd-store worker prompt. A store-
+prefixed poke would hand the pane inbox instructions for mail — that was the
+broken wake-agent surface this bridge closes.
 Seats missing from the map are logged, never broadcast, never guessed.
 
+Durable paths: every default below derives from $MAIL_HOME
+($HOME/data/agent-mail when unset — see agent-mail.env.template).
+No ephemeral-tmp paths: the pilot's tmp-dir pool and mesh were lost on reboot.
+
 Run (host-local, reversible):
-    python3 agent-mail-notify.py --map /tmp/mailpilot/notify-map.json &
+    python3 agent-mail-notify.py --map "$MAIL_HOME/notify-map.json" &
 Teardown: kill the pid. Nothing else to undo.
 
 YOLO_DECISION: built watcher + map-file seam now; daemon launch waits on
@@ -75,23 +77,30 @@ def iter_signals(signals_root):
                 continue
 
 
-DEFAULT_POKE = "INBOX_POKE"
+DEFAULT_POKE = "MAIL_POKE"
+
+# Exact wire line the bridge expects (isMailPoke + parseMailPoke):
+#   MAIL_POKE v1: agent-mail for <Seat> (project <slug>) - ...
+# Emitter and bridge must agree on it verbatim.
 
 
-def resolve_target(entry):
-    """Map entry -> (pane_id or None, poke prefix).
+def resolve_pane(entry):
+    """Map entry -> pane_id or None.
 
-    Accepts {"pane": ..., "poke": ...} objects (preferred: the pane's
-    own connected-store prefix) and bare pane-id strings (default prefix).
+    Accepts {"pane": ...} objects (a legacy "poke" key is ignored:
+    mail wakes always emit MAIL_POKE) and bare pane-id strings.
     Anything else is unmapped: log, never guess.
     """
     if isinstance(entry, dict):
-        pane = entry.get("pane")
-        poke = entry.get("poke") or DEFAULT_POKE
-        return (pane or None, poke)
+        return entry.get("pane") or None
     if isinstance(entry, str) and entry:
-        return entry, DEFAULT_POKE
-    return None, DEFAULT_POKE
+        return entry
+    return None
+
+
+def mail_home():
+    """Durable mail root: $MAIL_HOME, defaulting to ~/data/agent-mail."""
+    return os.environ.get("MAIL_HOME", os.path.join(os.path.expanduser("~"), "data", "agent-mail"))
 
 
 def poke(pane_id, text):
@@ -104,9 +113,9 @@ def poke(pane_id, text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--signals", default="/tmp/mailpilot/pilot-data/signals")
-    ap.add_argument("--map", default="/tmp/mailpilot/notify-map.json")
-    ap.add_argument("--state", default="/tmp/mailpilot/notify-state.json")
+    ap.add_argument("--signals", default=os.path.join(mail_home(), "pilot-data", "signals"))
+    ap.add_argument("--map", default=os.path.join(mail_home(), "notify-map.json"))
+    ap.add_argument("--state", default=os.path.join(mail_home(), "notify-state.json"))
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
 
@@ -117,17 +126,16 @@ def main():
         for slug, seat, path, mtime in iter_signals(args.signals):
             key = f"{slug}/{seat}"
             seen.add(key)
-            pane_id = seat_map.get(seat)
+            pane_id = resolve_pane(seat_map.get(seat))
             if not pane_id:
                 print(f"unmapped seat with mail: {key} (no poke sent)", flush=True)
                 continue
             last = state.get(key, 0)
             if mtime <= last:
                 continue  # already poked for this mail
-            pane_id, poke_prefix = resolve_target(seat_map.get(seat))
             ok, detail = poke(
                 pane_id,
-                f"{poke_prefix} v1: agent-mail for {seat} (project {slug}) "
+                f"{DEFAULT_POKE} v1: agent-mail for {seat} (project {slug}) "
                 f"- fetch_inbox unread_only=true, then acknowledge.",
             )
             print(f"poke {seat} -> {pane_id}: {'sent' if ok else 'FAILED ' + detail}",
