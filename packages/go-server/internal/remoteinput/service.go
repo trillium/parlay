@@ -162,6 +162,12 @@ func (s *Service) process(sub Submission) {
 	if sub.App != "" || sub.WindowTitle != "" {
 		focus = FocusVerified
 	}
+	if sub.DryRun {
+		// Real focus + real verification already ran above; report
+		// what would insert without typing anything.
+		s.setOutcome(dryRunOutcome(sub, focus))
+		return
+	}
 	if err := s.talon.Insert(sub.Text); err != nil {
 		s.setOutcome(Outcome{
 			ID: sub.ID, Device: sub.Device, Status: StatusInjectFailed,

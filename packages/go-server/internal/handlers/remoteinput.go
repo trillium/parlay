@@ -55,9 +55,16 @@ func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
 			writeStatusError(w, http.StatusBadRequest, "text is required")
 			return
 		}
+		// ?dryRun=true forces a dry run without touching the body:
+		// real focus + real verification, nothing typed.
+		dryRun := req.DryRun
+		if q := r.URL.Query().Get("dryRun"); q == "true" || q == "1" {
+			dryRun = true
+		}
 		id := svc.Submit(remoteinput.Submission{
 			Device: req.Device, Text: req.Text,
 			App: req.App, WindowTitle: req.WindowTitle, Trigger: req.Trigger,
+			DryRun: dryRun,
 		})
 		w.WriteHeader(http.StatusAccepted)
 		writeJSON(w, remoteinput.SubmitResponse{ID: id, Status: remoteinput.StatusQueued})

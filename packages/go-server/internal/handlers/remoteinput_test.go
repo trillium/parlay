@@ -123,6 +123,46 @@ func TestRemoteInputSubmitValidation(t *testing.T) {
 	}
 }
 
+func TestRemoteInputDryRunSubmitAndStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query string
+		body  string
+	}{
+		{"field", "", `{"device":"phone-1","text":"dry ✓\nline","dryRun":true}`},
+		{"query param", "?dryRun=1", `{"device":"phone-1","text":"dry ✓\nline"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := testRemoteService(nil)
+			defer svc.Stop()
+			submit := handleRemoteInputSubmit(svc)
+			status := handleRemoteInputStatus(svc)
+
+			req := httptest.NewRequest("POST", "/api/chat/remote-input/submit"+tc.query, bytes.NewBufferString(tc.body))
+			w := httptest.NewRecorder()
+			submit(w, req)
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("submit: got %d, want 202", w.Code)
+			}
+			var resp remoteinput.SubmitResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("submit: bad body: %v", err)
+			}
+
+			o := waitRemoteOutcome(t, status, resp.ID)
+			if o.Status != remoteinput.StatusDryRunPassed {
+				t.Fatalf("expected dry_run_passed, got %+v", o)
+			}
+			if !o.DryRun || o.InjectAttempted {
+				t.Fatalf("dry run must flag dryRun and never attempt: %+v", o)
+			}
+			if o.WouldInsert != "dry ✓\nline" {
+				t.Fatalf("wouldInsert = %q, want exact bytes", o.WouldInsert)
+			}
+		})
+	}
+}
+
 func TestRemoteInputStatusUnknown(t *testing.T) {
 	svc := testRemoteService(nil)
 	defer svc.Stop()
