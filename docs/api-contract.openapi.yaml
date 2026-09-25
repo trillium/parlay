@@ -1065,7 +1065,7 @@ paths:
                   id: { type: string }
                   device: { type: string }
                   status: { enum: [queued, injecting, injected, focus_failed, inject_failed] }
-                  focus: { enum: [verified, not_required, skipped] }
+                  focus: { enum: [verified, not_required] }
                   injectAttempted: { type: boolean }
                   preserveText: { type: boolean }
                   stripTrigger: { type: boolean }
