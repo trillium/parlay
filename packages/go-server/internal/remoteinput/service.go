@@ -115,7 +115,7 @@ func (s *Service) setOutcome(o Outcome) {
 	s.remember(o)
 	cb := s.onSettled
 	s.mu.Unlock()
-	if cb != nil {
+	if cb != nil && o.Terminal() {
 		cb(o)
 	}
 }
