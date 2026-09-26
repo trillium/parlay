@@ -1023,6 +1023,9 @@ paths:
                 app: { type: string }
                 windowTitle: { type: string }
                 trigger: { type: string }
+                mode: { type: string, description: "inject (default) types via Talon; bead captures the text as a bead and types nothing." }
+                store: { type: string, description: "Bead-mode capture queue (default inbox); any registered wrapper name." }
+                allowUnfocused: { type: boolean, description: "Deliberate opt-in to inject with no focus target." }
                 dryRun: { type: boolean, description: "Real focus + verification, nothing typed; ?dryRun=1 forces the same mode." }
       parameters:
         - name: dryRun
@@ -1030,6 +1033,21 @@ paths:
           required: false
           schema: { type: string }
           description: "dryRun=1 or true forces dry-run mode without touching the body."
+        - name: allowUnfocused
+          in: query
+          required: false
+          schema: { type: string }
+          description: "allowUnfocused=1 or true opts into targetless inject without touching the body."
+        - name: mode
+          in: query
+          required: false
+          schema: { type: string }
+          description: "Mirrors the body mode field (?mode=bead); the body wins when both are set."
+        - name: store
+          in: query
+          required: false
+          schema: { type: string }
+          description: "Mirrors the body store field (?store=task); the body wins when both are set."
       responses:
         "202":
           description: Queued; poll status or wait for the SSE event.
@@ -1042,7 +1060,7 @@ paths:
                   id: { type: string, description: "Submission id (ri-N)." }
                   status: { const: queued }
         "400":
-          description: device/text required, or invalid JSON body.
+          description: device/text required, unknown mode, invalid bead store, over-long bead text, targetless live inject, or invalid JSON body.
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
 
   /api/chat/remote-input/status:
@@ -1052,7 +1070,8 @@ paths:
       summary: Poll one submission's latest Outcome (404 unknown id)
       description: >
         Returns the latest Outcome for id. Terminal status:
-        injected | focus_failed | inject_failed | dry_run_passed;
+        injected | focus_failed | inject_failed | dry_run_passed |
+        bead_created | bead_failed;
         transient: queued | injecting. Guarded (GuardedPaths). Full
         contract owned by docs/remote-input.md.
       parameters:
@@ -1071,14 +1090,20 @@ paths:
                 properties:
                   id: { type: string }
                   device: { type: string }
-                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed, dry_run_passed] }
-                  focus: { enum: [verified, not_required] }
+                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed, dry_run_passed, bead_created, bead_failed] }
+                  focus: { enum: [verified, not_required, unfocused_allowed] }
                   injectAttempted: { type: boolean }
                   preserveText: { type: boolean }
                   stripTrigger: { type: boolean }
                   error: { type: string }
                   dryRun: { type: boolean }
                   wouldInsert: { type: string }
+                  allowUnfocused: { type: boolean }
+                  mode: { type: string, description: "inject or bead." }
+                  beadId: { type: string, description: "bead_created only; never set on failure." }
+                  beadStore: { type: string }
+                  beadWrapper: { type: string, description: "Resolved wrapper path behind the create." }
+                  capturedText: { type: string }
         "400":
           description: id required.
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }

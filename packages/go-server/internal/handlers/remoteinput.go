@@ -42,6 +42,9 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub) {
 }
 
 // handleRemoteInputSubmit implements POST /api/chat/remote-input/submit.
+// Mode selects the pipeline: empty/inject types via Talon (the
+// no-target rule applies); bead captures the text as a bead with no
+// target needed and nothing typed.
 func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -72,9 +75,44 @@ func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
 		if q := r.URL.Query().Get("allowUnfocused"); q == "true" || q == "1" {
 			allowUnfocused = true
 		}
-		// No silent blind injection: a live submit with no app and no
-		// window target must name the unfocused mode deliberately.
-		// (Dry runs type nothing, so they stay exempt.)
+		// Mode + store: query params mirror the body fields (?mode=bead
+		// ?store=task); the body wins when both are set.
+		mode := remoteinput.NormalizeMode(req.Mode)
+		if q := r.URL.Query().Get("mode"); q != "" && req.Mode == "" {
+			mode = remoteinput.NormalizeMode(q)
+		}
+		if mode != remoteinput.ModeInject && mode != remoteinput.ModeBead {
+			writeStatusError(w, http.StatusBadRequest,
+				`unknown mode: want "inject" or "bead"`)
+			return
+		}
+		store := remoteinput.NormalizeStore(req.Store)
+		if q := r.URL.Query().Get("store"); q != "" && req.Store == "" {
+			store = remoteinput.NormalizeStore(q)
+		}
+		if mode == remoteinput.ModeBead {
+			if !remoteinput.ValidStore(store) {
+				writeStatusError(w, http.StatusBadRequest,
+					`invalid bead store: must match ^[a-z][a-z0-9_-]{0,63}$ (any registered wrapper name works)`)
+				return
+			}
+			if n := len([]rune(req.Text)); n > remoteinput.MaxBeadTextLen {
+				writeStatusError(w, http.StatusBadRequest,
+					"bead text exceeds 2000 chars: rejected, never truncated")
+				return
+			}
+			// Bead mode needs no target and types nothing.
+			id := svc.Submit(remoteinput.Submission{
+				Device: req.Device, Text: req.Text, Mode: mode, Store: store,
+				Trigger: req.Trigger, DryRun: dryRun,
+			})
+			w.WriteHeader(http.StatusAccepted)
+			writeJSON(w, remoteinput.SubmitResponse{ID: id, Status: remoteinput.StatusQueued})
+			return
+		}
+		// No silent blind injection: a live inject submit with no app
+		// and no window target must name the unfocused mode
+		// deliberately. (Dry runs type nothing, so they stay exempt.)
 		if !dryRun && req.App == "" && req.WindowTitle == "" && !allowUnfocused {
 			writeStatusError(w, http.StatusBadRequest,
 				"no target: set app or windowTitle (see GET remote-input/targets for Talon names), "+
@@ -84,7 +122,7 @@ func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
 		id := svc.Submit(remoteinput.Submission{
 			Device: req.Device, Text: req.Text,
 			App: req.App, WindowTitle: req.WindowTitle, Trigger: req.Trigger,
-			AllowUnfocused: allowUnfocused, DryRun: dryRun,
+			Mode: mode, AllowUnfocused: allowUnfocused, DryRun: dryRun,
 		})
 		w.WriteHeader(http.StatusAccepted)
 		writeJSON(w, remoteinput.SubmitResponse{ID: id, Status: remoteinput.StatusQueued})
