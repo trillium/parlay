@@ -49,6 +49,9 @@ type TalonAdapter interface {
 	ActiveApp() (string, error)
 	FocusedWindowTitle() (string, error)
 	Insert(text string) error
+	// Targets lists Talon's applications in Talon's own ordering.
+	// Read-only: no focus change, no keystroke (dry-run safe).
+	Targets() ([]Target, error)
 }
 
 // replPath mirrors ~/.talon/talon_mcp/tools/lib/repl.ts getReplPath.

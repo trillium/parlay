@@ -144,7 +144,19 @@ func (s *Service) work() {
 }
 
 // process runs one submission: focus gate, then insert, then outcome.
+// A targetless live submission without allowUnfocused never reaches the
+// injector: it settles focus_failed with a typed error naming the flag.
+// (Dry runs type nothing, so they stay exempt.)
 func (s *Service) process(sub Submission) {
+	if sub.App == "" && sub.WindowTitle == "" && !sub.AllowUnfocused && !sub.DryRun {
+		s.setOutcome(Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusFocusFailed,
+			InjectAttempted: false, PreserveText: true,
+			StripTrigger: sub.Trigger != "",
+			Error:        `no target: set app or windowTitle, or send allowUnfocused:true to inject without focus`,
+		})
+		return
+	}
 	s.setOutcome(Outcome{ID: sub.ID, Device: sub.Device, Status: StatusInjecting})
 
 	if errText := s.focusGate(sub); errText != "" {
@@ -154,6 +166,7 @@ func (s *Service) process(sub Submission) {
 			ID: sub.ID, Device: sub.Device, Status: StatusFocusFailed,
 			InjectAttempted: false, PreserveText: true,
 			StripTrigger: sub.Trigger != "", Error: errText,
+			AllowUnfocused: sub.AllowUnfocused,
 		}
 		if sub.DryRun {
 			o.DryRun = true
@@ -167,6 +180,8 @@ func (s *Service) process(sub Submission) {
 	focus := FocusNotRequired
 	if sub.App != "" || sub.WindowTitle != "" {
 		focus = FocusVerified
+	} else if sub.AllowUnfocused {
+		focus = FocusAllowedUnfocused
 	}
 	if sub.DryRun {
 		// Real focus + real verification already ran above; report
@@ -179,12 +194,14 @@ func (s *Service) process(sub Submission) {
 			ID: sub.ID, Device: sub.Device, Status: StatusInjectFailed,
 			Focus: focus, InjectAttempted: true,
 			PreserveText: true, Error: err.Error(),
+			AllowUnfocused: sub.AllowUnfocused,
 		})
 		return
 	}
 	s.setOutcome(Outcome{
 		ID: sub.ID, Device: sub.Device, Status: StatusInjected,
 		Focus: focus, InjectAttempted: true,
+		AllowUnfocused: sub.AllowUnfocused,
 	})
 }
 

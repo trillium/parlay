@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,8 +60,9 @@ func TestRemoteInputSubmitQueuedThenInjected(t *testing.T) {
 	submit := handleRemoteInputSubmit(svc)
 	status := handleRemoteInputStatus(svc)
 
-	body, _ := json.Marshal(map[string]string{
+	body, _ := json.Marshal(map[string]any{
 		"device": "phone-1", "text": "hello\nworld",
+		"allowUnfocused": true, // targetless live submit names the mode
 	})
 	req := httptest.NewRequest("POST", "/api/chat/remote-input/submit", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -83,6 +85,9 @@ func TestRemoteInputSubmitQueuedThenInjected(t *testing.T) {
 	}
 	if !o.InjectAttempted {
 		t.Fatalf("injected outcome must flag attempted: %+v", o)
+	}
+	if o.Focus != remoteinput.FocusAllowedUnfocused || !o.AllowUnfocused {
+		t.Fatalf("named unfocused mode must surface on the outcome: %+v", o)
 	}
 
 	// Success-clears-state: the settle hook fired exactly once, injected —
@@ -160,6 +165,162 @@ func TestRemoteInputDryRunSubmitAndStatus(t *testing.T) {
 				t.Fatalf("wouldInsert = %q, want exact bytes", o.WouldInsert)
 			}
 		})
+	}
+}
+
+func TestRemoteInputSubmitRefusesTargetlessLive(t *testing.T) {
+	svc := testRemoteService(nil)
+	defer svc.Stop()
+	submit := handleRemoteInputSubmit(svc)
+
+	req := httptest.NewRequest("POST", "/api/chat/remote-input/submit",
+		bytes.NewBufferString(`{"device":"phone-1","text":"blind?"}`))
+	w := httptest.NewRecorder()
+	submit(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("targetless live submit: got %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "allowUnfocused") {
+		t.Fatalf("typed refusal must name the flag: %s", w.Body.String())
+	}
+}
+
+func TestRemoteInputSubmitTargetlessAllowedWhenNamed(t *testing.T) {
+	for _, target := range []string{
+		"/api/chat/remote-input/submit?allowUnfocused=1",
+		"/api/chat/remote-input/submit",
+	} {
+		body := `{"device":"phone-1","text":"explicit"}`
+		if !strings.Contains(target, "?") {
+			body = `{"device":"phone-1","text":"explicit","allowUnfocused":true}`
+		}
+		svc := testRemoteService(nil)
+		submit := handleRemoteInputSubmit(svc)
+		status := handleRemoteInputStatus(svc)
+
+		req := httptest.NewRequest("POST", target, bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		submit(w, req)
+		if w.Code != http.StatusAccepted {
+			svc.Stop()
+			t.Fatalf("%s: got %d, want 202", target, w.Code)
+		}
+		var resp remoteinput.SubmitResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			svc.Stop()
+			t.Fatalf("submit: bad body: %v", err)
+		}
+		o := waitRemoteOutcome(t, status, resp.ID)
+		svc.Stop()
+		if o.Status != remoteinput.StatusInjected {
+			t.Fatalf("%s: expected injected, got %+v", target, o)
+		}
+		if o.Focus != remoteinput.FocusAllowedUnfocused || !o.AllowUnfocused {
+			t.Fatalf("%s: named mode must surface: %+v", target, o)
+		}
+	}
+}
+
+func TestRemoteInputSubmitDryRunTargetlessAllowed(t *testing.T) {
+	// Dry runs type nothing, so the no-target rule exempts them: the
+	// success leg stays provable with zero keystrokes and no target.
+	svc := testRemoteService(nil)
+	defer svc.Stop()
+	submit := handleRemoteInputSubmit(svc)
+	status := handleRemoteInputStatus(svc)
+
+	req := httptest.NewRequest("POST", "/api/chat/remote-input/submit",
+		bytes.NewBufferString(`{"device":"phone-1","text":"dry no target","dryRun":true}`))
+	w := httptest.NewRecorder()
+	submit(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("dry-run targetless submit: got %d, want 202", w.Code)
+	}
+	var resp remoteinput.SubmitResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("submit: bad body: %v", err)
+	}
+	o := waitRemoteOutcome(t, status, resp.ID)
+	if o.Status != remoteinput.StatusDryRunPassed {
+		t.Fatalf("expected dry_run_passed, got %+v", o)
+	}
+	if o.Focus != remoteinput.FocusNotRequired {
+		t.Fatalf("expected not_required focus, got %+v", o)
+	}
+	if o.WouldInsert != "dry no target" {
+		t.Fatalf("wouldInsert = %q, want exact bytes", o.WouldInsert)
+	}
+}
+
+func TestRemoteInputTargets(t *testing.T) {
+	fake := &remoteinput.FakeTalon{TargetsList: []remoteinput.Target{
+		{Name: "WezTerm", Focused: true, WindowTitle: "macbookpro: coder", WindowCount: 1, HasWindows: true},
+		{Name: "Raycast", WindowCount: 0, HasWindows: false},
+	}}
+	svc := remoteinput.NewService(fake, 0, nil)
+	defer svc.Stop()
+	h := handleRemoteInputTargets(svc)
+
+	req := httptest.NewRequest("GET", "/api/chat/remote-input/targets", nil)
+	w := httptest.NewRecorder()
+	h(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("targets: got %d, want 200", w.Code)
+	}
+	var resp remoteinput.TargetsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("targets: bad body: %v", err)
+	}
+	if len(resp.Targets) != 2 {
+		t.Fatalf("expected 2 targets, got %+v", resp)
+	}
+	if resp.Targets[0].Name != "WezTerm" || !resp.Targets[0].Focused {
+		t.Fatalf("first target wrong: %+v", resp.Targets[0])
+	}
+	if resp.Targets[1].HasWindows || resp.Targets[1].WindowCount != 0 {
+		t.Fatalf("windowless marker wrong: %+v", resp.Targets[1])
+	}
+	if resp.DryRun {
+		t.Fatalf("plain targets call must not echo dryRun: %+v", resp)
+	}
+	if len(fake.Inserts) != 0 || len(fake.FocusAppCalls) != 0 {
+		t.Fatalf("targets must type and focus nothing")
+	}
+
+	// ?dryRun=1 is an accepted no-op echo on the read-only path.
+	req = httptest.NewRequest("GET", "/api/chat/remote-input/targets?dryRun=1", nil)
+	w = httptest.NewRecorder()
+	h(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("targets dryRun: got %d, want 200", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("targets dryRun: bad body: %v", err)
+	}
+	if !resp.DryRun || len(resp.Targets) != 2 {
+		t.Fatalf("dry-run targets wrong: %+v", resp)
+	}
+
+	// Wrong method is 405, like the sibling routes.
+	req = httptest.NewRequest("POST", "/api/chat/remote-input/targets", nil)
+	w = httptest.NewRecorder()
+	h(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("wrong method: got %d, want 405", w.Code)
+	}
+}
+
+func TestRemoteInputTargetsTalonFailure(t *testing.T) {
+	fake := &remoteinput.FakeTalon{TargetsErr: remoteinput.ErrFocusTransport}
+	svc := remoteinput.NewService(fake, 0, nil)
+	defer svc.Stop()
+	h := handleRemoteInputTargets(svc)
+
+	req := httptest.NewRequest("GET", "/api/chat/remote-input/targets", nil)
+	w := httptest.NewRecorder()
+	h(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("talon failure: got %d, want 502", w.Code)
 	}
 }
 

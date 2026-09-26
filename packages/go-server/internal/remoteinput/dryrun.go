@@ -17,5 +17,6 @@ func dryRunOutcome(sub Submission, focus string) Outcome {
 		ID: sub.ID, Device: sub.Device, Status: StatusDryRunPassed,
 		Focus: focus, InjectAttempted: false, PreserveText: true,
 		DryRun: true, WouldInsert: sub.Text,
+		AllowUnfocused: sub.AllowUnfocused,
 	}
 }

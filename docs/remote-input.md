@@ -44,6 +44,49 @@ order; focus completes first — inject only on focus success; a busy
 injector queues later submissions FIFO (no interleave, no drop, no
 busy-wait); one target computer (the Mac running this server + Talon).
 
+## Target enumeration (task-46ys9 — Talon names, not OS names)
+
+Measured live 2026-09-25: submitting the macOS process name fails
+verification — the process name for WezTerm is `wezterm-gui` while Talon
+reports `WezTerm`, so `POST /submit` with `"app": "wezterm-gui"`
+settles `focus_failed` (`focus mismatch: wanted app "wezterm-gui",
+active is "WezTerm"`). A phone UI therefore cannot enumerate targets
+from OS processes. Target names come from Talon:
+
+`GET /api/chat/remote-input/targets` (200 | 502 Talon unreachable):
+
+```json
+{"targets": [{"name": "WezTerm", "focused": true,
+ "windowTitle": "macbookpro: coder", "windowCount": 1, "hasWindows": true},
+ {"name": "Raycast", "focused": false, "windowCount": 0, "hasWindows": false}]}
+```
+
+Per target: `name` (the exact Talon `ui.apps()` name — the same string
+focus verification compares, so a picked target round-trips by
+construction), `focused` (Talon's active app), the relevant window
+title (first window in Talon's per-app ordering) and open-window
+count, in Talon's own `ui.apps()` ordering (the spec's
+cycling/recently-used behaviour needs the computer's ordering, not
+ours). Apps without windows stay listed (the launchable-apps row needs
+them) with `"hasWindows": false`. One bounded repl call, read-only —
+no focus change, no keystroke — so `?dryRun=1` is an accepted no-op
+echoed back (`"dryRun": true) for callers that want the mode visible.
+
+## No-target rule (task-46ys9 — never inject blind)
+
+Measured live: `POST /submit` with no `app` field used to yield
+`focus: "not_required"` and, with `dryRun` off, inject into whatever
+happens to be focused — on a voice-driven machine that can send
+dictation into the wrong application. The no-target case is now
+explicit: a live submit with no `app` and no `windowTitle` must set
+`"allowUnfocused": true` (or `?allowUnfocused=1`) deliberately, and
+the outcome surfaces the mode (`"focus": "unfocused_allowed"` plus
+`"allowUnfocused": true`). Without the flag the submit is refused —
+400 with a typed error at the wire, `focus_failed` naming the flag for
+in-process callers — injecting nothing, preserving the text. Dry runs
+type nothing, so they stay exempt: a targetless dry-run submit still
+reports `dry_run_passed` with `wouldInsert` (`focus: "not_required"`).
+
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 
 | Item | Value |
@@ -104,6 +147,34 @@ without touching the body. Then POST with `"app": "NoSuchAppXYZ"`
 and confirm `focus_failed` with `injectAttempted: false`, text preserved
 (nothing typed), and afterwards kill the server +
 `rm -rf "$STATE_DIR" "$BUILD_DIR"`.
+
+## Targets + no-target proof (safe, runnable now — types nothing)
+
+Same server as above (it serves the live Talon read path; the calls
+below never focus and never type):
+
+```sh
+curl -s localhost:4499/api/chat/remote-input/targets | head -c 400
+# → {"targets":[{"name":"...","focused":...,"windowTitle":"...",
+#      "windowCount":N,"hasWindows":true}, ...]}  (Talon order)
+curl -s 'localhost:4499/api/chat/remote-input/targets?dryRun=1' | head -c 120
+# → {"targets":[...],"dryRun":true}  (read-only; flag is a no-op echo)
+curl -s -X POST localhost:4499/api/chat/remote-input/submit \
+  -H 'Content-Type: application/json' \
+  -d '{"device":"manual-1","text":"blind?"}'
+# → 400 {"error":"no target: set app or windowTitle (see GET
+#      remote-input/targets for Talon names), or send allowUnfocused:true
+#      to inject without focus"}
+curl -s -X POST localhost:4499/api/chat/remote-input/submit \
+  -H 'Content-Type: application/json' \
+  -d '{"device":"manual-1","text":"dry no target","dryRun":true}'
+# → {"id":"ri-N","status":"queued"}; status polls to
+#   {"status":"dry_run_passed","focus":"not_required","dryRun":true,
+#    "wouldInsert":"dry no target",...}  (dry runs stay exempt)
+```
+
+Use a `name` from the targets listing verbatim for `"app"` — never the
+osascript process name.
 
 ## Live-keystroke proof (needs a visible scratch target + eyes)
 

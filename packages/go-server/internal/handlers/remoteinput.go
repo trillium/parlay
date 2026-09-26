@@ -1,14 +1,18 @@
-// Remote-input HTTP surface (task-57ltl): Parlay's accepted-input intake
-// for the Mac-side injection control plane. Two routes:
+// Remote-input HTTP surface (task-57ltl, targets + no-target rule task-46ys9):
+// Parlay's accepted-input intake for the Mac-side injection control plane.
+// Three routes:
 //
 //	POST /api/chat/remote-input/submit  enqueue text → 202 {id, queued}
 //	GET  /api/chat/remote-input/status?id=…  poll one Outcome (404 unknown)
+//	GET  /api/chat/remote-input/targets      list Talon's apps in Talon order
 //
 // Terminal outcomes additionally fan out as the device-scoped SSE event
 // `remote_input_result` carrying the Outcome — that event is what lets
 // Parlay clear its shared input state only on confirmed injection
 // (status "injected") and preserve + strip the trigger on "focus_failed".
-// Both routes are mutating/identifier-aiming and live in GuardedPaths.
+// All three routes are mutating/identifier-aiming and live in GuardedPaths.
+// Targets is read-only (no focus change, no keystroke); ?dryRun=1 on it
+// is accepted as a no-op so a client can prove the read path explicitly.
 package handlers
 
 import (
@@ -34,6 +38,7 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub) {
 	)
 	mux.HandleFunc("/api/chat/remote-input/submit", handleRemoteInputSubmit(svc))
 	mux.HandleFunc("/api/chat/remote-input/status", handleRemoteInputStatus(svc))
+	mux.HandleFunc("/api/chat/remote-input/targets", handleRemoteInputTargets(svc))
 }
 
 // handleRemoteInputSubmit implements POST /api/chat/remote-input/submit.
@@ -61,13 +66,53 @@ func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
 		if q := r.URL.Query().Get("dryRun"); q == "true" || q == "1" {
 			dryRun = true
 		}
+		// ?allowUnfocused=1 opts into targetless injection without
+		// touching the body, mirroring dryRun above.
+		allowUnfocused := req.AllowUnfocused
+		if q := r.URL.Query().Get("allowUnfocused"); q == "true" || q == "1" {
+			allowUnfocused = true
+		}
+		// No silent blind injection: a live submit with no app and no
+		// window target must name the unfocused mode deliberately.
+		// (Dry runs type nothing, so they stay exempt.)
+		if !dryRun && req.App == "" && req.WindowTitle == "" && !allowUnfocused {
+			writeStatusError(w, http.StatusBadRequest,
+				"no target: set app or windowTitle (see GET remote-input/targets for Talon names), "+
+					"or send allowUnfocused:true to inject without focus")
+			return
+		}
 		id := svc.Submit(remoteinput.Submission{
 			Device: req.Device, Text: req.Text,
 			App: req.App, WindowTitle: req.WindowTitle, Trigger: req.Trigger,
-			DryRun: dryRun,
+			AllowUnfocused: allowUnfocused, DryRun: dryRun,
 		})
 		w.WriteHeader(http.StatusAccepted)
 		writeJSON(w, remoteinput.SubmitResponse{ID: id, Status: remoteinput.StatusQueued})
+	}
+}
+
+// handleRemoteInputTargets implements GET /api/chat/remote-input/targets.
+// One bounded Talon read per call; read-only, so ?dryRun=1 is a no-op
+// echoed back for callers that want the mode visible.
+func handleRemoteInputTargets(svc *remoteinput.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		targets, err := svc.Targets()
+		if err != nil {
+			writeStatusError(w, http.StatusBadGateway, "talon targets failed: "+err.Error())
+			return
+		}
+		if targets == nil {
+			targets = []remoteinput.Target{}
+		}
+		resp := remoteinput.TargetsResponse{Targets: targets}
+		if q := r.URL.Query().Get("dryRun"); q == "true" || q == "1" {
+			resp.DryRun = true
+		}
+		writeJSON(w, resp)
 	}
 }
 
