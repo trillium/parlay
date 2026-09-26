@@ -27,6 +27,7 @@ const maxOutcomes = 1024
 // Service owns the submission queue and the outcome table.
 type Service struct {
 	talon       TalonAdapter
+	bead        BeadCreator
 	settleDelay time.Duration
 	onSettled   func(Outcome)
 
@@ -47,6 +48,7 @@ type Service struct {
 func NewService(talon TalonAdapter, settleDelay time.Duration, onSettled func(Outcome)) *Service {
 	s := &Service{
 		talon:       talon,
+		bead:        NewExecBeadCreator(),
 		settleDelay: settleDelay,
 		onSettled:   onSettled,
 		outcomes:    make(map[string]Outcome),
@@ -84,6 +86,14 @@ func (s *Service) Submit(sub Submission) string {
 	default:
 	}
 	return sub.ID
+}
+
+// SetBeadCreator swaps the bead backend (tests inject a fake; the
+// production exec creator is the NewService default).
+func (s *Service) SetBeadCreator(b BeadCreator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bead = b
 }
 
 // Get returns the latest outcome for id, or false when unknown (evicted
@@ -143,11 +153,23 @@ func (s *Service) work() {
 	}
 }
 
-// process runs one submission: focus gate, then insert, then outcome.
-// A targetless live submission without allowUnfocused never reaches the
-// injector: it settles focus_failed with a typed error naming the flag.
-// (Dry runs type nothing, so they stay exempt.)
+// process runs one submission: bead mode captures without touching
+// Talon; inject mode keeps the focus gate → insert → outcome pipeline.
+// The no-target refusal below is inject-only: bead mode needs no target.
 func (s *Service) process(sub Submission) {
+	mode := NormalizeMode(sub.Mode)
+	if mode == ModeBead {
+		s.processBead(sub)
+		return
+	}
+	if mode != ModeInject {
+		s.setOutcome(Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusInjectFailed,
+			Mode: mode, InjectAttempted: false, PreserveText: true,
+			Error: fmt.Sprintf("unknown mode %q: want %q or %q", sub.Mode, ModeInject, ModeBead),
+		})
+		return
+	}
 	if sub.App == "" && sub.WindowTitle == "" && !sub.AllowUnfocused && !sub.DryRun {
 		s.setOutcome(Outcome{
 			ID: sub.ID, Device: sub.Device, Status: StatusFocusFailed,
@@ -268,4 +290,79 @@ var sleepSettle = func(d time.Duration) {
 	if d > 0 {
 		time.Sleep(d)
 	}
+}
+
+// processBead captures the submission text as a bead. The Talon path
+// is fully bypassed: no focus resolution, no insert, no target needed
+// (a targetless bead submit is valid). Focus reports not_required and
+// injectAttempted stays false. Every failure is a typed bead_failed
+// that preserves the text and never sets a BeadID.
+func (s *Service) processBead(sub Submission) {
+	store := NormalizeStore(sub.Store)
+	s.mu.Lock()
+	backend := s.bead
+	if backend == nil {
+		backend = NewExecBeadCreator()
+		s.bead = backend
+	}
+	s.mu.Unlock()
+	fail := func(errText string, dry bool) {
+		s.setOutcome(Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusBeadFailed,
+			Focus: FocusNotRequired, Mode: ModeBead,
+			InjectAttempted: false, PreserveText: true,
+			BeadStore: store, DryRun: dry, Error: errText,
+		})
+	}
+	if !ValidStore(store) {
+		fail(fmt.Sprintf("invalid bead store %q: must match ^[a-z][a-z0-9_-]{0,63}$ "+"(any registered wrapper name works; nothing is hard-coded)", store), sub.DryRun)
+		return
+	}
+	if n := len([]rune(sub.Text)); n > MaxBeadTextLen {
+		fail(fmt.Sprintf("bead text exceeds %d chars (got %d): rejected, never truncated", MaxBeadTextLen, n), sub.DryRun)
+		return
+	}
+	if sub.Text == "" {
+		fail("bead text is empty: nothing to capture", sub.DryRun)
+		return
+	}
+	if sub.DryRun {
+		// Honest dry run: resolve the wrapper so the outcome names
+		// exactly what would be called, and create nothing.
+		wrapper, err := backend.Resolve(store)
+		if err != nil {
+			fail(err.Error(), true)
+			return
+		}
+		s.setOutcome(Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusDryRunPassed,
+			Focus: FocusNotRequired, Mode: ModeBead,
+			InjectAttempted: false, PreserveText: true,
+			DryRun: true, WouldInsert: sub.Text,
+			BeadStore: store, BeadWrapper: wrapper,
+		})
+		return
+	}
+	s.setOutcome(Outcome{ID: sub.ID, Device: sub.Device, Status: StatusInjecting, Mode: ModeBead})
+	id, wrapper, err := backend.Create(store, sub.Text)
+	if err != nil {
+		o := Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusBeadFailed,
+			Focus: FocusNotRequired, Mode: ModeBead,
+			InjectAttempted: false, PreserveText: true,
+			BeadStore: store, Error: err.Error(),
+		}
+		if wrapper != "" {
+			o.BeadWrapper = wrapper
+		}
+		s.setOutcome(o)
+		return
+	}
+	s.setOutcome(Outcome{
+		ID: sub.ID, Device: sub.Device, Status: StatusBeadCreated,
+		Focus: FocusNotRequired, Mode: ModeBead,
+		InjectAttempted: false,
+		BeadID:          id, BeadStore: store, BeadWrapper: wrapper,
+		CapturedText: sub.Text,
+	})
 }

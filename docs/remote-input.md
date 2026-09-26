@@ -87,6 +87,92 @@ in-process callers — injecting nothing, preserving the text. Dry runs
 type nothing, so they stay exempt: a targetless dry-run submit still
 reports `dry_run_passed` with `wouldInsert` (`focus: "not_required"`).
 
+## Bead mode (task-r887x — capture instead of inject)
+
+The same submit path can capture the incoming text as a **bead**
+instead of turning it into physical keyboard input. The PWA's deferred
+input-mode selector (task-pf1n3) will drive this mode.
+
+`POST /api/chat/remote-input/submit` with `"mode": "bead"`
+(or `?mode=bead`; the body wins when both are set):
+
+```json
+{"device": "phone-1", "text": "call mom tomorrow", "mode": "bead"}
+```
+
+- `mode` is `"inject"` (default) or `"bead"`. Empty/missing means
+  `inject`, so every existing caller and the current PWA keep working
+  unchanged. Anything else is 400 (`unknown mode`).
+- Bead mode **bypasses the whole Talon path**: no focus resolution, no
+  `actions.insert`, no target needed. A targetless bead submit is valid
+  — the no-target refusal above is inject-only.
+- Success settles `bead_created` carrying the new id, the store used,
+  and the exact bytes captured (`capturedText`); `injectAttempted` stays
+  false and `focus` stays `not_required`. It fans out through the same
+  status endpoint and the same `remote_input_result` SSE event, so the
+  phone clears its box and shows the id exactly as it does on `injected`.
+- Failure settles `bead_failed` with a typed `error` and **no id ever**:
+  wrapper missing, non-zero exit (stderr included), unparsable wrapper
+  output (`bead created but id unparseable … no id invented` — the bead
+  may exist, so no id is guessed), over-long text, or bad store name.
+  The text is preserved (`preserveText: true`).
+- Captured text is capped at **2000 chars (runes)** — the scratchpad
+  precedent. Over-long submits are rejected (400 at the wire,
+  `bead_failed` in-process), never truncated.
+- `dryRun: true` with `mode: "bead"` creates nothing and reports
+  `dry_run_passed` with `wouldInsert` (exact bytes), `beadStore`, and
+  `beadWrapper` — exactly what would be captured and what would be
+  called.
+
+### Store rule (never a hard-coded set)
+
+Default store is `inbox` (the capture/triage queue per `~/data/README.md`).
+The caller may name another store (e.g. `"store": "task"`), and any
+registered wrapper name works — the name is validated, not looked up:
+it must match `^[a-z][a-z0-9_-]{0,63}$` (a safe single path element, so
+it can only resolve to `<dir>/<name>`, never a traversal or flag).
+Anything else is 400 / `bead_failed` (`invalid bead store`).
+
+### Explicit wrapper path (correctness, not hygiene)
+
+The server resolves the wrapper to an **explicit path** — never through
+an inherited `PATH` alone (a launchd-spawned server has a minimal PATH;
+this box has been bitten by that class of bug with `gh`). Order:
+`FM_<STORE>_BIN` override (e.g. `FM_INBOX_BIN`, `FM_TASK_BIN`) > known
+install locations (`~/.local/bin/<store>`, `~/.pi/agent/bin/<store>`) >
+`PATH` lookup. When nothing resolves, the outcome is `bead_failed`
+(`bead wrapper not found for store … (tried: …)`). The resolved path is
+echoed on every bead outcome as `beadWrapper`, so dry runs audit exactly
+what would be called. The text is passed as a **single argv element**
+(`wrapper q "<text>"` via `exec`, no shell) — it is arbitrary phone
+dictation content and is never interpolated into a command line.
+
+### Bead proof (safe — types nothing, creates one real inbox bead)
+
+Same temp-server recipe as above (temp build dir, temp state dir, temp
+port — never the live server), then:
+
+```sh
+curl -s -X POST localhost:4499/api/chat/remote-input/submit \
+  -H 'Content-Type: application/json' \
+  -d '{"device":"manual-1","text":"parlay bead-mode proof ✓","mode":"bead"}'
+# → {"id":"ri-1","status":"queued"}
+curl -s 'localhost:4499/api/chat/remote-input/status?id=ri-1'
+# → {"status":"bead_created","focus":"not_required","mode":"bead",
+#      "injectAttempted":false,"beadId":"inbox-xxxx","beadStore":"inbox",
+#      "beadWrapper":"/Users/<you>/.local/bin/inbox",
+#      "capturedText":"parlay bead-mode proof ✓",...}
+BEAD=$(curl -s 'localhost:4499/api/chat/remote-input/status?id=ri-1' | python3 -c 'import json,sys; print(json.load(sys.stdin)["beadId"])')
+inbox show "$BEAD"   # the capture landed — close it after to avoid litter
+```
+
+Dry-run first if the box is unfamiliar — it resolves the wrapper and
+reports `dry_run_passed` with `wouldInsert`/`beadStore`/`beadWrapper`
+without creating anything. On a live submit, poll: the fleet wrapper's
+external-first routing can take seconds on first call (one observed
+`bead_created` settled ~6 s after submit), so the status reads
+`injecting` until the wrapper exits.
+
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 
 | Item | Value |
