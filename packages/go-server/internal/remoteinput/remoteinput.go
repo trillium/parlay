@@ -36,8 +36,9 @@ const (
 
 // FocusMode records what the focus gate did for a submission.
 const (
-	FocusVerified    = "verified"     // target focused and verified active
-	FocusNotRequired = "not_required" // no app/window target given; injected as-is
+	FocusVerified         = "verified"          // target focused and verified active
+	FocusNotRequired      = "not_required"      // dry run with no target; injected as-is
+	FocusAllowedUnfocused = "unfocused_allowed" // caller set allowUnfocused; injected without focus
 )
 
 // Submission is one accepted-input unit from Parlay. Text injects
@@ -50,6 +51,10 @@ type Submission struct {
 	App         string `json:"app,omitempty"`
 	WindowTitle string `json:"windowTitle,omitempty"`
 	Trigger     string `json:"trigger,omitempty"`
+	// AllowUnfocused permits injection with no app/window target.
+	// Without it a targetless live submission is refused (it would
+	// otherwise type into whatever owns focus); dry runs never need it.
+	AllowUnfocused bool `json:"allowUnfocused,omitempty"`
 	// DryRun performs the real focus request plus real verification
 	// and reports what would be inserted, typing nothing. It proves
 	// the success leg without touching the live machine.
@@ -72,6 +77,10 @@ type Outcome struct {
 	// the exact bytes that would have been inserted.
 	DryRun      bool   `json:"dryRun,omitempty"`
 	WouldInsert string `json:"wouldInsert,omitempty"`
+	// AllowUnfocused echoes the submission mode: true means this
+	// outcome injected (or would inject, for dry runs) with no focus
+	// target because the caller explicitly allowed it.
+	AllowUnfocused bool `json:"allowUnfocused,omitempty"`
 }
 
 // Terminal reports whether no further transition is possible.
@@ -89,7 +98,11 @@ type SubmitRequest struct {
 	App         string `json:"app,omitempty"`
 	WindowTitle string `json:"windowTitle,omitempty"`
 	Trigger     string `json:"trigger,omitempty"`
-	DryRun      bool   `json:"dryRun,omitempty"`
+	// AllowUnfocused opts into injection with no focus target.
+	// Required (or ?allowUnfocused=1) for a targetless live submit;
+	// dry runs never need it. Echoed back on the outcome.
+	AllowUnfocused bool `json:"allowUnfocused,omitempty"`
+	DryRun         bool `json:"dryRun,omitempty"`
 }
 
 // SubmitResponse is the 202 answer: the submission is queued, not done.

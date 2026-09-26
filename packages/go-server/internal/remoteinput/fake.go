@@ -15,9 +15,13 @@ type FakeTalon struct {
 	ActiveAppName string
 	WindowTitle   string
 
+	// Scripted target list returned by Targets.
+	TargetsList []Target
+
 	// Injected failures.
 	FocusAppErr error
 	InsertErr   error
+	TargetsErr  error
 
 	// StickyActive disables FocusApp's cooperative effect (the named app
 	// becoming active), simulating a focus request the OS did not honor.
@@ -32,6 +36,7 @@ type FakeTalon struct {
 	FocusWindowCalls []string
 	Inserts          []string
 	ActiveAppReads   int
+	TargetsCalls     int
 }
 
 // Verify FakeTalon implements TalonAdapter at compile time.
@@ -102,4 +107,18 @@ func (f *FakeTalon) Insert(text string) error {
 	}
 	f.Inserts = append(f.Inserts, text)
 	return nil
+}
+
+// Targets returns the scripted list. It records the call but never
+// focuses or inserts, mirroring the read-only live implementation.
+func (f *FakeTalon) Targets() ([]Target, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.TargetsCalls++
+	if f.TargetsErr != nil {
+		return nil, f.TargetsErr
+	}
+	out := make([]Target, len(f.TargetsList))
+	copy(out, f.TargetsList)
+	return out, nil
 }

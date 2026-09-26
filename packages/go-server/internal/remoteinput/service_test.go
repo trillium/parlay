@@ -32,7 +32,7 @@ func TestLiteralMultilineInjectedUnmodified(t *testing.T) {
 	defer svc.Stop()
 
 	text := "line one\n  indented line two\twith tab\n\nunicode: héllo wörld ✓\n\"quoted\" and 'apos' and \\backslash\\"
-	id := svc.Submit(Submission{Device: "d1", Text: text})
+	id := svc.Submit(Submission{Device: "d1", Text: text, AllowUnfocused: true})
 	o := waitOutcome(t, svc, id)
 
 	if o.Status != StatusInjected {
@@ -62,7 +62,7 @@ func TestSubmissionsSerializedInOrder(t *testing.T) {
 	const n = 10
 	ids := make([]string, n)
 	for i := 0; i < n; i++ {
-		ids[i] = svc.Submit(Submission{Device: "d1", Text: "text-" + string(rune('a'+i))})
+		ids[i] = svc.Submit(Submission{Device: "d1", Text: "text-" + string(rune('a'+i)), AllowUnfocused: true})
 	}
 	for _, id := range ids {
 		if o := waitOutcome(t, svc, id); o.Status != StatusInjected {
@@ -173,7 +173,7 @@ func TestInsertFailurePreservesTextWithoutStrip(t *testing.T) {
 	svc := NewService(fake, 0, nil)
 	defer svc.Stop()
 
-	id := svc.Submit(Submission{Device: "d1", Text: "keep me", Trigger: "send it"})
+	id := svc.Submit(Submission{Device: "d1", Text: "keep me", Trigger: "send it", AllowUnfocused: true})
 	o := waitOutcome(t, svc, id)
 
 	if o.Status != StatusInjectFailed {
