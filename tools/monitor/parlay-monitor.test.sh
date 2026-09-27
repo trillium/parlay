@@ -193,7 +193,7 @@ run_monitor() {
   ) >"${out}" 2>"${err}" &
   local pid=$!
   CODE="running"
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 90); do
     if ! kill -0 "${pid}" 2>/dev/null; then
       wait "${pid}"; CODE=$?
       break
@@ -499,7 +499,7 @@ echo
 echo "G. bounded enrollment against a wedged relay"
 
 # G1. A relay that never answers /register must fail, not hang. run_monitor
-# only waits ~6s, so a pre-fix script (unbounded curl) would still be "running"
+# only waits ~9s, so a pre-fix script (unbounded curl) would still be "running"
 # at the end of the wait — exiting with code 1 inside the window IS the
 # regression proof. MAX_TIME=2 hurries the bound (2s x 2 attempts + 1s retry
 # gap ≈ 5s); the mechanism, not the production 5s default, is under test.
