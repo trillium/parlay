@@ -230,6 +230,9 @@ func TestReapDuplicateListenersTerminatesEveryDuplicate(t *testing.T) {
 func TestReapDuplicateListenersEscalatesToKillForASurvivor(t *testing.T) {
 	// A loop blocked in a long poll can miss its SIGTERM window, and a
 	// survivor is exactly the duplicate delivery this guard exists to stop.
+	// The grace is now a poll, not a fixed sleep: SIGTERM, then signal-0
+	// probes until the budget runs out, then exactly one SIGKILL (plus the
+	// survivor-report probe after it).
 	stubProcessTable(t, []procEntry{
 		{pid: 601, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent mayor"},
 	}, nil)
@@ -238,8 +241,86 @@ func TestReapDuplicateListenersEscalatesToKillForASurvivor(t *testing.T) {
 	reapDuplicateListeners("mayor")
 
 	sigs := rec.sigsTo(601)
-	if len(sigs) < 3 || sigs[0] != syscall.SIGTERM || sigs[1] != syscall.Signal(0) || sigs[2] != syscall.SIGKILL {
-		t.Errorf("signals to 601 = %v, want SIGTERM, probe, SIGKILL", sigs)
+	if len(sigs) < 3 || sigs[0] != syscall.SIGTERM {
+		t.Fatalf("signals to 601 = %v, want SIGTERM first, then probes, then SIGKILL", sigs)
+	}
+	kills := 0
+	for i, s := range sigs[1:] {
+		if s == syscall.SIGKILL {
+			kills++
+			// Everything between SIGTERM and SIGKILL must be a probe.
+			for _, p := range sigs[1 : i+1] {
+				if p != syscall.Signal(0) {
+					t.Errorf("signals to 601 = %v, want only signal-0 probes between SIGTERM and SIGKILL", sigs)
+					break
+				}
+			}
+		}
+	}
+	if kills != 1 {
+		t.Errorf("signals to 601 = %v, want exactly one SIGKILL for a survivor", sigs)
+	}
+}
+
+func TestReapDuplicateListenersReturnsEarlyWhenTheVictimExits(t *testing.T) {
+	// The fixed-2s-grace regression: a victim that dies on SIGTERM must not
+	// cost the whole grace. The victim here exits after 2 probes; the reap
+	// must then stop probing (no SIGKILL, few signal-0s, little slept time).
+	stubProcessTable(t, []procEntry{
+		{pid: 601, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent mayor"},
+	}, nil)
+	origSignal, origSleep := signalProcess, nowSleep
+	probes := 0
+	var slept time.Duration
+	alive := true
+	signalProcess = func(pid int, sig syscall.Signal) error {
+		if sig == syscall.Signal(0) {
+			probes++
+			if probes >= 2 {
+				alive = false // victim reaped after 2 probes
+			}
+			if !alive {
+				return syscall.ESRCH
+			}
+			return nil
+		}
+		return nil
+	}
+	nowSleep = func(d time.Duration) { slept += d }
+	t.Cleanup(func() { signalProcess, nowSleep = origSignal, origSleep })
+
+	reapDuplicateListeners("mayor")
+
+	if probes > 3 {
+		t.Errorf("probes = %d, want the grace poll to stop soon after the victim exits", probes)
+	}
+	if slept >= singletonGraceTotal {
+		t.Errorf("slept %v, want well under the %v grace budget for a fast exit", slept, singletonGraceTotal)
+	}
+}
+
+func TestTerminateListenersNeverExceedsTheGraceBudget(t *testing.T) {
+	// Worst case is unchanged: a SIGTERM-ignoring survivor costs the full
+	// 2s budget, never more.
+	stubProcessTable(t, []procEntry{
+		{pid: 601, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent mayor"},
+	}, nil)
+	origSignal, origSleep := signalProcess, nowSleep
+	var slept time.Duration
+	signalProcess = func(pid int, sig syscall.Signal) error {
+		if sig == syscall.Signal(0) {
+			return nil // always alive
+		}
+		return nil
+	}
+	nowSleep = func(d time.Duration) { slept += d }
+	t.Cleanup(func() { signalProcess, nowSleep = origSignal, origSleep })
+
+	if got := terminateListeners([]int{601}); len(got) != 1 || got[0] != 601 {
+		t.Fatalf("terminateListeners survivors = %v, want [601]", got)
+	}
+	if slept != singletonGraceTotal {
+		t.Errorf("slept %v, want exactly the %v grace budget for a survivor", slept, singletonGraceTotal)
 	}
 }
 
@@ -325,8 +406,20 @@ func TestKillLocalListenersEscalatesToKillForASurvivor(t *testing.T) {
 		t.Fatalf("killed = %v, want [801]", killed)
 	}
 	sigs := rec.sigsTo(801)
-	if len(sigs) < 3 || sigs[0] != syscall.SIGTERM || sigs[1] != syscall.Signal(0) || sigs[2] != syscall.SIGKILL {
-		t.Errorf("signals to 801 = %v, want SIGTERM, probe, SIGKILL", sigs)
+	if len(sigs) < 3 || sigs[0] != syscall.SIGTERM {
+		t.Fatalf("signals to 801 = %v, want SIGTERM first, then probes, then SIGKILL", sigs)
+	}
+	kills := 0
+	for _, s := range sigs[1:] {
+		if s == syscall.SIGKILL {
+			kills++
+		} else if s != syscall.Signal(0) {
+			t.Errorf("signals to 801 = %v, want only signal-0 probes between SIGTERM and SIGKILL", sigs)
+			break
+		}
+	}
+	if kills != 1 {
+		t.Errorf("signals to 801 = %v, want exactly one SIGKILL for a survivor", sigs)
 	}
 }
 

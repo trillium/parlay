@@ -65,15 +65,39 @@ func CmdMonitor(argv []string) {
 			httpc.Die("parlay monitor: --agent <id> is required (or use --legacy-poll for the global feed)", config.ExitUsage)
 			return
 		}
-		ensureRegistered(agent)
+		// Skipped when this monitor was armed by `parlay listen`, which
+		// registered the same agent seconds ago (see handoffRegisteredAgent).
+		if !claimHandoffRegistration(agent) {
+			ensureRegistered(agent)
+		}
 		runRelayMonitor(agent, notifySafe)
 		return
 	}
 
-	if agent != "" {
+	if agent != "" && !claimHandoffRegistration(agent) {
 		ensureRegistered(agent)
 	}
 	runLegacyPoll(config.ServerURL(), agent, notifySafe)
+}
+
+// handoffRegisteredAgent carries a just-completed `parlay listen`
+// registration across the in-process handoff to CmdMonitor. listen.go sets it
+// right after its register-agent POST succeeds; CmdMonitor consumes (and
+// clears) it to skip its own best-effort ensureRegistered for the same agent
+// — that POST would otherwise re-register seconds after listen just did.
+// A direct `parlay monitor` call never has it set, so that path still
+// registers. Package-level (not a flag) so the wire surface is unchanged.
+var handoffRegisteredAgent string
+
+// claimHandoffRegistration reports whether agent was just registered by the
+// listen handoff, consuming the claim so a later direct monitor call for the
+// same id still registers.
+func claimHandoffRegistration(agent string) bool {
+	if agent != "" && handoffRegisteredAgent == agent {
+		handoffRegisteredAgent = ""
+		return true
+	}
+	return false
 }
 
 // ensureRegistered is CmdMonitor's own explicit-registration step, injectable

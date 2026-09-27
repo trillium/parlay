@@ -45,8 +45,23 @@ fi
 # Go rewrite of packages/cli (ticket B10, workstream B). Build the binary if
 # missing or stale (any tools/cli source newer than it), then exec it in
 # place of the old `bun packages/cli/src/index.ts`.
+#
+# The listen path never rebuilds inline: `parlay listen`/`monitor`/`agent-up`
+# arm the agent's only reply channel, so a multi-second inline rebuild there
+# delays enrollment (and a concurrent fleet pull mid-listen could swap the
+# binary under a streaming agent). When the binary exists these verbs exec it
+# directly; every other verb keeps the build-if-stale check, so ordinary use
+# refreshes the binary within one invocation of any non-stream verb. A missing
+# binary still builds on every verb — there is nothing else to exec.
 CLI_DIR="$REPO/tools/cli"
 GO_BIN="$CLI_DIR/bin/parlay-cli"
+case "${1:-}" in
+  listen|monitor|agent-up)
+    if [ -x "$GO_BIN" ]; then
+      exec "$GO_BIN" "$@"
+    fi
+    ;;
+esac
 if [ ! -x "$GO_BIN" ] || [ -n "$(find "$CLI_DIR" -name '*.go' -newer "$GO_BIN" -print -quit)" ]; then
   mkdir -p "$(dirname "$GO_BIN")"
   # CGO_ENABLED=0: the beads dependency's embedded-Dolt tree drags in ICU C++

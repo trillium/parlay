@@ -60,6 +60,15 @@ for arg in "$@"; do
 done
 log() { [ "${QUIET}" = 1 ] || echo "parlay ensure-up: $*" >&2; }
 
+# Success stamp for monitors: `parlay listen` runs ensure-up inside --preflight
+# and again seconds later for the real stream. Touching .ensure-up.ok on every
+# success lets the second run skip re-verifying a relay that was proven up
+# moments ago (see parlay-monitor.sh). Best-effort — a missing dir only means
+# the relay is not up, in which case no success path runs anyway.
+mark_ensure_up_ok() {
+  touch "$(parlay_relay_runtime_dir)/.ensure-up.ok" 2>/dev/null || true
+}
+
 # Cap the relay logs on every ensure-up, so a long-lived relay's logs stay
 # bounded between restarts (robots-dcgg: relay.err.log reached 277 MB with no
 # rotation anywhere). Guarded on the helper for pairing with an older installed
@@ -72,6 +81,7 @@ fi
 # point is to replace a relay that may well be answering /health.)
 if [ "${FORCE_RESTART}" != 1 ] && parlay_relay_health_ok; then
   log "relay already up"
+  mark_ensure_up_ok
   exit 0
 fi
 
@@ -103,6 +113,7 @@ if [ "${have_lock}" != 1 ]; then
   log "another starter holds the lock — waiting for its relay to answer /health"
   if parlay_relay_wait_health; then
     log "relay came up (started by a concurrent monitor)"
+    mark_ensure_up_ok
     exit 0
   fi
   log "could not acquire start lock and relay never came up"
@@ -115,6 +126,7 @@ trap 'rmdir "${LOCK}" 2>/dev/null || true' EXIT
 # acquiring the lock.
 if [ "${FORCE_RESTART}" != 1 ] && parlay_relay_health_ok; then
   log "relay already up (won the race, nothing to do)"
+  mark_ensure_up_ok
   exit 0
 fi
 
@@ -193,6 +205,7 @@ fi
 # demonstrably still working (its log grows) and gives up on a quiet one.
 if parlay_relay_wait_health; then
   log "relay is up (started via ${started})"
+  mark_ensure_up_ok
   exit 0
 fi
 log "relay did not answer /health within ${PARLAY_RELAY_HEALTH_WAIT}s of quiet (started via ${started}); check ${PARLAY_RELAY_ERR_LOG}"
