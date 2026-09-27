@@ -92,6 +92,10 @@ use it; any legacy poll-path monitors keep working untouched.
 The relay's control socket is single-binder (a second live relay fails to bind
 and exits), so even a lost lock race can never produce two live relays.
 
+Every success also stamps `<runtime>/.ensure-up.ok` (best-effort); monitors
+treat a fresh stamp plus a live socket as proof the relay was verified moments
+ago and skip re-verifying (see `tools/monitor/NOTES.md`).
+
 ### It never force-restarts a running relay (robots-mpr3)
 
 "Not answering `/health`" and "not running" are different states, and ensure-up
