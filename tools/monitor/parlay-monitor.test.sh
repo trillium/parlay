@@ -199,7 +199,11 @@ run_monitor() {
       break
     fi
     # Reached the streaming stage — that is a terminal outcome for this harness.
-    grep -q "streaming" "${err}" 2>/dev/null && break
+    # Match the success line only ("streaming '<agent>' from <spool>"): a bare
+    # "streaming" substring also matches the failure paths ("NOT streaming:",
+    # "is NOT streaming."), which would break the wait early, kill a process
+    # that was about to exit 1 on its own, and misreport CODE as "running".
+    grep -q "streaming '.*' from " "${err}" 2>/dev/null && break
     /bin/sleep 0.1
   done
   if [ "${CODE}" = "running" ]; then
