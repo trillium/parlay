@@ -39,7 +39,8 @@ unset BASH_ENV ENV PROMPT_COMMAND 2>/dev/null || true
 # the scenarios deterministic.
 unset PARLAY_SERVER PARLAY_RELAY_RUNTIME PARLAY_RELAY_SOCK \
       PARLAY_RELAY_PROBE_TIMEOUT PARLAY_MONITOR_WATCH_INTERVAL \
-      PARLAY_MONITOR_NO_ORPHAN_EXIT PARLAY_NOTIFY_BUDGET 2>/dev/null || true
+      PARLAY_MONITOR_NO_ORPHAN_EXIT PARLAY_NOTIFY_BUDGET \
+      PARLAY_ENROLL_MAX_TIME PARLAY_ENSURE_UP_STAMP_TTL 2>/dev/null || true
 # `${!BASH_FUNC_*}` names every exported-function env entry (e.g.
 # `BASH_FUNC_sleep%%`); unsetting them drops a function a developer shell might
 # have `export -f`'d. Works in the harness's bash 3.2 (macOS) and 5.x (CI).
@@ -114,6 +115,11 @@ const log = process.argv[5]
 // whose registry response grows with the fleet (robots-dcag). /health stays
 // instant, matching the real relay: it binds and serves before spool replay.
 const agentsDelayMs = Number(process.argv[6] ?? 0)
+// Wedged-/register mode ("1"): accept the enroll request and never answer,
+// simulating a wedged relay. Section G asserts the monitor bounds this wait
+// instead of hanging startup forever.
+
+const wedgedRegister = process.argv[7] === "1"
 
 Bun.serve({
   unix: sock,
@@ -127,6 +133,7 @@ Bun.serve({
       return Response.json({ agents: [], server: boundServer, runtime })
     }
     if (path === "/register") {
+      if (wedgedRegister) await new Promise(() => {}) // never answer
       const body = (await req.json()) as { agent: string }
       const spool = join(runtime, `${body.agent}.chan`)
       writeFileSync(spool, "")
@@ -139,16 +146,17 @@ Bun.serve({
 })
 TS
 
-# start_stub <dir> <bound-server> [agents-delay-ms] → STUB_SOCK/STUB_LOG/STUB_RUNTIME
+# start_stub <dir> <bound-server> [agents-delay-ms] [wedged-register] → STUB_SOCK/STUB_LOG/STUB_RUNTIME
 start_stub() {
   STUB_RUNTIME="$1"
   local bound="$2"
   local delay="${3:-0}"
+  local wedged="${4:-0}"
   mkdir -p "${STUB_RUNTIME}"
   STUB_SOCK="${STUB_RUNTIME}/relay.sock"
   STUB_LOG="${STUB_RUNTIME}/requests.log"
   : >"${STUB_LOG}"
-  bun "${ROOT}/stub-relay.ts" "${STUB_SOCK}" "${bound}" "${STUB_RUNTIME}" "${STUB_LOG}" "${delay}" \
+  bun "${ROOT}/stub-relay.ts" "${STUB_SOCK}" "${bound}" "${STUB_RUNTIME}" "${STUB_LOG}" "${delay}" "${wedged}" \
     >"${STUB_RUNTIME}/stub.log" 2>&1 &
   STUBS="${STUBS} $!"
   for _ in $(seq 1 60); do
@@ -176,6 +184,11 @@ run_monitor() {
     # Set by a caller that needs a specific probe bound; unset otherwise.
     [ -n "${PROBE_TIMEOUT_OVERRIDE:-}" ] \
       && export PARLAY_RELAY_PROBE_TIMEOUT="${PROBE_TIMEOUT_OVERRIDE}"
+    # Section G shortens the enroll bound so the wedged-relay case fails in
+    # ~5s instead of ~11s; the production default (5s x 2 attempts) is what
+    # the bound proves, the override only hurries it.
+    [ -n "${ENROLL_MAX_TIME_OVERRIDE:-}" ] \
+      && export PARLAY_ENROLL_MAX_TIME="${ENROLL_MAX_TIME_OVERRIDE}"
     exec "${MONITOR}" --agent "${agent}"
   ) >"${out}" 2>"${err}" &
   local pid=$!
@@ -475,6 +488,85 @@ if grep -q "POST /register auth=Bearer stub-owner-token-token-agent" "${STUB_LOG
 else
   bad "re-enroll did not replay the owner token" "$(cat "${STUB_LOG}")"
 fi
+
+# ══ G. bounded enrollment against a wedged relay (startup-hang fix) ═══════════
+# The defect: the enroll curl had NO timeout, so a relay that accepts the
+# /register request and never answers hung `parlay listen` startup forever —
+# the only unbounded network call in the path. Enrollment is now capped
+# (PARLAY_ENROLL_MAX_TIME per attempt, one retry), so a wedged relay fails
+# fast with a message that says what is wedged and that nothing was enrolled.
+echo
+echo "G. bounded enrollment against a wedged relay"
+
+# G1. A relay that never answers /register must fail, not hang. run_monitor
+# only waits ~6s, so a pre-fix script (unbounded curl) would still be "running"
+# at the end of the wait — exiting with code 1 inside the window IS the
+# regression proof. MAX_TIME=2 hurries the bound (2s x 2 attempts + 1s retry
+# gap ≈ 5s); the mechanism, not the production 5s default, is under test.
+start_stub "${ROOT}/g-wedged" "http://127.0.0.1:45006" 0 1 || exit 1
+ENROLL_MAX_TIME_OVERRIDE=2
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45006" "wedged-agent"
+ENROLL_MAX_TIME_OVERRIDE=""
+[ "${CODE}" = 1 ] \
+  && ok "wedged relay fails fast (exit 1) instead of hanging startup" \
+  || bad "wedged relay did not fail inside the wait window" "exit=${CODE}: ${ERR}"
+case "${ERR}" in
+  *"wedged or unreachable"*)
+    ok "wedged-relay failure names the relay as wedged or unreachable" ;;
+  *) bad "wedged-relay failure is not self-describing" "${ERR}" ;;
+esac
+case "${ERR}" in
+  *"never enrolled"*)
+    ok "wedged-relay failure says nothing was left deaf" ;;
+  *) bad "wedged-relay failure does not say the agent was never enrolled" "${ERR}" ;;
+esac
+if grep -q "/register" "${STUB_LOG}"; then
+  register_lines="$(grep -c "/register" "${STUB_LOG}")"
+  [ "${register_lines}" = 2 ] \
+    && ok "wedged relay was tried exactly twice (one retry)" \
+    || bad "wedged relay attempts = ${register_lines}, want 2 (initial + one retry)"
+else
+  bad "wedged relay was never even attempted" "${ERR}"
+fi
+
+# ══ H. the second ensure-up is skipped via a short-lived stamp ═══════════════
+# `parlay listen` runs ensure-up twice seconds apart (preflight, then stream).
+# Every success stamps the runtime dir; a fresh stamp + live socket skips the
+# re-verification. A stale/absent stamp still runs ensure-up as before.
+echo
+echo "H. second ensure-up skipped via short-lived stamp"
+
+# H1. First stream run verifies (ensure-up speaks); second run moments later
+# skips it. Both still reach streaming — the skip changes no outcome.
+start_stub "${ROOT}/h-stamp" "http://127.0.0.1:45007" || exit 1
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45007" "stamp-agent"
+case "${ERR}" in
+  *"parlay ensure-up:"*)
+    ok "first run verifies the relay via ensure-up" ;;
+  *) bad "first run skipped ensure-up with no prior verification" "${ERR}" ;;
+esac
+[ "${CODE}" = "running" ] \
+  && ok "first run still reaches streaming" \
+  || bad "first run did not reach streaming" "exit=${CODE}: ${ERR}"
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45007" "stamp-agent"
+case "${ERR}" in
+  *"skipping ensure-up"*)
+    ok "second run skips the re-verification via the fresh stamp" ;;
+  *) bad "second run re-ran ensure-up seconds after a success" "${ERR}" ;;
+esac
+[ "${CODE}" = "running" ] \
+  && ok "second run still reaches streaming" \
+  || bad "second run did not reach streaming" "exit=${CODE}: ${ERR}"
+
+# H2. A stale stamp re-arms verification: backdate the stamp well past any
+# sane TTL and the next run must invoke ensure-up again.
+touch -t 200001010000 "${STUB_RUNTIME}/.ensure-up.ok"
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45007" "stamp-agent"
+case "${ERR}" in
+  *"parlay ensure-up:"*)
+    ok "stale stamp re-arms ensure-up verification" ;;
+  *) bad "stale stamp was trusted as a fresh verification" "${ERR}" ;;
+esac
 
 echo
 printf 'parlay-monitor.test: %d passed, %d failed\n' "${pass}" "${fail}"

@@ -75,8 +75,19 @@ type procEntry struct {
 	args string
 }
 
+// Singleton takeover timing. The grace budget is unchanged (2s worst case),
+// but it is spent polling for exit every 100ms instead of sleeping blindly:
+// a victim that dies on SIGTERM pays ~100ms, not the full 2s. Only a
+// survivor that ignores SIGTERM still costs the whole budget before SIGKILL.
+const (
+	singletonGraceTotal   = 2 * time.Second
+	singletonPollInterval = 100 * time.Millisecond
+)
+
 // Injection points for tests — the real implementations touch the live
 // process table and send real signals, which no unit test may do.
+// nowSleep is also how the grace poll advances: tests stub it (usually as a
+// noop) and count signal-0 probes to observe early return without real time.
 var (
 	listProcesses = psSnapshot
 	signalProcess = func(pid int, sig syscall.Signal) error { return syscall.Kill(pid, sig) }
@@ -248,23 +259,18 @@ func reapDuplicateListeners(agent string) {
 
 	fmt.Fprintf(os.Stderr, "parlay listen: %d existing listener(s) for '%s' (pid %s) — ending them so this channel keeps exactly one\n",
 		len(dupes), agent, joinPIDs(dupes))
-	for _, pid := range dupes {
-		if err := signalProcess(pid, syscall.SIGTERM); err != nil {
-			fmt.Fprintf(os.Stderr, "parlay listen: SIGTERM pid %d failed: %v\n", pid, err)
-		}
-	}
 
 	// Grace, then confirm. A loop blocked in a long poll can miss its window,
 	// and a survivor is exactly the duplicate delivery this guard exists to
-	// stop — so the second pass is not optional.
-	nowSleep(2 * time.Second)
-	for _, pid := range dupes {
-		if signalProcess(pid, syscall.Signal(0)) != nil {
-			continue // already gone
-		}
-		fmt.Fprintf(os.Stderr, "parlay listen: pid %d ignored SIGTERM — sending SIGKILL\n", pid)
-		if err := signalProcess(pid, syscall.SIGKILL); err != nil {
-			fmt.Fprintf(os.Stderr, "parlay listen: SIGKILL pid %d failed: %v — this channel may still deliver twice\n", pid, err)
+	// stop — so the second pass is not optional. terminateListeners sends
+	// SIGTERM, polls for exit (~100ms granularity, so a victim that dies on
+	// SIGTERM is confirmed fast), and SIGKILLs only the survivors.
+	survivors := terminateListeners(dupes)
+	for _, pid := range survivors {
+		if signalProcess(pid, syscall.Signal(0)) == nil {
+			fmt.Fprintf(os.Stderr, "parlay listen: pid %d survived SIGKILL — this channel may still deliver twice\n", pid)
+		} else {
+			fmt.Fprintf(os.Stderr, "parlay listen: pid %d ignored SIGTERM — sent SIGKILL\n", pid)
 		}
 	}
 }
@@ -273,8 +279,9 @@ func reapDuplicateListeners(agent string) {
 // agent's channel — the local half of `parlay shutdown` (task-35ww): a
 // listener still running here must stop, not just fall silent once the
 // server/relay side is torn down. Reuses the same detection and kill
-// sequence as the arming-time singleton guard (reapDuplicateListeners):
-// SIGTERM, a 2s grace period, then SIGKILL any survivor. Returns the pids it
+// sequence as the arming-time singleton guard (terminateListeners):
+// SIGTERM, a polling grace (early return on fast exit, 2s budget worst
+// case), then SIGKILL any survivor. Returns the pids it
 // found and terminated — nil if none were running here, or if the process
 // table could not be read (never treated as an error: shutdown must still
 // proceed to deregister server-side).
@@ -287,17 +294,44 @@ func KillLocalListeners(agent string) []int {
 	if len(dupes) == 0 {
 		return nil
 	}
-	for _, pid := range dupes {
+	_ = terminateListeners(dupes)
+	return dupes
+}
+
+// terminateListeners ends pids with SIGTERM, waits up to singletonGraceTotal
+// for them to exit (polling with signal 0 every singletonPollInterval so a
+// fast exit returns early instead of paying the whole grace), then SIGKILLs
+// the survivors. It returns the pids that needed SIGKILL. Probes and kills
+// are best-effort: an unkillable pid is the caller's to report, not this
+// helper's to die on.
+func terminateListeners(pids []int) []int {
+	for _, pid := range pids {
 		_ = signalProcess(pid, syscall.SIGTERM)
 	}
-	nowSleep(2 * time.Second)
-	for _, pid := range dupes {
-		if signalProcess(pid, syscall.Signal(0)) != nil {
-			continue // already gone
+
+	polls := int(singletonGraceTotal / singletonPollInterval)
+	for i := 0; i < polls; i++ {
+		allGone := true
+		for _, pid := range pids {
+			if signalProcess(pid, syscall.Signal(0)) == nil {
+				allGone = false
+				break
+			}
 		}
-		_ = signalProcess(pid, syscall.SIGKILL)
+		if allGone {
+			return nil
+		}
+		nowSleep(singletonPollInterval)
 	}
-	return dupes
+
+	var survivors []int
+	for _, pid := range pids {
+		if signalProcess(pid, syscall.Signal(0)) == nil {
+			_ = signalProcess(pid, syscall.SIGKILL)
+			survivors = append(survivors, pid)
+		}
+	}
+	return survivors
 }
 
 func joinPIDs(pids []int) string {

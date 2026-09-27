@@ -34,6 +34,11 @@ type listenHarness struct {
 func startListenHarness(t *testing.T) *listenHarness {
 	t.Helper()
 	h := &listenHarness{}
+	// CmdListen now arms the monitor-handoff claim as a side effect; reset it
+	// per test so one listen test's success never suppresses another test's
+	// registration decision.
+	handoffRegisteredAgent = ""
+	t.Cleanup(func() { handoffRegisteredAgent = "" })
 	mux := http.NewServeMux()
 	record := func(path string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -497,5 +502,36 @@ func TestCmdListenEmptyCapsFlagIsTreatedAsOmitted(t *testing.T) {
 
 	if _, present := h.calls[0].body["caps"]; present {
 		t.Errorf("caps should be omitted for an empty --caps value, body = %+v", h.calls[0].body)
+	}
+}
+
+func TestCmdListenArmsTheMonitorHandoffClaim(t *testing.T) {
+	// A successful listen registration arms claimHandoffRegistration so the
+	// in-process CmdMonitor skips its redundant ensureRegistered POST.
+	startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+
+	CmdListen([]string{"--agent", "brain-dev"})
+
+	if !claimHandoffRegistration("brain-dev") {
+		t.Error("CmdListen did not arm the monitor handoff claim for brain-dev")
+	}
+}
+
+func TestCmdListenLeavesNoHandoffClaimWhenItNeverRegisters(t *testing.T) {
+	// A preflight failure dies before register-agent, so there is nothing
+	// for the monitor to skip — the claim must stay disarmed.
+	startListenHarness(t)
+	stubMonitor(t)
+	trapExit(t)
+	stubPreflight(t, config.ExitRuntime)
+
+	testsupport.Capture(func() {
+		CmdListen([]string{"--agent", "dogfood-user"})
+	})
+
+	if claimHandoffRegistration("dogfood-user") {
+		t.Error("a listen that never registered must not arm the handoff claim")
 	}
 }
