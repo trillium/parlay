@@ -85,13 +85,23 @@ func readNewLines(path string, offset int64) (lines []string, newOffset int64) {
 		panic(err)
 	}
 
+	// Only whole lines (through the last newline) are returned. A torn
+	// trailing fragment read mid-append is not parseable yet, and emitting
+	// it would burn the event (skip + advance), so it stays below the
+	// committed offset for the next pass. Truly malformed but complete
+	// lines still flow through for the caller to skip with offset advance.
+	s := string(buf)
+	idx := strings.LastIndexByte(s, '\n')
+	if idx < 0 {
+		return []string{}, offset
+	}
 	lines = []string{}
-	for _, part := range strings.Split(string(buf), "\n") {
+	for _, part := range strings.Split(s[:idx], "\n") {
 		if part != "" {
 			lines = append(lines, part)
 		}
 	}
-	return lines, size
+	return lines, offset + int64(idx+1)
 }
 
 func readOffset(fallback int64) int64 {
