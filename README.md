@@ -118,6 +118,12 @@ the coded default but loses to the env var).
 ./bin/parlay doctor deploy                 # deployment-level sweep: launchd, ports, logs, pins
 ```
 
+`doctor deploy` is for a machine running the launchd services
+(`packages/go-server/deploy/install.sh`); on a fresh clone it has nothing to
+inventory and says so. Its health probes follow the same server/engine
+resolution as every other verb, so it reports on the server your CLI is
+actually pointed at — never on a hardcoded `:4242`.
+
 `send` normally refuses a target that isn't in the live agent registry; `--force`
 seeds a channel before its agent has registered, which is exactly the case here.
 
