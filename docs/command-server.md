@@ -17,12 +17,13 @@ implements is [`docs/api-contract.md`](api-contract.md).
 
 The server's storage lives under its state dir (`$PARLAY_STATE_HOME`, default
 `~/.parlay`): messages/agents/drafts/settings/uploads. Chat history is
-`messages.jsonl`, not the TS server's `chat-history.jsonl` (a different file,
-not a synonym — see [`docs/events-history.md`](events-history.md)). The two
-observability tailers (`hook-tailer.ts`, `tool-tailer.ts`) that once lived
-in the TS server no longer broadcast in-process; they POST to
-`PARLAY_HUB_URL` (default `http://127.0.0.1:4242`), which is this server's SSE
-hub and message-persist route (`packages/go-server/internal/handlers/events.go`).
+`messages.jsonl`; there is no other history file — any reference to
+`chat-history.jsonl` or `$PARLAY_DATA_DIR` describes the TS server that was
+deleted. See [`docs/events-history.md`](events-history.md). The two
+observability tailers that read hook/tool JSONL live outside this repository
+(the TS/Pulse home) and reach the panel by POSTing to `PARLAY_HUB_URL`
+(default `http://127.0.0.1:4242`) — this server's message-persist and SSE-hub
+routes (`packages/go-server/internal/handlers/events.go`).
 
 The server owns these areas, built up ticket by ticket (`main.go`'s own comment
 enumerates C0 storage, C1 messaging/registry/long-poll, C2 the SSE hub, C3
