@@ -1,7 +1,8 @@
 # Deploying parlay-server as an always-on service (macOS)
 
-`parlay-server` (`packages/go-server/cmd/parlay-server`) is the Go rewrite of
-`packages/server`, Pulse's HTTP/SSE chat server. This directory gives it the
+`parlay-server` (`packages/go-server/cmd/parlay-server`) is parlay's HTTP/SSE chat
+server — the Go rewrite of a TypeScript server that was deleted in the Bun→Go cutover and
+is no longer in the tree. This directory gives it the
 same launchd `KeepAlive` supervision as the relay
 (`tools/relay/deploy/`, see `tools/relay/RELAY_DEPLOY.md`) and the eval-engine
 (`tools/eval-engine/deploy/`).
