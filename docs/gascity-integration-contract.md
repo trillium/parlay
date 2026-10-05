@@ -789,7 +789,7 @@ across contracts with the `observability` trust posture, which today is `tool_ev
 And the guard registration, which is a **single-plane** requirement:
 
 > **BINDING: any new `/api/chat` route must be registered in `internal/guard.GuardedPaths`**
-> — `packages/go-server/internal/guard/guard.go:128` — or must live under one of the guarded
+> — `packages/go-server/internal/guard/guard.go:134` — or must live under one of the guarded
 > subtrees below.
 >
 > **A new route is unguarded until you do.**
@@ -809,9 +809,9 @@ carrying a hand-rolled copy of the content-type gate in the handler; a forged cr
 with a JSON content type was accepted and wrote a registry row. So a GC unit adding a route
 does not have to remember this rule — but it does have to satisfy the test, which is the point.
 
-The guard also covers whole subtrees — `guardedPrefixes` (`guard.go:265`), covering
+The guard also covers whole subtrees — `guardedPrefixes` (`guard.go:296`), covering
 `/api/chat/agents/`, `/api/chat/plugin/`, `/api/debug/` — so anything added *under* those is
-guarded before you get there. `jsonExemptPaths` (`guard.go:219`) is a **closed three-member
+guarded before you get there. `jsonExemptPaths` (`guard.go:250`) is a **closed three-member
 list** (`/api/chat/upload`, `/api/chat/plugin/cursorless/rpc`,
 `/api/chat/tts/validate-splits`); do not grow it one bug report at a time.
 
