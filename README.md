@@ -49,27 +49,41 @@ the host from a phone; a LAN address or any other private tunnel works the same 
 
 ## Quickstart (local only — no Pulse, no tailnet)
 
-Prereqs: [Go](https://go.dev) 1.26+ (the CLI and server are both Go; `bin/parlay`
-builds the CLI for you on first run) and [Bun](https://bun.sh) for the client
-packages below — `bun install` also wires the repo's git hooks.
+Prereqs: [Go](https://go.dev) **1.26.5+** — the CLI and server are both Go, and
+`bin/parlay` builds the CLI for you on first run. (1.26.5, not 1.26, because
+`tools/cli/go.mod` declares `go 1.26.5`; with the default `GOTOOLCHAIN=auto`
+Go downloads the newer toolchain for you, but with `GOTOOLCHAIN=local` it is a
+hard error.)
+
+[Bun](https://bun.sh) is needed **only** if you want the chat panel
+(`packages/client`) or the git hooks. Every command in this Quickstart is Go, so
+you can skip `bun install` entirely.
+
+> **This repo is four separate Go modules** — `packages/go-server`, `tools/cli`,
+> `tools/relay`, `packages/spawn-profiles` — and there is **no root `go.work`**.
+> So every `go` command has to be run from *inside* the module it names. A
+> repo-root-relative path such as `go run ./packages/go-server/cmd/parlay-server`
+> fails with `go.mod file not found in current directory or any parent directory`.
+> Each step below says which directory it runs in; every command from here on is
+> relative to the root of the clone unless it says otherwise.
 
 ```sh
 git clone https://github.com/trillium/parlay && cd parlay
-bun install                                   # also wires the git hooks (core.hooksPath tools/hooks)
+bun install                                   # optional: also wires the git hooks (core.hooksPath tools/hooks)
 ```
 
 **1. Start the server.** It's `packages/go-server`, a single Go binary that listens on
 `:4242` (default `PARLAY_SERVER_ADDR=127.0.0.1:4242`) and owns `/api/chat/*`:
 
 ```sh
-go run ./packages/go-server/cmd/parlay-server
+cd packages/go-server && go run ./cmd/parlay-server
 ```
 
 It persists state under `$PARLAY_STATE_HOME` (default `~/.parlay`) — messages/agents/
 drafts/settings/uploads live there. To keep a dev run fully isolated from live state:
 
 ```sh
-go run ./packages/go-server/cmd/parlay-server -state-dir ~/.parlay/dev-data
+cd packages/go-server && go run ./cmd/parlay-server -state-dir ~/.parlay/dev-data
 ```
 
 > **⚠️ The server reads and writes its persisted store from `~/.parlay` by default.**
@@ -198,7 +212,7 @@ need first, not a complete index of every module in the repo:
 
 | Package | What it is |
 |---|---|
-| `packages/go-server` | The Go server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling, drafts/settings. Runs standalone on `:4242` (`go run ./packages/go-server/cmd/parlay-server`). The contract it implements lives in [`docs/api-contract.md`](docs/api-contract.md). |
+| `packages/go-server` | The Go server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling, drafts/settings. Runs standalone on `:4242` (`cd packages/go-server && go run ./cmd/parlay-server`). The contract it implements lives in [`docs/api-contract.md`](docs/api-contract.md). |
 | `tools/relay` | The standalone per-agent relay daemon — its own Go module, built by `tools/relay/build.sh`. Fans the server's `/api/chat/poll` feed out to enrolled agents; `parlay monitor`/`listen` need it unless you pass `--legacy-poll`. |
 | `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |

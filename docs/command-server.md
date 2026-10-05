@@ -3,7 +3,9 @@
 **Code:** [`packages/go-server`](../packages/go-server) (Go), entrypoint
 `packages/go-server/cmd/parlay-server`. It is the only server implementation in
 the tree since the Bun `packages/server` was deleted in the Bun→Go cutover —
-the root README's Quickstart runs `go run ./packages/go-server/cmd/parlay-server`
+the root README's Quickstart runs it (from inside the module, since this repo
+has four separate Go modules and no root `go.work`) as
+`cd packages/go-server && go run ./cmd/parlay-server`
 against `127.0.0.1:4242`. Run it with `-state-dir` / `-addr` flags or the
 `PARLAY_STATE_HOME` / `PARLAY_SERVER_ADDR` env vars.
 
@@ -30,7 +32,7 @@ drafts/uploads/settings, plus the later live-command registry in
 `RegisterPages`, and plugins `RegisterPlugins`).
 
 The whole mux is fronted by a CORS/guard layer that enforces the security
-boundary described in the root `CLAUDE.md`: the API is unauthenticated, so a
+boundary described in the root [`AGENTS.md`](../AGENTS.md): the API is unauthenticated, so a
 route is guarded by what it *does* (mutates, hands out identifiers), not by its
 HTTP method. The guard is `packages/go-server/internal/guard/`; a new
 mutating/identifier-aiming route must be added to `guard.GuardedPaths` and
