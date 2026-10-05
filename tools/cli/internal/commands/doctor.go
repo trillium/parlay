@@ -13,12 +13,10 @@
 package commands
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -30,6 +28,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
+	account "github.com/trillium/parlay/tools/cli/internal/juggle"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
@@ -440,86 +439,87 @@ func spawnCredsSummary(v verdict, lines []textLine) string {
 	return "spawn credentials ok"
 }
 
-// checkSpawnCreds is check 7: the ccjuggler-resolve binary on PATH and, if
-// accounts.json exists, each account's token resolvability. Multiple text
-// lines, one aggregate CheckResult (verdict = worst line), matching today's
+// checkSpawnCreds is check 7: whether the account tokens `parlay spawn
+// --account` needs are actually resolvable. Multiple text lines, one
+// aggregate CheckResult (verdict = worst line), matching today's
 // worstVerdict() aggregation into a single tally slot.
+//
+// It probes the SAME code path spawn does — internal/juggle's LoadAccounts +
+// GetToken, i.e. the Go port of ccjuggler.py's get_token(). This check used to
+// shell out to a ccjuggler-resolve bin (bun → python3 ~/code/juggle/
+// ccjuggler.py), which measured a resolver spawn never runs and made a fresh
+// clone FAIL doctor for a tool it does not need; the fix text even hardcoded
+// the author's ~/code/parlay checkout. Accounts are opt-in (`--account`), so a
+// missing accounts.json is a WARN, never a FAIL.
 func checkSpawnCreds(st *doctorState) (CheckResult, bool) {
-	// 7a. Binary presence.
-	resolvePath, err := exec.LookPath("ccjuggler-resolve")
-	if err != nil {
-		fixText := "ln -sf ~/code/parlay/packages/ccjuggler/src/cli.ts ~/.local/bin/ccjuggler-resolve"
-		return CheckResult{
-			ID:      "spawn-creds",
-			Verdict: vFail,
-			Summary: "ccjuggler-resolve not on PATH",
-			Fixes: []Fix{{
-				Summary:    fixText,
-				Argv:       []string{"ln", "-sf", "~/code/parlay/packages/ccjuggler/src/cli.ts", "~/.local/bin/ccjuggler-resolve"},
-				Reversible: true,
-				Idempotent: true,
-			}},
-			Lines: []textLine{{kind: "verdict", label: string(vFail), text: "ccjuggler-resolve not on PATH", fix: fixText}},
-		}, true
-	}
-	lines := []textLine{{kind: "verdict", label: string(vPass), text: fmt.Sprintf("ccjuggler-resolve found at %s", resolvePath)}}
+	accountsFile := account.AccountsFilePath()
+	evidence := map[string]any{"accounts_file": accountsFile, "resolver": "in-process (internal/juggle)"}
+	lines := []textLine{{
+		kind: "verdict", label: "--",
+		text: "spawn creds resolve in-process via internal/juggle (no external token-resolver bin needed)",
+	}}
 	verdicts := []verdict{vPass}
-	evidence := map[string]any{"resolve_path": resolvePath}
 
-	// 7b. Accounts file.
-	accountsFile := filepath.Join(os.Getenv("HOME"), "code", "juggle", "accounts.json")
-	evidence["accounts_file"] = accountsFile
-	data, err := os.ReadFile(accountsFile)
-	if err != nil {
-		fixText := "cp <MacBook>:~/code/juggle/accounts.json ~/code/juggle/accounts.json"
-		lines = append(lines, textLine{kind: "verdict", label: string(vWarn), text: fmt.Sprintf("accounts.json not found at %s", accountsFile), fix: fixText})
-		verdicts = append(verdicts, vWarn)
-		v := worstVerdict(verdicts)
+	accts := account.LoadAccounts()
+	if len(accts) == 0 {
+		// LoadAccounts swallows both "missing" and "unparseable" into an empty
+		// list, so one line covers both; the distinction is not actionable here.
+		fixText := fmt.Sprintf("only needed for `parlay spawn --account`: add an account to %s whose keychain_service holds that account's OAuth token (security add-generic-password -s <service> -a ccjuggler -w <token> -U)", accountsFile)
+		lines = append(lines, textLine{kind: "verdict", label: string(vWarn),
+			text: fmt.Sprintf("no ccjuggler accounts at %s — `parlay spawn --account` would fail, plain spawn is unaffected", accountsFile),
+			fix:  fixText})
+		v := vWarn
 		return CheckResult{
 			ID: "spawn-creds", Verdict: v, Summary: spawnCredsSummary(v, lines), Evidence: evidence,
 			Fixes: []Fix{{Summary: fixText}}, Lines: lines,
 		}, true
 	}
 
-	var acctFile struct {
-		Accounts []struct {
-			Name string `json:"name"`
-		} `json:"accounts"`
-	}
-	if err := json.Unmarshal(data, &acctFile); err != nil {
-		lines = append(lines, textLine{kind: "verdict", label: string(vWarn), text: fmt.Sprintf("accounts.json parse error: %s", err)})
-		verdicts = append(verdicts, vWarn)
-		v := worstVerdict(verdicts)
-		return CheckResult{ID: "spawn-creds", Verdict: v, Summary: spawnCredsSummary(v, lines), Evidence: evidence, Lines: lines}, true
-	}
-
-	// 7c. Per-account token resolve.
 	var fixes []Fix
-	var accts []map[string]any
-	for _, acct := range acctFile.Accounts {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		cmd := exec.CommandContext(ctx, resolvePath, acct.Name)
-		out, err := cmd.Output()
-		cancel()
-		stdout := strings.TrimSpace(string(out))
-		if err == nil && stdout != "" {
-			lines = append(lines, textLine{kind: "verdict", label: string(vPass), text: fmt.Sprintf("ccjuggler-resolve %s — token found", acct.Name)})
-			verdicts = append(verdicts, vPass)
-			accts = append(accts, map[string]any{"name": acct.Name, "ok": true})
-		} else {
-			fixText := fmt.Sprintf("see ~/.ccjuggler/%s/.oauth-token or run keychain setup", acct.Name)
-			if err != nil {
-				fixText = fmt.Sprintf("ccjuggler-resolve %s failed: %s — %s", acct.Name, err, fixText)
-			}
-			lines = append(lines, textLine{kind: "verdict", label: string(vFail), text: fmt.Sprintf("ccjuggler-resolve %s — no token", acct.Name), fix: fixText})
+	var detail []map[string]any
+	for _, acct := range accts {
+		service := acct.KeychainService
+		if service == "" {
+			service = "<no keychain_service set>"
+		}
+		// Same two failure modes resolveAccountToken (spawn/account.go) treats
+		// as failures: the keychain lookup erroring, and a lookup that
+		// succeeds with an empty token.
+		token, err := account.GetToken(acct)
+		switch {
+		case err != nil:
+			fixText := fmt.Sprintf("%s: `security find-generic-password -s %s -w` failed (%v) — store the account's OAuth token under that service (security add-generic-password -s %s -a ccjuggler -w <token> -U)", acct.Name, service, err, service)
+			lines = append(lines, textLine{kind: "verdict", label: string(vFail),
+				text: fmt.Sprintf("spawn account %q — no token (keychain service %s)", acct.Name, service), fix: fixText})
 			verdicts = append(verdicts, vFail)
 			fixes = append(fixes, Fix{Summary: fixText})
-			accts = append(accts, map[string]any{"name": acct.Name, "ok": false})
+			detail = append(detail, map[string]any{"name": acct.Name, "ok": false, "keychain_service": acct.KeychainService, "error": err.Error()})
+		case token == "":
+			fixText := fmt.Sprintf("%s: `security find-generic-password -s %s -w` returned an empty token — the entry is expired or holds the wrong payload (token_format %q)", acct.Name, service, tokenFormatOf(acct))
+			lines = append(lines, textLine{kind: "verdict", label: string(vFail),
+				text: fmt.Sprintf("spawn account %q — no token (keychain service %s returned empty)", acct.Name, service), fix: fixText})
+			verdicts = append(verdicts, vFail)
+			fixes = append(fixes, Fix{Summary: fixText})
+			detail = append(detail, map[string]any{"name": acct.Name, "ok": false, "keychain_service": acct.KeychainService, "error": "empty token"})
+		default:
+			lines = append(lines, textLine{kind: "verdict", label: string(vPass),
+				text: fmt.Sprintf("spawn account %q — token resolves (keychain service %s)", acct.Name, service)})
+			verdicts = append(verdicts, vPass)
+			detail = append(detail, map[string]any{"name": acct.Name, "ok": true, "keychain_service": acct.KeychainService})
 		}
 	}
-	evidence["accounts"] = accts
+	evidence["accounts"] = detail
 	v := worstVerdict(verdicts)
 	return CheckResult{ID: "spawn-creds", Verdict: v, Summary: spawnCredsSummary(v, lines), Evidence: evidence, Fixes: fixes, Lines: lines}, true
+}
+
+// tokenFormatOf is GetToken's token_format switch, defaulted the same way
+// ("raw"), for the empty-token fix line.
+func tokenFormatOf(a account.Account) string {
+	if a.TokenFormat == "" {
+		return "raw"
+	}
+	return a.TokenFormat
 }
 
 // checkContextRotation is check 9: the informational context-window

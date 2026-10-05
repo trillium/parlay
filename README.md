@@ -112,6 +112,7 @@ the coded default but loses to the env var).
 ./bin/parlay                               # live snapshot: subscribers, agents, last messages
 ./bin/parlay send --demo --force "hello"   # message the 'demo' channel
 ./bin/parlay history 5                     # read it back
+./bin/parlay health                        # host vitals: is the server up, how much memory
 ./bin/parlay doctor                        # self-diagnosis: server reachable? identity set?
 ./bin/parlay doctor --json                 # same checks as one JSON document (schema parlay.doctor/v1), for scripts/LLMs
 ./bin/parlay doctor deploy                 # deployment-level sweep: launchd, ports, logs, pins
@@ -119,6 +120,12 @@ the coded default but loses to the env var).
 
 `send` normally refuses a target that isn't in the live agent registry; `--force`
 seeds a channel before its agent has registered, which is exactly the case here.
+
+`doctor` is an **agent's** self-check, so run from a plain host shell it reports
+`FAIL PARLAY_AGENT_ID is not set` and exits 1 — by design, not a broken install.
+That is the one check the Quickstart's shell cannot satisfy; `health` is the
+host-level equivalent. Run `doctor` inside a spawned agent to see the rest
+(registry enrolment, monitor, identity, scratchpad, spawn credentials).
 
 That round-trip is the whole substrate. From here:
 

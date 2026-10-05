@@ -160,22 +160,24 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 	engineSrv := httptest.NewServer(engineMux)
 	t.Cleanup(engineSrv.Close)
 
-	// Fake HOME with accounts.json and a fake ccjuggler-resolve on PATH so the
-	// spawn-credentials check (check #7) passes deterministically.
+	// Fake HOME with accounts.json plus a fake `security` on PATH, so the
+	// spawn-credentials check (check #7) resolves a token deterministically.
+	// It probes internal/juggle's keychain lookup in-process — the same call
+	// `parlay spawn --account` makes — so `security`, not a ccjuggler-resolve
+	// bin, is what the fixture has to fake.
 	fakeHome := t.TempDir()
 	juggleDir := filepath.Join(fakeHome, "code", "juggle")
 	if err := os.MkdirAll(juggleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary"},{"name":"acc2"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary","keychain_service":"ccjuggler-primary"},{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fakeBin := filepath.Join(fakeHome, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fakeResolve := filepath.Join(fakeBin, "ccjuggler-resolve")
-	if err := os.WriteFile(fakeResolve, []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(fakeBin, "security"), []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -206,9 +208,9 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 		"PASS  identity.md ok",
 		"PASS  scratchpad.md ok",
 		"PASS  eval-engine healthy at " + engineSrv.URL,
-		"PASS  ccjuggler-resolve found",
-		"PASS  ccjuggler-resolve primary — token found",
-		"PASS  ccjuggler-resolve acc2 — token found",
+		"--    spawn creds resolve in-process via internal/juggle (no external token-resolver bin needed)",
+		`PASS  spawn account "primary" — token resolves (keychain service ccjuggler-primary)`,
+		`PASS  spawn account "acc2" — token resolves (keychain service ccjuggler-acc2)`,
 		"PASS  gc ok",
 		"all clear (0 warn)",
 	} {
@@ -371,15 +373,14 @@ func doctorJSONFixture(t *testing.T) {
 	if err := os.MkdirAll(juggleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary","keychain_service":"ccjuggler-primary"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fakeBin := filepath.Join(fakeHome, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fakeResolve := filepath.Join(fakeBin, "ccjuggler-resolve")
-	if err := os.WriteFile(fakeResolve, []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(fakeBin, "security"), []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -545,5 +546,133 @@ func TestDoctorJSONRejectsExtraPositional(t *testing.T) {
 	})
 	if !exited || code != config.ExitUsage {
 		t.Errorf("Doctor(extra) exit = (%d, %v), want (%d, true)", code, exited, config.ExitUsage)
+	}
+}
+
+// ── spawn-creds: the check a fresh clone runs ──────────────────────────────
+//
+// checkSpawnCreds used to probe a ccjuggler-resolve bun bin (which itself
+// shells out to python3 ~/code/juggle/ccjuggler.py) — a resolver
+// `parlay spawn --account` never runs, since spawn/account.go resolves
+// tokens in-process through internal/juggle. The result was a FAIL, exit 1,
+// and a fix line hardcoded to the author's ~/code/parlay checkout, on a
+// machine that spawns fine. These tests lock in the replacement: the real
+// resolver, no author-home paths, and WARN (not FAIL) for the opt-in state.
+
+// spawnCredsFixture points HOME at a temp dir and CCJUGGLER_ACCOUNTS_FILE at
+// the given JSON, with a fake `security` on PATH whose body is the stub —
+// internal/juggle's GetToken shells out to `security find-generic-password -s
+// <service> -w` exactly as spawn does.
+func spawnCredsFixture(t *testing.T, accountsJSON, securityStub string) {
+	t.Helper()
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	if accountsJSON != "" {
+		accounts := filepath.Join(fakeHome, "accounts.json")
+		if err := os.WriteFile(accounts, []byte(accountsJSON), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CCJUGGLER_ACCOUNTS_FILE", accounts)
+	}
+	bin := filepath.Join(fakeHome, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "security"), []byte(securityStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+}
+
+// assertNoAuthorHomePaths is the onboarding guard: no branch of this check may
+// tell a user to touch a path that only exists in one developer's checkout.
+func assertNoAuthorHomePaths(t *testing.T, cr CheckResult) {
+	t.Helper()
+	blob := cr.Summary
+	for _, l := range cr.Lines {
+		blob += "\n" + l.text + "\n" + l.fix
+	}
+	for _, f := range cr.Fixes {
+		blob += "\n" + f.Summary + "\n" + strings.Join(f.Argv, " ")
+	}
+	for _, bad := range []string{"~/code/parlay", "/Users/trillium", "ccjuggler-resolve"} {
+		if strings.Contains(blob, bad) {
+			t.Errorf("spawn-creds output names %q, which only exists on the author's machine:\n%s", bad, blob)
+		}
+	}
+}
+
+func TestSpawnCredsWarnsWhenNoAccountsConfigured(t *testing.T) {
+	spawnCredsFixture(t, "", "#!/bin/sh\nexit 1\n")
+
+	cr, ran := checkSpawnCreds(&doctorState{})
+	if !ran {
+		t.Fatal("checkSpawnCreds did not run")
+	}
+	if cr.Verdict != vWarn {
+		t.Errorf("verdict = %s, want WARN — accounts are opt-in (`parlay spawn --account`), so a machine that never configured one must not FAIL doctor", cr.Verdict)
+	}
+	if !strings.Contains(cr.Summary, "plain spawn is unaffected") {
+		t.Errorf("summary = %q, want it to say plain spawn is unaffected", cr.Summary)
+	}
+	if !strings.Contains(cr.Evidence["resolver"].(string), "in-process") {
+		t.Errorf("evidence resolver = %v, want it to name the in-process resolver", cr.Evidence["resolver"])
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+func TestSpawnCredsPassesWhenKeychainResolves(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\necho token\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if cr.Verdict != vPass {
+		t.Errorf("verdict = %s (%s), want PASS", cr.Verdict, cr.Summary)
+	}
+	if !strings.Contains(cr.Summary, "keychain service ccjuggler-acc2") {
+		t.Errorf("summary = %q, want it to name the keychain service it resolved", cr.Summary)
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+func TestSpawnCredsFailsWhenKeychainLookupFails(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\nexit 1\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if cr.Verdict != vFail {
+		t.Fatalf("verdict = %s (%s), want FAIL", cr.Verdict, cr.Summary)
+	}
+	fix := cr.Fixes[0].Summary
+	if !strings.Contains(fix, "ccjuggler-acc2") || !strings.Contains(fix, "security add-generic-password") {
+		t.Errorf("fix = %q, want the keychain service named with the command that stores the token", fix)
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+// An account whose keychain entry exists but yields an empty token is what a
+// logged-out or half-written credential looks like: the lookup SUCCEEDS, so
+// only an explicit emptiness check catches it — resolveAccountToken
+// (spawn/account.go) has the same second failure mode.
+func TestSpawnCredsFailsOnEmptyToken(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\nexit 0\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if cr.Verdict != vFail {
+		t.Fatalf("verdict = %s (%s), want FAIL on an empty token", cr.Verdict, cr.Summary)
+	}
+	if !strings.Contains(cr.Summary, "empty") {
+		t.Errorf("summary = %q, want it to distinguish an empty token from a failed lookup", cr.Summary)
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+// The check must read the accounts file the way spawn does — through
+// internal/juggle's path resolution — so CCJUGGLER_ACCOUNTS_FILE and the Go
+// port can never disagree about which accounts exist.
+func TestSpawnCredsHonorsCanonicalAccountsPath(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\necho token\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if got := cr.Evidence["accounts_file"]; got != os.Getenv("CCJUGGLER_ACCOUNTS_FILE") {
+		t.Errorf("evidence accounts_file = %v, want the CCJUGGLER_ACCOUNTS_FILE the canonical resolver used", got)
 	}
 }
