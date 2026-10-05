@@ -146,6 +146,23 @@ so that line is red and `health` exits 1; that is the engine, not your install.
 Start one with `nohup ./bin/parlay eval serve &` only if you want spoken or typed
 phrase commands — the CLI, the API and the panel's text chat do not need it.
 
+The engine is the one component with no per-instance identity: it has no state
+directory and no `config.json` key, so its *address* is its identity, and
+`127.0.0.1:4343` is a host-wide slot shared by every parlay instance on the
+machine. That is fine for the single-instance Quickstart above. If you run a
+second instance — `parlay-dev`, a `-state-dir` server, or `parlay remote set` —
+the engine needs two knobs moved together, because it both *answers* probes and
+*pushes* actions:
+
+- `PARLAY_EVAL_ENGINE_URL` — where `parlay health` / `parlay doctor` probe it.
+  Leave it at the default with a non-default server and those two annotate the
+  line as the host's engine rather than let a green tick describe another
+  instance's.
+- `parlay eval serve --push-url` (or `PARLAY_EVAL_PUSH_URL`) — where the engine
+  delivers computed panel actions. Its default is the **default** server's
+  `http://127.0.0.1:4242/api/chat/eval-push`, so an engine started for a second
+  instance without this would drive the *first* instance's panel.
+
 **4. Open the panel (optional — this is the only step that needs Bun):**
 
 ```sh
