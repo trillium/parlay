@@ -1353,7 +1353,8 @@ paths:
     post:
       operationId: commandStart
       x-parlay-server: go-only
-      summary: Register a running CLI verb (415 without POST+JSON content type)
+      summary: Register a running CLI verb. Guarded (GuardedPaths) — a foreign
+        Origin is 403 before the handler runs; 415 without POST+JSON content type.
       requestBody:
         required: true
         content:
@@ -1383,7 +1384,8 @@ paths:
     post:
       operationId: commandHeartbeat
       x-parlay-server: go-only
-      summary: Keep a command's registration fresh
+      summary: Keep a command's registration fresh. Guarded (GuardedPaths), same
+        posture as command-start
       requestBody:
         required: true
         content:
@@ -1410,7 +1412,8 @@ paths:
     post:
       operationId: commandEnd
       x-parlay-server: go-only
-      summary: Report a command's terminal state
+      summary: Report a command's terminal state. Guarded (GuardedPaths), same
+        posture as command-start
       requestBody:
         required: true
         content:

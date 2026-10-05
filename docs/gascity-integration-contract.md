@@ -766,31 +766,54 @@ SSE contract, and this registry) and the status seam inherits all four.
 
 `POST /api/chat/events` is parlay's **out-of-process ingress seam**
 (`packages/go-server/internal/handlers/events_ingress.go`). Its allowlist is
-**one name per real producer**, and today that is exactly one entry:
+**one name per real producer**, and today that is exactly one entry: `tool_event`. That
+producer is the PAI tool tailer, which is **not in this repository** — it was
+`packages/server/src/tool-tailer.ts`, deleted with the TypeScript server, and the tailers now
+run outside the tree and post over HTTP.
+
+The allowlist is no longer the hand-written literal this section used to quote. It is
+**derived** at init from the enrolled source contracts:
 
 ```go
-"tool_event": true,      // :73
+var ingressEvents = deriveIngressEvents(sourcecontracts.Enrolled())   // events_ingress.go:136
 ```
 
-From the file's own comment at `:24-27` — *"The allowlist: one name per real producer, and
-nothing else … That is `tool_event` alone — the TS tool tailer."*
+The canonical contracts are `contracts/sources/*.json` at the repo root, mirrored into the
+server as `packages/go-server/internal/sourcecontracts`; the set is the union of `emits`
+across contracts with the `observability` trust posture, which today is `tool_event` alone.
+**Enroll a contract, never hand-edit the allowlist** (`docs/source-contracts.md`).
 
 > **BINDING: no Gas City unit may widen `POST /api/chat/events` to carry the panel-aiming
 > events.** Status is panel-aiming. This ingress is not the seam for it.
 
-And the guard registration, which is a **dual-plane** requirement:
+And the guard registration, which is a **single-plane** requirement:
 
-> **BINDING: any new `/api/chat` route must be registered in BOTH:**
-> - `GUARDED_CHAT_PATHS` — `packages/server/src/guard/paths.ts:51` (Bun plane)
-> - `internal/guard.GuardedPaths` — `packages/go-server/internal/guard/guard.go:127` (Go plane)
+> **BINDING: any new `/api/chat` route must be registered in `internal/guard.GuardedPaths`**
+> — `packages/go-server/internal/guard/guard.go:128` — or must live under one of the guarded
+> subtrees below.
 >
-> **A new route is unguarded until you do.** Registering one plane and not the other is a
-> silent hole.
+> **A new route is unguarded until you do.**
 
-Both planes also guard whole subtrees — `GUARDED_PREFIXES` (`paths.ts:135`) and the Go
-`guardedPrefixes`, covering `/api/chat/agents/`, `/api/chat/plugin/`, `/api/debug/` — so
-anything added *under* those is guarded before you get there. `JSON_EXEMPT_PATHS`
-(`paths.ts:196`) is a **closed three-member list**; do not grow it one bug report at a time.
+*Corrected 2026-10-05: this was a dual-plane rule citing `GUARDED_CHAT_PATHS` in
+`packages/server/src/guard/paths.ts`. That file went with the TypeScript server in the
+Bun→Go cutover, so there is no second plane left to register and "register it in both" is no
+longer satisfiable. Both the guard set and its route classification live on the Go side.*
+
+This is now **enforced, not just stated** (corrected 2026-10-05, gnhf):
+`TestEveryRegisteredRouteIsGuardedOrExplained` in
+`packages/go-server/internal/guard/route_coverage_test.go` parses `internal/handlers` for every
+path put on the mux and fails the build on one that is neither guarded nor listed, with a
+reason, in `TestUnguardedRoutes`. The live-command registry's three report routes
+(`command-start`/`-heartbeat`/`-end`) shipped **outside** the boundary before that test existed,
+carrying a hand-rolled copy of the content-type gate in the handler; a forged cross-origin POST
+with a JSON content type was accepted and wrote a registry row. So a GC unit adding a route
+does not have to remember this rule — but it does have to satisfy the test, which is the point.
+
+The guard also covers whole subtrees — `guardedPrefixes` (`guard.go:265`), covering
+`/api/chat/agents/`, `/api/chat/plugin/`, `/api/debug/` — so anything added *under* those is
+guarded before you get there. `jsonExemptPaths` (`guard.go:219`) is a **closed three-member
+list** (`/api/chat/upload`, `/api/chat/plugin/cursorless/rpc`,
+`/api/chat/tts/validate-splits`); do not grow it one bug report at a time.
 
 A route is guarded by what its handler **does**, not by its HTTP method. `GET /subscribers` is
 guarded because it hands out identifiers.
@@ -826,19 +849,26 @@ wrong-server relay in it is a fleet outage (robots-93xu).
 > Neither alone is sufficient.** `GC_HOME` alone still leaves the process contending for
 > `:8372`. The port alone still reads and writes the captain's city state.
 >
-> **EVERY unit of this epic must run in a sandbox that redirects `PARLAY_STATE_HOME`,
-> `PAI_DIR`, `HOME`, and `PARLAY_DATA_DIR`** — per project CLAUDE.md, `PARLAY_DATA_DIR`
-> covers only what goes through `paths.ts`, and the tailers replay live agent turns into
-> whatever hub answers `PARLAY_HUB_URL`. Use `examples/bootstrap-sandbox.sh` rather than
+> **EVERY unit of this epic must run in a sandbox that redirects all FOUR of `HOME`,
+> `PARLAY_STATE_HOME`, `PARLAY_AGENT_HOME`, and `PAI_DIR`** — the repo's own four-redirect
+> rule (AGENTS.md), because no two of these subsystems agree on a root: `HOME` is what
+> guard/teardown/variant/launch hardcode (`~/.parlay`), `PARLAY_STATE_HOME` is the Go
+> server's entire state dir, `PARLAY_AGENT_HOME` is the CLI's agents root, and the server
+> writes its TTS substitutions under `$PAI_DIR/MEMORY`. **There is no `PARLAY_DATA_DIR`** — it
+> belonged to the deleted TypeScript server and nothing in the tree reads it, so redirecting
+> it isolates nothing. (Corrected 2026-10-05: this rule previously named `PARLAY_DATA_DIR`
+> instead of `PARLAY_AGENT_HOME`.) Use `examples/bootstrap-sandbox.sh` rather than
 > hand-rolling the isolation.
 >
 > **Never target port `:31337`** — the captain's live Pulse instance (project CLAUDE.md).
+> Pulse is the author's private distribution of this server, not a parlay dependency and not
+> something this repository ships.
 
 The probe run for §5 of this document redirected `GC_HOME` to a scratch directory and the
 supervisor port to `18372`, and invoked only `version`, `--help`, `config show --json`, and
 `session list` — none of which start, stop, or reload anything. **That is the template for
 the `gc` half of the isolation, and for that half only.** It redirected none of
-`PARLAY_STATE_HOME`, `PAI_DIR`, `HOME`, or `PARLAY_DATA_DIR`, so it does not demonstrate the
+`HOME`, `PARLAY_STATE_HOME`, `PARLAY_AGENT_HOME`, or `PAI_DIR`, so it does not demonstrate the
 sandbox the rule above requires — that requirement is independent, and redirecting `GC_HOME`
 and the port does not satisfy any part of it. Use `examples/bootstrap-sandbox.sh` for that
 half rather than treating this probe as a model for it.
@@ -1067,30 +1097,45 @@ Where the mapping is lossy, the Notes column says so — those are the rows that
 | session **bead** | agent record / `identity.md` frontmatter | parlay's is a plain file whose *absence* is the documented failure mode of robots-6xq7. Gas City's is a store row. §6 makes the spawn seam its sole writer. |
 | **bead** | **task** (federated store item) | Same word, different systems. A Gas City bead is a row in its own store; a parlay `task-…` is a bead in the PAI federation. `parlay spawn --bead <id>` binds the latter. Do not conflate. |
 | **city** | *(no parlay equivalent)* | A city is a config-plus-state root: `city.toml` + `.gc/`. parlay has no such scoping concept. Every city-scoped `gc` verb refuses outside one. |
-| `GC_HOME` | `PARLAY_STATE_HOME` / `PARLAY_DATA_DIR` | Loosely analogous. **Not interchangeable, and redirecting one does not redirect the other** — §9.1. |
+| `GC_HOME` | `PARLAY_STATE_HOME` (+ `HOME` / `PARLAY_AGENT_HOME`) | Loosely analogous. **Not interchangeable, and redirecting one does not redirect the other** — §9.1. There is no `PARLAY_DATA_DIR`; it went with the TypeScript server. |
 | **supervisor** | *(no parlay equivalent for a **session** supervisor)* | **Different shape, not absence.** Parlay supervises **per service**: each deployable gets its own launchd job and its own plist under `~/Library/LaunchAgents/`, installed by that service's own `deploy/install.sh` from one of three tracked templates (`packages/go-server/deploy/com.parlay.go-server.plist.template`, `tools/relay/deploy/com.parlay.relay.plist.template`, `tools/eval-engine/deploy/com.parlay.eval-engine.plist.template`; see `packages/go-server/deploy/lib.sh:33`, `tools/relay/deploy/lib.sh:22`, `tools/eval-engine/deploy/install.sh:46`), plus the live `com.parlay.chat-server` job named in the project CLAUDE.md. There is no cross-service supervisor, no session concept, and nothing that owns an agent process. Gas City supervises **centrally**: one machine-wide singleton (launchd label `com.gascity.supervisor`, `127.0.0.1:8372`) owns sessions and their processes (§9.1). What parlay lacks is a **session** supervisor, not process supervision — and because both write into `~/Library/LaunchAgents/`, the two already share a namespace (§9.2). |
 | **runtime provider** | **launcher** | `PARLAY_SPAWN_LAUNCHER` selects parlay's; `cmd/gc/runtime_registry.go` registers Gas City's. |
 | `herdr` provider | the `herdr` launcher (default) | **Both shell out to the same `herdr` binary.** This is the reason the spawn lift is L and not XL. |
-| `subprocess` provider | the `gascity` launcher | Naming collision — parlay's `gascity` launcher is a from-scratch port of subprocess semantics and contains **no Gas City code** (§11). Neither has an input-injection channel. |
+| `subprocess` provider | the **`subprocess`** launcher (the `gascity` spelling is its deprecated pre-rename alias, still accepted) | Naming collision — parlay's `subprocess` launcher is a from-scratch port of subprocess semantics and contains **no Gas City code** (§11); it is the herdr-free escape hatch selected by `--subprocess` / `PARLAY_SPAWN_LAUNCHER` / `[spawn].launcher`. Neither has an input-injection channel. (Corrected 2026-10-05: this row still called it the `gascity` launcher after the PR #133 rename.) |
 | **event** `Seq` | **cursor** | Gas City: monotonic `Seq` in `.gc/events.jsonl`, exactly-once per watcher via `Watch(ctx, afterSeq)`. Over HTTP the same position is `Last-Event-ID` / `after_cursor` (§3). |
-| `.gc/events.jsonl` | `~/exchange/chat-history.jsonl` | **Not equivalent.** parlay's is live history — do not clobber. Gas City's is an append-only event log with 256 MiB gzip rotation. |
+| `.gc/events.jsonl` | `messages.jsonl` (under `$PARLAY_STATE_HOME`, default `~/.parlay/`) | **Not equivalent.** parlay's is live chat history — do not clobber — and it is not an unrotated append-only log either: a 5,000-message ring, compacted by atomic rewrite at 32 MiB. Gas City's is an append-only event log with 256 MiB gzip rotation. (Corrected 2026-10-05: this row named `~/exchange/chat-history.jsonl`, a path only the deleted TypeScript server ever wrote.) |
 | **Nudge** | *(nearest: `parlay send`)* | **Lossy and dangerous.** `parlay send` is a chat POST that the agent's own `parlay listen` loop receives. Gas City's `Nudge` is terminal injection. They are not the same operation and must not be mapped 1:1. |
 | `ErrNudgeSubmitUnconfirmed` | *(no equivalent)* | parlay verifies **startup**, not **steering**. A capability parlay would gain. |
 | `Provider.Stop` | `gascity-stop` / teardown | Gas City's is idempotent (nil if absent). parlay's is SIGTERM → 100 ms poll to a 5 s deadline → SIGKILL. |
 | `IsRunning` vs `ProcessAlive` | registry ∩ process table | Gas City distinguishes "the session record says running" from "a process is on the table". parlay's rule is the intersection — see project CLAUDE.md, robots-jkwc. |
 | `ListRunning(prefix)` | `parlay status` / `crew-state` | Gas City returns names; parlay's returns a verdict with a **frozen** exit-code contract (§8.2). |
 | `AddressDirectory.ResolveAddress` | agent-id lookup | Gas City **refuses** an ambiguous address rather than picking a winner. parlay's `parlay send` needed robots-ngg5 to stop minting phantom channels — same bug class, already solved on the Gas City side. |
-| `PreStart` | worktree setup (`bin/parlay-spawn:925`) | "Failures abort startup so agents never launch into an unprepared workDir." |
-| `SessionSetup` | the `CLAUDECODE` unset block (`:1226-1239`) | Semantically identical; different insertion point. |
-| `ReadyPromptPrefix` / `ReadyDelayMs` | the `READY_$$` handshake (`:1240-1243` — marker appended at `:1240`, wait at `:1243`; `:1219` is the explanatory comment only) | parlay's bespoke echo trick becomes configuration. The `$`-literal vs `$`-expanded distinction is deliberate — preserve the *intent*, not the mechanism. |
+| `PreStart` | worktree setup (`spawnOne`'s `WantWorktree` / `gitToplevel`, `tools/cli/internal/spawn/spawnpipeline.go:105-116`) | "Failures abort startup so agents never launch into an unprepared workDir." |
+| `SessionSetup` | the `CLAUDECODE` unset prep (`spawnpipeline.go:342`) | Semantically identical; different insertion point. |
+| `ReadyPromptPrefix` / `ReadyDelayMs` | the `READY_$$` handshake (`spawnpipeline.go:346-349` — marker appended at `:346`, waited for with `PaneWaitOutput(…, 5000)` at `:349`) | parlay's bespoke echo trick becomes configuration. The `$`-literal vs `$`-expanded distinction is deliberate — preserve the *intent*, not the mechanism. |
 | `requires_gc` | *(nothing — do not use)* | **Parsed and never compared.** §4. |
 | `[events.export]` | `POST /api/chat/events` | Superficially symmetric, opposite directions. Gas City's is opt-in egress, 22 of 93 types, default-deny (§5). parlay's is ingress with a one-name allowlist that **must not widen** (§8.5). |
+
+*Corrected 2026-10-05: the `PreStart` / `SessionSetup` / `ReadyPromptPrefix` rows above cited
+`bin/parlay-spawn`, a bash script deleted with the Go spawner fold-in (task-42qot).
+`tools/cli/internal/spawn` is now the only implementation of the launch pipeline; the line
+numbers in those rows are its own.*
 
 ---
 
 ## 11. The stale comment block at `tools/parlay-bin/subprocess_spawn.go` (formerly `gascity_spawn.go`)
 
 **Corrected in this PR (P0, PR #132). The `gascity` → `subprocess` rename (PR #133) has already landed; this section is about the stale comment block.**
+
+> **Path refresh 2026-10-05.** `tools/parlay-bin/` no longer exists — it was deleted with the
+> Go spawner fold-in (task-42qot). The file this section is about is now
+> `tools/cli/internal/spawn/subprocess_spawn.go`, and `bin/parlay-spawn` (cited at `:1381` and
+> `:1388` below) is gone too. The line counts and anchors below are preserved as the
+> commit-anchored evidence they were written as; **read the current file, not these paths.**
+> One further correction: the `gascity-spawn` / `gascity-stop` / `gascity-ping` **verbs** are
+> gone — the dispatcher answers `subprocess-spawn` / `subprocess-stop` / `subprocess-ping`
+> with no `gascity-` alias. The flag, env value, and config key aliases in the first bullet
+> below still work.
 
 **Scope of that correction:** it covers the Go comment block in
 `tools/parlay-bin/subprocess_spawn.go` (formerly `gascity_spawn.go` — it was renamed in PR
