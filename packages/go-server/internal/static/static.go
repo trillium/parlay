@@ -32,7 +32,16 @@ func Handler(dir string) http.Handler {
 			return
 		}
 		if _, err := os.Stat(dir); err != nil {
-			http.Error(w, "assets directory not found: "+dir, http.StatusServiceUnavailable)
+			// A newcomer hits this on their first server start before building
+			// the panel bundle. Name the build command and the override rather
+			// than echoing a resolved path they have never heard of. /fleet/
+			// mounts <assets>/fleet, so it is the webview bundle that fills
+			// that one in.
+			http.Error(w, "assets directory not found: "+dir+
+				" — build the panel with `cd packages/client && bun run build`"+
+				" (the /fleet/ dashboard needs `bun run build` in packages/webview),"+
+				" or point -assets-dir / PARLAY_ASSETS_DIR at an existing bundle"+
+				" — the /api/chat API below works either way", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -72,7 +81,7 @@ func serveOrFallback(w http.ResponseWriter, r *http.Request, dir, path string) {
 	// any URL the user bookmarks or refreshes.
 	index := filepath.Join(dir, "index.html")
 	if _, err := os.Stat(index); err != nil {
-		http.Error(w, "index.html not found in assets directory — run `bun build.ts` in packages/client", http.StatusNotFound)
+		http.Error(w, "index.html not found in assets directory — run `cd packages/client && bun run build`", http.StatusNotFound)
 		return
 	}
 	http.ServeFile(w, r, index)

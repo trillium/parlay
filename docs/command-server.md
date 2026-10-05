@@ -39,4 +39,23 @@ HTTP method. The guard is `packages/go-server/internal/guard/`; a new
 mutating/identifier-aiming route must be added to `guard.GuardedPaths` and
 nothing is guarded until you do.
 
+**The panel host is this server too.** After all `/api/*` routes are registered,
+the mux mounts `internal/static` as a catch-all, so the same `:4242` serves the
+built `packages/client/dist` bundle *same-origin* with the API the panel needs —
+there is no separate host or reverse proxy to wire. Routes: `GET /` →
+`dist/index.html`, `GET /parlay-agent.js` (and `/annotate/<path>`, the
+Pulse-era script alias), and an SPA fallback to `index.html` for any unknown
+path. `/fleet/` mounts `<assets-dir>/fleet` — the separate `packages/webview`
+dashboard, which has its own build and is not part of the Quickstart.
+
+The bundle directory comes from `-assets-dir` / `PARLAY_ASSETS_DIR`. With
+neither set, `defaultAssetsDir()` (in `cmd/parlay-server/main.go`) walks up from
+the executable's own directory and then from the working directory looking for a
+checkout's `packages/client/dist`, falling back to a bare `dist`. The second
+start point is what makes the README's `go run ./cmd/parlay-server` work:
+`go run` executes a temporary binary under the build cache, so the
+executable-relative lookup finds nothing. Until you build the bundle, `GET /`
+answers `503` with the build command on its body and every `/api/chat/*` route
+works unchanged.
+
 **Env vars** (`PARLAY_STATE_HOME`, `PAI_DIR`, `PARLAY_HUB_URL`, `PARLAY_ALLOWED_ORIGINS`, `PARLAY_PUBLIC_HOST`, `PARLAY_SERVER_ADDR`, …) are documented canonically in [`examples/env.example`](../examples/env.example) — not repeated here.

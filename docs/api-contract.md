@@ -730,7 +730,9 @@ The server serves the built panel bundle standalone (no Pulse front door):
 `/` (SPA fallback to `index.html`), `/annotate/<path>` (the Pulse symlink
 convention, mapped onto the bundle root), and `/fleet/` (the
 `packages/webview` fleet dashboard), from `PARLAY_ASSETS_DIR` (`-assets-dir`;
-default: the sibling `packages/client/dist`). Dispatched
+default: the first `packages/client/dist` found by walking up from the
+executable's directory and then from the working directory, else a bare `dist`).
+Dispatched
 after all `/api/*` routes so it can never shadow them — and an unrouted
 `/api/*` path stays a real 404, never the SPA fallback (the CLI's
 `commandreport` caches that 404 to detect unsupported verbs). Source:
