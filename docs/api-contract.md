@@ -466,11 +466,17 @@ interface ParlaySettings {
   commandPhrases: Record<string, string[]>
   hybridVoice: boolean
   localOnlyVoice: boolean
-  textScale: number
+  textScale: number // PERCENT; 100 = default. The client divides by 100.
   voiceSettleMs: number
   noKeyboardMode: boolean
 }
 ```
+GET with no `settings.json` on disk returns `DefaultSettings()`
+(`packages/go-server/internal/store/settings.go`) — the document a fresh
+install sees, since nothing writes the file until a client PUTs one. The client
+spreads that response over its own defaults, so these values win on first run;
+`textScale` in particular is a percent and must be `100`, not `1`.
+
 PUT response (200): echoes the stored settings object bare. A legacy
 `voiceClearPhrase: string` (singular) on disk is migrated to
 `voiceClearPhrases: string[]` at load time.
