@@ -26,13 +26,13 @@ Three decisions worth knowing before touching it:
 - **Matching fails toward "not a duplicate", because the two error directions
   are not symmetric.** Killing a non-duplicate ends a live agent's session;
   missing one only leaves the pre-existing duplicate. So: exact token compare
-  on the agent id (`--agent mayor` never matches `mayor-2`), the subcommand
-  must be preceded by a parlay binary basename (a shell wrapper whose *command
-  string* contains the invocation is not the listener), scanning stops at
+  on the agent id (`--agent mayor` never matches `mayor-2`), the candidate's
+  own **argv[0]** must be a parlay binary basename (see the 2026-10-05
+  section below — this is the rule that keeps a shell wrapper whose *command
+  string* contains the invocation from being killed), scanning stops at
   `--name`/`--caps` because `ps` flattens argv unquoted and a ticket title
-  routinely contains `--agent`, and self plus every ancestor is protected —
-  the harness arms through a shell whose command string is the whole
-  invocation, so reaping an ancestor kills the reaper.
+  routinely contains `--agent`, and self plus every ancestor still visible in
+  the `ps` ppid map is protected.
 
 `PARLAY_LISTEN_NO_SINGLETON=1` opts out (announced on stderr). The singleton
 enforcement is Go-only, no TS port — but `listen` itself exists in both CLIs,
@@ -87,3 +87,46 @@ the match), or `PARLAY_LISTEN_NO_SINGLETON=1` in the instance that must not
 evict. What is deliberately NOT claimed: the match cannot be made instance-aware
 without a way to read another process's server, which this repo has no portable
 way to do.
+
+## The guard used to kill the shell that launched it (verified + fixed 2026-10-05)
+
+Reproduced while running the documented Quickstart in an isolated `HOME`. The
+rule above used to be *"the subcommand token must be **preceded by** a parlay
+binary basename"*, which every wrapper satisfies exactly as well as a real
+listener:
+
+```sh
+/bin/bash -c 'cd /tmp && ( /path/to/parlay-cli listen --agent demo --legacy-poll > /tmp/l.log 2>&1 & )'
+```
+
+The token before `listen` is the real binary path, so that shell was classified
+as a duplicate listener and `listen` SIGTERMed **its own caller** — the
+harness died with exit 143 while the listener it started lived on.
+
+The ancestor walk in `selectDuplicateListeners` exists precisely for this and
+provably cannot save it: `( ... & )` forks a subshell, the subshell exits, and
+the listener is reparented — at which point its real ancestors are simply not
+reachable in a `ps` ppid map. The walk stops at the first pid it cannot
+resolve, so a still-live grandparent that matches is fair game. That is a
+property of the data available, not a bug in the walk, so the walk is now
+documented as defence in depth rather than as the guard.
+
+The fix anchors the match on **argv[0]**: a candidate's own first token must
+be `parlay` or `parlay-cli`. A real listener's argv[0] always is (the
+`bin/parlay` wrapper execs that binary, so the wrapper is gone by then), and a
+shell, `env`, `tmux send-keys`, or an agent harness never is. It needs no
+ancestry at all, so the whole wrapper population is excluded by construction.
+
+Verified in both directions on a live isolated instance: the launcher shell now
+survives and prints no bogus `existing listener(s)` line, while a genuine second
+`listen --agent <same id>` still reaps the first and leaves exactly one process,
+and `parlay shutdown <id>` still reaps it. Two tests pin it — one over five
+wrapper shapes, one asserting through `reapDuplicateListeners` that a `bash -c`
+in the process table is never signalled while a real duplicate in the same table
+is.
+
+Rule to keep if this file is edited again: **the "fail toward not-a-duplicate"
+doctrine is about what `ps` cannot tell you. Where `ps` CAN tell you something
+definitively — what a process's own argv[0] is — prefer that to a walk over
+relationships the snapshot may have already lost.**
+

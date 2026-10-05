@@ -79,6 +79,19 @@ first turn actually fired.
 > `parlay-cli`, so a renamed copy of the binary (or a `go run` build) is never
 > detected and duplicate delivery returns silently.
 >
+> The same argv[0] requirement is what keeps a *shell* out of the victim set
+> (fixed 2026-10-05). The match used to accept any `ps` line whose subcommand
+> token was merely *preceded by* a parlay binary basename, which a wrapper
+> satisfies too: `bash -c 'cd /x && ( /path/to/parlay-cli listen --agent demo
+> … )'` was classified as a duplicate, and `listen` SIGTERMed **its own
+> caller**. Requiring the candidate's own argv[0] to be the parlay binary
+> excludes every wrapper, script, `tmux send-keys` and agent harness by
+> construction — and needs no ancestry walk, which could not have saved it
+> anyway, because the `( … & )` subshell exits and reparents the listener out
+> of reach of any `ps` ppid map. Reproduced and fixed: arming from a wrapper
+> now leaves the wrapper alive and prints no bogus `existing listener(s)`
+> line, while a genuine second `listen` for the same id still reaps the first.
+>
 > The opt-out is `PARLAY_LISTEN_NO_SINGLETON=1`, which skips the reap and says so
 > on stderr (duplicate delivery becomes possible). The reliable answer for a
 > second instance is a distinct agent id per instance — `--name` and `--color`
