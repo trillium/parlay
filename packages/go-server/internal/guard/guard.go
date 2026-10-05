@@ -125,6 +125,12 @@ import (
 //
 // A new mutating route is UNGUARDED until it is added here. If its callers do
 // not send a JSON content type, it also belongs in jsonExemptPaths.
+//
+// That rule is ENFORCED, not just documented: TestEveryRegisteredRouteIsGuardedOrExplained
+// parses internal/handlers for every path it puts on the mux and fails the
+// build on one that is neither guarded here nor listed, with a written reason,
+// in TestUnguardedRoutes. The live-command registry's three report routes
+// shipped outside the boundary before that test existed; see their entries.
 var GuardedPaths = map[string]bool{
 	// D7, the routes the verifier drove cross-origin.
 	"/api/chat/send":           true,
@@ -203,6 +209,31 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/remote-input/submit":  true,
 	"/api/chat/remote-input/status":  true,
 	"/api/chat/remote-input/targets": true,
+
+	// Live-command registry (#91): three POST report routes the CLI calls to
+	// announce a running verb. Mutating by the file's own rule — each writes
+	// a registry row that GET /api/chat/commands and the panel's live-commands
+	// view then report — so all three land here.
+	//
+	// They were added OUTSIDE this map when the feature shipped, carrying a
+	// hand-rolled copy of this guard's content-type gate in the handler
+	// (handlers.requireCommandReport) on the belief, stated in that function's
+	// comment, that "this server has no equivalent guard". That was true when
+	// the guard landed (task-6ai1) and false by the time the registry did, and
+	// the consequence was a route that accepted a forged cross-origin POST
+	// with Content-Type: application/json — a shape the handler's own gate
+	// cannot refuse, because requiring JSON is exactly what forces the
+	// preflight the handler assumed nothing would ever answer. Two
+	// implementations of one boundary is the defect class this file exists to
+	// prevent, so the routes come inside it and requireCommandReport stays as
+	// defense in depth.
+	//
+	// GET /api/chat/commands is the read half and deliberately stays OUT, on
+	// the /api/chat/agents precedent: a foreign page's read executes but its
+	// body is unreadable, because unguarded routes here send no ACAO at all.
+	"/api/chat/command-start":     true,
+	"/api/chat/command-heartbeat": true,
+	"/api/chat/command-end":       true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
