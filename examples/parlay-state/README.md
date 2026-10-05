@@ -1,12 +1,12 @@
 # `parlay-state/` — the CLI's and agents' state
 
-This is the CLI's and the agents' own state; the server keeps its data under
-`$PARLAY_DATA_DIR` rather than here. One exception matters in practice: the reply
-path resolves agent context from the **server process's** own `$HOME`, so
-`--agent` routing works only when the agent store is visible to the server — see
-the [`context.json`](#contextjson) section below. Point
-`PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` at a copy of this directory, or merge
-it into an existing `~/.parlay/`. If you already have a `~/.parlay`, follow
+This is the CLI's and the agents' own state; the server keeps its data in its own
+`-state-dir` (`PARLAY_STATE_HOME`, default `~/.parlay`) rather than here — see
+[`../data-dir/README.md`](../data-dir/README.md). Nothing in this directory is
+read by the server: the Go server routes a message by the `agent` field on the
+request, so `--agent` works without the server ever seeing an agent store.
+Point `PARLAY_STATE_HOME` / `PARLAY_AGENT_HOME` at a copy of this directory, or
+merge it into an existing `~/.parlay/`. If you already have a `~/.parlay`, follow
 [the merge instructions](../README.md#optional-merging-into-a-real-parlay) —
 `config.json`, `sweep-keep`, and the two agent directories can each overwrite
 state you are using.
@@ -16,7 +16,7 @@ state you are using.
 | `config.json` | Persisted default server URL. | Yes — point it at your server. |
 | `sweep-keep` | Agents `parlay sweep` must never tear down. Commented inline. | Yes — list your long-lived agents. |
 | `agents/<id>/identity.md` | The agent's launch spec + durable self-knowledge. | Yes — see below. |
-| `agents/<id>/context.json` | `{id, name, color}` reply-attribution record — the server reads it from its own `$HOME`. | Yes — must match `identity.md` and the registry. |
+| `agents/<id>/context.json` | `{id, name, color}` record of the agent's identity, mirrored from `identity.md`. | Yes — keep it in step with `identity.md`. |
 | `agents/<id>/scratchpad.md` | The agent's working notes. | No — the agent writes it. Created on first write. |
 | `agents/<id>/status` | Append-only agent→supervisor status lines. | No — `parlay status <verb> "<line>"` appends. |
 
@@ -52,7 +52,9 @@ One directory per agent, named for the agent id, under
 `$PARLAY_AGENT_HOME` (default `~/.parlay/agents`). Two agents are shipped:
 `helm` (long-lived, general purpose) and `reviewer` (task-scoped, bound to a git
 worktree). The id must be the same string in three places: the directory name,
-`context.json`'s `id`, and `identity.md`'s frontmatter `id`.
+`context.json`'s `id`, and `identity.md`'s frontmatter `id`. Nothing in the
+server reads that agreement, so a mismatch shows up as a tab and a verb
+disagreeing — not as a dropped message.
 
 ### `identity.md` frontmatter — the launch spec
 
@@ -100,21 +102,19 @@ line; a bare `parlay identity` prints this part with the frontmatter stripped.
 { "id": "helm", "name": "Helm", "color": "#6366f1" }
 ```
 
-The reply-attribution record, and the one place in this directory where whose
-`$HOME` is in play changes the outcome. `loadAgentContext`
-(`packages/server/src/agent-context.ts`, called on every `POST /api/chat/reply`)
-resolves `~/.parlay/agents/<id>/context.json` against the **server process's**
-own `$HOME` — not `PARLAY_AGENT_HOME`, and not the home of the CLI that sent the
-message. The id in the request is what routes; the server accepts it three ways,
-in order: this context file; the server's own agent registry (`parlay-agents.json`
-/ the in-memory map, written by `parlay listen` / `POST
-/api/chat/register-agent`); and the server's designated `PARLAY_AGENT_ID` — but
-only for that exact id, not as a blanket "any value accepts any id" presence
-check. With none of these the reply still succeeds and the CLI still prints
-`said as helm`, but the server drops the channel and files the message on the
-global thread. The fixes that do not depend on the server's environment are to
-run it under the same `$HOME` as the agent store, or to enroll the agent over
-HTTP — not to copy this directory into a live `~/.parlay`.
+The agent's identity in machine-readable form, so a tool can read the id, name
+and colour without parsing frontmatter. It must agree with `identity.md` and
+with the `agents.json` registry entry, or a tab shows one name while a verb acts
+on another.
+
+**The server never reads this file.** An earlier generation of this example
+documented it as the reply-attribution record the server resolved against its own
+`$HOME`, with three fallback mechanisms and a silent global-thread misroute when
+none of them matched. That was the retired TypeScript server. The Go server
+files a `POST /api/chat/reply` on whatever `agent` field the request carries
+(`internal/handlers/messaging.go`), so `--agent` routing needs nothing from the
+server's environment — and the whole class of "the server is looking in the wrong
+`$HOME`" traps is gone with it.
 
 ### `status`
 

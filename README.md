@@ -245,7 +245,7 @@ flowchart LR
 
     server["Command/chat server — :4242\npackages/go-server (Go)"]
 
-    hist["Events / history JSONL\nchat-history.jsonl · messages.jsonl"]
+    hist["Events / history JSONL\nmessages.jsonl"]
     registry["Agent registry & presence\nagents.json"]
     relay["Relay\ntools/relay — per-agent spool fan-out"]
     monitor["Monitor / listen\ntools/cli/internal/monitor"]
@@ -268,7 +268,7 @@ flowchart LR
 |---|---|---|
 | **Input** | DOM wrapper that turns edits in a composer element into evaluated phrase-engine actions. | [`docs/input.md`](docs/input.md) |
 | **Command/chat server** | Owns `/api/chat/*` — a single Go implementation (`packages/go-server`), the sole server; the TS server it replaced was deleted with the Bun→Go cutover. | [`docs/command-server.md`](docs/command-server.md) |
-| **Events / history (JSONL)** | Append-only chat history, plus the hook/tool-activity tailers that feed it — two different files depending on which server wrote them. | [`docs/events-history.md`](docs/events-history.md) |
+| **Events / history (JSONL)** | Append-only chat history in the server's state dir (`messages.jsonl`), plus the hook/tool-activity tailers that post into it over HTTP. | [`docs/events-history.md`](docs/events-history.md) |
 | **Agent registry & presence** | Who is enrolled as a chat tab, and transient (in-memory-only) connection counts. | [`docs/agent-registry.md`](docs/agent-registry.md) |
 | **Monitor / listen** | How an enrolled agent actually receives messages — relay-backed by default, `--legacy-poll` as a no-relay fallback with a documented dead-tab gap. | [`docs/monitor.md`](docs/monitor.md) |
 | **Launcher (spawn)** | Launches a new background agent into a live chat tab — one in-process implementation (`tools/cli/internal/spawn`), so the model and beads gates cannot be routed around. | [`docs/launcher.md`](docs/launcher.md) |
