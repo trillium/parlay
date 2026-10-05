@@ -7,7 +7,7 @@ rather than a competing orchestrator (epic task-4cfpv, child task-4cfpv.8).
 
 It is **source, not a live city**. There is no `.gc/` state directory here and
 none may ever be committed. The install unit (P12 of the migration plan in
-[`docs/gascity-integration-contract.md`](../docs/gascity-integration-contract.md))
+[`docs/gascity-integration-contract.md`](../../../../../docs/gascity-integration-contract.md))
 owns turning this source into a running city; no earlier unit runs
 `gc supervisor install`.
 
