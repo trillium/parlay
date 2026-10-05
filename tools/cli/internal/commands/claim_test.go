@@ -350,6 +350,9 @@ func TestClaimFoldsRecordedMemory(t *testing.T) {
 	newClaimServer(t)
 	stubTask(t, claimTask{ID: "task-77", Title: "Resume work"}, nil)
 	t.Setenv("PARLAY_AGENT_ID", "returner")
+	// The brief's pointer instruction is store-aware, so this test must say
+	// which branch it is asserting rather than inheriting the box's PATH.
+	pinHandoffStore(t, true)
 
 	// Seed identity + scratchpad under the temp PARLAY_AGENT_HOME.
 	dir := filepath.Join(os.Getenv("PARLAY_AGENT_HOME"), "returner")
@@ -585,6 +588,11 @@ func TestClaimUnresolvableTicketPrintsExitProcedure(t *testing.T) {
 	cs := newClaimServer(t)
 	stubTask(t, claimTask{}, errors.New(`Error fetching robots-aaa: no issue found matching "robots-aaa"`))
 	statusFile := noWorkAgent(t, "stranded")
+	// The no-work brief's exit procedure is store-aware: step 1 is
+	// `handoff create`, which only exists where the author's federation is
+	// installed. Pin the store PRESENT so this test asserts the recipe the
+	// captain's box actually runs, independent of whose machine runs it.
+	pinHandoffStore(t, true)
 
 	out, code, exited := runNoWorkClaim(t, "robots-aaa")
 	if !exited {

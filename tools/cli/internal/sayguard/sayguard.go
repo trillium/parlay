@@ -118,6 +118,13 @@ func WarnIfUnsubmittedHandoff(agent string) {
 	}
 
 	if result.Inherited {
+		// `handoff show` is named unconditionally here, and that is correct:
+		// this warning can only fire when the store itself answered with an
+		// open handoff row (DetectUnsubmittedHandoff -> resolveRow -> runStore
+		// shells out to the store binary), so reaching this line proves the
+		// command is on PATH. An "instruction must be runnable" conditional
+		// would be unreachable code; the tools/cli handoff-prescription gate
+		// allowlists this function for exactly that reason.
 		fmt.Fprintf(os.Stderr,
 			"💡 parlay: inherited stale handoff %s for agent '%s' (from a prior session).\n"+
 				"    To silence this warning without resetting context: identity --dismiss-handoff %s\n"+
