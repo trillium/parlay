@@ -112,7 +112,7 @@ the coded default but loses to the env var).
 ./bin/parlay                               # live snapshot: subscribers, agents, last messages
 ./bin/parlay send --demo --force "hello"   # message the 'demo' channel
 ./bin/parlay history 5                     # read it back
-./bin/parlay health                        # host vitals: is the server up, how much memory
+./bin/parlay health                        # host vitals: is the server up, how much memory (see note below)
 ./bin/parlay doctor                        # self-diagnosis: server reachable? identity set?
 ./bin/parlay doctor --json                 # same checks as one JSON document (schema parlay.doctor/v1), for scripts/LLMs
 ./bin/parlay doctor deploy                 # deployment-level sweep: launchd, ports, logs, pins
@@ -126,6 +126,13 @@ seeds a channel before its agent has registered, which is exactly the case here.
 That is the one check the Quickstart's shell cannot satisfy; `health` is the
 host-level equivalent. Run `doctor` inside a spawned agent to see the rest
 (registry enrolment, monitor, identity, scratchpad, spawn credentials).
+
+`health` reports the chat **server** (labelled `server`, not `relay` — parlay
+ships a separate relay daemon that only `parlay monitor` needs) and then the
+optional **voice engine**. You have not installed a voice engine at this point,
+so that line is red and `health` exits 1; that is the engine, not your install.
+Start one with `nohup ./bin/parlay eval serve &` only if you want spoken or typed
+phrase commands — the CLI, the API and the panel's text chat do not need it.
 
 That round-trip is the whole substrate. From here:
 

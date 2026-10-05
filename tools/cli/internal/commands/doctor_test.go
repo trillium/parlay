@@ -53,7 +53,7 @@ func TestHealthAllOK(t *testing.T) {
 		t.Errorf("Health() exited unexpectedly on an all-ok server: %q", out)
 	}
 	for _, want := range []string{
-		"ok    relay " + srv.URL + " — 2 client(s), 1 poller(s), 3 agent(s)",
+		"ok    server " + srv.URL + " — 2 client(s), 1 poller(s), 3 agent(s)",
 		"ok    memory — rss 45MB, heap 20MB; history 100 msgs (12KB)",
 		"ok    eval-engine " + engineSrv.URL + " — protocol v3",
 	} {
@@ -61,9 +61,42 @@ func TestHealthAllOK(t *testing.T) {
 			t.Errorf("Health() output missing %q, got:\n%s", want, out)
 		}
 	}
+	// The chat server is NOT parlay's relay. tools/relay is a separate daemon
+	// this probe never touches, so a green "relay" line told a newcomer their
+	// relay was up when only the server was being measured.
+	if strings.Contains(out, "relay ") {
+		t.Errorf("Health() output labels the chat server as the relay: %q", out)
+	}
 }
 
-func TestHealthSickWhenRelayUnreachable(t *testing.T) {
+// A dead eval-engine must not read as a broken install: the engine is the
+// optional voice layer, and the Quickstart's CLI + server path needs nothing
+// else. Exit 1 is deliberate (ux-eval-2026-08-30.md), so the FAIL line has to
+// carry the reason it is red.
+func TestHealthSickWhenEngineUnreachableSaysTheEngineIsOptional(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", jsonHandler(t, map[string]any{}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+
+	out := captureStdout(t, func() {
+		code, exited := withExitTrap(t, func() { Health(nil) })
+		if !exited || code != config.ExitRuntime {
+			t.Errorf("Health() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
+		}
+	})
+	if !strings.Contains(out, "the voice engine is OPTIONAL for the CLI + server") {
+		t.Errorf("Health() eval-engine FAIL does not mark the engine optional, got:\n%s", out)
+	}
+	if !strings.Contains(out, "This line is about the engine, not about your install.") {
+		t.Errorf("Health() eval-engine FAIL does not scope the FAIL to the engine, got:\n%s", out)
+	}
+}
+
+func TestHealthSickWhenServerUnreachable(t *testing.T) {
 	engineMux := http.NewServeMux()
 	engineMux.HandleFunc("/health", jsonHandler(t, map[string]any{"ok": true, "protocol": 1}))
 	engineSrv := httptest.NewServer(engineMux)
@@ -80,8 +113,8 @@ func TestHealthSickWhenRelayUnreachable(t *testing.T) {
 	if !exited || code != config.ExitRuntime {
 		t.Errorf("Health() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
 	}
-	if !strings.Contains(out, "FAIL  relay http://127.0.0.1:1") {
-		t.Errorf("Health() output = %q, want a FAIL relay line", out)
+	if !strings.Contains(out, "FAIL  server http://127.0.0.1:1") {
+		t.Errorf("Health() output = %q, want a FAIL server line", out)
 	}
 }
 
@@ -203,7 +236,7 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 	for _, want := range []string{
 		"PASS  PARLAY_AGENT_ID = doc-agent",
 		"PASS  server reachable at " + srv.URL,
-		`PASS  registered as "doc-agent" on the relay`,
+		`PASS  registered as "doc-agent" with the server`,
 		"PASS  monitor listening (last poll 2026-08-03T00:00:00Z)",
 		"PASS  identity.md ok",
 		"PASS  scratchpad.md ok",
