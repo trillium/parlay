@@ -22,15 +22,23 @@ Two delivery paths exist, selected by `--legacy-poll`:
   (`tools/relay/build.sh` — gitignored, not built by `bun install` or
   `bin/parlay`).
 
-**A real, documented gap** (verified against the root README's own text,
-2026-09-03): bare `listen` *without* `--legacy-poll` registers and announces
-with the server **before** it starts the relay connection. On a fresh clone
-where the relay binary hasn't been built yet, this leaves an agent that is
-enrolled (visible in the registry, looks live) but can never actually receive
-anything — it posts a `monitor DOWN` notice on its way out, but the registry
-entry survives, so the agent stays "enrolled and deaf." This is exactly the
-class of thing issue #210 tracks for a related gap in `ensure-up`/exit-3
-handling.
+**The relay is preflighted before enrollment, so a missing relay is a clean
+refusal, not a deaf tab** (verified 2026-09-03 against
+`internal/monitor/listen.go`, `monitor.go` and `internal/commands/claim.go`).
+Every enrolling entry point — `listen`, `monitor`, `claim` — runs
+`parlay-monitor.sh --preflight` *before* it POSTs `register-agent`. On a fresh
+clone with no relay binary the preflight fails, the verb exits `ExitRuntime`
+saying `NOT registered, so nothing is deaf`, and the agent never appears in
+`GET /api/chat/agents`. `--legacy-poll` deliberately skips the preflight: it is
+the no-relay escape hatch, so requiring a relay there would defeat its purpose.
+
+That preflight is what the "registered-but-deaf" trap was about — an agent
+enrolled in the panel whose event stream does not exist takes no directives for
+the rest of the session and nothing says so. `parlay monitor` was the one entry
+point still missing it (it registered, *then* discovered the dead relay — fixed
+2026-09-03), so this section and the root README both blamed bare `listen`,
+which had been closed earlier and was pointing readers at a hole that was no
+longer there.
 
 `singleton.go` enforces one live poll loop per agent channel (an "arming a
 listener is a takeover" guard — a second `listen` for the same agent

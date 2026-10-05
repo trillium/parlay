@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -294,6 +295,21 @@ func stubScript(t *testing.T) string {
 	return argLog
 }
 
+// stubRefusingScript installs a parlay-monitor.sh stub that exits
+// config.ExitUsage. runRelayMonitor reads that as a deliberate refusal (not a
+// crash worth respawning), so a test using it returns on the first iteration
+// instead of looping through the whole thrash budget.
+func stubRefusingScript(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "parlay-monitor.sh")
+	body := fmt.Sprintf("#!/bin/sh\nexit %d\n", config.ExitUsage)
+	if err := os.WriteFile(stub, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestCmdMonitorReapForwardsToScriptWithoutAnAgent(t *testing.T) {
 	argLog := stubScript(t)
 	trapExit(t)
@@ -413,6 +429,97 @@ func TestEnsureRegisteredIsBestEffortOnFailure(t *testing.T) {
 	// Must not panic or die — a register-agent failure degrades gracefully,
 	// exactly like the auto-register-on-poll side effect it replaces.
 	ensureRegistered("test-agent")
+}
+
+// A direct `parlay monitor --agent X` must preflight the relay BEFORE it
+// registers, or it is the last remaining way to reach the registered-but-deaf
+// state: register-agent posts the tab, the relay script then discovers there is
+// no relay and exits, and the agent stays enrolled looking live while receiving
+// nothing. `parlay listen` and `parlay claim` both preflight already.
+func TestCmdMonitorRelayPathPreflightsBeforeRegistering(t *testing.T) {
+	var registered bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/register-agent" {
+			registered = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	stubScript(t) // never reached, but keeps a stray script run harmless
+	trapExit(t)
+	stubPreflight(t, 1)
+
+	code, ok := testsupport.Capture(func() {
+		CmdMonitor([]string{"--agent", "deaf-test"})
+	})
+	if !ok {
+		t.Fatal("a failed relay preflight must die, not fall through to the stream")
+	}
+	if code != config.ExitRuntime {
+		t.Errorf("exit code = %d, want %d (ExitRuntime)", code, config.ExitRuntime)
+	}
+	if registered {
+		t.Error("register-agent was POSTed despite a failed relay preflight — the agent is left enrolled and deaf")
+	}
+}
+
+// A relay that IS reachable must still register and stream: the preflight is a
+// gate on the broken case, not a new reason to refuse a working setup.
+func TestCmdMonitorRelayPathRegistersWhenPreflightPasses(t *testing.T) {
+	var registered bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat/register-agent" {
+			registered = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	// A stub that exits with ExitUsage: runRelayMonitor treats that as a
+	// deliberate refusal and does not respawn, so the test ends on the first
+	// iteration instead of burning the whole thrash budget.
+	stubRefusingScript(t)
+	trapExit(t)
+	stubPreflight(t, 0)
+
+	testsupport.Capture(func() {
+		CmdMonitor([]string{"--agent", "ok-test"})
+	})
+	if !registered {
+		t.Error("register-agent was never POSTed on a healthy relay path")
+	}
+}
+
+// `--legacy-poll` is the no-relay escape hatch, so it must not preflight —
+// otherwise the documented fresh-clone path fails for the very reason it exists
+// to avoid needing a relay. The server answers 410 so the poll loop's one
+// terminal status ends it immediately: a bare `for {}` here would leak a
+// never-stopped goroutine past the end of the test.
+func TestCmdMonitorLegacyPollNeverPreflights(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer srv.Close()
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	trapExit(t)
+
+	preflightRan := false
+	orig := preflightRelay
+	preflightRelay = func(agent string) int {
+		preflightRan = true
+		return 1
+	}
+	t.Cleanup(func() { preflightRelay = orig })
+
+	testsupport.Capture(func() {
+		CmdMonitor([]string{"--agent", "legacy-test", "--legacy-poll"})
+	})
+	if preflightRan {
+		t.Error("--legacy-poll ran the relay preflight; it must work with no relay installed")
+	}
 }
 
 // The listen→monitor handoff must not re-register: `parlay listen`

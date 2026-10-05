@@ -34,4 +34,7 @@ The relay is **not built by `bun install` or `bin/parlay`** — it's gitignored
 and must be built explicitly (`tools/relay/build.sh`) before `monitor`/`listen`
 can use the non-legacy path; without it, those verbs exit 1 with
 `relay is not up and could not be started`, which is why the root README's
-Quickstart leans on `--legacy-poll` for a fresh clone.
+Quickstart leans on `--legacy-poll` for a fresh clone. That exit is a clean
+refusal rather than a trap: `monitor`/`listen`/`claim` each preflight the relay
+before enrolling, so nothing is registered when it fires — see
+[`monitor.md`](monitor.md).
