@@ -163,6 +163,18 @@ the engine needs two knobs moved together, because it both *answers* probes and
   `http://127.0.0.1:4242/api/chat/eval-push`, so an engine started for a second
   instance without this would drive the *first* instance's panel.
 
+There is a third, quieter cross-instance coupling, in the CLI rather than the
+engine: **`parlay listen --agent <id>` is a host-wide takeover.** It finds any
+other live `listen`/`monitor` on the same agent *id* in this host's process
+table and ends it — it does not distinguish instances, servers or state dirs. So
+a second instance's `listen --agent demo` kills the first instance's `demo`
+listener and leaves that instance registered but deaf. Give each instance its own
+agent ids (`demo` vs `demo-dev`); `--name`/`--color` do not scope it. If you
+deliberately want two instances sharing one channel name, set
+`PARLAY_LISTEN_NO_SINGLETON=1` in the one that must not evict (duplicate delivery
+becomes possible, and the skip is announced on stderr). `parlay shutdown <id>`
+reaps by the same id-based match, so it reaches across instances too.
+
 **4. Open the panel (optional — this is the only step that needs Bun):**
 
 ```sh

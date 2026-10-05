@@ -257,7 +257,14 @@ func reapDuplicateListeners(agent string) {
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "parlay listen: %d existing listener(s) for '%s' (pid %s) — ending them so this channel keeps exactly one\n",
+	// The scope is named in the message itself, not only in --help: the match is
+	// an agent ID in this HOST's process table, so a reader seeing this line on a
+	// second instance must learn that the process just killed may have belonged
+	// to a different server entirely. "so this channel keeps exactly one" is the
+	// wording that shipped for years and reads as per-instance (verified
+	// 2026-10-05: two isolated instances on different servers, same agent id, and
+	// the second listen killed the first's listener).
+	fmt.Fprintf(os.Stderr, "parlay listen: %d existing listener(s) for '%s' (pid %s) — ending them so this id keeps exactly one reader, HOST-WIDE (any parlay instance on this machine, any server; PARLAY_LISTEN_NO_SINGLETON=1 skips this)\n",
 		len(dupes), agent, joinPIDs(dupes))
 
 	// Grace, then confirm. A loop blocked in a long poll can miss its window,

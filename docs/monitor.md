@@ -40,11 +40,34 @@ point still missing it (it registered, *then* discovered the dead relay — fixe
 which had been closed earlier and was pointing readers at a hole that was no
 longer there.
 
-`singleton.go` enforces one live poll loop per agent channel (an "arming a
+`singleton.go` enforces one live poll loop per agent id (an "arming a
 listener is a takeover" guard — a second `listen` for the same agent
 supersedes rather than duplicates); `watchdog.go` is the post-spawn liveness
 check the [launcher](launcher.md) uses to confirm a newly spawned agent's
 first turn actually fired.
+
+> **The takeover is host-wide, not per instance — and it fires across
+> servers.** The guard matches a `ps` line for a `parlay`/`parlay-cli` binary
+> running `listen`/`monitor`/`agent-up` with the same `--agent <id>`; it has no
+> notion of *which* server, state dir or relay runtime dir that listener belongs
+> to. So two parlay instances on one host — `parlay-dev` beside production, a
+> `-state-dir` server beside the default one, two `parlay remote set` targets —
+> evict **each other**'s listener the moment their agent ids collide, and the
+> loser is left *registered but deaf*: its row is still in its own server's
+> registry while nothing reads the channel. Verified 2026-10-05 end to end: two
+> isolated servers on different ports, different state dirs, different `HOME`s,
+> same agent id — the second `listen --legacy-poll` printed
+> `1 existing listener(s) ... ending them` and the first process died, while
+> server A kept the stale registry row. Two further consequences worth knowing:
+> `parlay shutdown` kills by the same id-based match, so it has the same
+> host-wide reach; and the match requires the process to be named `parlay` or
+> `parlay-cli`, so a renamed copy of the binary (or a `go run` build) is never
+> detected and duplicate delivery returns silently.
+>
+> The opt-out is `PARLAY_LISTEN_NO_SINGLETON=1`, which skips the reap and says so
+> on stderr (duplicate delivery becomes possible). The reliable answer for a
+> second instance is a distinct agent id per instance — `--name` and `--color`
+> are per registration and do not scope the match.
 
 **`parlay shutdown <id>`** (task-35ww, landed after this doc's initial pass —
 verified 2026-09-03 against `docs/agent-notes/graceful-agent-shutdown-task-35ww.md`)

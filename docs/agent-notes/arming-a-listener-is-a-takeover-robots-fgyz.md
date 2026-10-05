@@ -39,3 +39,51 @@ enforcement is Go-only, no TS port — but `listen` itself exists in both CLIs,
 so do **not** add it to `GO_ONLY_VERBS`. No `check` case in
 `tools/cli/parity/run.sh` either: the singleton behavior causes a deliberate
 divergence the harness can't reconcile.
+
+(The `parity/run.sh` and `GO_ONLY_VERBS` paragraphs above are archaeology — both
+were deleted with `packages/cli` in T-08. The singleton rule itself is live.)
+
+## The match is host-wide, so two instances evict each other (verified 2026-10-05)
+
+`selectDuplicateListeners` matches an agent **id**. It never learns which server,
+state dir, or relay runtime dir a candidate listener belongs to — the `ps` line
+carries no such thing, and the file's own "fail toward not-a-duplicate" doctrine
+means guessing one would be the wrong direction. So the guard is
+host-wide-per-id, and the README explicitly blesses running a second instance
+(`parlay-dev`, a `-state-dir` server, `parlay remote set`). When their agent ids
+collide, the second `listen` **SIGTERMs the first's listener across servers** and
+the loser is left *registered but deaf* — its row still in its own server's
+registry, nothing reading the channel.
+
+Reproduced end to end (two isolated servers, different ports, different state
+dirs, different `HOME`s, same `--agent`): instance B printed
+
+```
+parlay listen: 1 existing listener(s) for '<id>' (pid NNNN) — ending them so this channel keeps exactly one
+```
+
+instance A's process died, and `GET /api/chat/agents` on server A still listed
+`<id>`. Three consequences to carry:
+
+- **A test instance is a FIFTH surface, not four redirects.** `HOME`,
+  `PARLAY_STATE_HOME`, `PARLAY_AGENT_HOME` and `PAI_DIR` isolate everything
+  *this* box writes except this: the guard reads the process table, and relay
+  spools live in `$TMPDIR/parlay`. An isolated `listen --agent X` can kill a
+  production listener on an id you picked without thinking.
+- **`KillLocalListeners` (i.e. `parlay shutdown <id>`) has the same host-wide
+  reach** — same `selectDuplicateListeners`, no server discrimination.
+- **The binary-basename allowlist is a silent coverage hole.** `ps` must show
+  `parlay` or `parlay-cli` for a process to be classified as a listener, so a
+  renamed copy of the binary is never reaped and duplicate delivery returns with
+  no signal. Observed while reproducing this: a scratch build at
+  `/tmp/parlay-iter21-cli` armed a listener and the next `listen` for the same
+  id printed nothing and killed nothing; renamed to `parlay-cli` the same pair of
+  commands reaped as designed.
+
+The honest mitigations, all now user-facing in `parlay listen --help`,
+`parlay monitor --help`, `docs/monitor.md` and the root README: distinct agent
+ids per instance (`--name`/`--color` are registration cosmetics and do not scope
+the match), or `PARLAY_LISTEN_NO_SINGLETON=1` in the instance that must not
+evict. What is deliberately NOT claimed: the match cannot be made instance-aware
+without a way to read another process's server, which this repo has no portable
+way to do.
