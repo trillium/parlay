@@ -1,7 +1,7 @@
 // Package guard is the Go port of packages/server/src/guard/ — the one
 // security boundary for the unauthenticated chat API (task-6ai1, defect D7 of
-// the end-to-end verification). Over there the policy lives in
-// guard/origin.ts + guard/index.ts and the route set in guard/paths.ts; this
+// the end-to-end verification). In the deleted TypeScript server the policy lived
+// in guard/origin.ts + guard/index.ts and the route set in guard/paths.ts; this
 // package holds both.
 //
 // Before this package, packages/go-server had no origin boundary of any kind.
@@ -119,9 +119,9 @@ import (
 // GuardedPaths" in the package comment for the classification test, which is
 // method-independent, and for the residue that test does not cover — TS carries
 // two accepted-residue read routes, and this server's exposure differs because
-// divergence 1 means its unguarded routes send no ACAO at all. Mirrors
-// GUARDED_CHAT_PATHS in packages/server/src/guard/paths.ts for the routes the
-// two servers share.
+// divergence 1 means its unguarded routes send no ACAO at all. Mirrored
+// GUARDED_CHAT_PATHS in packages/server/src/guard/paths.ts (deleted with the
+// TS server in the Bun→Go cutover) for the routes the two servers shared.
 //
 // A new mutating route is UNGUARDED until it is added here. If its callers do
 // not send a JSON content type, it also belongs in jsonExemptPaths.

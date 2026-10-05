@@ -42,9 +42,10 @@ render an unattributed row or, for `id`, no row at all. The 500-record cap
 bounds the whole registry and is therefore server-only. The server repeats the check because the report
 endpoints are unauthenticated and client-side classification is not a security
 boundary. Adding a field here means adding it to that whitelist deliberately.
-The three mutating routes require `Content-Type: application/json` for the same
-CSRF-shaped reason `packages/server/src/guard.ts` does; the read route stays
-world-readable like `/api/chat/agents`.
+The three mutating routes are inside `internal/guard.GuardedPaths` — the Origin
++ JSON content-type gate the rest of the chat API uses, not a hand-rolled check
+(see `docs/agent-notes/a-hand-rolled-csrf-gate-is-not-a-boundary.md`); the read
+route stays world-readable like `/api/chat/agents`.
 
 The "one registry, two renderers" claim is enforced, not asserted:
 `packages/go-server/testdata/live-commands.golden.json` is read by the Go
