@@ -39,14 +39,19 @@ packages/go-server/parlay-server
 # committing that live state would be worse, so it is ignored as a backstop.
 city/.gc/
 
-# .fm-hooks/ is firstmate behavioral-hook telemetry: every command each harness
-# runs, appended to $CWD/.fm-hooks/queue/events.jsonl (see fm-hooks/src/queue.js,
-# overridable only via FM_HOOK_QUEUE). It is machine-local observer state, never
-# product. Untracked here it also blocks gnhf, whose ensureCleanWorkingTree
-# refuses any non-empty `git status --porcelain`; and because gnhf commits with
-# `git add -A`, an overnight run swept a 19 KB events.jsonl straight into the
-# diff — noise in review and a tripwire for CI's 2 MiB tracked-blob gate.
-# Move it out of the tree entirely with FM_HOOK_QUEUE=~/.fm-hooks/queue.
+# .fm-hooks/ is firstmate behavioral-hook telemetry, historically written into
+# $CWD. Fixed upstream in fm-hooks 2e34642 ("Keep observer state out of the
+# working directory"): state now resolves from homedir to
+# ~/.local/state/fm-hooks, with per-repo namespacing by resolved real path and
+# 5 MB x 3 rotation. Verified 2026-10-05 — a post-fix process leaves no
+# .fm-hooks directory in its repo at all, so task-vejyd is resolved.
+#
+# KEEP THIS ENTRY until every long-lived harness process predating that commit
+# has restarted. A pi session that loaded the extension before the fix keeps the
+# old code in memory and keeps writing to $CWD/.fm-hooks/queue/events.jsonl for
+# its whole lifetime. Removing this line while such a session is live re-dirties
+# `git status --porcelain` and blocks every gnhf run (ensureCleanWorkingTree).
+# Safe to drop once no pre-fix process remains.
 .fm-hooks/
 
 # packages/server/ is a two-file leftover of the completed Bun→Go cutover
