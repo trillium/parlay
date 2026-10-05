@@ -175,6 +175,20 @@ deliberately want two instances sharing one channel name, set
 becomes possible, and the skip is announced on stderr). `parlay shutdown <id>`
 reaps by the same id-based match, so it reaches across instances too.
 
+And a fourth, in the relay itself: **the relay is a per-user singleton that binds
+one upstream server for life.** `tools/relay` runs one process per user on the
+host-wide `$TMPDIR/parlay` runtime dir, started with a single `-server`. A second
+instance shares that process, so `listen`/`monitor` without `--legacy-poll` would
+enroll into a relay that is polling the *other* instance's chat server — the
+enroll succeeds, the tab looks live, and nothing you send to your own server ever
+arrives. `parlay monitor`/`listen` now refuse this before registering anything:
+`preflight OK` means the relay is up **and** polling the server your CLI is
+pointed at, and a mismatch exits 1 naming both (a relay too old to report which
+server it polls is let through — the check cannot guess). Three ways out — use
+`--legacy-poll`, give the instance its own relay (a `PARLAY_RELAY_RUNTIME=<dir>`
+plus a relay started with `-server $PARLAY_SERVER`), or point `PARLAY_SERVER` at
+whatever the existing relay is already polling.
+
 **4. Open the panel (optional — this is the only step that needs Bun):**
 
 ```sh

@@ -72,6 +72,18 @@ and stream runs verify only once.
 Regression coverage: `parlay-monitor.test.sh` uses a unix-socket stub to prove
 canonical enrollment and verify-only preflight without touching live state.
 
+**One relay, one server.** The canonical relay is per USER, and it binds one
+`-server` for its whole life, so every parlay instance on the host enrolls
+through the same process while possibly pointing at different chat servers.
+"Liveness" alone is therefore not a sufficient preflight: a relay that is up but
+polling a different server enrolls cleanly and produces a live-looking tab that
+can never hear anything. The preflight reads `server` off the relay's `/health`
+and refuses a mismatch before registration, normalizing `localhost`≡`127.0.0.1`
+and dropping default ports first; a relay that reports no `server` (a build
+predating the field) is tolerated, because an unanswerable question must not
+become a refusal. `--legacy-poll` bypasses the relay entirely and so is
+unaffected. Covered by section I of `parlay-monitor.test.sh`.
+
 ## Reader lifetime + one reader per channel (robots-3pvi)
 
 Nothing ever ended a `tail -F`. A harness kills only the shell it spawned;

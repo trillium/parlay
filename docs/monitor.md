@@ -40,6 +40,21 @@ point still missing it (it registered, *then* discovered the dead relay — fixe
 which had been closed earlier and was pointing readers at a hole that was no
 longer there.
 
+**The preflight also checks that the relay is polling *your* server**, not just
+that it is up (added 2026-10-05). The relay is a per-user singleton that binds
+one `-server` for its whole life, so two parlay instances on one host share it;
+without this check a second instance's `listen` enrolled into a relay polling
+the *first* instance's chat server and came up live-looking and permanently
+deaf — the identical outcome the preflight exists to prevent, reached by a
+different road. `parlay-monitor.sh` now reads the `server` field off the relay's
+`/health` and refuses with both URLs named before anything is registered.
+`localhost`≡`127.0.0.1` and the scheme's default port are normalized first, and
+a relay that reports no `server` at all (a build predating the field) is not
+treated as a mismatch — see [`relay.md`](relay.md). The green line changed
+shape for the same reason: it now reads `preflight OK — canonical relay is up
+for 'X' and polling <url>`, because "the relay is up" was never the whole
+precondition.
+
 `singleton.go` enforces one live poll loop per agent id (an "arming a
 listener is a takeover" guard — a second `listen` for the same agent
 supersedes rather than duplicates); `watchdog.go` is the post-spawn liveness
