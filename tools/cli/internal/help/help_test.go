@@ -60,6 +60,27 @@ func TestHelpNamingHandoffCreateAlsoCarriesTheNotInstalledCaveat(t *testing.T) {
 // therefore have to say so where a reader actually sees it, and both have to
 // name the opt-out (`PARLAY_LISTEN_NO_SINGLETON=1`); "one listener per
 // channel" is the same words the bug shipped with.
+// The one place parlay kills processes is worth stating precisely in both
+// directions: the match is the candidate's OWN argv[0] (so a wrapper that
+// merely contains the command line is safe), and that same rule is the
+// coverage hole (a renamed binary is invisible). Before 2026-10-05 the guard
+// accepted any line whose subcommand token was merely PRECEDED by a parlay
+// binary name, so `bash -c '... ( parlay-cli listen --agent demo ... )'` was
+// reaped — parlay killed its own caller.
+func TestListenerHelpNamesTheArgvZeroRuleAndItsCoverageHole(t *testing.T) {
+	for _, verb := range []string{"listen", "monitor"} {
+		text, ok := Lookup(verb)
+		if !ok {
+			t.Fatalf("no help entry for %q", verb)
+		}
+		for _, want := range []string{"argv[0]", "renamed"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("parlay %s --help does not mention %q — the takeover kills processes, and a\nreader arming from a script needs to know the script is not the victim while a\nrenamed binary is not the guard's problem:\n%s", verb, want, text)
+			}
+		}
+	}
+}
+
 func TestListenerHelpStatesTheTakeoverIsHostWide(t *testing.T) {
 	for _, verb := range []string{"listen", "monitor"} {
 		text, ok := Lookup(verb)

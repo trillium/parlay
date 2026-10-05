@@ -173,7 +173,12 @@ agent ids (`demo` vs `demo-dev`); `--name`/`--color` do not scope it. If you
 deliberately want two instances sharing one channel name, set
 `PARLAY_LISTEN_NO_SINGLETON=1` in the one that must not evict (duplicate delivery
 becomes possible, and the skip is announced on stderr). `parlay shutdown <id>`
-reaps by the same id-based match, so it reaches across instances too.
+reaps by the same id-based match, so it reaches across instances too. Only a process
+whose own `argv[0]` is `parlay` or `parlay-cli` is ever a candidate, so a script,
+shell or agent harness that merely *contains* that command line is never the victim
+— arming from a wrapper cannot kill the wrapper (this repo's guard got that wrong
+until 2026-10-05). The flip side is that a renamed copy of the binary is not
+detected at all, so duplicate delivery comes back silently.
 
 And a fourth, in the relay itself: **the relay is a per-user singleton that binds
 one upstream server for life.** `tools/relay` runs one process per user on the

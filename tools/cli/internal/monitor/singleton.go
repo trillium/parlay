@@ -49,11 +49,29 @@ var listenSubcommands = map[string]bool{
 
 // parlayBinaryNames are the basenames a parlay CLI process can run under:
 // the `bin/parlay` wrapper and the Go binary it execs
-// (tools/cli/bin/parlay-cli). Requiring the subcommand to be preceded by one
-// of these is what keeps a shell wrapper whose *command string* merely
-// contains "parlay listen --agent X" from being mistaken for the listener
-// itself. ("parlay-bin", the former standalone spawn binary, was folded into
-// the CLI by task-42qot and no longer runs as its own process.)
+// (tools/cli/bin/parlay-cli). A candidate is only considered when its OWN
+// argv[0] is one of these — which is what keeps a shell wrapper whose
+// *command string* merely contains "parlay listen --agent X" from being
+// mistaken for the listener itself.
+//
+// That argv[0] rule is load-bearing, not a nicety (verified 2026-10-05 by
+// reproduction). An earlier version only required the subcommand token to be
+// PRECEDED by a parlay binary name, which a wrapper satisfies exactly as
+// well:
+//
+//	/bin/bash -c 'cd /x && ( /path/to/parlay-cli listen --agent demo ... )'
+//
+// Such a line matches under the preceded-by rule, so `listen` reaped the very
+// shell that launched it. The ancestor walk in selectDuplicateListeners did
+// not save it, and provably cannot: as soon as one intermediate ancestor has
+// exited (the `( ... & )` subshell above), the process is reparented and its
+// real ancestors are no longer reachable in a `ps` ppid map at all — so the
+// chain from self simply terminates at a pid the guard can no longer see.
+// argv[0] needs no ancestry at all, so the wrapper population is excluded by
+// construction instead of by a best-effort walk.
+//
+// ("parlay-bin", the former standalone spawn binary, was folded into the CLI
+// by task-42qot and no longer runs as its own process.)
 var parlayBinaryNames = map[string]bool{
 	"parlay":     true,
 	"parlay-cli": true,
@@ -97,9 +115,10 @@ var (
 // listensForAgent reports whether one `ps` args line is a parlay poll loop on
 // exactly this agent's channel.
 //
-// Shape required: a parlay binary, then a listen-ish subcommand, then
-// `--agent <agent>` (or `--agent=<agent>`) among the flags that follow it,
-// with an exact token compare so `--agent mayor` never matches `mayor-2`.
+// Shape required: the process's OWN argv[0] is a parlay binary, then a
+// listen-ish subcommand, then `--agent <agent>` (or `--agent=<agent>`) among
+// the flags that follow it, with an exact token compare so `--agent mayor`
+// never matches `mayor-2`.
 func listensForAgent(args, agent string) bool {
 	return agent != "" && listenerAgent(args) == agent
 }
@@ -111,13 +130,13 @@ func listensForAgent(args, agent string) bool {
 // parses each process line once instead of once per candidate id.
 func listenerAgent(args string) string {
 	tokens := strings.Fields(args)
+	if len(tokens) == 0 || !parlayBinaryNames[baseName(tokens[0])] {
+		return ""
+	}
 
 	sub := -1
 	for i := 1; i < len(tokens); i++ {
-		if !listenSubcommands[tokens[i]] {
-			continue
-		}
-		if parlayBinaryNames[baseName(tokens[i-1])] {
+		if listenSubcommands[tokens[i]] {
 			sub = i
 			break
 		}
@@ -181,10 +200,16 @@ func baseName(path string) string {
 // selectDuplicateListeners returns the pids of live poll loops on this
 // agent's channel that this process must end before arming its own.
 //
-// self and every one of self's ancestors are protected: the harness arms the
-// monitor through a shell whose command string is the whole `parlay listen …`
-// invocation, so an ancestor can match the pattern, and killing it would kill
-// the very process doing the reaping.
+// self and every one of self's ancestors that the snapshot still knows about
+// are protected: the harness arms the monitor through a shell whose command
+// string is the whole `parlay listen …` invocation, so an ancestor can match
+// the pattern, and killing it would kill the very process doing the reaping.
+//
+// This is defence in depth, not the primary guard — listenerAgent's argv[0]
+// rule already excludes every shell wrapper. The walk is best effort by
+// construction: once an intermediate ancestor has exited, the process is
+// reparented and its real ancestors are unreachable in a ppid map, so the
+// chain here stops early. It must never be relied on to save a caller.
 func selectDuplicateListeners(procs []procEntry, agent string, self int) []int {
 	parent := make(map[int]int, len(procs))
 	for _, p := range procs {
