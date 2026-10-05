@@ -20,9 +20,13 @@ on a phone, driving autonomous terminal coding agents on a machine somewhere els
 - **Voice-first control.** A compiled phrase engine turns spoken commands into panel
   actions, and agent replies can be read back aloud with per-passage playback — so a
   whole review cycle can happen without a keyboard.
-- **Durable identity + memory.** `identity`, `scratchpad`, and `handoff` persist
-  across restarts, so an agent that blows its context window recovers *who it is* and
-  *what it was doing* via the `identity → handoff → scratchpad` chain.
+- **Durable identity + memory.** `identity` and `scratchpad` persist across
+  restarts, so an agent that blows its context window recovers *who it is* and
+  *what it was doing*. Both are plain files under `~/.parlay/agents/<id>/` and work
+  standalone on any clone. (The full `identity → handoff → scratchpad` chain adds a
+  `handoff` leg from the author's private beads-store tooling — `handoff` is not a
+  `parlay` verb and is not installed by this repo, so a clone gets the portable two
+  legs. See the note below.)
 - **Spawn + supervise.** Launch a background agent that auto-enrols as a live tab, and
   drive event-based follow-ups.
 - **Reachable from anywhere you can reach the host** — over your LAN, a
@@ -180,6 +184,18 @@ launcher runs in-process (`tools/cli/internal/spawn`). The bash spawner and its
 To reach it from your phone, expose the host — Tailscale, LAN IP, or a private
 tunnel — and export `PARLAY_SERVER` as that address instead of `localhost`.
 
+> **One honest caveat about context recovery.** A spawned agent that exhausts its
+> context is supposed to recover through an `identity → handoff → scratchpad` chain.
+> Two of those three legs are yours: `parlay identity` and `parlay scratchpad` are
+> plain files under `~/.parlay/agents/<id>/` and work on any clone. The middle leg,
+> `handoff`, is **not a `parlay` verb** — it is a beads-store wrapper from the
+> author's own federation tooling (the same family as `task`/`inbox`), and this repo
+> neither ships nor installs it. So the flags that lean on it —
+> `identity --submit`, `--park`, `--complete`, and `parlay drawdown`'s closing
+> recipe — either need an id passed explicitly (`parlay identity --submit <handoff-id>`,
+> which works with no store installed) or are simply skipped. Every command involved
+> detects this and says so rather than pointing you at a command you do not have.
+
 **The chat API is unauthenticated by design** (that is how the CLI and plain `curl`
 work — see the origin guard in `packages/go-server/internal/guard`), so anything
 that can reach the port can post into a live agent's turn. Expose it only over a
@@ -235,7 +251,7 @@ need first, not a complete index of every module in the repo:
 | `packages/go-server` | The Go server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling, drafts/settings. Runs standalone on `:4242` (`cd packages/go-server && go run ./cmd/parlay-server`). The contract it implements lives in [`docs/api-contract.md`](docs/api-contract.md). |
 | `tools/relay` | The standalone per-agent relay daemon — its own Go module, built by `tools/relay/build.sh`. Fans the server's `/api/chat/poll` feed out to enrolled agents; `parlay monitor`/`listen` need it unless you pass `--legacy-poll`. |
 | `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
-| `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
+| `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
 | `examples/fleet` | The author's personal **fleet layer** — inbox dispatcher/emit, pi-inbox bridge, and the agent skills. Not core product; installs via `examples/fleet/install.sh`. |
 

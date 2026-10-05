@@ -30,6 +30,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
 	account "github.com/trillium/parlay/tools/cli/internal/juggle"
+	"github.com/trillium/parlay/tools/cli/internal/resolvehandoff"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
@@ -410,7 +411,14 @@ func checkIdentityMD(st *doctorState) (CheckResult, bool) {
 	}
 
 	if hm := doctorHandoffRe.FindStringSubmatch(txt); hm != nil {
-		note := fmt.Sprintf("handoff pointer → %s (run: handoff show %s)", hm[1], hm[1])
+		// Only name `handoff show` when that command can actually be run —
+		// `handoff` is a federation store wrapper, not something this repo
+		// installs, so a fresh clone would otherwise be pointed at a command
+		// it does not have. The pointer itself is still reported.
+		note := fmt.Sprintf("handoff pointer → %s (full session state lives in the handoff store)", hm[1])
+		if resolvehandoff.StoreAvailable("") {
+			note = fmt.Sprintf("handoff pointer → %s (run: handoff show %s)", hm[1], hm[1])
+		}
 		cr.Lines = append(cr.Lines, textLine{kind: "note", text: note})
 		cr.Evidence["handoff"] = hm[1]
 	}

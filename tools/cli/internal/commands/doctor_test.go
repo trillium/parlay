@@ -353,12 +353,40 @@ func TestDoctorHandoffPointerNoted(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_HOME", home)
 	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
 	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+	pinHandoffStore(t, true)
 
 	out := captureStdout(t, func() {
 		withExitTrap(t, func() { Doctor(nil) })
 	})
 	if !strings.Contains(out, "note: handoff pointer → handoff-abc123 (run: handoff show handoff-abc123)") {
 		t.Errorf("Doctor() output = %q, want the handoff pointer note", out)
+	}
+}
+
+// Fresh-clone case: `handoff` is a federation store wrapper this repo does not
+// install, so doctor must report the pointer WITHOUT telling the reader to run
+// a command they do not have. The pointer itself is still surfaced.
+func TestDoctorHandoffPointerOmitsCommandWhenNoStore(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, "doc-agent-4")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\nid: doc-agent-4\n---\n📎 Handoff: handoff-abc123\n"), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "scratchpad.md"), []byte("notes\n"), 0o644)
+
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-4")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+	pinHandoffStore(t, false)
+
+	out := captureStdout(t, func() {
+		withExitTrap(t, func() { Doctor(nil) })
+	})
+	if !strings.Contains(out, "note: handoff pointer → handoff-abc123") {
+		t.Errorf("Doctor() must still report the pointer, got: %q", out)
+	}
+	if strings.Contains(out, "handoff show handoff-abc123") {
+		t.Errorf("with no store installed, doctor must not prescribe `handoff show`, got: %q", out)
 	}
 }
 

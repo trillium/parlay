@@ -39,6 +39,27 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// StoreAvailable is what lets callers tell "store installed, nothing open"
+// from "no store at all" — the second being the fresh-clone case, where
+// `handoff` is a federation wrapper this repo does not ship.
+func TestStoreAvailableDistinguishesPresentFromAbsent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	if StoreAvailable("") {
+		t.Error("StoreAvailable must be false when the default store is not on PATH")
+	}
+	script := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "handoff"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !StoreAvailable("") {
+		t.Error("StoreAvailable must be true once the store is resolvable on PATH")
+	}
+	if !StoreAvailable("handoff") {
+		t.Error("an explicit store name must resolve the same as the default")
+	}
+}
+
 func TestResolvesNewestOpenHandoffViaList(t *testing.T) {
 	stubStore(t, "handoff", `[{"id":"handoff-1bk","status":"open"}]`, "")
 	if got := ResolveCurrentHandoff("handoff", "mayor"); got != "handoff-1bk" {
