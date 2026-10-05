@@ -76,3 +76,27 @@ func TestListenerHelpStatesTheTakeoverIsHostWide(t *testing.T) {
 		}
 	}
 }
+
+// The relay-backed enroll path has its own cross-instance failure mode that the
+// takeover wording does not cover: the relay is one process per user on a
+// host-wide runtime dir and binds ONE -server for life, so two instances share
+// it. Without this in the help, a second instance's `listen` enrolls into a
+// relay polling the FIRST instance's server and comes up registered-but-deaf
+// with no error anywhere — a strictly worse failure than the eviction the
+// SCOPE paragraph above does describe.
+func TestListenerHelpNamesTheRelayServerBinding(t *testing.T) {
+	for _, verb := range []string{"listen", "monitor"} {
+		text, ok := Lookup(verb)
+		if !ok {
+			t.Fatalf("no help entry for %q", verb)
+		}
+		for _, want := range []string{"PARLAY_RELAY_RUNTIME", "--legacy-poll", "PARLAY_SERVER"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("parlay %s --help does not name %q — a reader running two instances\ncannot learn that the relay they would enroll through is bound to one\nserver and may not be the one this CLI is pointed at:\n%s", verb, want, text)
+			}
+		}
+		if !strings.Contains(text, "preflight") {
+			t.Errorf("parlay %s --help does not mention the preflight that refuses a\nserver-mismatched relay before anything is registered:\n%s", verb, text)
+		}
+	}
+}
