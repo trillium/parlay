@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # bootstrap-sandbox.sh — instantiate this example into a throwaway sandbox and
-# prove it works, without touching your real ~/.parlay, ~/exchange, or any
-# running parlay server.
+# prove it works, without touching your real ~/.parlay or any running parlay
+# server.
 #
 # It copies examples/parlay-state → $SANDBOX/.parlay and examples/data-dir →
-# $SANDBOX/data, builds the Go CLI, starts packages/server on a free port with
-# $HOME redirected into the sandbox, then exercises the CLI against it.
+# $SANDBOX/data, builds the Go CLI and the Go server, starts that server on a
+# free port with $HOME redirected into the sandbox, then exercises the CLI
+# against it.
 #
 # Usage:
 #   examples/bootstrap-sandbox.sh              # run, report, clean up
 #   examples/bootstrap-sandbox.sh --keep       # leave the sandbox on disk
 #   examples/bootstrap-sandbox.sh --port 45999 # pin the port instead of picking one
 #
-# Requirements: bun, go, curl. Run it from anywhere; it locates the repo itself.
+# Requirements: go, curl. Run it from anywhere; it locates the repo itself.
 
 set -euo pipefail
 
@@ -22,7 +23,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --keep)  KEEP=1; shift ;;
     --port)  PORT="${2:?--port needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -30,15 +31,9 @@ done
 EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$EXAMPLES_DIR/.." && pwd)"
 
-for tool in bun go curl; do
+for tool in go curl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
 done
-
-# An unused high port. --port overrides; 0 lets the kernel pick one for us.
-if [ -z "$PORT" ]; then
-  PORT="$(bun -e 'const s=Bun.listen({hostname:"127.0.0.1",port:0,socket:{data(){}}});const p=s.port;s.stop(true);console.log(p)')"
-fi
-BASE="http://127.0.0.1:$PORT"
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/parlay-example.XXXXXX")"
 SERVER_PID=""
@@ -59,6 +54,61 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Port helper, in Go — the same two answers this script needs from the network
+# stack, with no dependency beyond the Go toolchain the rest of the run already
+# requires. `go run` on a single stdlib-only file needs no module, so this does
+# not depend on which of the repo's four Go modules the cwd happens to be in.
+# (The previous version of this script used `bun -e` for both, which put a
+# hard Bun requirement on a script the README otherwise describes as Go-only.)
+cat > "$SANDBOX/porttool.go" <<'GOEOF'
+package main
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"strconv"
+)
+
+func main() {
+	switch os.Args[1] {
+	case "pick":
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "pick:", err)
+			os.Exit(1)
+		}
+		defer l.Close()
+		fmt.Println(l.Addr().(*net.TCPAddr).Port)
+	case "check":
+		port, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "check: bad port:", err)
+			os.Exit(2)
+		}
+		// Exit 0 when the port is FREE (nothing is listening), 1 when it is
+		// held, 2 when the probe itself could not run. The last one must not
+		// be collapsed into "free" or "held": the caller would then either
+		// adopt somebody else's server or refuse a port nobody owns.
+		if l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err == nil {
+			l.Close()
+			os.Exit(0)
+		}
+		os.Exit(1)
+	default:
+		fmt.Fprintln(os.Stderr, "usage: porttool pick | porttool check <port>")
+		os.Exit(2)
+	}
+}
+GOEOF
+porttool() { (cd "$SANDBOX" && go run ./porttool.go "$@"); }
+
+# An unused high port. --port overrides; otherwise the kernel picks one for us.
+if [ -z "$PORT" ]; then
+  PORT="$(porttool pick)" || { echo "could not pick a free port" >&2; exit 1; }
+fi
+BASE="http://127.0.0.1:$PORT"
+
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 # ── 1. Instantiate the example ───────────────────────────────────────────────
@@ -71,7 +121,7 @@ rm -f "$SANDBOX/.parlay/README.md"
 
 # Baseline for the "did the server actually write here?" check below: whatever
 # the seeded history ships with, before anything has run against it.
-SEEDED_HISTORY_LINES="$(wc -l < "$SANDBOX/data/chat-history.jsonl" | tr -d ' ')"
+SEEDED_HISTORY_LINES="$(wc -l < "$SANDBOX/data/messages.jsonl" | tr -d ' ')"
 
 # The one placeholder a reader has to replace. Here: point it at the sandbox.
 find "$SANDBOX/.parlay/agents" -name identity.md -print0 |
@@ -81,9 +131,15 @@ find "$SANDBOX/.parlay/agents" -name '*.bak' -delete
 # The example ships a localhost:4242 default; retarget it at this run's port.
 printf '{\n  "server": "%s"\n}\n' "$BASE" > "$SANDBOX/.parlay/config.json"
 
-# ── 2. Build the CLI ─────────────────────────────────────────────────────────
+# ── 2. Build the CLI and the server ──────────────────────────────────────────
+# CGO_ENABLED=0 for the CLI: the beads dependency's embedded-Dolt tree drags in
+# ICU C++ headers under default CGO on macOS, which bricks the build. Nothing in
+# the CLI needs cgo, and `bin/parlay` sets it for the same reason.
 say "building the parlay CLI (tools/cli)"
-(cd "$REPO/tools/cli" && go build -o "$SANDBOX/bin/parlay" .)
+(cd "$REPO/tools/cli" && CGO_ENABLED=0 go build -o "$SANDBOX/bin/parlay" .)
+
+say "building the parlay server (packages/go-server)"
+(cd "$REPO/packages/go-server" && CGO_ENABLED=0 go build -o "$SANDBOX/bin/parlay-server" ./cmd/parlay-server)
 
 # Every parlay invocation below runs fully inside the sandbox. PARLAY_SERVER is
 # deliberately NOT set, so the sandbox's own config.json is what resolves the
@@ -97,25 +153,40 @@ parlay() {
 }
 
 # ── 3. Start the server ──────────────────────────────────────────────────────
-say "starting packages/server on port $PORT"
+say "starting packages/go-server on $BASE"
 # Refuse a port somebody else already holds. Everything below both reads and
 # WRITES over $BASE, so adopting a foreign server would mutate its data — the
 # one thing this script promises not to do.
-if bun -e "try{Bun.listen({hostname:'127.0.0.1',port:$PORT,socket:{data(){}}}).stop(true);process.exit(1)}catch{process.exit(0)}"; then
-  echo "port $PORT is already in use; refusing to run against a server this script did not start" >&2
+if porttool check "$PORT"; then
+  :
+else
+  # 1 means held, anything else means the probe did not run. Collapsing the
+  # second into the first would refuse a port nobody owns; collapsing it into
+  # "free" would adopt somebody else's server.
+  rc=$?
+  if [ "$rc" = 1 ]; then
+    echo "port $PORT is already in use; refusing to run against a server this script did not start" >&2
+  else
+    echo "could not probe port $PORT (porttool check exited $rc); refusing to guess" >&2
+  fi
   exit 1
 fi
 # `exec` is load-bearing: without it the subshell is a real intermediate process
-# on stock macOS bash 3.2, $! records IT rather than bun, and the kill in
+# on stock macOS bash 3.2, $! records IT rather than the server, and the kill in
 # cleanup() leaves an orphaned server holding this port while $SANDBOX is
 # removed underneath it. exec replaces the subshell, so $! is always the server.
+#
+# Every path the server can write is pinned into the sandbox: -state-dir holds
+# messages/registry/draft/settings/uploads, -pai-dir the TTS cache, and
+# -assets-dir is pointed at an empty directory so a real
+# packages/client/dist next to the repo is never served (or read) here.
 (
-  cd "$REPO/packages/server"
   exec env HOME="$SANDBOX" \
-    PARLAY_DATA_DIR="$SANDBOX/data" \
-    PAI_DIR="$SANDBOX/pai" \
-    PARLAY_PORT="$PORT" \
-    bun src/index.ts
+    "$SANDBOX/bin/parlay-server" \
+      -addr "127.0.0.1:$PORT" \
+      -state-dir "$SANDBOX/data" \
+      -pai-dir "$SANDBOX/pai" \
+      -assets-dir "$SANDBOX/assets"
 ) > "$SANDBOX/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -156,13 +227,16 @@ parlay send --helm "hello from bootstrap-sandbox.sh"
 say "parlay history — read it back"
 parlay history 5
 
+say "parlay say --agent helm — the agent-role reply path (POST /api/chat/reply)"
+parlay say --agent helm "replying from the bootstrap sandbox"
+
 say "parlay identity --agent helm — the durable self-knowledge (frontmatter stripped)"
 parlay identity --agent helm
 
 say "parlay launch — known agents from the sandbox's ~/.parlay/agents"
 parlay launch
 
-say "PUT /api/chat/parlay/settings — settings persist into \$PARLAY_DATA_DIR"
+say "PUT /api/chat/parlay/settings — settings persist into the server state dir"
 curl -fsS -m 5 -X PUT -H 'Content-Type: application/json' \
   -d '{"textScale":123}' "$BASE/api/chat/parlay/settings" >/dev/null
 
@@ -198,8 +272,20 @@ run_check "registry served the seeded agents" registry_served_both_agents
 message_round_tripped() { parlay history 5 --full | grep -q "hello from bootstrap-sandbox.sh"; }
 run_check "message round-tripped through the server" message_round_tripped
 
-message_persisted() { grep -q "hello from bootstrap-sandbox.sh" "$SANDBOX/data/chat-history.jsonl"; }
-run_check "message persisted to \$PARLAY_DATA_DIR/chat-history.jsonl" message_persisted
+message_persisted() { grep -q "hello from bootstrap-sandbox.sh" "$SANDBOX/data/messages.jsonl"; }
+run_check "message persisted to the state dir's messages.jsonl" message_persisted
+
+# The --agent reply path, which send never touches. The server files a reply on
+# the `agent` field of the request, so this asserts both that the route works and
+# that the id actually routed the message to that agent's channel rather than
+# landing on the global thread.
+reply_routed_to_the_agent_channel() {
+  local out; out="$(parlay history 20 --full)" || return 1
+  # --full prints the id/channel header on one line and the text on the next,
+  # so the text line must FOLLOW a helm header rather than merely share a line.
+  printf '%s\n' "$out" | grep -A1 'channel=helm' | grep -q 'replying from the bootstrap sandbox' || return 1
+}
+run_check "reply path routed --agent helm onto the helm channel" reply_routed_to_the_agent_channel
 
 remote_resolved_from_config() { parlay remote | grep -q "source: config"; }
 run_check "server URL resolved from config.json" remote_resolved_from_config
@@ -227,7 +313,7 @@ launch_specs_for_both() {
 }
 run_check "launch spec discovered for both agents, both reported ghost (registered, no listener)" launch_specs_for_both
 
-# The four seeded chat-history.jsonl lines are loaded by the server and served
+# The four seeded messages.jsonl lines are loaded by the server and served
 # back on the channel each one names — two on helm, two on reviewer. `--full`
 # prints `id=… channel=…`, so this asserts routing, not just that the text
 # survived.
@@ -245,50 +331,57 @@ doctor_passes_core_checks() {
 }
 run_check "doctor PASSes identity, registry membership, reachability" doctor_passes_core_checks
 
-# The server's persisted WRITES must land in $PARLAY_DATA_DIR and nowhere else.
-# Both halves have to prove a write: the example's own files are copied into
-# $SANDBOX/data before boot, so merely existing there proves nothing. History
-# must have grown past its seeded lines (the send above), and settings must carry
-# the value the PUT above sent. "Nowhere else" is checked at the exact paths
-# packages/server/src/paths.ts falls back to when PARLAY_DATA_DIR is not honored:
-# $HOME/exchange and $PAI_DIR/MEMORY/STATE, both inside the sandbox for this run.
-persisted_only_in_data_dir() {
+# The server's persisted WRITES must land in the state dir it was given and
+# nowhere else. Both halves have to prove a write: the example's own files are
+# copied into $SANDBOX/data before boot, so merely existing there proves nothing.
+# History must have grown past its seeded lines (the send above), and settings
+# must carry the value the PUT above sent. "Nowhere else" is checked at the
+# paths a server that ignored -state-dir would use instead — $HOME/.parlay, the
+# CLI's own state root and the one the default is — plus the $PAI_DIR tree, all
+# inside the sandbox for this run.
+persisted_only_in_state_dir() {
   local now
-  now="$(wc -l < "$SANDBOX/data/chat-history.jsonl" | tr -d ' ')" || return 1
+  now="$(wc -l < "$SANDBOX/data/messages.jsonl" | tr -d ' ')" || return 1
   [ "$now" -gt "$SEEDED_HISTORY_LINES" ] || return 1
-  grep -q '"textScale": *123' "$SANDBOX/data/parlay-settings.json" || return 1
+  grep -q '"textScale": *123' "$SANDBOX/data/settings.json" || return 1
   local stray
-  for stray in "$SANDBOX/exchange/chat-history.jsonl" \
-               "$SANDBOX/exchange/parlay-settings.json" \
-               "$SANDBOX/exchange/chat-draft.txt" \
-               "$SANDBOX/pai/MEMORY/STATE/parlay-agents.json" \
-               "$SANDBOX/pai/MEMORY/STATE/parlay-session-channels.json"; do
-    if [ -e "$stray" ]; then echo "  unexpected write outside \$PARLAY_DATA_DIR: $stray" >&2; return 1; fi
+  for stray in "$SANDBOX/.parlay/messages.jsonl" \
+               "$SANDBOX/.parlay/agents.json" \
+               "$SANDBOX/.parlay/settings.json" \
+               "$SANDBOX/.parlay/draft.json"; do
+    if [ -e "$stray" ]; then echo "  unexpected write outside the state dir: $stray" >&2; return 1; fi
   done
+  # And nothing at all under -pai-dir: this run never exercises TTS, so a file
+  # there means the server ignored the flag and wrote into the default PAI tree.
+  if [ -n "$(find "$SANDBOX/pai" -type f -print -quit 2>/dev/null)" ]; then
+    echo "  unexpected write under the -pai-dir:" >&2
+    find "$SANDBOX/pai" -type f >&2
+    return 1
+  fi
   return 0
 }
-run_check "server persisted only into \$PARLAY_DATA_DIR" persisted_only_in_data_dir
+run_check "server persisted only into the state dir it was given" persisted_only_in_state_dir
 
 cat <<'EOF'
 
   LIMITS of this run — what the PASSes above do not say:
 
-  UNCOVERED  The --agent reply path. Every message above is sent with `parlay
-             send` (POST /api/chat/send); POST /api/chat/reply is never called,
-             and no check here says anything about it. That path routes an id
-             via context.json under the SERVER process's own $HOME, the server's
-             agent registry (parlay-agents.json — what `parlay listen` /
-             register-agent writes), or the server's exact PARLAY_AGENT_ID, so
-             `parlay say --agent <id>` can succeed while the message is filed on
-             the global thread instead of that agent's tab. See "The layout" in
-             examples/README.md.
+  UNCOVERED  Delivery, and everything behind it. A message that lands on a
+             channel is not a message an agent received: nothing here arms a
+             listener, so `parlay listen` / `parlay monitor` and the relay they
+             enroll through are untested. The relay is a per-runtime-dir
+             singleton on the host, so standing one up from a sandbox is the
+             cross-talk this example exists to avoid — that is the whole
+             reason the agents above read [ghost].
 
-  EXPOSED    While the server above was up it was bound to every interface with
-             no authentication, so anyone who could reach that port could read
-             this sandbox's history and post as any agent. Seeded fixtures, a
-             kernel-picked high port and a few seconds bound the damage — they
-             do not make the port private. On an untrusted network, treat that
-             window as real.
+  BOUND      While the server above was up, anything on this machine could
+             reach its port and — there is no authentication — read this
+             sandbox's history and post as any agent. It is bound to
+             127.0.0.1, so nothing off-host could, but that is this script's
+             -addr, not a property of the server: it has no authentication, and
+             a real instance reaches further. Seeded fixtures, a kernel-picked
+             high port and a few seconds bound the damage on this box. On an
+             untrusted network, treat that window as real.
 EOF
 
 if [ "$fail" = "0" ]; then
