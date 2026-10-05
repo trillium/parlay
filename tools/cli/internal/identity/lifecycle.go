@@ -28,6 +28,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/resolvehandoff"
 )
 
 // runInherit runs name(argv...) with stdio wired to the parent's (stdin,
@@ -108,8 +109,7 @@ func HandleLaunch(kind MemKind, opts args.Result) bool {
 		cwd, _ = os.Getwd()
 	}
 	model := fm.Get("model")
-	recovery := "You are " + id + ", restarted with a FRESH context after a context reset. Before anything else, recover yourself: run 'identity' (it shows a pinned handoff pointer), then 'handoff show <that-id>' for full state, then 'scratchpad' for your working notes. Then re-enroll, tell the captain via 'reply' that you are back after a context reset, and resume where you left off."
-	spawnArgs := []string{id, name, color, recovery, "--cwd", cwd}
+	spawnArgs := []string{id, name, color, respawnRecoveryPrompt(id), "--cwd", cwd}
 	if model != "" {
 		spawnArgs = append(spawnArgs, "--model", model)
 	}
@@ -126,6 +126,29 @@ func HandleLaunch(kind MemKind, opts args.Result) bool {
 		httpc.Die(fmt.Sprintf("identity --launch: parlay spawn failed — %v", err), config.ExitRuntime)
 	}
 	return true
+}
+
+// respawnRecoveryPrompt is the charter a respawned agent wakes with: how to
+// rebuild its state after a context reset.
+//
+// Store-aware for the same reason identity --submit's refusal is
+// (mem.go): `handoff` is a beads-store wrapper from the author's federation,
+// NOT a command this repo ships, so a plain clone has no `handoff show` to run.
+// This prompt is read by a live agent at exactly the moment it has least
+// capacity to discover that — the state it needs is the handoff body, and a
+// command that does not exist looks like amnesia, so it goes looking for work
+// to redo. With no store, name the portable leg instead: the pointer still
+// names the id, `parlay drawdown` drafts a body from history, and identity +
+// scratchpad are what actually carry state either way.
+func respawnRecoveryPrompt(id string) string {
+	head := "You are " + id + ", restarted with a FRESH context after a context reset. Before anything else, recover yourself: run 'identity' (it shows a pinned handoff pointer), "
+	const tail = " Then re-enroll, tell the captain via 'reply' that you are back after a context reset, and resume where you left off."
+	if resolvehandoff.StoreAvailable("") {
+		return head + "then 'handoff show <that-id>' for full state, then 'scratchpad' for your working notes." + tail
+	}
+	return head +
+		"then 'scratchpad' for your working notes — there is no `handoff` store on this machine, so a pinned pointer's body cannot be fetched; 'identity' and 'scratchpad' are the whole of what carries across, and 'parlay drawdown' will draft a fresh handoff body from chat history when you need one." +
+		tail
 }
 
 // HandleMintEphemeral implements identity --mint-ephemeral: generate a hash

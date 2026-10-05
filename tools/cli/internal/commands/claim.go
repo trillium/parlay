@@ -50,6 +50,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
 	"github.com/trillium/parlay/tools/cli/internal/monitor"
+	"github.com/trillium/parlay/tools/cli/internal/resolvehandoff"
 )
 
 // claimTask is a resolved beads/robots ticket — the subset of `<store> show
@@ -371,9 +372,23 @@ func claimNoWorkBrief(agent, taskID, title, reason, detail string, recorded, ann
 	if agent != "" {
 		idFlag = fmt.Sprintf(" --assignee %s", agent)
 	}
-	fmt.Fprintf(&b, "1. handoff create \"claim failed: %s (%s)\"%s\n", taskID, reason, idFlag)
-	b.WriteString("   Put the reason in the body. This is the record of why the pane ended.\n")
-	b.WriteString("2. identity --park <the-handoff-id-from-step-1>\n\n")
+	// Store-aware, for the same reason identity's --submit refusal is: `handoff`
+	// is a beads-store wrapper from the author's federation, NOT a command this
+	// repo ships, so on a plain clone step 1 would be a command that does not
+	// exist — and step 2's id comes FROM step 1, so the whole exit procedure
+	// would dead-end. The exit itself does not depend on the store: --park pins
+	// any id and shuts you down, so name the portable two-step instead.
+	if resolvehandoff.StoreAvailable("") {
+		fmt.Fprintf(&b, "1. handoff create \"claim failed: %s (%s)\"%s\n", taskID, reason, idFlag)
+		b.WriteString("   Put the reason in the body. This is the record of why the pane ended.\n")
+		b.WriteString("2. identity --park <the-handoff-id-from-step-1>\n\n")
+	} else {
+		b.WriteString("1. parlay drawdown 20\n")
+		fmt.Fprintf(&b, "   It drafts a handoff body from the last 20 messages — keep it as the record of why this pane ended (mention: claim failed: %s (%s)).\n", taskID, reason)
+		b.WriteString("   There is no `handoff` store on this machine (it ships with the author's federation, not with parlay), so no bead can be minted here.\n")
+		b.WriteString("2. identity --park <any-handoff-id>\n")
+		b.WriteString("   --park pins that id verbatim and exits, so any id works — e.g. claim-failed-<your-agent-id>.\n\n")
+	}
 
 	b.WriteString("Step 2 IS the exit: --park pins the handoff and shuts you down WITHOUT a\n")
 	b.WriteString("restart. Do not reach for the other two exits — 'identity --submit' reboots\n")
@@ -493,7 +508,17 @@ func claimBrief(agent, name, color, model string, task claimTask, silent bool) s
 	fmt.Fprintf(&b, "## Your memory — recovered\n\n### Identity\n%s\n\n### Scratchpad\n%s\n\n",
 		identity.ReadMemBody(identity.KindIdentity, agent),
 		identity.ReadMemBody(identity.KindScratchpad, agent))
-	b.WriteString("If a 📎 Handoff pointer appears above, run `handoff show <that-id>` for full session state before you start.\n\n")
+	// Same store-awareness as the no-work brief's exit procedure. The pointer
+	// line itself is a frozen on-disk format (identity.pinHandoffPointer) and
+	// stays as-is, but the instruction that tells the agent to ACT on it is
+	// read once, right here, and must not aim at a command the machine lacks.
+	if resolvehandoff.StoreAvailable("") {
+		b.WriteString("If a 📎 Handoff pointer appears above, run `handoff show <that-id>` for full session state before you start.\n\n")
+	} else {
+		b.WriteString("If a 📎 Handoff pointer appears above, its body cannot be fetched: no `handoff` store is installed on this\n" +
+			"machine (it ships with the author's federation, not with parlay). The Identity and Scratchpad bodies folded in\n" +
+			"above ARE your recovered state — read them carefully before you start.\n\n")
+	}
 
 	fmt.Fprintf(&b, "## Task — %s\n\n", task.ID)
 	if strings.TrimSpace(task.Title) != "" {
