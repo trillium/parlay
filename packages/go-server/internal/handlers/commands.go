@@ -127,23 +127,23 @@ func handleCommands(st *store.Store, hub *Hub) http.HandlerFunc {
 	}
 }
 
-// requireCommandReport gates the three MUTATING command routes. It is the
-// same shape as packages/server/src/guard.ts's rule for the Bun server's
-// mutating chat routes, applied here because this server has no equivalent
-// guard and this feature adds new write endpoints to it:
+// requireCommandReport gates the three MUTATING command routes: POST only,
+// and Content-Type: application/json.
 //
-//   - POST only, so a <img>/<script> GET cannot report anything;
-//   - Content-Type: application/json required, which a cross-origin CORS
-//     SIMPLE request cannot set. Anything else must preflight, and this
-//     server answers no preflight, so a hostile page cannot reach the
-//     registry from a browser.
+// This used to be described as this server's own CSRF defence, written because
+// "this server has no equivalent guard". That was true when it was written and
+// is no longer: packages/go-server/internal/guard now wraps the whole mux, and
+// all three paths are in guard.GuardedPaths, so the origin check and the
+// content-type gate both run before this function is reached. The gate stays —
+// defense in depth costs nothing here and the handler is the right place to
+// refuse a POST that is not a report — but it is no longer the only thing
+// standing between a hostile page and the registry.
 //
-// This is CSRF-shaped, not authentication: a local process can still report
-// whatever it likes, exactly as it can with every other route on this
-// unauthenticated server. It bounds the damage to "something already running
-// on this machine", which is what the view claims to describe anyway. The
-// read endpoint deliberately keeps the old world-readable behavior, matching
-// /api/chat/agents.
+// What it still buys on its own, for a reader deciding whether to keep it:
+// requiring JSON is what forces a preflight, and an unguarded path answers no
+// preflight. So requiring JSON alone is a real defence, and it is why these
+// three routes were not obviously broken when they shipped outside the guard.
+// It is just not a boundary, and a boundary has one implementation.
 //
 // The CLI reporter always sends this content type, so nothing that exists
 // today is broken by the requirement.

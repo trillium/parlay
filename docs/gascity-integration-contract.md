@@ -799,6 +799,16 @@ And the guard registration, which is a **single-plane** requirement:
 Bun→Go cutover, so there is no second plane left to register and "register it in both" is no
 longer satisfiable. Both the guard set and its route classification live on the Go side.*
 
+This is now **enforced, not just stated** (corrected 2026-10-05, gnhf):
+`TestEveryRegisteredRouteIsGuardedOrExplained` in
+`packages/go-server/internal/guard/route_coverage_test.go` parses `internal/handlers` for every
+path put on the mux and fails the build on one that is neither guarded nor listed, with a
+reason, in `TestUnguardedRoutes`. The live-command registry's three report routes
+(`command-start`/`-heartbeat`/`-end`) shipped **outside** the boundary before that test existed,
+carrying a hand-rolled copy of the content-type gate in the handler; a forged cross-origin POST
+with a JSON content type was accepted and wrote a registry row. So a GC unit adding a route
+does not have to remember this rule — but it does have to satisfy the test, which is the point.
+
 The guard also covers whole subtrees — `guardedPrefixes` (`guard.go:265`), covering
 `/api/chat/agents/`, `/api/chat/plugin/`, `/api/debug/` — so anything added *under* those is
 guarded before you get there. `jsonExemptPaths` (`guard.go:219`) is a **closed three-member
