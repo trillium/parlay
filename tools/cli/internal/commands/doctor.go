@@ -564,7 +564,16 @@ func checkContextRotation(st *doctorState) (CheckResult, bool) {
 		v = vPass
 		evidence["context_percentage"] = ctx
 	}
-	text := fmt.Sprintf("context: %s — rotate at ~85%% (run: parlay context-check <pct>; on ROTATE, handoff + identity --submit)", ctx)
+	// The next-step clause is store-aware for the same reason context-check's
+	// ROTATE line is: `handoff` is a beads-store wrapper from the author's
+	// federation, not something this repo installs, so a clone must never be
+	// pointed at it as a command to run (same rule as checkIdentityMD's
+	// pointer note and `parlay drawdown`'s closing recipe).
+	next := "on ROTATE, handoff + identity --submit"
+	if !resolvehandoff.StoreAvailable("") {
+		next = "on ROTATE, write the handoff body (parlay drawdown) + identity --submit <handoff-id>"
+	}
+	text := fmt.Sprintf("context: %s — rotate at ~85%% (run: parlay context-check <pct>; %s)", ctx, next)
 	return informationalLine("context-rotation", v, text, evidence), true
 }
 
