@@ -48,6 +48,25 @@ type handoffRow struct {
 	Created   string `json:"created"`
 }
 
+// StoreAvailable reports whether the store CLI itself is resolvable on PATH.
+// store == "" defaults to DefaultStore.
+//
+// This exists because "no handoff id" has TWO very different causes that
+// ResolveCurrentHandoff deliberately collapses into "" (it never throws): a
+// store that reports nothing open, and a store that is not installed at all.
+// The second is the fresh-clone case — `handoff` is a beads-store wrapper from
+// the author's federation (the same family as `task`/`inbox`), NOT a command
+// this repo ships — and telling such a reader to "create one first
+// (handoff create …)" points them at a command they do not have. Callers use
+// this to say which of the two happened.
+func StoreAvailable(store string) bool {
+	if strings.TrimSpace(store) == "" {
+		store = DefaultStore
+	}
+	_, err := exec.LookPath(store)
+	return err == nil
+}
+
 // runStore shells out to `<store> <args...>` and parses its stdout as
 // either a JSON array of rows or a single JSON object row. Never throws: a
 // spawn failure, non-zero exit, empty stdout, or unparseable JSON all
