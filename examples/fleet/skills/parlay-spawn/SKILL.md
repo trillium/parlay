@@ -99,9 +99,14 @@ launcher = "subprocess"   # or "herdr" (default); "gascity" is a deprecated alia
 
 ## Token injection
 
-`ccjuggler-resolve <account>` (from `packages/ccjuggler`) resolves the OAuth token:
-1. macOS keychain: `security find-generic-password -a ccjuggler -s ccjuggler-<account>`
-2. Flat file: `~/.ccjuggler/<account>/.oauth-token`
+`--account` resolves the OAuth token **in-process** — no external resolver bin,
+no python, nothing to install. The lookup is `internal/juggle.GetToken` (the Go port of `ccjuggler.py`'s `get_token()`), reading the macOS keychain:
+
+```
+security find-generic-password -s <account's keychain_service> [-a <keychain_account>] -w
+```
+
+Per-`token_format`, a `claude-credentials-json` entry is unwrapped to `claudeAiOauth.accessToken`; `raw` (the default) is used verbatim. There is no flat-file fallback — an account whose keychain entry is missing or empty fails at spawn. `parlay doctor`'s `spawn-creds` check probes exactly this path, so it is the fastest way to see which account is broken and the command that fixes it.
 
 Spawn exits non-zero with a clear error if no token is found. Token is injected as `CLAUDE_CODE_OAUTH_TOKEN` via `herdr tab create --env` (or exported directly in `--pane` in-place mode).
 
@@ -143,7 +148,7 @@ parlay spawn refactor-x "Refactor X" "#6366f1" \
 
 ## Troubleshooting
 
-- **"ccjuggler-resolve not found"** — run `bun install` in `packages/ccjuggler` or ensure the bin is on PATH.
+- **`--account NAME: no token`** — `parlay doctor` names the account whose `security find-generic-password -s <service> -w` fails or comes back empty, and prints the `security add-generic-password` line that stores one. There is no separate resolver to install.
 - **"no root pane returned"** — herdr tab create failed; check `herdr` is running and the socket path is valid.
 - **Agent registers but never receives prompt** — check `$TMPDIR/parlay-watchdog-<launcher>.log`
   for whether the watchdog saw the first turn fire.

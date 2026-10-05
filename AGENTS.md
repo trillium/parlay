@@ -98,7 +98,7 @@ Reach for these instead of the hand-rolled equivalent.
 
 Historical per-ticket notes. Open these only when working on that specific area — they explain why a port is bug-for-bug faithful to a TS quirk.
 
-- [B5 `status`/`crew-state`/`supervise`/`context-check`](docs/agent-notes/go-cli-ticket-b5-status-crew.md) · [B6 `robots-watch`/`robots-tail`](docs/agent-notes/go-cli-ticket-b6-robots-watch.md) · [B7 `doctor`/`health`](docs/agent-notes/go-cli-ticket-b7-doctor-health.md) · [B8 `resolve-handoff`/`say-guard`](docs/agent-notes/go-cli-ticket-b8-resolve-handoff.md) · [B9 `launch`/`drawdown`/`idle`](docs/agent-notes/go-cli-ticket-b9-launch-drawdown.md) · [B10 coverage/parity close-out](docs/agent-notes/go-cli-ticket-b10-coverage-parity.md)
+- [B5 `status`/`crew-state`/`supervise`/`context-check`](docs/agent-notes/go-cli-ticket-b5-status-crew.md) · [B6 `robots-watch`/`robots-tail`](docs/agent-notes/go-cli-ticket-b6-robots-watch.md) · [B7 `doctor`/`health`](docs/agent-notes/go-cli-ticket-b7-doctor-health.md) (a check must probe the path the product runs, not a second implementation of it) · [B8 `resolve-handoff`/`say-guard`](docs/agent-notes/go-cli-ticket-b8-resolve-handoff.md) · [B9 `launch`/`drawdown`/`idle`](docs/agent-notes/go-cli-ticket-b9-launch-drawdown.md) · [B10 coverage/parity close-out](docs/agent-notes/go-cli-ticket-b10-coverage-parity.md)
 - [C3 drafts/uploads/settings](docs/agent-notes/go-server-ticket-c3-drafts-uploads.md) · [C6 launchd deploy tooling](docs/agent-notes/go-server-ticket-c6-parlay-server.md)
 
 One rule from that workstream still applies to new work: a "port X" ticket may already be done by an earlier ticket's broader scope — grep `internal/` first.
