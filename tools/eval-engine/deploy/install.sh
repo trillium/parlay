@@ -61,7 +61,15 @@ HEALTH_URL="http://${EVAL_ADDR}/health"
 if [ "${REBUILD}" = 1 ] || [ ! -x "${ENGINE_BIN}" ]; then
   echo "==> building eval-engine binary (unified parlay CLI, tools/cli)" >&2
   mkdir -p "${ENGINE_DIR}"
-  ( cd "${CLI_DIR}" && go build -o "${ENGINE_BIN}" . )
+  # CGO_ENABLED=0 is REQUIRED, not a preference: the CLI's beads dependency
+  # carries an embedded Dolt tree whose ICU binding needs C++ headers that a
+  # stock macOS toolchain does not ship, so a default-cgo build dies with
+  # `file.cpp:3:10: fatal error: 'unicode/regex.h' file not found` — the exact
+  # failure `bin/parlay` documents on its own build step (robots-wgij). Nothing
+  # in the CLI needs cgo. This line used to omit it, which made the engine
+  # installer's own /health verification unreachable on any fresh clone: the one
+  # fix `parlay health` prints for its only expected red line could not run.
+  ( cd "${CLI_DIR}" && CGO_ENABLED=0 go build -o "${ENGINE_BIN}" . )
 fi
 [ -x "${ENGINE_BIN}" ] || { echo "install.sh: no engine binary at ${ENGINE_BIN} (run with --rebuild)" >&2; exit 1; }
 
