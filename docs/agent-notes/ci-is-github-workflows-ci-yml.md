@@ -11,18 +11,20 @@ limit meant it never read the diff (see the merge-gate section above — that ve
 exists because of the same lie). A triage of the open-PR backlog found 23/23 PRs
 green and 3 provably broken.
 
-Four parallel jobs, each pinned to action commit SHAs with `permissions:
+Three parallel jobs, each pinned to action commit SHAs with `permissions:
 contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
-every module in `GO_MODULES`), **bun** (tests for `packages/{input,client,server}` and
-`tools/gate-tag` — which gets no `bun install`, having no `package.json` and no
-dependencies — plus typecheck for `packages/input`),
-**shell** (nine hermetic harnesses, preceded by a `git`/`jq`/`curl`/`python3`
-presence check so a binary missing from the rolling runner image fails the step
-instead of letting a harness skip itself green — `python3` is on that list
-because `bin/context-reset.test.sh` needs a real pty), **hygiene** (conflict
-markers, 2 MiB tracked-file ceiling measured on the tracked *blob* via `git
-ls-tree -l`, never `stat` on the worktree path, which would follow this repo's
-tracked symlinks).
+every module in `GO_MODULES`), **shell** (the five hermetic harnesses named in
+its own comment, preceded by a `git`/`jq`/`curl`/`python3`/`bun` presence check
+so a binary missing from the rolling runner image fails the step instead of
+letting a harness skip itself green — `python3` is on that list because
+`bin/context-reset.test.sh` needs a real pty, and `bun` because the monitor
+harness runs a Bun stub relay), **hygiene** (conflict markers, 2 MiB
+tracked-file ceiling measured on the tracked *blob* via `git ls-tree -l`, never
+`stat` on the worktree path, which would follow this repo's tracked symlinks;
+every top-level `docs/*.md` must be linked from `docs/README.md`; and no
+committed `*.sh` may reference an artifact that was deleted).
+There is no `bun` job: the client and input packages still have `package.json`
+files, but nothing in CI runs their tests.
 Both hygiene gates distinguish "the tool failed" from "the tree is clean" —
 `git grep`'s status 2+ and a failed or empty `git ls-tree` each fail the step.
 Read the file's own comments for per-step rationale rather than re-deriving it.
@@ -54,9 +56,11 @@ Four things worth knowing before editing it:
   `tools/relay/deploy/{ensure-up,install}.test.sh` (launchctl/PlistBuddy),
   `tools/cli/parity/run.sh` (stands up a real go-server fixture; the parity
   harness was retired with `packages/cli` in T-08, so this entry is archaeology),
-  `examples/bootstrap-sandbox.sh` (same class as the previous entry — it stands
-  up a real `packages/server` fixture; it has also not been trial-run to the
-  bar stated at the end of this bullet), and
+  `examples/bootstrap-sandbox.sh` (same class — it stands up a real Go-server
+  fixture, and is run by hand as the "copy this into your sandbox" first step;
+  it has also not been trial-run to the bar stated at the end of this bullet),
+  `packages/go-server/parity/capture-sse-golden.sh` (a diagnosis tool that
+  boots a real server and compares its SSE frames to the frozen golden), and
   `packages/client`'s `bun run build` (its `build.ts` POSTs to the configured
   local server). Also not enforced:
   `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a

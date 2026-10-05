@@ -1,13 +1,17 @@
-// capture-to-golden.ts — companion to refresh-sse-golden.sh. Parses two raw
-// SSE captures of the TS server, normalizes volatile values, slices frames
-// into scenario steps by the cumulative frame-count boundaries the shell
-// harness recorded, and prints the golden JSON to stdout.
+// capture-to-golden.ts — companion to capture-sse-golden.sh, which is the only
+// thing that invokes it. Parses two raw SSE captures, normalizes volatile
+// values, slices frames into scenario steps by the cumulative frame-count
+// boundaries the shell harness recorded, and prints the capture as JSON.
 //
 // The normalization here must stay rule-for-rule identical to normalizeValue
 // in internal/handlers/sse_golden_test.go — the Go test applies the same
-// rules to its own capture before comparing.
+// rules to its own capture before comparing. That pairing is the whole reason
+// this file still exists: the normalization is the portable half of a capture,
+// and it is the part a reader can still check by eye after the reference
+// server (packages/server) was deleted in the Bun→Go cutover.
 //
 // Usage: bun capture-to-golden.ts <legacy.raw> <l1,l2,...> <caps.raw> <c1,c2,...>
+//   SSE_GOLDEN_CAPTURED_FROM  labels the output's `capturedFrom` field
 
 const STEPS = ["connect-burst", "register-agent", "poll-park", "send", "reload", "unregister"]
 
@@ -49,12 +53,21 @@ function parseSSE(raw: string, file: string): Frame[] {
     else if (line.startsWith("data: ")) data = line.slice("data: ".length)
     else throw new Error(`${file}: unrecognized SSE line: ${JSON.stringify(line)}`)
   }
-  // presence_map never enters the golden: the TS server rebroadcasts it from
-  // a 10s sweep timer (packages/server/src/sse.ts) whose arrivals are
+  // presence_map never enters the golden: the TypeScript server rebroadcast
+  // it from a 10s sweep timer (packages/server/src/sse.ts, deleted in the
+  // Bun→Go cutover — the rule is preserved here) whose arrivals are
   // wall-clock-nondeterministic, and its vocabulary diverges anyway
   // (api-contract.md ledger row 3). The shell harness excludes it from frame
   // counting for the same reason, so the boundaries line up with this filter.
-  return frames.filter(f => f.event !== "presence_map")
+  //
+  // commands is the mirror image: a Go-only burst snapshot (ledger row 29) that
+  // the TypeScript server had no equivalent of, so it is absent from the
+  // committed golden and dropped by transformGoStep. Filtering it here keeps
+  // this pipeline, the harness's boundary accounting and the test's two
+  // transforms modelling the same set of frames — otherwise a capture of the Go
+  // server is one frame longer than the boundaries that describe it, and
+  // slice() rejects it as "a frame arrived outside the scenario".
+  return frames.filter(f => f.event !== "presence_map" && f.event !== "commands")
 }
 
 function slice(frames: Frame[], bounds: number[], file: string): Frame[][] {
@@ -79,8 +92,11 @@ if (!legacyFile || !legacyBounds || !capsFile || !capsBounds) {
 const parseBounds = (s: string) => s.split(",").map(n => parseInt(n, 10))
 
 const golden = {
-  capturedFrom: "packages/server (TS)",
-  regenerate: "packages/go-server/parity/refresh-sse-golden.sh",
+  // Provenance of whatever was captured, not a promise that it can be
+  // re-captured: see capture-sse-golden.sh's header for why the committed
+  // golden is frozen.
+  capturedFrom: process.env.SSE_GOLDEN_CAPTURED_FROM || "packages/go-server (Go)",
+  normalizedBy: "packages/go-server/parity/capture-to-golden.ts",
   steps: STEPS,
   legacy: slice(parseSSE(await Bun.file(legacyFile).text(), legacyFile), parseBounds(legacyBounds), legacyFile),
   caps: slice(parseSSE(await Bun.file(capsFile).text(), capsFile), parseBounds(capsBounds), capsFile),

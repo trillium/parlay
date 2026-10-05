@@ -21,11 +21,14 @@ import (
 // TestSSEGolden replays the golden scenario against a real Go server (full
 // Register mux over live HTTP, so the wire bytes are the real thing) and
 // compares the two SSE streams frame-by-frame against
-// testdata/sse-golden.json — a normalized capture of the TypeScript server
-// running the identical scenario, refreshed by
-// parity/refresh-sse-golden.sh (local-only: it boots the TS server, which
-// CI's shell job deliberately cannot do; this test itself is hermetic and
-// rides the go job).
+// testdata/sse-golden.json — a frozen capture of the TypeScript server running
+// the identical scenario, taken before that server was deleted in the Bun→Go
+// cutover. There is no live reference server left, so the golden cannot be
+// re-captured: parity/capture-sse-golden.sh drives this same scenario against
+// the Go server and diffs the result against this file, which is how you
+// diagnose a failure here, but it deliberately has no way to write the golden.
+// Re-baselining from the Go server would make this test compare the server
+// against itself. This test itself is hermetic and rides the go job.
 //
 // Every difference between the streams is applied as an explicit transform
 // below, each citing its docs/api-contract.md divergence-ledger row or table
@@ -265,14 +268,17 @@ func postGoldenJSON(t *testing.T, urlStr, body string) {
 func TestSSEGolden(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "sse-golden.json"))
 	if err != nil {
-		t.Fatalf("read golden (regenerate with parity/refresh-sse-golden.sh): %v", err)
+		t.Fatalf("read golden (a frozen capture of the deleted TypeScript server; "+
+			"see the header comment and parity/capture-sse-golden.sh): %v", err)
 	}
 	var golden goldenCapture
 	if err := json.Unmarshal(raw, &golden); err != nil {
 		t.Fatalf("parse golden: %v", err)
 	}
 	if !reflect.DeepEqual(golden.Steps, sseGoldenSteps) {
-		t.Fatalf("golden steps %v != test scenario %v — regenerate the golden and update both sides together", golden.Steps, sseGoldenSteps)
+		t.Fatalf("golden steps %v != test scenario %v — the scenario and the frozen golden have diverged; "+
+			"fix the test scenario, and note the golden cannot be regenerated (parity/capture-sse-golden.sh)",
+			golden.Steps, sseGoldenSteps)
 	}
 
 	st := newTestStore(t)
