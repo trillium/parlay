@@ -200,11 +200,16 @@ paths:
     get:
       operationId: history
       summary: Recent chat history, oldest first
+      description: >-
+        `limit` bounds how many of the retained messages are returned (the
+        server retains 5,000). An absent, non-numeric or non-positive `limit`
+        returns the whole retained window — there is no smaller server-side
+        default. `channel` is accepted by some clients and ignored.
       parameters:
         - name: limit
           in: query
-          schema: { type: integer, default: 200 }
-          description: Non-numeric or non-positive falls back to 200.
+          schema: { type: integer }
+          description: Maximum retained messages to return; 0 or absent means all retained.
       responses:
         "200":
           content:

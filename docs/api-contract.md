@@ -213,8 +213,12 @@ Responses: 200 `{ "ok": true, "id": "…" }`; **400**
 `send`/`reply`).
 
 ### `GET /api/chat/history?limit=N`
-Recent chat history, oldest first. `limit` defaults to 200; non-numeric or
-non-positive values fall back to the default.
+Recent chat history, oldest first. `limit` bounds how many of the retained
+messages come back (the server retains 5,000 — see
+[`events-history.md`](events-history.md)); an absent, non-numeric or
+non-positive `limit` returns the whole retained window rather than a
+smaller default. There is no channel scoping: a `channel` query parameter is
+ignored.
 
 Response: `ChatMessage[]`
 ```ts
@@ -438,8 +442,9 @@ Serve an uploaded image inline. Unguarded read. No name regex (store lookup
 instead); Content-Type is sniffed from the file bytes, not the extension; 404
 on unknown.
 
-On disk: `~/exchange/parlay-uploads/<name>` — agents may read that path
-directly.
+On disk: `<state-dir>/uploads/<name>` (`$PARLAY_STATE_HOME`, default
+`~/.parlay`) — agents may read that path directly. `<name>` is server-
+generated (random + a sanitized image extension), never the client's filename.
 
 ---
 
