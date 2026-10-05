@@ -50,3 +50,31 @@ Two related traps worth remembering:
   consulted.
 - `internal/juggle.GetToken` shells out to `security`, so any test fixture
   that fakes a spawn-cred environment must put a fake `security` on PATH.
+
+## The same rule, second instance: `doctor deploy` probed its own address
+
+`checkServiceHealth` in `doctor_deploy.go` resolved its targets from
+`envOr("PARLAY_SERVER_ADDR", "127.0.0.1:4242")` and
+`envOr("PARLAY_EVAL_ADDR", ...)` — the *server-side bind* variables the
+deploy plists set. Every other verb resolves the server through
+`config.ServerURL()` (`PARLAY_SERVER` > `parlay remote set` config > coded
+default), and plain `parlay doctor` prints that URL. So with
+`PARLAY_SERVER=http://mini1:9999` exported, `doctor` reported on mini1 while
+`doctor deploy` printed `PASS chat-server 127.0.0.1:4242 — healthy` about a
+server this CLI never contacts: the same second-implementation defect as
+`spawn-creds`, one file over.
+
+`deployServices()` now resolves through the same precedence the CLI uses,
+keeping the bind var as the fallback for an operator whose shell exports it,
+and records which level supplied each target in the evidence
+(`--json` → `evidence.services[].source`). `localhost` is normalized to
+`127.0.0.1` so the raw TCP dial and the `/health` fetch cannot land on
+different listeners, the scheme is carried through so an `https` URL is not
+fetched over `http`, and a FAIL on a **non-loopback** target no longer
+offers a `launchctl kickstart` fix — that advice is about the wrong machine,
+so it is neither printed nor marked `healable`.
+
+The generalizable half: when two checks describe the same dependency, they
+must resolve it through the same function. A duplicated resolution is where
+this file's second bug lived, and it produced a green line about a component
+that was not the one in use.

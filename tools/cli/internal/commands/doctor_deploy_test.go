@@ -149,8 +149,22 @@ func healthyHTTPSeam() {
 	}
 }
 
+// hermeticServerEnv pins the CLI's server resolution to an empty state dir and
+// an empty env, so a health test cannot pick up the developer's own
+// PARLAY_SERVER or `parlay remote set` config and probe the wrong address.
+// deployServices() reads both, so every health test needs this.
+func hermeticServerEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_SERVER", "")
+	t.Setenv("PARLAY_SERVER_ADDR", "")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "")
+	t.Setenv("PARLAY_EVAL_ADDR", "")
+}
+
 func TestDeployHealthAllHealthyPass(t *testing.T) {
 	fastProbe(t)
+	hermeticServerEnv(t)
 	deployDialPort = func(addr string, timeout time.Duration) error { return nil }
 	healthyHTTPSeam()
 	defer func() { deployDialPort = nil }()
@@ -164,6 +178,7 @@ func TestDeployHealthAllHealthyPass(t *testing.T) {
 
 func TestDeployHealthDegradedIsWarn(t *testing.T) {
 	fastProbe(t)
+	hermeticServerEnv(t)
 	deployDialPort = func(addr string, timeout time.Duration) error { return nil }
 	deployHTTPGet = func(url string, timeout time.Duration) (*http.Response, error) {
 		return &http.Response{StatusCode: 500, Status: "500 Internal Server Error", Body: io.NopCloser(strings.NewReader(`{"ok":false}`))}, nil
@@ -179,6 +194,7 @@ func TestDeployHealthDegradedIsWarn(t *testing.T) {
 
 func TestDeployHealthRefusedIsFail(t *testing.T) {
 	fastProbe(t)
+	hermeticServerEnv(t)
 	deployDialPort = func(addr string, timeout time.Duration) error {
 		return errors.New("dial tcp 127.0.0.1:4242: connect: connection refused")
 	}
@@ -193,6 +209,7 @@ func TestDeployHealthRefusedIsFail(t *testing.T) {
 
 func TestDeployHealthBootingIsWarnWhenProcessUp(t *testing.T) {
 	fastProbe(t)
+	hermeticServerEnv(t)
 	deployDialPort = func(addr string, timeout time.Duration) error {
 		return errors.New("dial tcp 127.0.0.1:4242: connect: connection refused")
 	}
@@ -217,6 +234,7 @@ func TestDeployHealthBootingIsWarnWhenProcessUp(t *testing.T) {
 
 func TestDeployHealthNetworkIndeterminateIsUnknown(t *testing.T) {
 	fastProbe(t)
+	hermeticServerEnv(t)
 	deployDialPort = func(addr string, timeout time.Duration) error {
 		return errors.New("dial tcp 127.0.0.1:4242: i/o timeout")
 	}
@@ -227,6 +245,145 @@ func TestDeployHealthNetworkIndeterminateIsUnknown(t *testing.T) {
 	if cr.Verdict != vUnknown {
 		t.Errorf("verdict = %s, want UNKNOWN when a network condition prevents a conclusion", cr.Verdict)
 	}
+}
+
+// ── health-target resolution ───────────────────────────────────────────────
+//
+// The sweep must probe the SAME server/engine the rest of the CLI talks to.
+// Before this, `doctor deploy` probed PARLAY_SERVER_ADDR/coded defaults while
+// `doctor` reported on config.ServerURL(), so the two could print opposite
+// verdicts about the same install.
+
+func TestDeployHealthTargetsFollowTheCLIResolution(t *testing.T) {
+	cases := []struct {
+		name       string
+		env        map[string]string
+		persisted  string
+		wantChat   string
+		wantSource string
+	}{
+		{
+			name:       "PARLAY_SERVER wins over everything",
+			env:        map[string]string{"PARLAY_SERVER": "http://mini1:9999", "PARLAY_SERVER_ADDR": "127.0.0.1:4242"},
+			persisted:  "http://laptop:7777",
+			wantChat:   "mini1:9999",
+			wantSource: "env",
+		},
+		{
+			name:       "persisted `parlay remote set` beats the bind addr",
+			env:        map[string]string{"PARLAY_SERVER_ADDR": "127.0.0.1:4242"},
+			persisted:  "http://laptop:7777",
+			wantChat:   "laptop:7777",
+			wantSource: "config",
+		},
+		{
+			name:       "bind addr still wins when neither env nor config is set",
+			env:        map[string]string{"PARLAY_SERVER_ADDR": "127.0.0.1:5353"},
+			wantChat:   "127.0.0.1:5353",
+			wantSource: "PARLAY_SERVER_ADDR",
+		},
+		{
+			name:       "coded default when nothing is set",
+			wantChat:   "127.0.0.1:4242",
+			wantSource: "default",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("PARLAY_STATE_HOME", home)
+			t.Setenv("PARLAY_SERVER", "")
+			t.Setenv("PARLAY_SERVER_ADDR", "")
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if tc.persisted != "" {
+				if err := config.SetPersistedServer(tc.persisted); err != nil {
+					t.Fatalf("SetPersistedServer: %v", err)
+				}
+			}
+			svcs := deployServices()
+			if svcs[0].Addr != tc.wantChat {
+				t.Errorf("chat-server addr = %q, want %q (resolved from %s)", svcs[0].Addr, tc.wantChat, tc.wantSource)
+			}
+			if !strings.Contains(svcs[0].Source, tc.wantSource) {
+				t.Errorf("chat-server source = %q, want it to name %q so --json says which server was probed", svcs[0].Source, tc.wantSource)
+			}
+		})
+	}
+}
+
+func TestDeployHealthEvalEngineTargetMatchesDoctor(t *testing.T) {
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_EVAL_ADDR", "127.0.0.1:5354")
+	svcs := deployServices()
+	if svcs[1].Addr != "127.0.0.1:5354" {
+		t.Errorf("eval addr = %q, want the PARLAY_EVAL_ADDR override honored", svcs[1].Addr)
+	}
+	// PARLAY_EVAL_ENGINE_URL is the var `parlay doctor`/`health` use; it must
+	// win here too, or the two disagree about which engine is "the" one.
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:5355")
+	svcs = deployServices()
+	if svcs[1].Addr != "127.0.0.1:5355" {
+		t.Errorf("eval addr = %q, want PARLAY_EVAL_ENGINE_URL to win over PARLAY_EVAL_ADDR", svcs[1].Addr)
+	}
+	if got, want := svcs[1].Addr, hostPortFromEngineURLForTest(engineURL()); got != want {
+		t.Errorf("eval addr = %q, want the same host:port doctor resolves (%q)", got, want)
+	}
+}
+
+func TestHostPortFromURL(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantAddr string
+		wantSch  string
+		wantOK   bool
+	}{
+		{"http://localhost:4242", "127.0.0.1:4242", "http", true},
+		{"http://127.0.0.1:14399/", "127.0.0.1:14399", "http", true},
+		{"https://mini1.example", "mini1.example:443", "https", true},
+		{"http://mini1.example", "mini1.example:80", "http", true},
+		{"", "", "", false},
+		{"not a url", "", "", false},
+	}
+	for _, tc := range cases {
+		addr, sch, ok := hostPortFromURL(tc.in)
+		if ok != tc.wantOK || addr != tc.wantAddr || sch != tc.wantSch {
+			t.Errorf("hostPortFromURL(%q) = (%q, %q, %v), want (%q, %q, %v)", tc.in, addr, sch, ok, tc.wantAddr, tc.wantSch, tc.wantOK)
+		}
+	}
+}
+
+func TestDeployHealthRemoteFailureIsNotOfferedALaunchctlFix(t *testing.T) {
+	fastProbe(t)
+	hermeticServerEnv(t)
+	deployDialPort = func(addr string, timeout time.Duration) error {
+		return errors.New("dial tcp 10.0.0.9:4242: connect: connection refused")
+	}
+	defer func() { deployDialPort = nil }()
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://10.0.0.9:4343")
+	t.Setenv("PARLAY_SERVER", "http://10.0.0.9:4242")
+
+	cr, _ := checkServiceHealth(&doctorDeployState{})
+	if cr.Verdict != vFail {
+		t.Fatalf("verdict = %s, want FAIL", cr.Verdict)
+	}
+	for _, f := range cr.Fixes {
+		if strings.Contains(f.Summary, "launchctl") {
+			t.Errorf("fix %q offers a launchctl restart for a target that is not this host", f.Summary)
+		}
+		if f.Healable {
+			t.Errorf("fix %q marked healable for a remote target — heal would kickstart the wrong machine", f.Summary)
+		}
+	}
+}
+
+// hostPortFromEngineURLForTest mirrors deployServices' engine resolution for
+// the assertion that doctor and doctor deploy agree.
+func hostPortFromEngineURLForTest(raw string) string {
+	addr, _, _ := hostPortFromURL(raw)
+	return addr
 }
 
 // ── log freshness ───────────────────────────────────────────────────────────

@@ -13,10 +13,11 @@
 //     os.Stat it (a missing binary is a mechanical FAIL). The expected set is
 //     DERIVED from what is installed, never hard-coded (the issue-#253
 //     pin-rot lesson).
-//  2. service-health — /health probes with retry-and-deadline (the
-//     gcLivenessRun poll-until-deadline shape, never a fixed window), on the
-//     deploy libs' own default ports (:4242 chat server, :4343 eval-engine)
-//     respecting env overrides. Distinguishes BOOTING (process up, port not
+//  2. service-health — /health probes with retry-and-deadline (poll-until-
+//     deadline, never a fixed window), on the SAME endpoints the rest of the
+//     CLI resolves (config.ServerURL() for the chat server,
+//     PARLAY_EVAL_ENGINE_URL for the engine; see deployServices), respecting
+//     env overrides. Distinguishes BOOTING (process up, port not
 //     yet listening => WARN) from FAIL (refused after the full deadline) from
 //     UNKNOWN (network condition prevents a conclusion). Uses net.DialTimeout;
 //     never shells out to lsof/netstat.
@@ -47,6 +48,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -357,24 +359,101 @@ type healthProbeOutcome struct {
 	note    string
 }
 
-// deployService is one probed health target, derived from the deploy libs'
-// own defaults (design §2 check 2) and env overrides.
+// deployService is one probed health target, resolved the way the rest of
+// the CLI resolves the same dependency (see deployServices).
 type deployService struct {
 	Name       string
 	Addr       string // host:port
+	Scheme     string // "http" unless the resolved URL said otherwise
+	Source     string // which precedence level the addr came from — evidence
 	HealthPath string
 }
 
-// deployServices derives the expected chat-server and eval-engine endpoints
-// the way the deploy libs themselves do: env override wins, else the coded
-// default. There is NO :4243 — that port exists nowhere in this repo.
+// deployServices derives the chat-server and eval-engine endpoints the deploy
+// sweep health-probes. Precedence deliberately MIRRORS the resolution every
+// other verb already uses for the same dependency, so `parlay doctor` (which
+// reports "server reachable at <config.ServerURL()>") and `parlay doctor
+// deploy` can never disagree about which server or engine is "the" one —
+// before this, deploy probed a hardcoded/PARLAY_SERVER_ADDR address while the
+// rest of the CLI talked to something else, so it could print PASS about a
+// server this CLI never contacts.
+//
+//	chat-server : PARLAY_SERVER > `parlay remote set` config > PARLAY_SERVER_ADDR > 127.0.0.1:4242
+//	eval-engine : PARLAY_EVAL_ENGINE_URL > PARLAY_EVAL_ADDR > 127.0.0.1:4343
+//
+// The config level only applies when config.ServerSource() is NOT the coded
+// default, so an operator who runs the server on a non-default bind addr in
+// the same shell (PARLAY_SERVER_ADDR — what the deploy plists set) keeps that
+// override exactly as before. There is NO :4243 — that port exists nowhere in
+// this repo.
 func deployServices() []deployService {
-	chatAddr := envOr("PARLAY_SERVER_ADDR", "127.0.0.1:4242")
-	engineAddr := envOr("PARLAY_EVAL_ADDR", "127.0.0.1:4343")
+	chatAddr, chatSrc, chatScheme := chatServerTarget()
+	engineAddr, engineSrc, engineScheme := evalEngineTarget()
 	return []deployService{
-		{Name: "chat-server", Addr: chatAddr, HealthPath: "/health"},
-		{Name: "eval-engine", Addr: engineAddr, HealthPath: "/health"},
+		{Name: "chat-server", Addr: chatAddr, Scheme: chatScheme, Source: chatSrc, HealthPath: "/health"},
+		{Name: "eval-engine", Addr: engineAddr, Scheme: engineScheme, Source: engineSrc, HealthPath: "/health"},
 	}
+}
+
+// chatServerTarget resolves the chat-server endpoint + scheme + which
+// precedence level supplied it.
+func chatServerTarget() (addr, source, scheme string) {
+	if info := config.ServerSource(); info.Source != config.SourceDefault {
+		if a, s, ok := hostPortFromURL(info.URL); ok {
+			return a, "parlay server url (" + string(info.Source) + ")", s
+		}
+	}
+	if a := strings.TrimSpace(os.Getenv("PARLAY_SERVER_ADDR")); a != "" {
+		return a, "PARLAY_SERVER_ADDR", "http"
+	}
+	return "127.0.0.1:4242", "default", "http"
+}
+
+// evalEngineTarget mirrors chatServerTarget for the voice engine, using the
+// same two variables the server-side and CLI-side code read.
+func evalEngineTarget() (addr, source, scheme string) {
+	if v := strings.TrimSpace(os.Getenv("PARLAY_EVAL_ENGINE_URL")); v != "" {
+		if a, s, ok := hostPortFromURL(v); ok {
+			return a, "PARLAY_EVAL_ENGINE_URL", s
+		}
+	}
+	if a := strings.TrimSpace(os.Getenv("PARLAY_EVAL_ADDR")); a != "" {
+		return a, "PARLAY_EVAL_ADDR", "http"
+	}
+	return "127.0.0.1:4343", "default", "http"
+}
+
+// hostPortFromURL converts a resolved base URL into the host:port the raw TCP
+// dial needs, keeping the scheme for the /health fetch. Reports false when the
+// value carries no usable host. `localhost` is normalized to 127.0.0.1 so the
+// dial and the fetch always target one listener even where the name resolves
+// to ::1 first.
+func hostPortFromURL(raw string) (addr, scheme string, ok bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return "", "", false
+	}
+	scheme = strings.ToLower(strings.TrimSpace(u.Scheme))
+	if scheme == "" || scheme == "ws" || scheme == "wss" {
+		if scheme == "wss" {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	port := u.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port), scheme, true
 }
 
 // deployPollInterval is the retry cadence for the poll-until-deadline health
@@ -578,13 +657,17 @@ func severity(v verdict) int {
 // after the full deadline), and UNKNOWN (network condition prevents a
 // conclusion), plus PASS (healthy) and WARN (degraded) from /health.
 func checkServiceHealth(st *doctorDeployState) (CheckResult, bool) {
-	lines := make([]textLine, 0, len(deployServices()))
-	verdicts := make([]verdict, 0, len(deployServices()))
-	svcList := make([]any, 0, len(deployServices()))
+	// Resolved ONCE: deployServices() reads the persisted config file, so
+	// calling it per-length would both re-read and risk two different answers
+	// in one sweep.
+	svcsToProbe := deployServices()
+	lines := make([]textLine, 0, len(svcsToProbe))
+	verdicts := make([]verdict, 0, len(svcsToProbe))
+	svcList := make([]any, 0, len(svcsToProbe))
 	maxSev := vPass
 	var fixes []Fix
-	for _, s := range deployServices() {
-		rec := map[string]any{"name": s.Name, "addr": s.Addr}
+	for _, s := range svcsToProbe {
+		rec := map[string]any{"name": s.Name, "addr": s.Addr, "source": s.Source}
 		port := addrPort(s.Addr)
 		var out healthProbeOutcome
 		s.probe(&out)
@@ -600,9 +683,23 @@ func checkServiceHealth(st *doctorDeployState) (CheckResult, bool) {
 		}
 		lines = append(lines, textLine{kind: "verdict", label: string(out.verdict),
 			text: fmt.Sprintf("%s %s — %s", s.Name, s.Addr, out.note), fix: ""})
+		if out.verdict == vFail {
+			lines[len(lines)-1].text += fmt.Sprintf(" (target from %s)", s.Source)
+		}
 		verdicts = append(verdicts, out.verdict)
 		maxSev = worst(maxSev, out.verdict)
 		if out.verdict == vFail {
+			if !isLoopbackAddr(s.Addr) {
+				// The target is not this host (PARLAY_SERVER / `parlay remote
+				// set` pointed the CLI somewhere else). A launchctl restart
+				// would be advice about the wrong machine, so say what the
+				// sweep can and cannot do instead.
+				fixText := fmt.Sprintf("the CLI is pointed at %s (%s), not this host — fix it there, or run `parlay remote set http://localhost:4242` to point back at this host's server", s.Addr, s.Source)
+				rec["fix"] = fixText
+				fixes = append(fixes, Fix{Summary: fixText})
+				svcList = append(svcList, rec)
+				continue
+			}
 			// Healable: restart the owning launchd service ("restart relay on
 			// dead socket"). Find the launchd svc whose plist also owns the
 			// addr's port, defaulting by name.
@@ -663,6 +760,21 @@ func launchdLabelFor(svcs []launchdService, s deployService, port int) string {
 	}
 }
 
+// isLoopbackAddr reports whether an addr names this host. Used to decide
+// whether a launchctl restart is a sensible repair for a failed target.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // probe implements the poll-until-deadline port + /health probe for one
 // service (design §2 flowchart). It fills *out with the terminal outcome.
 func (s deployService) probe(out *healthProbeOutcome) {
@@ -671,7 +783,11 @@ func (s deployService) probe(out *healthProbeOutcome) {
 	for {
 		err := deployDialPort(s.Addr, 500*time.Millisecond)
 		if err == nil {
-			resp, herr := deployHTTPGet("http://"+s.Addr+s.HealthPath, 3*time.Second)
+			scheme := s.Scheme
+			if scheme == "" {
+				scheme = "http"
+			}
+			resp, herr := deployHTTPGet(scheme+"://"+s.Addr+s.HealthPath, 3*time.Second)
 			if herr != nil {
 				*out = healthProbeOutcome{vUnknown, "port up but /health had no usable answer: " + herr.Error()}
 				return
