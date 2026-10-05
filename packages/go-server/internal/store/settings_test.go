@@ -18,6 +18,22 @@ func TestSettingsStoreDefaultsWhenNoFile(t *testing.T) {
 	}
 }
 
+// textScale crosses the wire as a PERCENT: packages/client divides it by 100
+// when applying it (settings-modal/apply.ts) and clamps a saved value to
+// [85, 160]. This server used to default it to 1, so on a fresh install — no
+// settings.json, which is every first run until the modal is saved — the client
+// rendered every reading surface at 1% scale. The bounds below are the client's,
+// restated here so the two halves of the pair cannot drift apart silently.
+func TestDefaultTextScaleIsAUsablePercent(t *testing.T) {
+	got := DefaultSettings().TextScale
+	if got != 100 {
+		t.Errorf("DefaultSettings().TextScale = %v, want 100 (percent; the client divides by 100)", got)
+	}
+	if got < 85 || got > 160 {
+		t.Errorf("DefaultSettings().TextScale = %v, outside the client's [85, 160] clamp", got)
+	}
+}
+
 func TestSettingsStoreReplaceAndPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	ss1, err := openSettingsStore(path)
