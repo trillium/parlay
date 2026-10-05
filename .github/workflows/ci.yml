@@ -413,3 +413,51 @@ jobs:
             exit 1
           fi
           echo "no tracked file exceeds $limit bytes ($scanned scanned)"
+
+      # docs/README.md is the index for the whole corpus, and an unindexed doc is
+      # one nobody finds — the failure mode this catches is silent in every other
+      # check: nothing breaks, the doc is simply unreachable from the entry point.
+      # It was not hypothetical. The index listed 19 of the 29 top-level docs, so
+      # source-contracts, routing, staleness-model, supersession,
+      # interface-capabilities, gc-prerequisite, remote-input and the rest were
+      # silently dropped from the only "which doc do I want" page.
+      #
+      # Matched on the exact link target "](<basename>)" rather than the bare
+      # filename, so a doc counts as indexed only by being LINKED from the index,
+      # not by having its name appear in passing prose. Subdirectories
+      # (docs/agent-notes/, docs/upstream/, …) are out of scope on purpose:
+      # agent-notes is a one-lesson-per-file directory with 60+ entries that is
+      # indexed by AGENTS.md instead, and forcing each into a table would be
+      # noise. Scope this to docs/*.md only.
+      - name: Every top-level docs/ doc is indexed in docs/README.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          index=docs/README.md
+          if [ ! -f "$index" ]; then
+            echo "::error::$index is missing: docs/ has no index at all"
+            exit 1
+          fi
+          fail=0
+          scanned=0
+          for doc in docs/*.md; do
+            base=$(basename "$doc")
+            if [ "$base" = "README.md" ]; then
+              continue
+            fi
+            scanned=$((scanned + 1))
+            if ! grep -qF "]($base)" "$index"; then
+              echo "::error file=$doc::$doc is not linked from $index — add a row for it under the section it belongs in"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          # A listing of zero means the glob matched nothing (renamed directory,
+          # wrong cwd) and the loop above passed vacuously.
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no docs were scanned: the index-completeness check proved nothing"
+            exit 1
+          fi
+          echo "all $scanned top-level docs are indexed in $index"
