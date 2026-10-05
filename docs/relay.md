@@ -20,14 +20,14 @@ Interface, all local to the machine:
   (`POST /register`, `POST /unregister`, `GET /agents`, `GET /health`), where
   `runtime-dir` defaults to `$TMPDIR/parlay`.
 
-Per the root `CLAUDE.md`: the relay is a **per-runtime-dir singleton bound to
-one server** — `PARLAY_SERVER` alone does not scope which relay a given
-runtime dir's socket belongs to, and Unix socket paths cap at 104 bytes, which
-constrains how deep a runtime dir can nest. The canonical runtime dir is
-reserved specifically so a wrong-server relay bound there can't become a
-fleet-wide outage; never let an ambient env var reconfigure an installed
-singleton relay. A relay that isn't answering `/health` is not necessarily
-down — never force-restart it on that basis alone (see
+Per the root [`AGENTS.md`](../AGENTS.md) (tracked as the symlink `CLAUDE.md`):
+the relay is a **per-runtime-dir singleton bound to one server** — `PARLAY_SERVER`
+alone does not scope which relay a given runtime dir's socket belongs to, and
+Unix socket paths cap at 104 bytes, which constrains how deep a runtime dir
+can nest. The canonical runtime dir is reserved specifically so a wrong-server
+relay bound there can't become a fleet-wide outage; never let an ambient env var
+reconfigure an installed singleton relay. A relay that isn't answering `/health`
+is not necessarily down — never force-restart it on that basis alone (see
 `docs/agent-notes/not-answering-health-not-running-never-robots-mpr3.md`).
 
 The relay is **not built by `bun install` or `bin/parlay`** — it's gitignored
