@@ -137,9 +137,12 @@ func CmdListen(argv []string) {
 	}
 
 	// 2. Singleton guard (robots-fgyz). Arming is a takeover, not an addition:
-	// any other live poll loop on this agent's channel is ended first, so the
-	// channel keeps exactly one reader. Runs before register/announce so a
-	// duplicate is never left alive by a later failure on the HTTP path.
+	// any other live poll loop for this agent ID is ended first, so the ID keeps
+	// exactly one reader. The match is host-wide — it spans every parlay instance
+	// on this machine and every server, so a second instance reaps the first
+	// one's listener (see singleton.go and docs/monitor.md). Runs before
+	// register/announce so a duplicate is never left alive by a later failure
+	// on the HTTP path.
 	ensureSingleListener(agent)
 
 	// 3. add-self-to-agent-registry — identity + capabilities.

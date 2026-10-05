@@ -51,3 +51,28 @@ func TestHelpNamingHandoffCreateAlsoCarriesTheNotInstalledCaveat(t *testing.T) {
 		t.Error("parlay help's usage block still says `for 'handoff create'`")
 	}
 }
+
+// The listener takeover guard (`singleton.go`) matches an agent ID in this
+// HOST's process table — it cannot tell which server or state dir a candidate
+// listener belongs to. Verified 2026-10-05: two isolated instances on
+// different servers, same agent id, and the second `listen` SIGTERMed the
+// first's listener, leaving it registered but deaf. Both enrolling verbs
+// therefore have to say so where a reader actually sees it, and both have to
+// name the opt-out (`PARLAY_LISTEN_NO_SINGLETON=1`); "one listener per
+// channel" is the same words the bug shipped with.
+func TestListenerHelpStatesTheTakeoverIsHostWide(t *testing.T) {
+	for _, verb := range []string{"listen", "monitor"} {
+		text, ok := Lookup(verb)
+		if !ok {
+			t.Fatalf("no help entry for %q", verb)
+		}
+		for _, want := range []string{"HOST-WIDE", "PARLAY_LISTEN_NO_SINGLETON=1"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("parlay %s --help does not say %q — a reader running two instances on\none host cannot learn that this verb evicts the other instance's listener:\n%s", verb, want, text)
+			}
+		}
+		if strings.Contains(text, "one channel keeps exactly one reader") {
+			t.Errorf("parlay %s --help still scopes the takeover to a channel, which reads as\nper-instance; it is per agent ID across every instance on the host", verb)
+		}
+	}
+}
