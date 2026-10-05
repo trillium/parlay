@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -77,6 +78,25 @@ func TestHandlerNoDir(t *testing.T) {
 
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("empty dir want 503 got %d", rr.Code)
+	}
+}
+
+// A newcomer's first server start hits the missing-bundle path before they
+// have built the panel. The body has to say how to build it, not just echo a
+// resolved path they have never heard of.
+func TestHandlerMissingDirExplainsHowToBuildThePanel(t *testing.T) {
+	h := Handler(filepath.Join(t.TempDir(), "nope"))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing dir want 503 got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"bun run build", "-assets-dir", "PARLAY_ASSETS_DIR"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("503 body missing %q: %q", want, body)
+		}
 	}
 }
 

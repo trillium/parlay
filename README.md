@@ -34,19 +34,21 @@ on a phone, driving autonomous terminal coding agents on a machine somewhere els
 
 ## Requirements, honestly
 
-**The CLI + server work standalone.** `bun install`, start the server, point the CLI
+**The CLI + server work standalone.** Start the server, point the CLI
 at it — no other services, no accounts, no tunnel. That's the path in the Quickstart
-below and it is the one this repo fully supports.
+below and it is the one this repo fully supports. ([Bun](https://bun.sh) is only
+needed if you also want the chat panel or the git hooks.)
 
-**The web panel does not ship with a host.** The chat panel
-(`packages/client`) is a browser bundle that expects to be served from the *same
-origin* as the chat API, and the author serves it from a personal, unreleased page
-host called Pulse. **Pulse is not open source and is not available** — so there is no
-turnkey `open this URL and see the panel` path here yet. To run the UI you build the
-bundle (`cd packages/client && bun run build`, which writes
-`dist/parlay-agent.js`), serve it yourself, and reverse-proxy `/api/chat/*` to the
-parlay server. That wiring is not documented here yet, and it is the main gap
-between this repo and the demo.
+**The chat panel needs Bun and nothing else.** `packages/client` is a browser
+bundle, and the Go server *is* its host: it serves the bundle same-origin from the
+same `:4242` it serves `/api/chat/*` on, so there is no reverse proxy to wire and
+no second service to run. Build the bundle (`cd packages/client && bun run build`)
+and open `http://localhost:4242/` — Quickstart step 4. The author's own install
+hosts the panel behind a private page host called Pulse, which is **not open
+source and not available here**, but nothing in this repo requires it; it is a
+distribution choice, not a dependency. A second, separate bundle — the fleet
+dashboard (`packages/webview`) — is served at `/fleet/` and is not part of the
+Quickstart.
 
 **Tailscale is optional.** Nothing requires it. It is simply how the author reaches
 the host from a phone; a LAN address or any other private tunnel works the same way.
@@ -143,6 +145,26 @@ optional **voice engine**. You have not installed a voice engine at this point,
 so that line is red and `health` exits 1; that is the engine, not your install.
 Start one with `nohup ./bin/parlay eval serve &` only if you want spoken or typed
 phrase commands — the CLI, the API and the panel's text chat do not need it.
+
+**4. Open the panel (optional — this is the only step that needs Bun):**
+
+```sh
+cd packages/client && bun run build      # writes dist/index.html + dist/parlay-agent.js
+```
+
+Then open <http://localhost:4242/>. The server found the bundle by itself: it
+resolves `packages/client/dist` from its own install location first and from the
+directory you started it in second, so the command in step 1 works unchanged. If
+your bundle lives somewhere else, pass `-assets-dir <path>` or export
+`PARLAY_ASSETS_DIR`.
+
+Until you build it, `GET /` answers `503` with those instructions on its body —
+every `/api/chat/*` route works regardless, and none of the CLI in step 3 ever
+needed the panel. The bundle is gitignored, so this is a once-per-clone build.
+
+`/fleet/` is a *different* app (`packages/webview`, React) served from
+`<assets-dir>/fleet`; `packages/go-server/deploy/install.sh --build` builds and
+copies it there. It is not needed for anything above.
 
 That round-trip is the whole substrate. From here:
 
@@ -250,7 +272,7 @@ need first, not a complete index of every module in the repo:
 |---|---|
 | `packages/go-server` | The Go server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling, drafts/settings. Runs standalone on `:4242` (`cd packages/go-server && go run ./cmd/parlay-server`). The contract it implements lives in [`docs/api-contract.md`](docs/api-contract.md). |
 | `tools/relay` | The standalone per-agent relay daemon — its own Go module, built by `tools/relay/build.sh`. Fans the server's `/api/chat/poll` feed out to enrolled agents; `parlay monitor`/`listen` need it unless you pass `--legacy-poll`. |
-| `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
+| `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle with `cd packages/client && bun run build`; the Go server serves it same-origin from `-assets-dir` (`packages/client/dist`), so it needs no separate host or proxy. |
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
 | `examples/fleet` | The author's personal **fleet layer** — inbox dispatcher/emit, pi-inbox bridge, and the agent skills. Not core product; installs via `examples/fleet/install.sh`. |
@@ -304,7 +326,7 @@ flowchart LR
 | **Relay** | Single fan-out daemon between the server's long-poll feed and every enrolled agent's monitor; a per-runtime-dir singleton, not built by default. | [`docs/relay.md`](docs/relay.md) |
 | **Live-command registry** | A separate registry from agent enrollment — tracks running `parlay` CLI invocations for `parlay commands` and the panel's live-commands view. | [`docs/live-commands.md`](docs/live-commands.md) |
 | **CLI** | The `parlay` Go command surface and the embedded voice/phrase eval engine. | [`tools/cli`](tools/cli) — start with `parlay help`, then `parlay <verb> --help`. The authoring doc ([`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md)) is TS-era design, not the live surface. |
-| **Panel** | The browser chat UI — tabs, presence, TTS, annotations. Not shipped with a host; see the Requirements section above. | [`packages/client`](packages/client) |
+| **Panel** | The browser chat UI — tabs, presence, TTS, annotations. A gitignored bundle (`packages/client/dist`) that the Go server serves same-origin from `-assets-dir`, so it is the server's own host rather than a separate one. | [`packages/client`](packages/client) |
 
 ## A worked config
 
