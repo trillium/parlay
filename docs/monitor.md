@@ -40,16 +40,29 @@ first turn actually fired.
 
 **`parlay shutdown <id>`** (task-35ww, landed after this doc's initial pass —
 verified 2026-09-03 against `docs/agent-notes/graceful-agent-shutdown-task-35ww.md`)
-is the counterpart to enrollment: explicit, on-demand teardown instead of
-letting a retiring agent's listener/spool/registry row time out or get
-pruned by the hourly sweep. One call does all three: kills any local
-`listen`/`monitor` process for that id (same detect/SIGTERM/grace/SIGKILL
-sequence the singleton guard above already uses), deregisters it server-side
-(`POST /api/chat/unregister`, tombstoning the channel and reporting an
-undelivered-message count rather than discarding it), and immediately
-resolves any long-poll parked on that channel with `{gone: true}` instead of
-waiting out its own timeout. It's idempotent — a 404 on the unregister step
-means the agent was already retired, which counts as success, not error.
-Scope note: this verb only covers `packages/server` (the live production
-server) and `tools/relay`/`tools/cli` — `packages/go-server` was not given
-parity here, matching the precedent of two earlier server-only PRs.
+is the counterpart to enrollment: explicit, on-demand retirement instead of
+leaving a departing agent's listener, spool, and registry row behind. It kills
+any local `listen`/`monitor` process for that id (same
+detect/SIGTERM/grace/SIGKILL sequence the singleton guard above already uses),
+then deregisters it server-side via `POST /api/chat/unregister`. It's idempotent
+— a 404 on the unregister step means the agent was already retired, which
+counts as success, not error. Scope note: every step is an HTTP call to the
+chat server, so this verb covers `packages/go-server` and `tools/relay` /
+`tools/cli` equally; the go-server *is* the server, so there is no second
+implementation sitting outside the change.
+
+> **What the server actually does today (verified 2026-09-03 against
+> `packages/go-server`).** The verb was written against a server that, on
+> unregister, tombstoned the channel, immediately resolved parked long-polls
+> with `{"gone": true}`, reported an `undelivered` count, and answered **410
+> Gone** to any later poll. The Go server does none of those: `unregister`
+> removes the registry row, broadcasts `agent_unregister`, and returns
+> `{ok, id}` — `undelivered` is always absent, a parked poll resolves only on a
+> message, its 25s timeout, or a client disconnect, and no request anywhere in
+> the server answers 410. Consequence for a reader: the relay's 410-tombstone
+> path (`relay_poll.go`) and `parlay monitor`'s 410 exit never fire against
+> this server, so after `shutdown` a remote agent's local spool survives and
+> its poll loop simply keeps polling a channel that is no longer enrolled (and
+> will still receive anything sent to it). The verb is still correct for a
+> *local* agent, where step 1 kills the listener; treat the server-side
+> cascade as unimplemented rather than relying on it.

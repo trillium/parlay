@@ -48,11 +48,13 @@ func postJSON(url string, body map[string]any) error {
 
 // registerAgent posts the new agent's identity so its tab exists.
 // bin/parlay-spawn step 1 (lines 338–341, 1202–1213). launchedBy/startedAt
-// (docs/scope-go-spawn.md Finding F2, #236) mark this registration as
-// Parlay-launched: packages/server/src/prune/idle-reap.ts's shouldIdleReap
-// exempts any agent whose launchedBy does not start with "parlay" from idle
-// reaping, so omitting these fields silently makes a Go-spawned agent
-// unreapable — treated the same as a firstmate-spawned one.
+// (task-4dz9) are the launch record the DELETED TS server's idle reaper keyed
+// on (packages/server/src/prune/idle-reap.ts). The Go server's
+// registerAgentRequest has no such fields, so they are accepted and dropped:
+// nothing here reaps an agent row by age — deregistration is explicit
+// (`parlay shutdown` / `teardown` / `heal` / `sweep --apply`). They are still
+// sent so the request is honest about who launched the agent if an age-based
+// reaper is ever reintroduced.
 func registerAgent(server, id, name, color string) error {
 	startedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	if err := postJSON(server+"/api/chat/register-agent", map[string]any{
@@ -60,7 +62,7 @@ func registerAgent(server, id, name, color string) error {
 		"launchedBy": spawnLaunchedByValue,
 		"startedAt":  startedAt,
 	}); err != nil {
-		return fmt.Errorf("register-agent failed — is Pulse running on %s? %w", server, err)
+		return fmt.Errorf("register-agent failed — is the parlay server running on %s? %w", server, err)
 	}
 	return nil
 }

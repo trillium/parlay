@@ -195,10 +195,10 @@ func Claim(argv []string) {
 // entering the poll loop — that stays a harness Monitor concern.
 func claimEnroll(agent, name, color string, task claimTask) {
 	fmt.Fprintf(os.Stderr, "parlay claim: registering '%s' …\n", agent)
-	// launchedBy/startedAt (task-4dz9): the launch record the idle reaper
-	// (packages/server/src/prune/idle-reap.ts) keys on — every Parlay spawn
-	// path stamps this, firstmate's own spawn path never does, which is what
-	// keeps firstmate-spawned agents outside the reaper's reach entirely.
+	// launchedBy/startedAt (task-4dz9) are the launch record the DELETED TS
+	// server's idle reaper keyed on. The Go server has no such fields on its
+	// register-agent request, so they are accepted and dropped; every spawn
+	// path still stamps them so the request records who launched the agent.
 	reg := httpc.PostJSON[struct {
 		OK    bool   `json:"ok,omitempty"`
 		Error string `json:"error,omitempty"`

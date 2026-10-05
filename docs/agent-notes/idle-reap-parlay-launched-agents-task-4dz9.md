@@ -138,3 +138,27 @@ liveness signal already covers correctly.
 TS server only (`packages/server`), matching the precedent this module's
 sibling (`policy.ts`/`sweep.ts`) and task-35ww already set — `packages/go-server`
 was not given parity here.
+
+## STATUS (2026-09-03): the reaper does not exist in the Go server
+
+Everything above describes the **deleted TypeScript server**. Verified against
+`packages/go-server` on 2026-09-03:
+
+- There is no agent idle reaper. `grep -rn reap packages/go-server` finds only
+  the live-command reaper (`internal/handlers/commands.go`'s
+  `runCommandReaper`), which reaps *command records*, never agents.
+- `PARLAY_AGENT_IDLE_TIMEOUT_MS` is read nowhere in this repository — only
+  mentioned here.
+- `launchedBy`/`startedAt` have no field on the Go wire types
+  (`handlers.registerAgentRequest`, `store.AgentInfo`), so the values
+  `parlay spawn` and `parlay claim` still send are accepted and dropped.
+  `decodeJSON` unmarshals into a struct with no catch-all map.
+- Unregister does two things: remove the row, broadcast `agent_unregister`.
+  No tombstone, no `{"gone": true}` poll resolution, no `undelivered` count,
+  and no 410 anywhere in the server — so the relay's `errChannelGone`
+  tombstone path and `monitor`'s 410 exit are unreachable today.
+
+Consequence for reasoning about this repo: a registry row is a claim, not
+liveness, and retirement is explicit (`shutdown` / `teardown` / `heal` /
+`sweep --apply`). Do not reason from this note's guards; they describe code
+that no longer runs. See `docs/agent-registry.md`.
