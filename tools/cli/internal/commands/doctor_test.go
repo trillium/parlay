@@ -390,6 +390,42 @@ func TestDoctorHandoffPointerOmitsCommandWhenNoStore(t *testing.T) {
 	}
 }
 
+// The context-rotation advisory is printed on every doctor run, including on
+// a fresh clone, and its next-step clause used to name the uninstallable
+// `handoff` wrapper. Same rule as the pointer note above: the verdict and the
+// percentages are fixed; only the wording tracks store availability.
+func TestDoctorContextLineIsStoreAware(t *testing.T) {
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-5")
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+
+	t.Run("with store", func(t *testing.T) {
+		pinHandoffStore(t, true)
+		cr, ran := checkContextRotation(&doctorState{})
+		if !ran {
+			t.Fatal("checkContextRotation did not run")
+		}
+		if !strings.Contains(cr.Summary, "on ROTATE, handoff + identity --submit") {
+			t.Errorf("summary = %q, want the historical clause when the store is installed", cr.Summary)
+		}
+		if !strings.Contains(cr.Summary, "parlay context-check <pct>") {
+			t.Errorf("summary = %q, want it to still name context-check", cr.Summary)
+		}
+	})
+
+	t.Run("without store", func(t *testing.T) {
+		pinHandoffStore(t, false)
+		cr, _ := checkContextRotation(&doctorState{})
+		if strings.Contains(cr.Summary, "on ROTATE, handoff + identity --submit") {
+			t.Errorf("summary = %q, want the store-installed clause dropped with no store", cr.Summary)
+		}
+		for _, want := range []string{"parlay context-check <pct>", "parlay drawdown", "identity --submit <handoff-id>"} {
+			if !strings.Contains(cr.Summary, want) {
+				t.Errorf("summary = %q, want it to name %q", cr.Summary, want)
+			}
+		}
+	})
+}
+
 func TestDoctorHelpDoesNotPanic(t *testing.T) {
 	out := captureStdout(t, func() { Doctor([]string{"--help"}) })
 	if !strings.Contains(out, "parlay doctor") {

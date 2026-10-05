@@ -77,7 +77,7 @@ func TestParsePercentRejectsEmpty(t *testing.T) {
 }
 
 func TestComputeRotateVerdictBelowThresholdIsOK(t *testing.T) {
-	v := ComputeRotateVerdict(84.9, DefaultRotateThreshold)
+	v := ComputeRotateVerdict(84.9, DefaultRotateThreshold, true)
 	if v.Rotate || v.ExitCode != config.ExitOK {
 		t.Errorf("ComputeRotateVerdict(84.9, 85) = %+v, want Rotate=false ExitCode=0", v)
 	}
@@ -87,7 +87,7 @@ func TestComputeRotateVerdictBelowThresholdIsOK(t *testing.T) {
 }
 
 func TestComputeRotateVerdictAtThresholdRotates(t *testing.T) {
-	v := ComputeRotateVerdict(85, DefaultRotateThreshold)
+	v := ComputeRotateVerdict(85, DefaultRotateThreshold, true)
 	if !v.Rotate || v.ExitCode != ExitRotate {
 		t.Errorf("ComputeRotateVerdict(85, 85) = %+v, want Rotate=true ExitCode=%d", v, ExitRotate)
 	}
@@ -97,30 +97,87 @@ func TestComputeRotateVerdictAtThresholdRotates(t *testing.T) {
 }
 
 func TestComputeRotateVerdictAboveThresholdRotates(t *testing.T) {
-	v := ComputeRotateVerdict(93, DefaultRotateThreshold)
+	v := ComputeRotateVerdict(93, DefaultRotateThreshold, true)
 	if !v.Rotate || v.ExitCode != ExitRotate {
 		t.Errorf("ComputeRotateVerdict(93, 85) = %+v, want Rotate=true ExitCode=%d", v, ExitRotate)
 	}
 }
 
 func TestComputeRotateVerdictCustomThresholdShiftsBoundary(t *testing.T) {
-	v := ComputeRotateVerdict(70, 60)
+	v := ComputeRotateVerdict(70, 60, true)
 	if !v.Rotate {
-		t.Errorf("ComputeRotateVerdict(70, 60) = %+v, want Rotate=true", v)
+		t.Errorf("ComputeRotateVerdict(70, 60, true) = %+v, want Rotate=true", v)
 	}
-	v = ComputeRotateVerdict(50, 60)
+	v = ComputeRotateVerdict(50, 60, true)
 	if v.Rotate {
-		t.Errorf("ComputeRotateVerdict(50, 60) = %+v, want Rotate=false", v)
+		t.Errorf("ComputeRotateVerdict(50, 60, true) = %+v, want Rotate=false", v)
 	}
 }
 
 func TestComputeRotateVerdictRoundsToOneDecimal(t *testing.T) {
-	v := ComputeRotateVerdict(85.44, DefaultRotateThreshold)
+	v := ComputeRotateVerdict(85.44, DefaultRotateThreshold, true)
 	if !strings.Contains(v.Line, "85.4%") {
 		t.Errorf("ComputeRotateVerdict(85.44, 85).Line = %q, want it rounded to 85.4%%", v.Line)
 	}
 	if !v.Rotate {
 		t.Error("ComputeRotateVerdict(85.44, 85).Rotate = false, want true (rounds up to meet threshold)")
+	}
+}
+
+// The store-availability argument must not touch the DECISION — only the
+// wording of the ROTATE line's next step. A script branches on exit 3, so a
+// machine-dependent exit code would be a real regression.
+func TestComputeRotateVerdictVerdictIsStoreIndependent(t *testing.T) {
+	for _, pct := range []float64{10, 84.9, 85, 93, 100} {
+		with, without := ComputeRotateVerdict(pct, DefaultRotateThreshold, true), ComputeRotateVerdict(pct, DefaultRotateThreshold, false)
+		if with.Rotate != without.Rotate || with.ExitCode != without.ExitCode {
+			t.Errorf("pct %v: verdict differs by store availability: %+v vs %+v", pct, with, without)
+		}
+	}
+}
+
+// Fresh-clone case: `handoff` is a beads-store wrapper from the author's
+// federation, not a command this repo installs. The ROTATE line is read by a
+// live agent that is about to act on it, so it must never name `handoff
+// create` where that binary does not exist.
+func TestRotateLineWithoutStoreNamesThePortableSubstitute(t *testing.T) {
+	v := ComputeRotateVerdict(87, DefaultRotateThreshold, false)
+	if strings.Contains(v.Line, "handoff create") {
+		t.Errorf("ROTATE line prescribes `handoff create` with no store installed: %q", v.Line)
+	}
+	for _, want := range []string{"ROTATE", "parlay drawdown", "parlay identity --submit <handoff-id>"} {
+		if !strings.Contains(v.Line, want) {
+			t.Errorf("ROTATE line = %q, want it to name %q", v.Line, want)
+		}
+	}
+}
+
+// With the store installed the historical one-liner is preserved verbatim —
+// the captain's fleet reads these lines too.
+func TestRotateLineWithStoreKeepsTheHandoffCreateRecipe(t *testing.T) {
+	v := ComputeRotateVerdict(87, DefaultRotateThreshold, true)
+	if got := v.Line; !strings.Contains(got, "ROTATE: create handoff now, then identity --submit") {
+		t.Errorf("ROTATE line with store = %q, want the historical `create handoff now` recipe", got)
+	}
+}
+
+func TestContextCheckWithoutStoreDoesNotPrescribeHandoffCreate(t *testing.T) {
+	pinHandoffStore(t, false)
+	// exit trap INSIDE the stdout capture: RecordingExit unwinds by panicking,
+	// and the panic has to be recovered before the pipe is closed and read.
+	var code int
+	var exited bool
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { ContextCheck([]string{"87"}) })
+	})
+	if !exited || code != ExitRotate {
+		t.Errorf("ContextCheck([87]) exited=%v code=%d, want exit %d", exited, code, ExitRotate)
+	}
+	if strings.Contains(out, "handoff create") {
+		t.Errorf("ContextCheck with no store installed prescribed `handoff create`:\n%s", out)
+	}
+	if !strings.Contains(out, "parlay identity --submit <handoff-id>") {
+		t.Errorf("ContextCheck with no store installed did not name the portable substitute:\n%s", out)
 	}
 }
 
