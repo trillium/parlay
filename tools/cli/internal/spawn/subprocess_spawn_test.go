@@ -209,3 +209,87 @@ func TestSubprocessTreehouseSidecarWrittenAndReturnedOnStop(t *testing.T) {
 func shimLogQuote(path string) string {
 	return "\"" + path + "\""
 }
+
+// (captureStdout is the shared helper from spawn_test.go.)
+//
+// TestSubprocessHelpIsAnsweredNotExecuted is the regression pin for the rough
+// edge that made these three verbs undiscoverable: `--help` was parsed as the
+// leading agent-id positional, so
+//
+//	parlay subprocess-stop --help   exited 0 in SILENCE, having "stopped" a
+//	                                session literally named --help
+//	parlay subprocess-ping --help   exited 1 with no output at all
+//	parlay subprocess-spawn --help  dumped usage to stderr and exited 2
+//
+// while the top-level usage text promised "Any subcommand accepts --help".
+// Each verb must now print the shared usage to stdout and exit 0.
+func TestSubprocessHelpIsAnsweredNotExecuted(t *testing.T) {
+	// A state dir that would be catastrophic to act on, so a regression that
+	// actually EXECUTED the verb cannot pass by accident.
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+
+	cases := []struct {
+		name string
+		run  func() int
+	}{
+		{"spawn", func() int { return runSubprocessSpawnCommand([]string{"--help"}) }},
+		{"stop", func() int { return runSubprocessStopCommand([]string{"--help"}) }},
+		{"ping", func() int { return runSubprocessPingCommand([]string{"--help"}) }},
+		{"stop -h", func() int { return runSubprocessStopCommand([]string{"-h"}) }},
+	}
+	for _, tc := range cases {
+		out, code := captureStdout(t, tc.run)
+		if code != 0 {
+			t.Errorf("subprocess %s --help exited %d, want 0 (asking for help is not a usage error)", tc.name, code)
+		}
+		if !strings.Contains(out, "Usage: parlay subprocess-spawn") {
+			t.Errorf("subprocess %s --help printed %q, want the shared subprocess usage", tc.name, out)
+		}
+		// The usage names all three verbs, so a reader who typed stop/ping can
+		// see the family; assert it explicitly so a future trim cannot drop it.
+		for _, verb := range []string{"subprocess-stop", "subprocess-ping"} {
+			if !strings.Contains(out, verb) {
+				t.Errorf("subprocess %s --help output never mentions %s", tc.name, verb)
+			}
+		}
+	}
+}
+
+// TestSubprocessStopAndPingRefuseAFlagAsAnAgentID covers the other half of the
+// same defect: without the guard, any unrecognized leading flag was taken as an
+// agent id. `--help` was the visible symptom; a typo'd `--stae-dir` is the one
+// that would have aimed a stop at a session named `--stae-dir`.
+func TestSubprocessStopAndPingRefuseAFlagAsAnAgentID(t *testing.T) {
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+
+	for _, args := range [][]string{
+		{"--stae-dir", "/tmp/nope"},
+		{"-x"},
+		{"--agent", "demo"},
+	} {
+		if _, code := captureStdout(t, func() int { return runSubprocessStopCommand(args) }); code != 2 {
+			t.Errorf("subprocess-stop %v exited %d, want 2", args, code)
+		}
+		if _, code := captureStdout(t, func() int { return runSubprocessPingCommand(args) }); code != 2 {
+			t.Errorf("subprocess-ping %v exited %d, want 2", args, code)
+		}
+	}
+}
+
+// TestSubprocessUsageNamesNoDeletedScript pins the second fix in this file: the
+// user-facing usage text told readers to "pass this explicitly from
+// bin/parlay-spawn", a script deleted with the Go spawner fold-in (task-42qot).
+// The on-disk "gascity" directory segment stays (it is what pre-rename sessions
+// are found under), so only the dead script reference is asserted away.
+func TestSubprocessUsageNamesNoDeletedScript(t *testing.T) {
+	for _, dead := range []string{"bin/parlay-spawn", "AGENT_DIR"} {
+		if strings.Contains(subprocessSpawnUsage, dead) {
+			t.Errorf("subprocessSpawnUsage still names %q, which no longer exists; a reader "+
+				"cannot follow an instruction that points at a deleted file", dead)
+		}
+	}
+	if !strings.Contains(subprocessSpawnUsage, "gascity") {
+		t.Error("subprocessSpawnUsage lost the on-disk \"gascity\" segment name; sessions " +
+			"started before the rename are found under it")
+	}
+}

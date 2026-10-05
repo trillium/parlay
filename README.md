@@ -146,6 +146,7 @@ That round-trip is the whole substrate. From here:
 ./bin/parlay reply --agent demo "on it"           # posts an agent-role message into history; channel routing needs a spawned agent's context
 ./bin/parlay alert "heads up"                     # broadcast to every agent
 ./bin/parlay help                                 # every verb
+./bin/parlay <verb> --help                        # one verb, in detail (every verb answers this)
 ./bin/parlay monitor --legacy-poll --agent demo   # stream a channel; runs until Ctrl-C, so give it a second shell
 ```
 
@@ -286,7 +287,7 @@ flowchart LR
 | **Launcher (spawn)** | Launches a new background agent into a live chat tab — one in-process implementation (`tools/cli/internal/spawn`), so the model and beads gates cannot be routed around. | [`docs/launcher.md`](docs/launcher.md) |
 | **Relay** | Single fan-out daemon between the server's long-poll feed and every enrolled agent's monitor; a per-runtime-dir singleton, not built by default. | [`docs/relay.md`](docs/relay.md) |
 | **Live-command registry** | A separate registry from agent enrollment — tracks running `parlay` CLI invocations for `parlay commands` and the panel's live-commands view. | [`docs/live-commands.md`](docs/live-commands.md) |
-| **CLI** | The `parlay` Go command surface and the embedded voice/phrase eval engine. | [`tools/cli`](tools/cli), [`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md) |
+| **CLI** | The `parlay` Go command surface and the embedded voice/phrase eval engine. | [`tools/cli`](tools/cli) — start with `parlay help`, then `parlay <verb> --help`. The authoring doc ([`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md)) is TS-era design, not the live surface. |
 | **Panel** | The browser chat UI — tabs, presence, TTS, annotations. Not shipped with a host; see the Requirements section above. | [`packages/client`](packages/client) |
 
 ## A worked config
