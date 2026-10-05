@@ -1,8 +1,9 @@
 // parlay doctor + health: glanceable diagnosis surfaces.
 //
-// `health` is the SERVER'S vitals (relay, subscribers, memory, eval-engine) —
-// same view for every caller. `doctor` is THIS AGENT'S self-diagnosis: each
-// named check (doctor_check.go's registry) reports PASS/WARN/FAIL/UNKNOWN
+// `health` is the SERVER'S vitals (reachability, subscribers, memory,
+// eval-engine) — same view for every caller. `doctor` is THIS AGENT'S
+// self-diagnosis: each named check (doctor_check.go's registry) reports
+// PASS/WARN/FAIL/UNKNOWN
 // with the fix for anything broken, keeps going past failures (a dead server
 // must not hide a corrupt identity file), and exits 1 if anything FAILed so
 // scripts can gate on it. `--json` renders the same registry as a single
@@ -122,10 +123,15 @@ func Health(argv []string) {
 	server := config.ServerURL()
 	engine := engineURL()
 
+	// The label is "server", never "relay": this probe measures the chat
+	// server itself, and parlay ships a SEPARATE component called the relay
+	// (tools/relay, the per-agent spool fan-out `parlay monitor` needs). Calling
+	// the server "relay" here told a newcomer their relay was healthy when it
+	// was not running at all — and the two fail and get fixed independently.
 	subs := tryJSON[healthSubscribersInfo](server, "/api/chat/subscribers")
 	if !subs.ok {
 		sick = true
-		fmt.Printf("FAIL  relay %s — %s\n", server, subs.err)
+		fmt.Printf("FAIL  server %s — %s\n", server, subs.err)
 		fmt.Printf("      fix: is the Go server running? curl %s/api/chat/subscribers\n", server)
 	} else {
 		d := subs.data
@@ -139,7 +145,7 @@ func Health(argv []string) {
 		if d.Registered != nil {
 			registered = d.Registered.Count
 		}
-		fmt.Printf("ok    relay %s — %d client(s), %d poller(s), %d agent(s)\n", server, clients, pollers, registered)
+		fmt.Printf("ok    server %s — %d client(s), %d poller(s), %d agent(s)\n", server, clients, pollers, registered)
 		if d.Memory != nil {
 			historyCount, historyKB := "?", "?"
 			if d.History != nil {
@@ -161,6 +167,16 @@ func Health(argv []string) {
 			reason = engineRes.err
 		}
 		fmt.Printf("FAIL  eval-engine %s — %s\n", engine, reason)
+		// The engine is OPTIONAL for the substrate this repo ships working:
+		// the Quickstart's CLI + server need no other service, so on a fresh
+		// clone this line is red by default. Exit 1 is still correct (a dead
+		// engine is exactly what an operator wants screamed about, and
+		// docs/ux-eval-2026-08-30.md recorded that decision deliberately), but
+		// the newcomer must be able to tell WHICH part of their install is
+		// missing instead of concluding the whole thing is broken.
+		fmt.Printf("      the voice engine is OPTIONAL for the CLI + server (it is what turns spoken or typed\n")
+		fmt.Printf("      phrases into panel actions); the CLI, the API and the panel's text chat all work\n")
+		fmt.Printf("      without it. This line is about the engine, not about your install.\n")
 		fmt.Printf("      fix: %s\n", evalEngineFix)
 	}
 
@@ -262,16 +278,20 @@ func checkServerReachable(st *doctorState) (CheckResult, bool) {
 		return singleLine("server-reachable", vPass, fmt.Sprintf("server reachable at %s", st.server), "",
 			map[string]any{"server_url": st.server, "url_source": string(st.src.Source)}), true
 	}
-	fix := "check the Go server and relay are up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
+	// Only the server is being probed here. Blaming "the Go server and relay"
+	// sent a newcomer to build tools/relay when the thing that was actually
+	// unreachable is the chat server — and the relay is a separate, optional
+	// daemon that `--legacy-poll` exists to avoid.
+	fix := "check the Go server is up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
 	if st.src.Source != config.SourceDefault {
-		fix = fmt.Sprintf("check the Go server and relay are up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
+		fix = fmt.Sprintf("check the Go server is up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
 	}
 	text := fmt.Sprintf("server unreachable at %s — %s", st.server, st.subs.err)
 	return singleLine("server-reachable", vFail, text, fix,
 		map[string]any{"server_url": st.server, "url_source": string(st.src.Source), "error": st.subs.err}), true
 }
 
-// checkAgentRegistered is check 3: does the relay's agent registry know this
+// checkAgentRegistered is check 3: does the server's agent registry know this
 // agent — needs agent + a reachable server.
 func checkAgentRegistered(st *doctorState) (CheckResult, bool) {
 	if st.agent == "" || !st.subs.ok {
@@ -288,7 +308,7 @@ func checkAgentRegistered(st *doctorState) (CheckResult, bool) {
 		}
 	}
 	if registered {
-		return singleLine("agent-registered", vPass, fmt.Sprintf("registered as %q on the relay", st.agent), "",
+		return singleLine("agent-registered", vPass, fmt.Sprintf("registered as %q with the server", st.agent), "",
 			map[string]any{"agent_id": st.agent}), true
 	}
 	fixText := fmt.Sprintf("first poll auto-registers: parlay monitor --agent %s (via Monitor{})", st.agent)
