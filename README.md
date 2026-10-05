@@ -396,8 +396,19 @@ your running server alone — read its limits in [`examples/`](examples/) before
 ```sh
 cd packages/go-server && go test ./...     # the Go server
 cd packages/client && bun test             # a TS client package, from inside it — see note below
-cd tools/cli && go test ./...              # the Go CLI
+cd tools/cli && CGO_ENABLED=0 go test ./...  # the Go CLI — see the cgo note below
 ```
+
+The `CGO_ENABLED=0` on the CLI line is required, not decoration.
+`tools/cli`'s beads dependency carries an embedded Dolt tree whose ICU binding
+needs C++ headers that a stock macOS toolchain does not ship, so the same
+command with cgo on fails to build with
+`fatal error: 'unicode/regex.h' file not found` — for `go test`, for
+`go build`, and for the plain `go build .` that `bin/parlay` runs (which is why
+the wrapper pins the flag itself). Nothing in the CLI needs cgo. On Linux, or
+with a full Xcode/ICU toolchain installed, the flag is harmless either way.
+Every committed `deploy/install.sh` carries it for the same reason, and
+`tools/cli/deploy_build_flags_gate_test.go` fails the build if one regresses.
 
 There is no root `bunfig.toml`, so `bun test` at the repo root does not load the
 happy-dom preload some client packages need: DOM-touching suites fail there with

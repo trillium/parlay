@@ -84,9 +84,23 @@ func engineScopeNote() string {
 // print for an unreachable eval-engine. It must hold on any clone: the old
 // text hardcoded the author's ~/code/parlay checkout path and a
 // ./parlay-eval-engine binary that nothing on a fresh clone builds — the
-// binary is a gitignored artifact only `go build` (or the installer, which
-// builds it if missing) produces.
-const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd), or: nohup parlay eval serve > engine.log 2>&1 & (the engine ships inside the parlay binary; cd tools/cli && go build . if you need one)"
+// binary is a gitignored artifact only the installer (which builds it if
+// missing) or an explicit `go build` produces.
+//
+// Two defects lived in the same string, both verified on a fresh clone:
+//   - `cd tools/cli && go build .` is a default-cgo build of the CLI module,
+//     which dies on macOS for the same missing-ICU reason bin/parlay pins
+//     CGO_ENABLED=0 against (robots-wgij) — so the suggested repair could not
+//     build anything.
+//   - It also named the wrong artifact: `go build .` in tools/cli writes a
+//     binary named `cli` (the directory base), not `parlay`, and never lands
+//     it on PATH, so the `parlay eval serve` it is a parenthetical for could
+//     not have been that binary.
+//
+// So the fallback names the wrapper, which builds the CLI with the right flags
+// and then execs it: `./bin/parlay eval serve` from the clone (or plain
+// `parlay eval serve` once installed). Verified end to end on a fresh clone.
+const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd, supervised), or: ./bin/parlay eval serve > engine.log 2>&1 & — the engine ships inside the CLI itself, so any parlay binary can serve it and ./bin/parlay builds one on first run"
 
 // jsonAttempt is the outcome of tryJSON: either decoded data, or a short
 // error string describing why it failed (network error, non-2xx status, or

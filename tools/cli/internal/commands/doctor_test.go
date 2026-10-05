@@ -205,6 +205,49 @@ func TestEngineTargetAndItsTwoCallSitesStayInSync(t *testing.T) {
 
 // ── doctor ───────────────────────────────────────────────────────────────
 
+// The eval-engine repair line is the FIRST fix a newcomer sees: it is the
+// only expected red line in the Quickstart, and `health` prints it verbatim on
+// FAIL while `doctor` prints it on WARN. Both defects this pins were found by
+// running the Quickstart on a real fresh clone, where neither repair could
+// work:
+//
+//   - the fallback said `cd tools/cli && go build .`, a default-cgo build of
+//     the CLI module, which dies on macOS on the missing ICU headers that
+//     bin/parlay pins CGO_ENABLED=0 against (robots-wgij);
+//   - and that same command writes a binary named `cli`, not `parlay`, so it
+//     could not have been the `parlay eval serve` it was a parenthetical for.
+//
+// The repo-relative paths are checked against the tree, so the line cannot
+// drift back into naming a checkout that does not exist.
+func TestEvalEngineFixNamesRepairsThatActuallyRun(t *testing.T) {
+	if strings.Contains(evalEngineFix, "go build .") {
+		t.Error("evalEngineFix still suggests a bare `go build .` of the CLI module: " +
+			"it is a default-cgo build (dies on missing ICU headers, robots-wgij) and it " +
+			"writes a binary named `cli`, not `parlay`")
+	}
+	for _, want := range []string{"tools/eval-engine/deploy/install.sh", "./bin/parlay eval serve"} {
+		if !strings.Contains(evalEngineFix, want) {
+			t.Errorf("evalEngineFix no longer offers %q; a fresh clone has no other working repair", want)
+		}
+	}
+
+	// The repo-relative half must exist in the tree. Walk up from
+	// internal/commands to the repository root.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(wd, "..", "..", "..", "..")
+	for _, rel := range []string{
+		"tools/eval-engine/deploy/install.sh",
+		"bin/parlay",
+	} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("evalEngineFix points at %s, which is not in the tree: %v", rel, err)
+		}
+	}
+}
+
 func TestDoctorFailsWithNoAgentID(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_ID", "")
 	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
