@@ -224,8 +224,21 @@ Launch a background agent that shows up as a live tab (needs a
 
 ```sh
 parlay spawn code-reviewer "Code Reviewer" "#c084fc" \
-  "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
+  "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo --model sonnet
 ```
+
+**`--model` is mandatory and there is no default.** Omit it and `parlay spawn` refuses
+with exit 2 and *`refusing to spawn — no model was chosen`*: the launching session's
+model is never inherited and there is no silent sonnet fallback. Three things satisfy
+the gate — `--model <id>` (what the example does), a `--profile <name>` that carries a
+model ([`packages/spawn-profiles`](packages/spawn-profiles)), or `--no-pii`, which
+auto-routes to a free model. `parlay spawn --list` renders the profile catalog.
+
+One thing to know before your first spawn: for the default `claude` harness the
+launcher starts it with `--dangerously-skip-permissions` (plus a `--strict-mcp-config`
+and a sonnet fallback), deliberately — a phone-driven agent cannot answer a permission
+prompt. Every other harness gets only its explicit `--model` and uses its own
+permission config. Details in [`docs/launcher.md`](docs/launcher.md).
 
 `parlay spawn` is the sole entry point for spawning, and the only one there is: the
 launcher runs in-process (`tools/cli/internal/spawn`). The bash spawner and its
