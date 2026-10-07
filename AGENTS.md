@@ -4,6 +4,8 @@ This file is internal operating memory for AI agents working in this repository,
 
 **This file is an index, not the archive.** It is loaded into every agent session, so it is kept small on purpose: the non-negotiable rules are inline below, and everything else is one line plus a pointer into [`docs/agent-notes/`](docs/agent-notes/), which holds the full rationale. Read the pointer before touching the code it describes — the one-liner is a reminder, not the whole rule.
 
+**Before you run anything: `./bin/parlay-preflight`.** One command, bash only (so it still runs when the machine is broken), that checks the whole prerequisite set — Go against the floor `tools/cli/go.mod` declares, `git`, `curl`, the chat-server and eval-engine ports, `$HOME`, the state directory, the CLI build directory and the relay runtime, with write permission on each — and prints **every** problem in one run with the exact `fix:` command, exiting 1 if any is blocking. It is the same command the README's step 0 gives a newcomer and the one to re-run when the machine looks wrong; `bin/parlay-preflight.test.sh` proves it fails on a deliberately broken environment. `parlay health` (running instance) and `parlay doctor` (this agent) answer different, later questions.
+
 ## Do not do these things
 
 Each of these has already caused a real incident on the captain's box.

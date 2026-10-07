@@ -55,11 +55,39 @@ the host from a phone; a LAN address or any other private tunnel works the same 
 
 ## Quickstart (local only — no Pulse, no tailnet)
 
+### Step 0 — check the machine before it wastes your time
+
+```sh
+./bin/parlay-preflight
+```
+
+That one command checks the whole prerequisite set at once — Go (and its version
+against the floor `tools/cli/go.mod` declares), `git`, `curl`, the chat-server
+port, the eval-engine port, the state directories, and write permission on each —
+and it reports **every** problem it finds in one run, each with the exact command
+that fixes it. It needs nothing installed to run: it is bash and nothing else, on
+purpose (a checker that cannot run on a broken machine is useless precisely when
+it is needed).
+
+**Success looks like** `0 failure(s).` and exit 0, followed by the next command to
+run. **If it fails**, fix exactly what it names and run it again — the `fix:` line
+under each `FAIL` is the remedy, not a hint. It exits 1 while anything is
+blocking; `warn` lines never block, and each one says which optional feature it
+limits (the chat panel, the sandbox example).
+
+It is also the command to reach for when something that *used to* work stops
+working, or when a later step in this file fails: it is the single prerequisite
+surface, so the newcomer's step 0 and the operator's "what is wrong with this
+machine" are one command and not two.
+
+### The four steps (step 0 has just checked everything they need)
+
 Prereqs: [Go](https://go.dev) **1.26.5+** — the CLI and server are both Go, and
 `bin/parlay` builds the CLI for you on first run. (1.26.5, not 1.26, because
 `tools/cli/go.mod` declares `go 1.26.5`; with the default `GOTOOLCHAIN=auto`
 Go downloads the newer toolchain for you, but with `GOTOOLCHAIN=local` it is a
-hard error.)
+hard error.) Step 0 checks all of this for you; this paragraph is what it is
+checking.
 
 [Bun](https://bun.sh) is needed **only** if you want the chat panel
 (`packages/client`) or the git hooks. Every command in this Quickstart is Go, so
@@ -284,6 +312,38 @@ work — see the origin guard in `packages/go-server/internal/guard`), so anythi
 that can reach the port can post into a live agent's turn. Expose it only over a
 private network — a tailnet, a VPN, or a LAN you control — never a public tunnel or
 a port forwarded to the internet.
+
+### When a step fails, or something that worked stops working
+
+Run step 0 again. `./bin/parlay-preflight` is the prerequisite surface for a
+newcomer and for an operator, and it is deliberately the same command in both
+roles — there is no second checklist to find. It answers whether the toolchain is
+present and new enough, whether the state directories and the CLI build directory
+are writable, whether the port the CLI talks to is free, and — if something is
+already listening there — whether it is parlay (`GET /health` answers with
+`"ok":true`) or a stranger holding the port. Each `FAIL` prints the exact command
+that fixes it.
+
+Two other verbs answer questions this one deliberately does not, both only once a
+server exists:
+
+- `./bin/parlay health` — the running instance's own vitals on the server your CLI
+  is pointed at: subscribers, pollers, registered agents, server memory and history
+  size; then the optional voice engine. It exits 1 on a fresh clone because the
+  voice engine is not installed — that line is the engine, not your install, and the
+  output says so.
+- `./bin/parlay doctor deploy` — the machine-level sweep for a host running the
+  launchd services: service inventory, binary-path sanity, log freshness, pin-vs-doc
+  consistency. On a fresh clone it has nothing to inventory and says so.
+
+(`./bin/parlay doctor` with no subcommand is a *different* thing: it is one agent's
+self-diagnosis — is `PARLAY_AGENT_ID` set, is that agent registered and listening,
+are its identity files readable. Run from a plain shell it fails on the first
+question by design. It is for an agent inside a spawned turn, not for you.)
+
+Everything else that has already bitten someone is in [`AGENTS.md`](AGENTS.md), the
+incident record, and the per-fact notes it links to under
+[`docs/agent-notes/`](docs/agent-notes/).
 
 ## Fleet layer and `parlay-dev`
 

@@ -256,6 +256,15 @@ jobs:
   #   tools/relay/deploy/ensure-up.test.sh   — drives launchctl (macOS launchd).
   #   tools/relay/deploy/install.test.sh     — launchctl + plist/PlistBuddy.
   #
+  # bin/parlay-preflight.test.sh is hermetic in the same sense. It redirects
+  # HOME/PARLAY_*/TMPDIR into one mktemp root, builds its cases against a
+  # synthetic checkout there, and occupies exactly one kernel-chosen port with a
+  # listener it kills on exit. Its last case does point the preflight at the real
+  # checkout under `env -i` — that command only reads (it resolves paths and
+  # probes a port) and writes nothing, which is why it can be run here at all.
+  # It needs no Go: the toolchain it checks for is stubbed, so this job does not
+  # silently depend on a toolchain it never installed.
+  #
   # HOME is redirected here too, and PARLAY_SERVER is pointed at a closed port
   # so that any spawn path which somehow reached a network call fails fast
   # instead of registering against a live Pulse instance.
@@ -312,6 +321,7 @@ jobs:
           git config --global user.email ci@example.invalid
           git config --global user.name  "parlay ci"
           for t in bin/parlay-treehouse-guard.test.sh \
+                   bin/parlay-preflight.test.sh \
                    bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
                    tools/hooks/hooks.test.sh \

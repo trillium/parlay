@@ -1,0 +1,250 @@
+#!/bin/bash
+# parlay-preflight — can this machine and checkout run parlay at all?
+#
+# Run this FIRST, before any other command in the README. It reports EVERY
+# problem it finds in one run, each with the exact command that fixes it, and
+# exits 1 if any of them is a hard blocker. Things that limit only an optional
+# feature (the chat panel, the sandbox example) are WARN, not FAIL: the
+# README's Quickstart works without them.
+#
+#   ./bin/parlay-preflight
+#
+# It needs nothing but a bash, deliberately: every tool it checks for is a thing
+# that may be missing, so it cannot depend on any of them. No grep/sed/dirname/
+# awk, and port probes use bash's own /dev/tcp — which is what lets it still
+# print a full report under a deliberately broken environment, the case
+# bin/parlay-preflight.test.sh runs. `#!/bin/bash`, not `env bash`, for the same
+# reason: a broken PATH cannot find env either. It is NOT `parlay health` (is a
+# RUNNING instance healthy?) or `parlay doctor` (is THIS agent enrolled?) —
+# those answer questions that only exist after a server is up.
+#
+# Reads, all optional: HOME, TMPDIR, GOTOOLCHAIN, PARLAY_STATE_HOME,
+# PARLAY_SERVER, PARLAY_EVAL_ENGINE_URL, PARLAY_RELAY_RUNTIME.
+
+SELF="${BASH_SOURCE[0]}"
+case "$SELF" in */*) SELFDIR="${SELF%/*}" ;; *) SELFDIR="." ;; esac
+ROOT="$(cd -- "$SELFDIR/.." 2>/dev/null && pwd -P)" || ROOT=""
+
+FAILS=0; WARNS=0; OKS=0
+ok()   { OKS=$((OKS + 1));  printf '  ok    %-13s %s\n' "$1" "$2"; }
+warn() { WARNS=$((WARNS + 1)); printf '  warn  %-13s %s\n' "$1" "$2"
+         if [ -n "$3" ]; then printf '        fix: %s\n' "$3"; fi; return 0; }
+fail() { FAILS=$((FAILS + 1)); printf '  FAIL  %-13s %s\n' "$1" "$2"
+         if [ -n "$3" ]; then printf '        fix: %s\n' "$3"; fi; return 0; }
+# ── helpers ───────────────────────────────────────────────────────────────────
+# True if VERSION >= FLOOR, dot-separated. A suffix ("1.27.0-rc1") compares on
+# its numeric prefix, which is what a plain release version in go.mod means.
+version_ge() {
+  local IFS=. i x y
+  local -a H N
+  H=(${1%%-*}); N=(${2%%-*})
+  for i in 0 1 2; do
+    x="${H[$i]:-0}"; y="${N[$i]:-0}"
+    case "$x" in ''|*[!0-9]*) x=0 ;; esac
+    case "$y" in ''|*[!0-9]*) y=0 ;; esac
+    [ "$x" -gt "$y" ] && return 0
+    [ "$x" -lt "$y" ] && return 1
+  done
+  return 0
+}
+# True if P is a writable dir, or does not exist and its nearest existing
+# ancestor is. Never creates anything: a preflight that mutates the thing it is
+# checking is not a preflight.
+writable() {
+  local p="$1"
+  while [ ! -e "$p" ]; do
+    case "$p" in
+      "/"|"."|"") return 1 ;;
+      */*) p="${p%/*}"; [ -n "$p" ] || p="/" ;;
+      *) return 1 ;;
+    esac
+  done
+  [ -d "$p" ] && [ -w "$p" ]
+}
+# need_writable <path> <label> <ok-detail> <fail-detail> <fix>
+need_writable() {
+  if writable "$1"; then ok "$2" "$1 $3"; else fail "$2" "$1 $4" "$5"; fi
+}
+
+# A tool is a prerequisite only if it RUNS: a half-installed binary that
+# `command -v` finds and that then exits non-zero is not one this checkout has.
+tool() { # tool <name> <ok|warn|fail> <why it matters> <fix>
+  local n="$1" sev="$2" v
+  if ! command -v "$n" >/dev/null 2>&1; then
+    "$sev" "$n" "not on PATH — $3" "$4"; return 0
+  fi
+  if ! v="$("$n" --version 2>/dev/null)"; then
+    "$sev" "$n" "on PATH but '$n --version' does not run — broken or shadowed" "$4"; return 0
+  fi
+  v="${v%%$'\n'*}"; v="${v%% (*}"     # curl prints protocols/features too
+  ok "$n" "${v:-on PATH}"
+}
+
+# Resolve HOST/PORT out of a URL or host:port.
+HOST=""; PORT=""
+split_hostport() {
+  local s="${1#*://}"; s="${s%%/*}"
+  case "$s" in
+    *:*) HOST="${s%:*}"; PORT="${s##*:}" ;;
+    *)   HOST="$s";      PORT="" ;;
+  esac
+  [ -n "$HOST" ] || HOST=127.0.0.1
+  [ "$HOST" = "localhost" ] && HOST=127.0.0.1
+  return 0
+}
+
+# 0 if PORT on HOST accepts a TCP connection. A refused connection and a bash
+# built without /dev/tcp are both "not reachable" — the caller's remedy is the
+# same either way, so distinguishing them would be a claim this cannot support.
+port_reachable() { (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null; }
+
+# The raw HTTP response to GET /health, or failure if nothing is listening. Raw
+# HTTP over /dev/tcp because telling "a parlay server is already here" from
+# "something else owns this port" must not need curl. The subshell matters: bash
+# exits on a failed exec redirection, so a refused connect would kill the report.
+http_health() {
+  ( exec 3<>"/dev/tcp/$1/$2" || exit 1
+    printf 'GET /health HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n' "$1" >&3 || exit 1
+    while IFS= read -r -t 3 line; do printf '%s\n' "$line"; done <&3
+  ) 2>/dev/null
+}
+
+# The server the CLI will talk to, resolved the way the CLI resolves it:
+# PARLAY_SERVER env, then persisted config, then the coded default. The config
+# read is a crude scan for the "server" value rather than JSON parsing — a
+# preflight that needs a JSON parser stops working exactly when PATH is broken.
+# (q, not a literal quote in the expansions: bash rejects an escaped quote
+# inside a quoted parameter-expansion pattern.)
+server_url() {
+  [ -n "${PARLAY_SERVER:-}" ] && { printf '%s' "$PARLAY_SERVER"; return 0; }
+  local q='"' v
+  if [ -f "$1" ]; then
+    v="$(<"$1")"
+    case "$v" in *"$q"server"$q"*)
+      v="${v#*${q}server${q}}"; v="${v#*:}"; v="${v#*${q}}"; v="${v%%${q}*}"
+      case "$v" in http*) printf '%s' "$v"; return 0 ;; esac ;;
+    esac
+  fi
+  printf 'http://localhost:4242'
+}
+
+printf 'parlay-preflight — can this machine and checkout run parlay?\n\n'
+# ── 1. checkout ───────────────────────────────────────────────────────────────
+MISSING=""
+for m in tools/cli packages/go-server tools/relay packages/spawn-profiles; do
+  [ -f "$ROOT/$m/go.mod" ] || MISSING="$MISSING $m"
+done
+if [ -z "$ROOT" ]; then
+  fail checkout "could not resolve the checkout root from this script's own location" \
+       "run it from the clone: ./bin/parlay-preflight (do not copy the file out of the repo)"
+elif [ -n "$MISSING" ] || [ ! -f "$ROOT/bin/parlay" ]; then
+  fail checkout "not a parlay checkout: $ROOT has no bin/parlay and/or is missing modules:$MISSING" \
+       "cd into the clone root (or: git clone https://github.com/trillium/parlay && cd parlay)"
+else
+  ok checkout "$ROOT — 4 Go modules, bin/parlay present"
+fi
+# ── 2. Go, against the floor tools/cli/go.mod declares ────────────────────────
+GO_FLOOR=""
+if [ -f "$ROOT/tools/cli/go.mod" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "go "*) GO_FLOOR="${line#go }"; GO_FLOOR="${GO_FLOOR%% *}"; break ;; esac
+  done < "$ROOT/tools/cli/go.mod"
+fi
+[ -n "$GO_FLOOR" ] || GO_FLOOR="1.26"
+if ! command -v go >/dev/null 2>&1; then
+  fail go "not on PATH — every parlay command builds the Go CLI on first run" \
+       "install Go $GO_FLOOR+ (https://go.dev/dl · macOS: brew install go · Debian/Ubuntu: apt-get install golang-go)"
+else
+  GOVER=""
+  for tok in $(go version 2>/dev/null); do
+    case "$tok" in go[0-9]*) GOVER="${tok#go}"; break ;; esac
+  done
+  if [ -z "$GOVER" ]; then
+    fail go "on PATH but 'go version' did not run — a broken or half-installed Go" \
+         "reinstall: https://go.dev/dl (macOS: brew reinstall go)"
+  elif version_ge "$GOVER" "$GO_FLOOR"; then
+    ok go "go$GOVER (tools/cli requires $GO_FLOOR)"
+  elif [ "${GOTOOLCHAIN:-auto}" = "local" ]; then
+    fail go "go$GOVER is older than the $GO_FLOOR floor and GOTOOLCHAIN=local forbids fetching it" \
+         "upgrade Go to $GO_FLOOR+, or unset GOTOOLCHAIN to let Go download the toolchain itself"
+  else
+    warn go "go$GOVER is older than the $GO_FLOOR floor; GOTOOLCHAIN=auto downloads it on the first build (needs network)" \
+         "optional, to skip the download: upgrade Go — macOS: brew upgrade go"
+  fi
+fi
+# ── 3. git and curl (needed), bun (optional panel) ────────────────────────────
+tool git  fail "parlay spawn/guard/teardown all shell out to git" "macOS: xcode-select --install · Debian/Ubuntu: apt-get install git"
+tool curl warn "examples/bootstrap-sandbox.sh needs it (the Quickstart does not)" "macOS: preinstalled at /usr/bin/curl · Debian/Ubuntu: apt-get install curl"
+tool bun  warn "only the optional chat panel (packages/client) needs it" "curl -fsSL https://bun.sh/install | bash  (skip this unless you want the panel)"
+# ── 4. state paths, build dir, permissions ────────────────────────────────────
+if [ -z "${HOME:-}" ]; then
+  fail HOME "unset — the CLI resolves ~/.parlay, ~/.claude/PAI and the agent store from \$HOME" \
+       "export HOME=/path/to/your/home, then re-run"
+  STATE_HOME="${PARLAY_STATE_HOME:-/nonexistent/.parlay}"
+elif [ ! -d "$HOME" ] || [ ! -w "$HOME" ]; then
+  fail HOME "$HOME is not an existing, writable directory — ~/.parlay is created under it" \
+       "export HOME=/path/to/your/home (it must exist and be writable), then re-run"
+  STATE_HOME="${PARLAY_STATE_HOME:-$HOME/.parlay}"
+else
+  ok HOME "$HOME"
+  STATE_HOME="${PARLAY_STATE_HOME:-$HOME/.parlay}"
+fi
+need_writable "$STATE_HOME" "CLI state" "(PARLAY_STATE_HOME: writable)" \
+  "is not writable — config.json, agents/ and skills live here" \
+  "chmod u+wx \"$STATE_HOME\" (or export PARLAY_STATE_HOME=/some/writable/dir)"
+need_writable "$ROOT/tools/cli/bin" "build dir" "(bin/parlay builds the CLI binary here)" \
+  "is not writable — bin/parlay cannot build the CLI" "chmod -R u+wx \"$ROOT/tools/cli\""
+RELAY_DIR="${PARLAY_RELAY_RUNTIME:-${TMPDIR:-/tmp}/parlay}"
+case "$RELAY_DIR" in */) RELAY_DIR="${RELAY_DIR%/}" ;; esac
+[ -n "$RELAY_DIR" ] || RELAY_DIR="/parlay"
+need_writable "$RELAY_DIR" "relay runtime" "(PARLAY_RELAY_RUNTIME)" \
+  "is not writable — the relay puts relay.sock and <agent>.chan spools here" \
+  "chmod u+wx \"$RELAY_DIR\" (or export PARLAY_RELAY_RUNTIME=/some/writable/dir)"
+# ── 5. the ports the CLI and the optional engine use ──────────────────────────
+split_hostport "$(server_url "$STATE_HOME/config.json")"
+PORT="${PORT:-4242}"
+if port_reachable "$HOST" "$PORT"; then
+  case "$(http_health "$HOST" "$PORT")" in
+    *'"ok":true'*) ok "server port" "$HOST:$PORT already answers parlay's /health — an instance is up there" ;;
+    *) fail "server port" "$HOST:$PORT is taken by something that is not parlay" \
+            "start on another port: cd packages/go-server && go run ./cmd/parlay-server -addr 127.0.0.1:4243 , then point the CLI at it: ./bin/parlay remote set http://127.0.0.1:4243" ;;
+  esac
+else
+  ok "server port" "$HOST:$PORT is free (this is where the CLI expects the server)"
+fi
+split_hostport "${PARLAY_EVAL_ENGINE_URL:-http://127.0.0.1:4343}"
+if port_reachable "$HOST" "${PORT:-4343}"; then
+  ok "engine port" "$HOST:${PORT:-4343} has a listener — only needed for spoken/typed phrase commands"
+else
+  ok "engine port" "$HOST:${PORT:-4343} is free (optional: parlay eval serve)"
+fi
+# ── 6. isolation: is this about to run against a live install? ────────────────
+n=-1
+if [ -d "$STATE_HOME/agents" ]; then
+  n=0
+  for entry in "$STATE_HOME/agents"/*; do [ -e "$entry" ] && n=$((n + 1)); done
+fi
+if [ -z "${HOME:-}" ] && [ -z "${PARLAY_STATE_HOME:-}" ]; then
+  ok isolation "no state home to check (HOME and PARLAY_STATE_HOME are both unset)"
+elif [ -n "${PARLAY_STATE_HOME:-}" ] || [ "$n" = -1 ]; then
+  ok isolation "$STATE_HOME is not the live default state home, or holds no agents"
+elif [ "$n" = 0 ]; then
+  ok isolation "$STATE_HOME/agents is empty — safe to experiment in"
+else
+  warn isolation "$STATE_HOME/agents holds $n agent dir(s) — this is a live install, not a scratch one" \
+       "to experiment without touching it: examples/bootstrap-sandbox.sh (redirects HOME, PARLAY_STATE_HOME, PARLAY_AGENT_HOME and PAI_DIR into a temp dir)"
+fi
+# ── 7. summary ────────────────────────────────────────────────────────────────
+printf '\n%s checks: %s ok, %s warning(s), %s failure(s).\n' \
+       "$((OKS + WARNS + FAILS))" "$OKS" "$WARNS" "$FAILS"
+if [ "$FAILS" -gt 0 ]; then
+  printf 'Fix the %s failure(s) above, then run this again — nothing else works until they are gone.\n' "$FAILS"
+  exit 1
+fi
+if [ "$WARNS" -gt 0 ]; then
+  printf 'Nothing is blocking. Every warning above is a limit or a caution, not a broken install.\n'
+fi
+printf '\nReady. Start the server (this blocks; it is the one long-running command):\n  cd packages/go-server && go run ./cmd/parlay-server\n'
+printf 'Then, in a second shell at the repo root, prove the round-trip:\n  ./bin/parlay send --demo --force "hello" && ./bin/parlay history 5\n'
+printf 'And the one health surface for a running instance:\n  ./bin/parlay health\n'
+exit 0
