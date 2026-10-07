@@ -28,7 +28,9 @@ in the repo references Talon, so no parallel front end was built.
 ```
 
 Terminal `status`: `injected` | `focus_failed` | `inject_failed` |
-`dry_run_passed` (dry-run: real focus + real verification, nothing typed).
+`dry_run_passed` (dry-run: real focus + real verification, nothing typed) |
+`bead_created` | `bead_failed` | `held` (below the confidence threshold:
+nothing typed, text preserved — see "Confidence hold" below).
 Transient: `queued` | `injecting`. Every terminal outcome also fans out
 as the device-scoped SSE event `remote_input_result` carrying the same
 Outcome — that event is the clear signal: Parlay clears shared state
@@ -43,6 +45,45 @@ Semantics (from project-1ayr): text injects literally, multiline, in
 order; focus completes first — inject only on focus success; a busy
 injector queues later submissions FIFO (no interleave, no drop, no
 busy-wait); one target computer (the Mac running this server + Talon).
+
+## Confidence hold (task-r887x follow-on — refusing to act on input we know is uncertain)
+
+`POST /api/chat/remote-input/submit` accepts one optional, additive field:
+
+```json
+{"device": "phone-1", "text": "hello", "app": "Terminal", "confidence": 0.42}
+```
+
+`confidence` is the recognition confidence the submitting surface
+reported for `text`, in [0,1]. **Omitting it means "not reported" — never
+"confident"**, and every caller that predates the field keeps working
+byte-identically.
+
+The server reads a threshold from `PARLAY_INPUT_MIN_CONFIDENCE` (a number
+in [0,1]; unset or empty means the threshold is **disabled**).
+`inputlog.Judge` owns the decision, and there are exactly three outcomes:
+
+| Reported confidence | Threshold | What happens |
+|---|---|---|
+| below it | enabled | **held**: 202 `{"id":"ri-N","status":"held"}`, nothing is typed, nothing is captured, text preserved, terminal outcome `status:"held"` with an `error` naming the threshold |
+| at or above it | enabled | routed normally |
+| anything | disabled | routed normally |
+| **not reported** | any | routed normally |
+
+The last row is deliberate. A threshold that held an *absent* confidence
+would refuse every surface that cannot report one — which today is every
+surface — so absence is a visible state of its own, not a hold. A hold is
+therefore something the phone can and must see: `held` is terminal, fans
+out the same `remote_input_result` SSE event, and — like `focus_failed` —
+preserves the text because nothing was typed.
+
+Every submit, every refusal and every outcome is recorded in the input
+ledger ([`input-seam.md`](input-seam.md)) under source `remote-input`, keyed
+by the same `ri-N` id the phone polls, so `parlay input --input ri-3` replays
+exactly what happened to one dictation. A malformed or out-of-range
+`PARLAY_INPUT_MIN_CONFIDENCE` is a hard startup error, not a silent fallback
+to disabled: a typo'd threshold that quietly stopped holding is the failure
+this instrumentation exists to make visible.
 
 ## Target enumeration (task-46ys9 — Talon names, not OS names)
 

@@ -57,7 +57,7 @@ func TestRemoteInputSubmitQueuedThenInjected(t *testing.T) {
 	settled := make(chan remoteinput.Outcome, 4)
 	svc := testRemoteService(settled)
 	defer svc.Stop()
-	submit := handleRemoteInputSubmit(svc)
+	submit := handleRemoteInputSubmit(svc, nil)
 	status := handleRemoteInputStatus(svc)
 
 	body, _ := json.Marshal(map[string]any{
@@ -105,7 +105,7 @@ func TestRemoteInputSubmitQueuedThenInjected(t *testing.T) {
 func TestRemoteInputSubmitValidation(t *testing.T) {
 	svc := testRemoteService(nil)
 	defer svc.Stop()
-	submit := handleRemoteInputSubmit(svc)
+	submit := handleRemoteInputSubmit(svc, nil)
 
 	for name, body := range map[string]string{
 		"missing device": `{"text":"hi"}`,
@@ -140,7 +140,7 @@ func TestRemoteInputDryRunSubmitAndStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := testRemoteService(nil)
 			defer svc.Stop()
-			submit := handleRemoteInputSubmit(svc)
+			submit := handleRemoteInputSubmit(svc, nil)
 			status := handleRemoteInputStatus(svc)
 
 			req := httptest.NewRequest("POST", "/api/chat/remote-input/submit"+tc.query, bytes.NewBufferString(tc.body))
@@ -171,7 +171,7 @@ func TestRemoteInputDryRunSubmitAndStatus(t *testing.T) {
 func TestRemoteInputSubmitRefusesTargetlessLive(t *testing.T) {
 	svc := testRemoteService(nil)
 	defer svc.Stop()
-	submit := handleRemoteInputSubmit(svc)
+	submit := handleRemoteInputSubmit(svc, nil)
 
 	req := httptest.NewRequest("POST", "/api/chat/remote-input/submit",
 		bytes.NewBufferString(`{"device":"phone-1","text":"blind?"}`))
@@ -195,7 +195,7 @@ func TestRemoteInputSubmitTargetlessAllowedWhenNamed(t *testing.T) {
 			body = `{"device":"phone-1","text":"explicit","allowUnfocused":true}`
 		}
 		svc := testRemoteService(nil)
-		submit := handleRemoteInputSubmit(svc)
+		submit := handleRemoteInputSubmit(svc, nil)
 		status := handleRemoteInputStatus(svc)
 
 		req := httptest.NewRequest("POST", target, bytes.NewBufferString(body))
@@ -226,7 +226,7 @@ func TestRemoteInputSubmitDryRunTargetlessAllowed(t *testing.T) {
 	// success leg stays provable with zero keystrokes and no target.
 	svc := testRemoteService(nil)
 	defer svc.Stop()
-	submit := handleRemoteInputSubmit(svc)
+	submit := handleRemoteInputSubmit(svc, nil)
 	status := handleRemoteInputStatus(svc)
 
 	req := httptest.NewRequest("POST", "/api/chat/remote-input/submit",
@@ -348,7 +348,7 @@ func TestRemoteInputFocusFailureSurfacesTypedOutcome(t *testing.T) {
 	fake := &remoteinput.FakeTalon{ActiveAppName: "Other", StickyActive: true}
 	svc := remoteinput.NewService(fake, 0, nil)
 	defer svc.Stop()
-	submit := handleRemoteInputSubmit(svc)
+	submit := handleRemoteInputSubmit(svc, nil)
 	status := handleRemoteInputStatus(svc)
 
 	body, _ := json.Marshal(map[string]string{

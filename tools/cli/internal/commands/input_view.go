@@ -94,8 +94,9 @@ func printJSON(v any) {
 
 func renderInputRows(w io.Writer, rows []inputRow, stats inputStats, limit int) {
 	fmt.Fprintf(w, "INPUT SEAM — %d input(s) from the last %d retained hop(s)\n", len(rows), limit)
-	fmt.Fprintf(w, "ledger: %d retained, %d written, %d dropped, %d rejected, %d queued\n\n",
+	fmt.Fprintf(w, "ledger: %d retained, %d written, %d dropped, %d rejected, %d queued\n",
 		stats.Retained, stats.Written, stats.Dropped, stats.Rejected, stats.Queue)
+	fmt.Fprintln(w, thresholdLine(stats.MinConfidence))
 	if len(rows) == 0 {
 		fmt.Fprintln(w, "Nothing recorded. An empty view means no operator input reached an intake\n"+
 			"surface yet, or the ledger is newer than the activity you are looking for. It is\n"+
@@ -112,24 +113,11 @@ func renderInputRows(w io.Writer, rows []inputRow, stats inputStats, limit int) 
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, inputConfidenceNote(rows))
-	fmt.Fprintln(w, "Legend: delivered = handed to a listener; queued = waiting; refused = an intake\n"+
-		"declined it (WHY names the reason); held = a threshold stopped it. See docs/input-seam.md.")
+	fmt.Fprintln(w, inputLegend)
 }
 
-// inputConfidenceNote reports what the window contains, not what the product
-// does today: "not reported" is not "confident".
-func inputConfidenceNote(rows []inputRow) string {
-	reported := 0
-	for _, r := range rows {
-		if r.Confidence != nil {
-			reported++
-		}
-	}
-	if reported == 0 {
-		return "Confidence: not reported by any surface in this window — \"not reported\" is not \"confident\"."
-	}
-	return fmt.Sprintf("Confidence: reported for %d of %d input(s) in this window.", reported, len(rows))
-}
+// Input-seam note: the two honesty lines about the ledger's posture, and the
+// legend for the state column, live in input_threshold.go.
 
 // cell truncates a value to exactly n characters so it cannot break the table.
 // ASCII dots, not an ellipsis: a multi-byte rune would misalign %-Ns padding.

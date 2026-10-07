@@ -8,7 +8,6 @@ package commands
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -27,14 +26,15 @@ type inputEvent struct {
 	Detail     string   `json:"detail,omitempty"`
 }
 
-// inputStats is the ledger's own honesty report, travelling with every page
-// so an empty view and a shedding ledger cannot look alike.
+// inputStats is the ledger's own honesty report — an empty view and a shedding
+// ledger cannot look alike. MinConfidence is the hold threshold, nil when off.
 type inputStats struct {
-	Retained uint64 `json:"retained"`
-	Written  uint64 `json:"written"`
-	Dropped  uint64 `json:"dropped"`
-	Rejected uint64 `json:"rejected"`
-	Queue    int    `json:"queue"`
+	Retained      uint64   `json:"retained"`
+	Written       uint64   `json:"written"`
+	Dropped       uint64   `json:"dropped"`
+	Rejected      uint64   `json:"rejected"`
+	Queue         int      `json:"queue"`
+	MinConfidence *float64 `json:"minConfidence,omitempty"`
 }
 
 type inputPage struct {
@@ -117,16 +117,22 @@ func deriveInputRow(id string, hops []inputEvent, now time.Time, stale time.Dura
 		}
 		row.At = t
 	}
-	// A failure class anywhere in the input's history is the answer, even if
-	// a later hop looks healthy: a refused input was not delivered by being
-	// retried.
+	// A failure class anywhere in the input's history is the answer, even if a
+	// later hop looks healthy: a refusal is not undone by being retried.
 	for _, e := range hops {
 		switch e.Class {
 		case "refused":
 			row.State, row.Why = "refused", e.Reason
 		case "recogniser_error":
 			row.State, row.Why = "recogniser error", e.Reason
-		case "low_confidence", "held":
+		case "no_match":
+			row.State, row.Why = "no match", e.Reason
+		case "low_confidence":
+			row.State, row.Why = "low confidence", confidenceWhy(e)
+		case "held":
+			// The action, not the judgement: a submission measured below the
+			// threshold was actually stopped. Keying a hold off the class alone
+			// would call a routed submission held.
 			row.State, row.Why = "held", confidenceWhy(e)
 		case "superseded":
 			row.State, row.Why = "superseded", e.Reason
@@ -198,52 +204,4 @@ func inputRowFor(hops []inputEvent, now time.Time, stale time.Duration) inputRow
 	return deriveInputRow(hops[0].InputID, hops, now, stale)
 }
 
-func replayOutcome(r inputRow, lastHop, now time.Time) string {
-	total := ""
-	if !r.At.IsZero() && !lastHop.IsZero() && lastHop.After(r.At) {
-		total = " in " + humanAge(lastHop.Sub(r.At))
-	}
-	if r.Why != "" {
-		return fmt.Sprintf("%s%s — %s", strings.ToUpper(r.State), total, r.Why)
-	}
-	return strings.ToUpper(r.State) + total
-}
-
-func parseInputTs(ts string) (time.Time, bool) {
-	t, err := time.Parse(time.RFC3339Nano, ts)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return t.Local(), true
-}
-
-// humanAge renders a duration at the coarsest useful precision.
-func humanAge(d time.Duration) string {
-	if d < 0 {
-		d = -d
-	}
-	switch {
-	case d < time.Second:
-		return fmt.Sprintf("%dms", d.Milliseconds())
-	case d < time.Minute:
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	case d < time.Hour:
-		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
-	default:
-		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
-	}
-}
-
-func inputStamp(ts string) string {
-	if t, ok := parseInputTs(ts); ok {
-		return t.Format("2006-01-02T15:04:05.000")
-	}
-	return ts
-}
-
-func inputClock(ts string) string {
-	if t, ok := parseInputTs(ts); ok {
-		return t.Format("15:04:05.000")
-	}
-	return ts
-}
+// Timestamp, duration and replay-outcome rendering live in input_timefmt.go.

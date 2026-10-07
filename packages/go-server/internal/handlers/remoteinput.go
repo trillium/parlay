@@ -16,9 +16,12 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
+	"parlay/go-server/internal/inputlog"
 	"parlay/go-server/internal/remoteinput"
+	"parlay/go-server/internal/store"
 )
 
 // remoteInputEvent is the SSE name carrying settled Outcomes.
@@ -26,17 +29,24 @@ const remoteInputEvent = "remote_input_result"
 
 // registerRemoteInput wires the intake routes. The service drives the live
 // Talon REPL; tests build handlers directly with a fake-backed service.
-func registerRemoteInput(mux *http.ServeMux, hub *Hub) {
+//
+// st is the input-seam ledger. Recording is wired here, at the service's
+// accept hook and its settle callback, so every submission is recorded no
+// matter which handler path accepted it.
+func registerRemoteInput(mux *http.ServeMux, hub *Hub, st *store.Store) {
+	seam := remoteInputSeam{st: st}
 	svc := remoteinput.NewService(
 		remoteinput.NewREPLTalon(),
 		remoteinput.DefaultSettleDelay,
 		func(o remoteinput.Outcome) {
 			if o.Terminal() {
 				hub.broadcastToDevice(o.Device, remoteInputEvent, o)
+				seam.settled(o)
 			}
 		},
 	)
-	mux.HandleFunc("/api/chat/remote-input/submit", handleRemoteInputSubmit(svc))
+	svc.SetOnAccepted(seam.intake)
+	mux.HandleFunc("/api/chat/remote-input/submit", handleRemoteInputSubmit(svc, st))
 	mux.HandleFunc("/api/chat/remote-input/status", handleRemoteInputStatus(svc))
 	mux.HandleFunc("/api/chat/remote-input/targets", handleRemoteInputTargets(svc))
 }
@@ -45,21 +55,35 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub) {
 // Mode selects the pipeline: empty/inject types via Talon (the
 // no-target rule applies); bead captures the text as a bead with no
 // target needed and nothing typed.
-func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
+//
+// Every refusal below is recorded in the input ledger before the 4xx is
+// written. That is the point: a submission the intake declined previously
+// left no trace anywhere, so "the phone never sent it" and "the server
+// refused it" were the same silence.
+func handleRemoteInputSubmit(svc *remoteinput.Service, st *store.Store) http.HandlerFunc {
+	seam := remoteInputSeam{st: st}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
+		// Ledger key for input that never gets a submission id. An accepted
+		// submission is keyed by its own ri-N id instead, so the operator can
+		// replay the exact id the phone polls.
+		inputID := inputlog.NewInputID()
 		var req remoteinput.SubmitRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
 		if req.Device == "" {
+			seam.refused(inputID, reasonMissingDevice)
 			writeStatusError(w, http.StatusBadRequest, "device is required")
 			return
 		}
 		if req.Text == "" {
+			// Nothing was transcribed. That is a recogniser error, not a
+			// missing message: the input arrived and became nothing.
+			seam.recogniserError(inputID)
 			writeStatusError(w, http.StatusBadRequest, "text is required")
 			return
 		}
@@ -82,6 +106,7 @@ func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
 			mode = remoteinput.NormalizeMode(q)
 		}
 		if mode != remoteinput.ModeInject && mode != remoteinput.ModeBead {
+			seam.refused(inputID, reasonUnknownMode)
 			writeStatusError(w, http.StatusBadRequest,
 				`unknown mode: want "inject" or "bead"`)
 			return
@@ -92,41 +117,67 @@ func handleRemoteInputSubmit(svc *remoteinput.Service) http.HandlerFunc {
 		}
 		if mode == remoteinput.ModeBead {
 			if !remoteinput.ValidStore(store) {
+				seam.refused(inputID, reasonInvalidStore)
 				writeStatusError(w, http.StatusBadRequest,
 					`invalid bead store: must match ^[a-z][a-z0-9_-]{0,63}$ (any registered wrapper name works)`)
 				return
 			}
 			if n := len([]rune(req.Text)); n > remoteinput.MaxBeadTextLen {
+				seam.refused(inputID, reasonBeadTextTooLong)
 				writeStatusError(w, http.StatusBadRequest,
 					"bead text exceeds 2000 chars: rejected, never truncated")
 				return
 			}
 			// Bead mode needs no target and types nothing.
-			id := svc.Submit(remoteinput.Submission{
+			acceptRemoteInput(w, svc, seam, remoteinput.Submission{
 				Device: req.Device, Text: req.Text, Mode: mode, Store: store,
-				Trigger: req.Trigger, DryRun: dryRun,
+				Trigger: req.Trigger, DryRun: dryRun, Confidence: req.Confidence,
 			})
-			w.WriteHeader(http.StatusAccepted)
-			writeJSON(w, remoteinput.SubmitResponse{ID: id, Status: remoteinput.StatusQueued})
 			return
 		}
 		// No silent blind injection: a live inject submit with no app
 		// and no window target must name the unfocused mode
 		// deliberately. (Dry runs type nothing, so they stay exempt.)
 		if !dryRun && req.App == "" && req.WindowTitle == "" && !allowUnfocused {
+			seam.refused(inputID, reasonNoTarget)
 			writeStatusError(w, http.StatusBadRequest,
 				"no target: set app or windowTitle (see GET remote-input/targets for Talon names), "+
 					"or send allowUnfocused:true to inject without focus")
 			return
 		}
-		id := svc.Submit(remoteinput.Submission{
+		acceptRemoteInput(w, svc, seam, remoteinput.Submission{
 			Device: req.Device, Text: req.Text,
 			App: req.App, WindowTitle: req.WindowTitle, Trigger: req.Trigger,
 			Mode: mode, AllowUnfocused: allowUnfocused, DryRun: dryRun,
+			Confidence: req.Confidence,
 		})
-		w.WriteHeader(http.StatusAccepted)
-		writeJSON(w, remoteinput.SubmitResponse{ID: id, Status: remoteinput.StatusQueued})
 	}
+}
+
+// acceptRemoteInput applies the confidence threshold and then either holds
+// the submission or queues it. A hold is terminal and types nothing: the
+// submission never reaches the service's queue, and the held outcome is what
+// tells the phone its text is preserved because a threshold stopped it.
+//
+// The threshold is only ever compared against a confidence the caller
+// actually reported. Nothing is held on an absent confidence — see
+// inputlog.Judge for why that asymmetry is deliberate rather than a gap.
+func acceptRemoteInput(w http.ResponseWriter, svc *remoteinput.Service, seam remoteInputSeam, sub remoteinput.Submission) {
+	if min := seam.minConfidence(); min != nil {
+		if v := inputlog.Judge(min, sub.Confidence); v.Hold {
+			sub.ID = svc.Hold(sub, fmt.Sprintf(
+				"confidence %.2f is below the configured minimum %.2f: held, nothing was typed",
+				*sub.Confidence, *min))
+			seam.intake(sub)
+			seam.held(sub)
+			w.WriteHeader(http.StatusAccepted)
+			writeJSON(w, remoteinput.SubmitResponse{ID: sub.ID, Status: remoteinput.StatusHeld})
+			return
+		}
+	}
+	id := svc.Submit(sub)
+	w.WriteHeader(http.StatusAccepted)
+	writeJSON(w, remoteinput.SubmitResponse{ID: id, Status: remoteinput.StatusQueued})
 }
 
 // handleRemoteInputTargets implements GET /api/chat/remote-input/targets.

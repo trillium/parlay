@@ -37,6 +37,12 @@ type Options struct {
 	MaxBytes  int64
 	Queue     int
 
+	// MinConfidence is the confidence below which an input is held rather
+	// than routed. Nil disables the threshold entirely, which is the
+	// default: a deployment opts in by setting it, and an unset threshold
+	// behaves exactly as it did before this field existed.
+	MinConfidence *float64
+
 	// Appender is the durable append primitive. Nil uses the real JSONL
 	// file. It exists as a field so a test can make the sink arbitrarily
 	// slow or failing without touching the filesystem — the same adapter
@@ -55,6 +61,13 @@ type Stats struct {
 	Dropped  uint64 `json:"dropped"`
 	Rejected uint64 `json:"rejected"`
 	Queue    int    `json:"queue"`
+
+	// MinConfidence is the confidence threshold actually in force, or nil
+	// when disabled. It travels with the events because a hold is
+	// meaningless without the number behind it: a view that showed "held"
+	// and not the threshold could not tell a policy working from a policy
+	// misconfigured.
+	MinConfidence *float64 `json:"minConfidence,omitempty"`
 }
 
 // Log is the durable input-seam ledger: an append-only JSONL file for
@@ -67,11 +80,12 @@ type Stats struct {
 // that could stall or fail there would be a regression in the product's one
 // job. See the never-in-the-delivery-path test.
 type Log struct {
-	mu        sync.RWMutex
-	path      string
-	maxEvents int
-	maxBytes  int64
-	file      *os.File
+	mu            sync.RWMutex
+	path          string
+	maxEvents     int
+	maxBytes      int64
+	minConfidence *float64
+	file          *os.File
 
 	// appendLine is the durable append primitive. It is a field so a test
 	// can make the sink arbitrarily slow or failing without touching the
@@ -109,13 +123,14 @@ func Open(path string, opts Options) (*Log, error) {
 	}
 
 	l := &Log{
-		path:      path,
-		maxEvents: maxEvents,
-		maxBytes:  maxBytes,
-		nextSeq:   1,
-		queue:     make(chan Event, queue),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
+		path:          path,
+		maxEvents:     maxEvents,
+		maxBytes:      maxBytes,
+		minConfidence: opts.MinConfidence,
+		nextSeq:       1,
+		queue:         make(chan Event, queue),
+		stop:          make(chan struct{}),
+		done:          make(chan struct{}),
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("inputlog: create dir: %w", err)
@@ -129,6 +144,16 @@ func Open(path string, opts Options) (*Log, error) {
 	}
 	go l.drain()
 	return l, nil
+}
+
+// MinConfidence reports the confidence threshold in force, or nil when the
+// threshold is disabled. It is read by the intake that applies the hold, so
+// the number the view shows and the number enforced are the same one.
+func (l *Log) MinConfidence() *float64 {
+	if l == nil {
+		return nil
+	}
+	return l.minConfidence
 }
 
 // Record queues one hop for the durable ledger. Never blocks and never

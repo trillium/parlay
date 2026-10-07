@@ -40,6 +40,11 @@ const (
 	// non-zero exit, unparsable id, over-long text, bad store name.
 	// The typed reason is always in Error; a BeadID is never set.
 	StatusBeadFailed = "bead_failed"
+	// StatusHeld is the policy hold: the caller reported a confidence
+	// below the configured threshold, so nothing was typed, nothing was
+	// captured, and the text is preserved. It is terminal and it is NOT
+	// a failure — no delivery was refused, because none was attempted.
+	StatusHeld = "held"
 )
 
 // FocusMode records what the focus gate did for a submission.
@@ -90,6 +95,12 @@ type Submission struct {
 	// and reports what would be inserted, typing nothing. It proves
 	// the success leg without touching the live machine.
 	DryRun bool `json:"dryRun,omitempty"`
+	// Confidence is the recognition confidence the submitting surface
+	// reported for Text, in [0,1]. Optional and additive: every caller
+	// that predates it omits it, and omission means "not reported",
+	// never "confident". It is read by the ledger's hold policy and
+	// nowhere else.
+	Confidence *float64 `json:"confidence,omitempty"`
 }
 
 // Outcome is the per-submission result reported back to Parlay. Parlay
@@ -135,7 +146,8 @@ func (o Outcome) Terminal() bool {
 		o.Status == StatusInjectFailed ||
 		o.Status == StatusDryRunPassed ||
 		o.Status == StatusBeadCreated ||
-		o.Status == StatusBeadFailed
+		o.Status == StatusBeadFailed ||
+		o.Status == StatusHeld
 }
 
 // SubmitRequest is the POST /api/chat/remote-input/submit wire shape.
@@ -154,6 +166,11 @@ type SubmitRequest struct {
 	// dry runs never need it. Echoed back on the outcome.
 	AllowUnfocused bool `json:"allowUnfocused,omitempty"`
 	DryRun         bool `json:"dryRun,omitempty"`
+
+	// Confidence is the recognition confidence the submitting surface
+	// reported for Text, in [0,1]. Optional and additive; nil means
+	// "not reported". See Submission.Confidence.
+	Confidence *float64 `json:"confidence,omitempty"`
 }
 
 // SubmitResponse is the 202 answer: the submission is queued, not done.

@@ -1884,137 +1884,223 @@ The sections above are main's onboarding account (PR #314) and runtime-observabi
 
 # Input-seam observability — working notes
 
-Status: in progress. This file records what the tooling can and cannot tell the
-operator **right now**; it is updated as the work lands and is deliberately
-honest about the gaps.
+Status: the dictation door is now instrumented end to end, with a real
+confidence hold. This file records what the tooling can and cannot tell the
+operator **right now**, and is deliberately honest about the gaps.
 
 ## What the operator can now tell apart
 
-Before this work, four different failures on the input path looked identical
-from the panel, because none of them left a durable, typed record:
+The question this exists to answer, from the panel:
 
 > did the speech recogniser mishear it, did the relay drop it, did the agent
 > ignore it, or did the phone never send it?
 
-There is now a durable **input-seam ledger** (`input.jsonl` beside
-`messages.jsonl`) holding one record per **hop** an input made, keyed by the
-input's own id, plus a view (`parlay input`) and a replay
-(`parlay input --input <id>`) over it.
+There is a durable **input-seam ledger** (`input.jsonl` beside
+`messages.jsonl`): one record per **hop** an input made, keyed by the input's
+own id, plus a live view (`parlay input`), a replay
+(`parlay input --input <id>`) and a JSON form for scripts.
 
-States the view can now distinguish, each of which previously read as "nothing
-happened" or as an identical-looking chat line:
+Both doors are now instrumented. The **dictation door**
+(`POST /api/chat/remote-input/submit`) previously recorded nothing at all: a
+submission that was held, one whose transcript never arrived, and one that
+typed successfully left exactly the same silence. It is now keyed by the same
+`ri-N` id the phone polls, so a replay names the submission the operator saw.
+
+These states are now distinguishable where four failures previously looked
+identical:
 
 | State | What it means | Why it used to be invisible |
 |---|---|---|
-| `delivered` | A listener was handed the input. `LATENCY` is first hop → delivery. | A delivered and a queued message are byte-identical in `messages.jsonl`. |
+| `delivered` | A listener was handed a chat message; or the dictation reached its target. `LATENCY` is first hop → delivery. | A delivered and a queued message are byte-identical in `messages.jsonl`. |
 | `queued` | Durably held, waiting for a listener. | Same bytes as delivered. |
 | `queued (unpicked)` | Queued and nothing picked it up within the stale window. | Indistinguishable from an intentional queue. |
-| `refused` | An intake surface declined it before storing anything. `WHY` names the reason (e.g. `empty-input`). | Nothing reaches disk at all, so there was no record anywhere. |
-| `received` / `interpreted` / `routed` with no later hop | Where the input **stopped**. | Read as ordinary silence. |
-| `held` | A confidence/provenance threshold stopped it. | Vocabulary + storage exist; no producer yet (below). |
-| `recogniser error` | The recogniser reported it could not transcribe the input. | No producer yet (below). |
-| `superseded` | A later input replaced it before it was acted on. | No producer yet (below). |
-
-The same six failure classes the objective names are the ledger's closed
-`class` vocabulary: `recogniser_error`, `low_confidence`, `no_match`,
-`refused`, `unpicked`, `superseded` — plus `ok` and `confidence_unknown`.
+| `refused` | An intake declined it, or the target refused delivery. `WHY` names the reason. | `/send` refusals never reached disk at all; dictation refusals reached nothing. |
+| `recogniser error` | The dictation sent an empty transcript. Nothing was said, or nothing was transcribed. | A bare `400` the phone logged and dropped. |
+| `no match` | The input named a destination that matched nothing — today, a focus target that did not become the active app/window. | The submission settled `focus_failed` in an in-memory map nothing read. |
+| `held` | A reported confidence fell below the configured threshold. `WHY` names the number. Nothing was typed; the text is preserved. | Did not exist: no surface reported a confidence at all. |
+| `confidence_unknown` | No recognition confidence was reported for this input. | Did not exist, and would otherwise read as "confident". |
+| `superseded` | A later input replaced this one before it was acted on. | Vocabulary + view state only: no producer (below). |
+| `received`/`interpreted`/`routed` with no later hop | Where the input **stopped** (`WHY` says so, with the age). | Read as ordinary silence. |
 
 Two rules are enforced rather than intended:
 
 - **A non-`ok` hop must carry a `reason`.** The ledger refuses to store an
   unexplained failure and counts it (`stats.rejected`) so a gap in the view is
   never invisible. An input event that failed with no recorded reason is a
-  defect in the tooling.
-- **`confidence_unknown` is its own state**, never folded into `ok`. Today no
-  intake surface in this repo reports a recogniser confidence, so this is what
-  every dictation actually lands in, and the view says so instead of implying
-  confidence it does not have.
+  defect in the tooling, not a quiet night.
+- **`confidence_unknown` is its own state**, never folded into `ok`. `/send`
+  and `/alert` have nothing to report, so this is what they honestly are; the
+  view's footer says `not reported` rather than implying confidence.
 
-## What was built
+## The hold
 
-- `packages/go-server/internal/inputlog` — the durable ledger: append-only
-  JSONL, bounded in-memory ring (5,000 events / 8 MiB), and a **non-blocking**
-  writer (256-deep queue, single drain goroutine, drop counted on a full queue,
-  budgeted flush on close). `Log.Record` never touches disk, never blocks, and
-  never returns an error.
-- Recording call sites (`internal/handlers/input_seam.go`): the `queued` hop of
-  every operator message accepted by `/send` and `/alert`, the `delivered` hop
-  at both poll delivery points (`poll-wake` vs `poll-backlog`, kept distinct so
-  a hot delivery is not confused with a drain after a reconnect), and a
-  `refused` hop for a `/send` the intake rejected.
-- `GET /api/chat/input-events` — the read surface (ledger + its own counters).
-  Classified as an unguarded read in `internal/guard`'s `TestUnguardedRoutes`
-  with a written reason: it hands out only message ids and channel names, which
-  `/api/chat/history` already returns unguarded, and it writes nothing.
-- `parlay input [--input <id>] [--watch] [--json] [--limit N] [--stale-after S]`
-  — the live view, the replay, and JSON for scripts.
-- Contracts and docs: `docs/api-contract.md`, `docs/api-contract.openapi.yaml`,
-  and `docs/input-seam.md` (indexed in `docs/README.md`).
+`PARLAY_INPUT_MIN_CONFIDENCE` (a number in [0,1]) is the threshold below
+which a dictation is **held rather than routed**. `inputlog.Judge` owns the
+decision, and the asymmetry is load-bearing:
+
+| Reported confidence | Threshold | Result |
+|---|---|---|
+| below it | enabled | **held** — nothing typed or captured, text preserved, `low_confidence` + `held` hops, `status: "held"` on the wire and the SSE event |
+| at or above it | enabled | routed normally |
+| anything | disabled (unset) | routed normally |
+| **not reported** | any | routed normally, recorded as `confidence_unknown` |
+
+An absent confidence is **never** a hold: holding on an unreported value would
+refuse every surface that cannot report one — today, all of them — which is a
+policy invented on no evidence. A malformed or out-of-range threshold is a
+hard startup error, never a silent fallback to disabled.
+
+The threshold travels to the reader in `stats.minConfidence` and `parlay input`
+prints it above the table, so a hold always has its number beside it.
+
+## Demonstration (isolated server, `TALON_REPL_PATH` pinned away from the live machine)
+
+Four failures and two healthy states, one injection each, then the view:
+
+```
+==================== parlay input ====================
+INPUT SEAM — 7 input(s) from the last 60 retained hop(s)
+ledger: 12 retained, 12 written, 0 dropped, 0 rejected, 0 queued
+threshold: hold below confidence 0.80 (server PARLAY_INPUT_MIN_CONFIDENCE); a hold needs a reported confidence — unreported input is never held
+STATE            INPUT                  SOURCE       CHANNEL    WHEN      LATENCY  WHY
+delivered        m1                     poll-backlog c0         2.6s      +5ms     —
+queued (unpicked) m0                     send         nobody     2.6s      —        no listener picked it up in 2.6s
+delivered        ri-3                   remote-input -          2.6s      +0ms     —
+refused          in-1791364792779429... remote-input -          2.6s      —        missing-device
+no match         ri-2                   remote-input -          2.6s      —        target-not-matched
+held             ri-1                   remote-input -          2.6s      —        confidence 0.25 below threshold 0.80
+recogniser error in-1791365025517920... remote-input -          2.6s      —        empty-transcript
+
+Confidence: reported for 1 of 7 input(s) in this window.
+Legend: delivered = handed a listener or typed at the target; queued = waiting;
+refused = an intake or the target declined it; no match = it named a destination that
+did not match; low confidence = measured below the threshold; held = actually stopped
+by it. WHY names the reason in every case. See docs/input-seam.md.
+```
+
+Not one of the four failures reads as healthy, and the two healthy rows carry
+their own latency. Replays, straight off the durable ledger:
+
+```
+==================== parlay input --input ri-1 ====================
+REPLAY ri-1 — 3 hop(s)
+  #1 —       2026-10-07T02:19:52.762  received    ok                 source=remote-input  channel=- detail=mode=inject
+  #2 +0ms    2026-10-07T02:19:52.762  interpreted low_confidence     source=remote-input  channel=- why=below-confidence-threshold
+  #3 +0ms    2026-10-07T02:19:52.762  held        held               source=remote-input  channel=- why=below-confidence-threshold
+
+Outcome: HELD in 0ms — confidence 0.25 below threshold 0.80
+
+==================== parlay input --input ri-2 ====================
+REPLAY ri-2 — 2 hop(s)
+  #1 —       2026-10-07T02:19:52.771  received    ok                 source=remote-input  channel=- detail=mode=inject
+  #2 +0ms    2026-10-07T02:19:52.772  routed      no_match           source=remote-input  channel=- why=target-not-matched detail=outcome=focus_failed
+
+Outcome: NO MATCH in 0ms — target-not-matched
+
+==================== parlay input --input m0 ====================
+REPLAY m0 — 1 hop(s)
+  #1 —       2026-10-07T02:19:52.792  queued      ok                 source=send          channel=nobody
+
+Outcome: QUEUED (UNPICKED) — no listener picked it up in 5.7s
+
+==================== parlay input --input m1 ====================
+REPLAY m1 — 2 hop(s)
+  #1 —       2026-10-07T02:19:52.799  queued      ok                 source=send          channel=c0
+  #2 +5ms    2026-10-07T02:19:52.804  delivered   ok                 source=poll-backlog  channel=c0
+```
+
+`m0` is the dropped one: queued, never polled, and the replay ends by naming
+that rather than stopping silently.
+
+The script that produced the paste is `.pi/demo/input-seam-demo.sh`. It is run-local
+scratch and deliberately **not** part of the diff (harness scratch is never
+committed): it pins `TALON_REPL_PATH` to a nonexistent path so nothing can be
+typed or focused on the live Mac, and it uses a fresh temp state dir, so it
+touches neither the live fleet state nor the operator's machine. Re-run it
+from a checkout of this branch to reproduce the paste above.
 
 ## Hard constraints, and how each is met
 
 - **Observability never sits in the delivery path.**
-  `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` installs a ledger whose sink
-  never returns, then drives `POST /api/chat/send` and a poll: both succeed,
-  promptly, and the message is still durably stored.
-  `TestRecordNeverBlocksOnAWedgedSink` pins the same property at the ledger's
-  own boundary (50,000 `Record` calls against a wedged sink, with drops
-  counted).
-- **Never record raw audio; do not change message-history retention or
+  `TestRemoteInputDeliveryIsNotSlowedOrFailedByAWedgedLedger` (new) installs a
+  ledger whose sink never returns, then submits a dictation: the submission is
+  still accepted, still reaches the target, and still settles, promptly.
+  `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` does the same for
+  `/send` + poll, and `TestRecordNeverBlocksOnAWedgedSink` pins it at the
+  ledger's own boundary (50,000 records against a wedged sink).
+- **Never record raw audio, never change message-history retention or
   privacy.** The ledger stores ids, stages, classes, short reason tokens and
-  numbers — **never message text**. It is a separate file with its own bound,
-  not a second copy of `messages.jsonl`.
-- **Never weaken `internal/guard.GuardedPaths`; never reimplement its checks.**
-  No guard check was touched or re-implemented. The new route is a read and is
-  classified as one, with a reason, in the enforced route-coverage test.
+  numbers — **never message text**. Backend error strings are deliberately not
+  copied in: a Talon or bead error can echo the text being typed. The full
+  error stays on the submission's own status.
+- **Never weaken `internal/guard.GuardedPaths`; never reimplement its
+  checks.** No guard check was touched. No route was added in this unit of
+  work at all; the dictation routes keep their existing guarded
+  classification.
 - **Do not touch deployment scripts, public endpoint shapes, or downstream
-  consumers.** No existing route's request or response shape changed. A refused
-  input gets a ledger-local id (`in-…`) precisely so the frozen error bodies
-  need no new field.
-- **Nothing under `.pi/` is committed.** `.pi/` is now in `.gitignore` (it is
-  harness scratch; without the entry it dirties `git status --porcelain` for
-  the whole session running in this checkout — the same reason `.fm-hooks/` is
-  listed).
+  consumers.** No existing field changed type, name or meaning. `confidence`
+  on the submit body is **optional and additive**; omitting it is
+  byte-identical to before, and absent means not reported.
+  `held` is a new terminal status that downstream readers already handle
+  correctly by default: Parlay clears input state only on `injected` and
+  preserves the text on anything else, which is exactly the wanted behavior
+  for a hold.
+- **Nothing under `.pi/`, `.gnhf/` or other harness scratch is committed.**
+  `.pi/` is in `.gitignore`.
 
 ## Deliberately not built (and why)
 
-- **A producer for `low_confidence`, `recogniser_error`, `no_match`,
-  `superseded`, `held`.** The vocabulary, the storage, the wire contract and
-  the view states all exist; nothing emits them yet. Two reasons, both
-  deliberate: `remote-input` and the panel are the only surfaces that could
-  report a recogniser confidence, and **no public endpoint shape may change**,
-  so a confidence field cannot simply be bolted onto `POST /send`. The honest
-  state meanwhile is `confidence_unknown`, which the view prints rather than
-  papering over.
-- **A confidence/provenance threshold that actually holds input.** Nothing
-  reports a confidence yet, so there is nothing to compare against and nothing
-  to hold — a threshold over an always-absent value would be theatre.
-- **`received` / `interpreted` hops for accepted input.** The `queued` row
-  already carries the id, stage and source; a `received` row would duplicate
-  the same facts until an intake surface has something extra to say at that
-  moment.
-- **The remote-input intake's hops.** It injects through Talon and never
-  becomes a chat message, so its hops need their own keying; its outcome map is
-  not durable today.
-- **A push stream for the ledger.** `--watch` polls (default 2s) and its header
-  says so. An SSE event would imply delivery latency the ledger does not have.
+- **A producer for `superseded`.** Nothing in this product discards an input
+  in favour of a newer one: the injection queue is explicitly FIFO with "no
+  interleaving, no dropping", and the chat store appends. A producer would
+  have to invent a semantic the product does not have, and an invented
+  supersession would be worse than an absent one. The vocabulary, the storage
+  and the view state exist so that the day something does supersede, it is
+  visible instead of silent; `TestDeriveInputRowNamesEveryFailureClass` pins
+  the rendering today.
+- **`received` / `interpreted` hops for accepted `/send` and `/alert`.** The
+  `queued` row already carries the id, stage and source; a `received` row
+  would duplicate the same facts. Those doors can be given their own hops the
+  day they have something extra to say at that moment (a source device, a
+  reported confidence).
+- **A build for the dictation confidence on the phone side.** The server
+  accepts and enforces `confidence`; nothing in this repo's phone/panel
+  surfaces sends it yet (the panel is not open-sourced here, and
+  `remote-input` has no in-repo client). Until something reports one, the
+  honest state of every dictation remains `confidence_unknown`, and the view
+  says so rather than implying trust.
+- **A provenance threshold.** The threshold is over reported confidence only.
+  No surface reports provenance strength, so a provenance hold would compare
+  against a value nothing produces.
+- **A push stream for the ledger.** `--watch` polls (default 2s) and its
+  header states the cadence. An SSE event would imply a delivery latency the
+  ledger does not have.
 
 ## Left undone
 
-- Failure-class demonstrations are complete for the three classes the product
-  can actually produce today (`delivered`, `queued (unpicked)`, `refused`) —
-  pasted in the run log. The remaining classes are pinned by unit tests on the
-  derivation (`internal/commands/input_model_test.go`) rather than by
-  end-to-end injection, because no producer exists (above).
-- `parlay input --watch` prints hops as they arrive; it does not yet aggregate a
+- **Push + PR.** The working tree is complete and validated, but this run's
+  harness commits each iteration itself, so no commit was made here and the
+  branch is not yet on the remote. Pushing `gnhf/objective-give-the-o-ad0a88`
+  and opening the PR (`gh-axi pr create --base main --head
+  gnhf/objective-give-the-o-ad0a88`) is the first thing the next iteration
+  should do — nothing else is blocking it.
+- `parlay input --watch` prints hops as they arrive; it does not aggregate a
   per-input state while watching.
-- The ledger's read route has no `limit` cursor for incremental tailing beyond
+- The ledger's read route has no cursor for incremental tailing beyond
   newest-N.
+- The stop condition literally configured for this run cannot exit zero in
+  this repository: there is no root `go.mod` (four independent modules, no
+  `go.work`), so `go build ./...`, `go vet ./...` and `go test ./...` at the
+  repo root all fail with `directory prefix . does not contain main module`.
+  Confirmed identical at baseline before any change. The equivalent per-module
+  sweep matching CI's module list is fully green.
 
 ## File size
 
 This repository enforces no per-file line budget (CI gates are conflict
-markers, a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and
-docs-index completeness — `.github/workflows/ci.yml`). Following the
-objective, every new file is **under 250 lines**; that ceiling was chosen, not
-inherited.
+markers, a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and docs-index
+completeness — `.github/workflows/ci.yml`). Following the objective, every new
+file is **under 250 lines**; that ceiling was chosen, not inherited. Files
+touched in this unit are within it too: the view's threshold/legend helpers
+were split into `input_threshold.go` to keep `input_view.go` under the same
+bound.

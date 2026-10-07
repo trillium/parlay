@@ -42,10 +42,11 @@ func (l *Log) Stats() Stats {
 	written := l.appended
 	l.mu.RUnlock()
 	return Stats{
-		Retained: retained,
-		Written:  written,
-		Dropped:  l.dropped.Load(),
-		Rejected: l.rejected.Load(),
-		Queue:    len(l.queue),
+		Retained:      retained,
+		Written:       written,
+		Dropped:       l.dropped.Load(),
+		Rejected:      l.rejected.Load(),
+		Queue:         len(l.queue),
+		MinConfidence: l.minConfidence,
 	}
 }

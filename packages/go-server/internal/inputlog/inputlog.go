@@ -103,6 +103,15 @@ const (
 	ClassHeld = "held"
 )
 
+// Reason tokens this package itself produces. A reason is a short
+// machine-readable token, never a message body: it names why a hop did not
+// succeed without carrying what the operator said.
+const (
+	// ReasonBelowConfidence is the hold reason: a transcript was reported
+	// with a confidence below the configured threshold.
+	ReasonBelowConfidence = "below-confidence-threshold"
+)
+
 // knownStages is the closed vocabulary of hops.
 var knownStages = map[string]bool{
 	StageReceived:    true,
@@ -200,6 +209,46 @@ func checkUnit(v *float64, name string) error {
 		return fmt.Errorf("%s %v is outside [0,1]", name, *v)
 	}
 	return nil
+}
+
+// Verdict is the threshold decision for one input's reported confidence. It
+// exists so the rule lives in exactly one place: the view's rendering, the
+// hold at the intake, and the tests all read the same decision rather than
+// three paraphrases of it.
+type Verdict struct {
+	// Class is the inputlog class this confidence lands in: ClassOK,
+	// ClassLowConfidence, or ClassConfidenceUnknown.
+	Class string
+	// Hold is true only when the input must not be routed.
+	Hold bool
+	// Reason names why, for a hold. Empty otherwise.
+	Reason string
+}
+
+// Judge applies a configured minimum confidence to a reported confidence.
+//
+// Three outcomes, and the middle one is the honest one:
+//
+//   - reported and >= min: ClassOK.
+//   - reported and <  min: Hold, ClassLowConfidence.
+//   - NOT reported: ClassConfidenceUnknown, and never a hold.
+//
+// Unknown never holds on purpose. A threshold that refused an absent value
+// would refuse every input from every surface that does not report a
+// confidence — today, all of them — which is a policy invented on no
+// evidence. "Not reported" is its own visible state instead, and the view
+// prints it as one rather than as confidence.
+func Judge(minConfidence, confidence *float64) Verdict {
+	if confidence == nil || *confidence < 0 || *confidence > 1 {
+		return Verdict{Class: ClassConfidenceUnknown}
+	}
+	if minConfidence == nil || *minConfidence < 0 || *minConfidence > 1 {
+		return Verdict{Class: ClassOK}
+	}
+	if *confidence < *minConfidence {
+		return Verdict{Class: ClassLowConfidence, Hold: true, Reason: ReasonBelowConfidence}
+	}
+	return Verdict{Class: ClassOK}
 }
 
 // inputIDSeq disambiguates two refusals minted in the same nanosecond.

@@ -264,7 +264,7 @@ interface InputEvent {
   stage: "received" | "interpreted" | "routed" | "queued" | "delivered" | "held" | "superseded"
   class: "ok" | "recogniser_error" | "low_confidence" | "confidence_unknown"
        | "no_match" | "refused" | "unpicked" | "superseded" | "held"
-  source?: string      // the surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog
+  source?: string      // the surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input
   channel?: string     // destination agent/channel, once one was chosen
   confidence?: number  // reported recognition confidence in [0,1]; absent = not reported
   threshold?: number   // the threshold a hold was decided against
@@ -273,6 +273,7 @@ interface InputEvent {
 }
 interface InputEventStats {
   retained: number; written: number; dropped: number; rejected: number; queue: number
+  minConfidence?: number  // the hold threshold actually in force; absent = disabled
 }
 ```
 
@@ -286,7 +287,8 @@ intended:
   reason is a defect in the tooling, so the ledger refuses to store one and
   counts it in `stats.rejected` instead.
 - **`stats` travels with `events`.** An empty list and a ledger that is
-  silently shedding records must never look the same.
+  silently shedding records must never look the same. `stats.minConfidence`
+  is the hold threshold in force, so a hold is never inferred from a row.
 
 Unguarded: it returns only message ids and channel names, which
 `/api/chat/history` already returns unguarded, and it writes nothing. Recording
@@ -640,7 +642,7 @@ capture it as a bead (no Talon path, no target needed; `bead_created` /
 `{ "device": "string (required)", "text": "string (required)",
 "app"?: "…", "windowTitle"?: "…", "trigger"?: "…",
 "mode"?: "inject"|"bead", "store"?: "…",
-"allowUnfocused"?: true, "dryRun"?: true }`
+"allowUnfocused"?: true, "dryRun"?: true, "confidence"?: 0.0..1.0 }`
 (`?dryRun=1` / `?allowUnfocused=1` / `?mode=bead` / `?store=…` force the same modes without touching
 the body; the body wins when both are set; dry-run runs the real focus + verification and reports
 `wouldInsert`, typing nothing). A live inject submit with no `app` and no
@@ -652,6 +654,18 @@ below — Talon `ui.apps()` names, not OS process names). Bead text is capped at
 done — the terminal outcome arrives via status poll or the
 `remote_input_result` SSE event). Errors: **400** `device`/`text` missing;
 **405** non-POST. All three routes are in the guard's `GuardedPaths`.
+
+`confidence` is optional and additive: the recognition confidence the
+submitting surface reported for `text`. Omitting it means *not reported*,
+never *confident*. When the server has a hold threshold in force
+(`PARLAY_INPUT_MIN_CONFIDENCE`, in [0,1]), a submission whose reported
+confidence is below it is **held** rather than routed: **202**
+`{ "id": "ri-N", "status": "held" }`, nothing is typed, the text is
+preserved, and the terminal outcome carries `status: "held"` with an `error`
+naming the threshold. An input with **no** reported confidence is never held —
+a threshold that refused an absent value would refuse every surface that
+cannot report one. Every submit, refusal and outcome is recorded in
+[`input-seam.md`](input-seam.md)'s ledger (source `remote-input`).
 
 ### `GET /api/chat/remote-input/targets`
 List Talon's applications in Talon's own `ui.apps()` ordering (200) or
@@ -666,7 +680,9 @@ Poll one submission's latest `Outcome` (200) or **404** unknown id
 `focus_failed` | `inject_failed` | `dry_run_passed` (dry-run success:
 real focus + verification, nothing typed, `wouldInsert` carries the exact
 bytes) | `bead_created` (capture success: `beadId`/`beadStore`/`beadWrapper`/`capturedText`) |
-`bead_failed` (typed `error`, text preserved, never an id); transient: `queued` | `injecting`.
+`bead_failed` (typed `error`, text preserved, never an id) | `held` (a reported
+confidence fell below the configured threshold: nothing typed, text preserved);
+transient: `queued` | `injecting`.
 Parlay clears shared input state only on `injected` (never on `dry_run_passed`); on `focus_failed` it
 preserves the text and strips `trigger`. **400** `id` missing; **405**
 non-GET.
@@ -932,7 +948,7 @@ implements the same contract for hosts without a shared subscription.
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `tts_event` | `{ "id", "role": "tts_event", "type", "device", …, "ts" }` | TTS lifecycle fan-out from `POST /tts-event`. |
-| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"?, "allowUnfocused"?, "mode"?, "beadId"?, "beadStore"?, "beadWrapper"?, "capturedText"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`/`bead_created`/`bead_failed`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
+| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"?, "allowUnfocused"?, "mode"?, "beadId"?, "beadStore"?, "beadWrapper"?, "capturedText"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`/`bead_created`/`bead_failed`/`held`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
 | `lavish_session` | `{ "key", "file", "proxyUrl", "status" }` | Embedded-workspace card upsert. **Producer routes not wired** — see below. |
 | `reload` | *(none)* | `location.reload()`. |
 | `navigate` | `{ "url", "openDrawer" }` | Workspace navigation. Gated by capability declarations. |

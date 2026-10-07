@@ -72,6 +72,12 @@ type Config struct {
 	Dir             string // state directory; created if missing
 	MaxMessages     int    // ring-buffer cap; <=0 uses DefaultMaxMessages
 	MaxHistoryBytes int64  // messages.jsonl compaction trigger; <=0 uses DefaultMaxHistoryBytes
+
+	// MinInputConfidence is the confidence below which operator input is
+	// held rather than routed. Nil (the zero value) disables the
+	// threshold, and a disabled threshold is byte-identical behavior to a
+	// server without this field. See inputlog.Judge.
+	MinInputConfidence *float64
 }
 
 // Open loads (or initializes) every substore from cfg.Dir, creating the
@@ -114,7 +120,9 @@ func Open(cfg Config) (*Store, error) {
 		messages.Close()
 		return nil, fmt.Errorf("store: channels: %w", err)
 	}
-	inputs, err := inputlog.Open(filepath.Join(cfg.Dir, "input.jsonl"), inputlog.Options{})
+	inputs, err := inputlog.Open(filepath.Join(cfg.Dir, "input.jsonl"), inputlog.Options{
+		MinConfidence: cfg.MinInputConfidence,
+	})
 	if err != nil {
 		messages.Close()
 		return nil, fmt.Errorf("store: input ledger: %w", err)

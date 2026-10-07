@@ -1065,6 +1065,17 @@ paths:
                 store: { type: string, description: "Bead-mode capture queue (default inbox); any registered wrapper name." }
                 allowUnfocused: { type: boolean, description: "Deliberate opt-in to inject with no focus target." }
                 dryRun: { type: boolean, description: "Real focus + verification, nothing typed; ?dryRun=1 forces the same mode." }
+                confidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  description: >-
+                    Optional and additive: the recognition confidence the submitting
+                    surface reported for text. Omission means "not reported" — never
+                    "confident" and never held. When the server has a threshold in
+                    force (PARLAY_INPUT_MIN_CONFIDENCE) and this is below it, the
+                    submission is held: status 202 with status=held, nothing typed,
+                    text preserved.
       parameters:
         - name: dryRun
           in: query
@@ -1088,7 +1099,7 @@ paths:
           description: "Mirrors the body store field (?store=task); the body wins when both are set."
       responses:
         "202":
-          description: Queued; poll status or wait for the SSE event.
+          description: Queued, or held when a reported confidence is below the configured threshold; poll status or wait for the SSE event.
           content:
             application/json:
               schema:
@@ -1096,7 +1107,7 @@ paths:
                 required: [id, status]
                 properties:
                   id: { type: string, description: "Submission id (ri-N)." }
-                  status: { const: queued }
+                  status: { enum: [queued, held] }
         "400":
           description: device/text required, unknown mode, invalid bead store, over-long bead text, targetless live inject, or invalid JSON body.
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
@@ -1109,7 +1120,7 @@ paths:
       description: >
         Returns the latest Outcome for id. Terminal status:
         injected | focus_failed | inject_failed | dry_run_passed |
-        bead_created | bead_failed;
+        bead_created | bead_failed | held;
         transient: queued | injecting. Guarded (GuardedPaths). Full
         contract owned by docs/remote-input.md.
       parameters:
@@ -1128,7 +1139,7 @@ paths:
                 properties:
                   id: { type: string }
                   device: { type: string }
-                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed, dry_run_passed, bead_created, bead_failed] }
+                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed, dry_run_passed, bead_created, bead_failed, held] }
                   focus: { enum: [verified, not_required, unfocused_allowed] }
                   injectAttempted: { type: boolean }
                   preserveText: { type: boolean }
@@ -1628,7 +1639,7 @@ components:
             The hop's outcome. Anything but `ok` carries a reason. `confidence_unknown`
             is the honest state when no recognition confidence was reported — never
             folded into `ok`.
-        source: { type: string, description: The surface or mechanism that produced this hop, e.g. send, alert, poll-wake, poll-backlog. }
+        source: { type: string, description: "The surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input." }
         channel: { type: string, description: Destination agent/channel, when one had been chosen. }
         confidence: { type: number, description: "Reported recognition confidence in [0,1]; absent means not reported." }
         threshold: { type: number, description: The confidence threshold it was compared against; present iff the hold was decided by one. }
@@ -1644,6 +1655,7 @@ components:
         dropped: { type: integer, description: Events shed because the writer queue was full. }
         rejected: { type: integer, description: Events refused as malformed (e.g. a failure with no reason). }
         queue: { type: integer, description: Events queued and not yet written. }
+        minConfidence: { type: number, description: "The confidence threshold actually in force, or absent when it is disabled. The number a hold was decided against, travelling with the events so a hold and a misconfigured policy cannot look alike." }
 
     InputEventPage:
       type: object

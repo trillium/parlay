@@ -1,8 +1,9 @@
 # The input seam
 
 **Code:** `packages/go-server/internal/inputlog` (the ledger),
-`packages/go-server/internal/handlers/input_seam.go` (the three recording call
-sites), `packages/go-server/internal/handlers/input_events.go` (the read
+`packages/go-server/internal/handlers/input_seam.go` and
+`input_remote.go` (the recording call sites),
+`packages/go-server/internal/handlers/input_events.go` (the read
 surface). Wire contract: [`api-contract.md`](api-contract.md)
 §`GET /api/chat/input-events` and its machine-readable twin
 [`api-contract.openapi.yaml`](api-contract.openapi.yaml).
@@ -71,10 +72,10 @@ answer to "where did it stop".
 | Class | Means |
 |---|---|
 | `ok` | The hop did what it was supposed to. |
-| `recogniser_error` | The recogniser reported it could not transcribe the input. There is no transcript to be unsure about. |
+| `recogniser_error` | The recogniser reported it could not transcribe the input. There is no transcript to be unsure about. Produced today by a dictation submit that arrives with empty text. |
 | `low_confidence` | A transcript exists and was reported below the threshold. Requires **both** `confidence` and `threshold`, so a hold is never unexplained. |
-| `confidence_unknown` | **No confidence was reported.** Not success, not failure — "we cannot tell". This is the state every dictation lands in today, because no intake surface in this repo reports a recogniser confidence yet; a view that showed it as `ok` would be inventing evidence. |
-| `no_match` | The input parsed as a command but named no destination matching a registered agent or known channel. |
+| `confidence_unknown` | **No confidence was reported.** Not success, not failure — "we cannot tell". Every chat `/send` and `/alert` lands here, because no intake surface on those doors reports a recogniser confidence; a view that showed it as `ok` would be inventing evidence. |
+| `no_match` | The input parsed as a command but named no destination that matched — today, a dictation submit whose focus target did not become the active app or window, or a bead submit whose store has no wrapper. |
 | `refused` | The destination exists but delivery was refused — validation failure, stale-target refusal, unwritable store. |
 | `unpicked` | The input was queued and no listener picked it up. Recorded only once something has actually waited long enough to say so. |
 | `superseded` | A later input for the same destination replaced this one before it was acted on. |
@@ -87,38 +88,84 @@ is *queued but never picked up*, and a refusal row names its reason directly.
 ## `source`: which door, and which delivery path
 
 `source` names the surface or mechanism that produced the hop. Intake sources
-today are `send` (`POST /api/chat/send`) and `alert` (`POST /api/chat/alert`).
+today are `send` (`POST /api/chat/send`), `alert` (`POST /api/chat/alert`) and
+`remote-input` (`POST /api/chat/remote-input/submit`, the phone dictation door).
 Delivery is one of `poll-wake` (a parked long-poll resolved by the new message)
 or `poll-backlog` (the retained store answered a cursor) — keeping those
 distinct is what makes "delivered hot" tell apart from "drained after a
 reconnect".
 
+## The dictation door, and the hold
+
+The remote-input intake is keyed by its own `ri-N` submission id, the same id
+the phone polls at `GET /api/chat/remote-input/status`, so a replay names the
+exact submission the operator saw. Its hops today:
+
+| Hop | When |
+|---|---|
+| `received` | Every submission that reaches the handler, before it is queued. |
+| `interpreted` | Only when a `confidence` was actually reported; carries the number and the threshold it was compared against. |
+| `held` | A reported confidence fell below the threshold: nothing was typed, text preserved. |
+| `routed` + `no_match` | The focus target did not match (nothing was typed), or a bead submit named a store it could not resolve. |
+| `delivered` + `ok` | The text was typed at the target, or captured as a bead. |
+| `delivered` + `refused` | The target was reached and the injection failed. |
+| `interpreted` + `recogniser_error` | The submit arrived with empty text: the dictation produced nothing. Previously a bare 400 that left no trace. |
+| `interpreted` + `refused` | The intake declined it before storing anything: missing `device`, unknown `mode`, invalid store, over-long bead text, or a targetless live inject. |
+
+Reason tokens are short names (`empty-transcript`, `missing-device`,
+`target-not-matched`, `inject-failed`, `bead-failed`, `no-target`, …), never the
+backend's error string: a Talon or bead error can echo the text being typed, and
+this ledger must never become a second copy of the transcript. The full error
+stays on the submission's own status.
+
+### The hold
+
+A hold is the smallest honest guard against acting on input the product can
+see is uncertain. The server reads a threshold from
+`PARLAY_INPUT_MIN_CONFIDENCE` (a number in [0,1]; unset or empty means
+**disabled**), and `inputlog.Judge` is the single owner of the decision:
+
+| Reported confidence | Threshold | Result |
+|---|---|---|
+| below it | enabled | **held** — `low_confidence` + `held` hops, 202 `status: "held"`, nothing typed, text preserved |
+| at or above it | enabled | routed normally |
+| anything | disabled | routed normally |
+| **not reported** | any | routed normally, and recorded as `confidence_unknown` rather than `ok` |
+
+The last row is the load-bearing asymmetry: **an absent confidence is never a
+hold.** A threshold that refused an unreported value would refuse every surface
+that cannot report one — today, every surface — which is a policy invented on
+no evidence. "Not reported" gets its own visible state instead.
+
+The threshold travels to the reader inside `stats.minConfidence`, and
+`parlay input` prints it above the table, so a hold can never be inferred from a
+row without the number behind it.
+
 ## What is recorded today, and what is not
 
-Recorded: the `queued` hop of every operator (`role: "user"`) message accepted
-by `/send` or `/alert`; the `delivered` hop at both poll delivery points; and a
-`refused` hop for a `/send` the intake rejected.
+Recorded: the full hop set of the dictation intake (above); the `queued` hop of
+every operator (`role: "user"`) message accepted by `/send` or `/alert`; the
+`delivered` hop at both poll delivery points; and a `refused` hop for a `/send`
+or remote-input submit the intake rejected before storing anything.
 
-**Not yet recorded, deliberately, in this unit of work:**
+**Not yet recorded, deliberately:**
 
-- `received` / `interpreted` hops for accepted input. The `queued` row already
-  carries the id, stage and source, and a `received` row would be a duplicate
-  keyed on the same facts until an intake surface actually has something extra
-  to say at that moment (a reported confidence, a source device).
-- The remote-input intake (`POST /api/chat/remote-input/submit`). It injects
-  through Talon and never becomes a chat message, so its hops need their own
-  keying. Its in-memory outcome map is not durable today.
-- The `no_match`, `unpicked`, `held` and `superseded` classes. The vocabulary
-  and the storage accept them; nothing produces them yet. `unpicked` in
-  particular needs a read-time window over a queued hop, not a producer.
-- A confidence or provenance threshold. The schema carries `confidence` and
-  `threshold` because `low_confidence` cannot be honest without both, but no
-  intake surface reports a confidence yet, so there is nothing to compare
-  against and nothing is held.
+- `received` / `interpreted` hops for accepted `/send` and `/alert` input. The
+  `queued` row already carries the id, stage and source, and a `received` row
+  would duplicate the same facts until those doors have something extra to say
+  at that moment (a reported confidence, a source device).
+- The `unpicked` and `superseded` classes. `unpicked` is a read-time judgement
+  over a queued hop, not a producer, and the view already makes it. Nothing in
+  the product yet discards an input in favour of a newer one, so a
+  `superseded` producer would be an invented semantic rather than an observed
+  one — the vocabulary and the view state exist so that the day something does
+  supersede, it is visible instead of silent.
+- A provenance threshold. The threshold today is over reported confidence
+  only. No surface reports provenance strength, so a provenance hold would
+  compare against a value nothing produces.
 
-A `parlay input` view and a replay-by-id verb are the intended consumers; both
-read this ledger over `GET /api/chat/input-events` rather than any second
-source.
+A `parlay input` view and a replay-by-id verb are the consumers; both read
+this ledger over `GET /api/chat/input-events` rather than any second source.
 
 ## Reading it
 

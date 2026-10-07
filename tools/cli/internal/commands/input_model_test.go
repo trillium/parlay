@@ -31,9 +31,29 @@ func TestDeriveInputRowNamesEveryFailureClass(t *testing.T) {
 			wantState: "recogniser error", wantWhy: "no-speech",
 		},
 		{
-			name: "low confidence names the threshold",
+			// A named failure must never render as the absence of a later hop:
+			// this read "routed — stopped after routed" until it was fixed.
+			name:      "no match is named, not reported as where it stopped",
+			hops:      []inputEvent{{Seq: 1, Ts: at(5), Stage: "received", Class: "ok"}, {Seq: 2, Ts: at(5), Stage: "routed", Class: "no_match", Reason: "target-not-matched"}},
+			wantState: "no match", wantWhy: "target-not-matched",
+		},
+		{
+			name: "a low-confidence measurement names the threshold",
 			hops: []inputEvent{{Seq: 1, Ts: at(5), Stage: "interpreted", Class: "low_confidence",
 				Reason: "below-threshold", Confidence: fl(0.35), Threshold: fl(0.80)}},
+			wantState: "low confidence", wantWhy: "confidence 0.35 below threshold 0.80",
+		},
+		{
+			// The held hop is the action and wins over the measurement that
+			// preceded it, which is the order the intake records them in.
+			name: "a hold is named held, not low confidence",
+			hops: []inputEvent{
+				{Seq: 1, Ts: at(9), Stage: "received", Class: "ok"},
+				{Seq: 2, Ts: at(9), Stage: "interpreted", Class: "low_confidence",
+					Reason: "below-threshold", Confidence: fl(0.35), Threshold: fl(0.80)},
+				{Seq: 3, Ts: at(9), Stage: "held", Class: "held",
+					Reason: "below-threshold", Confidence: fl(0.35), Threshold: fl(0.80)},
+			},
 			wantState: "held", wantWhy: "confidence 0.35 below threshold 0.80",
 		},
 		{
