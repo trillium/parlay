@@ -17,11 +17,14 @@ Interface, all local to the machine:
 - **Spool file** — `{runtime-dir}/<agent>.chan`, plain text lines
   (`CHAT_MSG|<id>|<role>|<text>[|from:<sender>]`).
 - **Control socket** — a Unix domain socket at `{runtime-dir}/relay.sock`
-  (`POST /register`, `POST /unregister`, `GET /agents`, `GET /health`), where
-  `runtime-dir` defaults to `$TMPDIR/parlay`. `GET /health` answers
+  (`POST /register`, `POST /unregister`, `GET /agents`, `GET /health`,
+  `GET /audit`, `GET /delivery`), where `runtime-dir` defaults to
+  `$TMPDIR/parlay`. `GET /health` answers
   `{"ok":true,"server":…,"runtime":…}`: the `server` field names the upstream
   this relay is bound to, which is what lets an enrolling monitor notice that
   the canonical relay is somebody else's (below).
+- **Delivery ledger** — `{runtime-dir}/delivery.log`, one JSON line per
+  delivery event (see below).
 
 ## The relay binds ONE server, and every instance on the host shares it
 
@@ -68,3 +71,54 @@ Quickstart leans on `--legacy-poll` for a fresh clone. That exit is a clean
 refusal rather than a trap: `monitor`/`listen`/`claim` each preflight the relay
 before enrolling, so nothing is registered when it fires — see
 [`monitor.md`](monitor.md).
+
+## What the relay delivered, and when
+
+The relay keeps **two durable trails**, and the split is the point:
+
+- `{runtime-dir}/audit.log` — the **control plane**: who enrolled or retired a
+  channel and when (`register`, `unregister`, and the denials), one line per
+  enroll, with the caller's owner-token fingerprint and never the raw token.
+  Shape: `{"ts","actor","action","agent"}`. Read it with `GET /audit?limit=N`.
+- `{runtime-dir}/delivery.log` — the **data plane**: what this relay actually
+  spooled, for whom, when, and how each channel's delivery ended. One line per
+  message. Read it with `GET /delivery?limit=N&agent=<id>`.
+
+```json
+{"ts":"2026-10-07T08:23:12Z","event":"spooled","agent":"crew-1","msg":"m-1","role":"user"}
+{"ts":"2026-10-07T08:23:19Z","event":"spool-failed","agent":"crew-1","msg":"m-2"}
+{"ts":"2026-10-07T08:24:02Z","event":"delivery-ended","agent":"crew-1","reason":"channel-gone","spoolLines":1}
+{"ts":"2026-10-07T08:24:02Z","event":"rotated","reason":"size-cap"}
+```
+
+Four events, each a fact only the relay witnesses:
+
+| event | says |
+|---|---|
+| `spooled` | the message is on disk in that agent's spool — the relay's delivery boundary |
+| `spool-failed` | the append failed, so the message did **not** reach the agent |
+| `delivery-ended` | the channel stopped being polled, with `reason` (`channel-gone` \| `unregister` \| `shutdown`) and `spoolLines` |
+| `rotated` | the active file hit 8 MiB; `delivery.log.1` holds the previous generation |
+
+Three honest limits, stated rather than papered over:
+
+- **`spooled` is not "read".** Nothing in the fleet acknowledges consumption, so
+  the ledger records the boundary it can see. It never claims an agent saw
+  anything.
+- **`spoolLines` is a count, not a diagnosis.** It is the number of messages in
+  the spool when the channel stopped, taken *before* the spool is tombstoned. It
+  counts what was spooled and unproven-consumed — never what the agent missed,
+  which is not knowable here.
+- **Rotation is lossy and says so.** A trail that simply begins mid-history is
+  indistinguishable from a quiet fleet, so the new file's first line is a
+  `rotated` marker.
+
+Nothing free-form is stored: no message body, no path, no error string — the
+same posture as `audit.log`. Writes are best-effort exactly like the audit
+log's and can never slow or fail a delivery; `PARLAY_RELAY_DELIVERY_LOG=0`
+turns recording off, and `GET /delivery` then reports `enabled:false` while
+`exists:false` tells a never-written ledger apart from an empty one.
+
+Both trails are local reads on the control socket, they are read-only, and the
+chat API's guard is untouched by them. See `tools/relay/NOTES.md` for the
+route table and `tools/relay/relay_delivery.go` for the writer.

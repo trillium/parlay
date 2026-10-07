@@ -122,6 +122,31 @@ func (r *relay) controlMux() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"entries": r.readAudit(auditLimit(req.URL.Query().Get("limit")))})
 	})
 
+	// /delivery tails the data-plane ledger (relay_delivery.go): what this relay
+	// actually spooled for whom, when, and how each channel's delivery ended.
+	// It is the counterpart to /audit's control-plane trail — same runtime dir,
+	// same read-only local socket, same additive shape — and it is deliberately
+	// separate from /audit because this one is written at message rate and
+	// /audit is not. The 404 body's absence of ?agent is not a filter error: an
+	// unknown agent simply has no entries, and `exists`/`enabled` distinguish
+	// that from a ledger that was never written or was switched off.
+	mux.HandleFunc("/delivery", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET only"})
+			return
+		}
+		q := req.URL.Query()
+		entries, exists := r.readDelivery(readDeliveryLimit(q.Get("limit")), strings.TrimSpace(q.Get("agent")))
+		writeJSON(w, http.StatusOK, deliveryResponse{
+			OK:      true,
+			Enabled: deliveryLogEnabled(),
+			Exists:  exists,
+			Ledger:  r.deliveryPath(),
+			Count:   len(entries),
+			Entries: entries,
+		})
+	})
+
 	return mux
 }
 

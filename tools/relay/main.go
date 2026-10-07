@@ -13,12 +13,20 @@
 //	Spool line    : CHAT_MSG|<id>|<role>|<text>\n               (captain messages, no attribution)
 //	              : CHAT_MSG|<id>|<role>|<text>|from:<sender>\n (agent→agent messages, 5th field)
 //	Spool path    : {runtime-dir}/<agent>.chan       (runtime-dir defaults to $TMPDIR/parlay)
+//	Delivery trail: {runtime-dir}/delivery.log       (relay_delivery.go; PARLAY_RELAY_DELIVERY_LOG=0 disables)
 //	Control socket : Unix domain socket at {runtime-dir}/relay.sock
 //	  POST /register {"agent":"<id>"}     → {"ok":true,"agent":"<id>","spool":"<path>","token":"<owner>"}   (idempotent per caller)
 //	  POST /unregister {"agent":"<id>"}   → {"ok":true}
 //	  GET  /agents                        → {"agents":[...],"server":"...","runtime":"..."}
 //	  GET  /health                        → {"ok":true}
 //	  GET  /audit?limit=N                 → {"entries":[...]} (who/what/target/when JSONL tail)
+//	  GET  /delivery?limit=N&agent=<id>   → {ok,enabled,exists,ledger,count,entries} (data-plane
+//	                                        delivery trail: what was spooled for whom, when, and how
+//	                                        each channel's delivery ended — relay_delivery.go)
+//
+// Two trails, two planes: /audit is enrollment (control plane, one entry per
+// enroll), /delivery is delivery (data plane, one entry per message). Reading
+// them together is how "what happened at 2am" is answered without the source.
 //
 // Per-caller identity: the first /register for an id mints an owner token
 // (returned once — persist as {runtime-dir}/<agent>.token); re-registering

@@ -25,12 +25,17 @@ type fakeUpstream struct {
 	scripts map[string][]upstreamMessage
 	// served[channel] counts how many messages that channel has handed out.
 	served map[string]int
+	// polls[channel] counts every poll request, delivered or idle — the signal a
+	// test needs to prove a loop is still ALIVE (served stops moving once the
+	// script drains).
+	polls map[string]int
 }
 
 func newFakeUpstream() *fakeUpstream {
 	return &fakeUpstream{
 		scripts: make(map[string][]upstreamMessage),
 		served:  make(map[string]int),
+		polls:   make(map[string]int),
 	}
 }
 
@@ -50,6 +55,7 @@ func (f *fakeUpstream) handler(w http.ResponseWriter, req *http.Request) {
 	after := req.URL.Query().Get("after")
 
 	f.mu.Lock()
+	f.polls[channel]++
 	script := f.scripts[channel]
 	idx := f.served[channel]
 
@@ -70,6 +76,13 @@ func (f *fakeUpstream) handler(w http.ResponseWriter, req *http.Request) {
 	f.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, msg)
+}
+
+// pollCount returns how many poll requests a channel has taken.
+func (f *fakeUpstream) pollCount(channel string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.polls[channel]
 }
 
 // readSpoolIDs returns the ids in order from a spool file's CHAT_MSG lines.
