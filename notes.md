@@ -1876,3 +1876,145 @@ on `origin/main`, so nothing of the captain's is affected.
   evidence the relay was polling it; a denied unregister proves the caller held
   nothing, so it cannot end an interval. Both are pinned by tests, not by
   convention.
+
+---
+
+## Input-seam observability work (branch notes for PR #312 follow, unmodified)
+The sections above are main's onboarding account (PR #314) and runtime-observability notes (PR #313), which landed while this branch was in flight.
+
+# Input-seam observability — working notes
+
+Status: in progress. This file records what the tooling can and cannot tell the
+operator **right now**; it is updated as the work lands and is deliberately
+honest about the gaps.
+
+## What the operator can now tell apart
+
+Before this work, four different failures on the input path looked identical
+from the panel, because none of them left a durable, typed record:
+
+> did the speech recogniser mishear it, did the relay drop it, did the agent
+> ignore it, or did the phone never send it?
+
+There is now a durable **input-seam ledger** (`input.jsonl` beside
+`messages.jsonl`) holding one record per **hop** an input made, keyed by the
+input's own id, plus a view (`parlay input`) and a replay
+(`parlay input --input <id>`) over it.
+
+States the view can now distinguish, each of which previously read as "nothing
+happened" or as an identical-looking chat line:
+
+| State | What it means | Why it used to be invisible |
+|---|---|---|
+| `delivered` | A listener was handed the input. `LATENCY` is first hop → delivery. | A delivered and a queued message are byte-identical in `messages.jsonl`. |
+| `queued` | Durably held, waiting for a listener. | Same bytes as delivered. |
+| `queued (unpicked)` | Queued and nothing picked it up within the stale window. | Indistinguishable from an intentional queue. |
+| `refused` | An intake surface declined it before storing anything. `WHY` names the reason (e.g. `empty-input`). | Nothing reaches disk at all, so there was no record anywhere. |
+| `received` / `interpreted` / `routed` with no later hop | Where the input **stopped**. | Read as ordinary silence. |
+| `held` | A confidence/provenance threshold stopped it. | Vocabulary + storage exist; no producer yet (below). |
+| `recogniser error` | The recogniser reported it could not transcribe the input. | No producer yet (below). |
+| `superseded` | A later input replaced it before it was acted on. | No producer yet (below). |
+
+The same six failure classes the objective names are the ledger's closed
+`class` vocabulary: `recogniser_error`, `low_confidence`, `no_match`,
+`refused`, `unpicked`, `superseded` — plus `ok` and `confidence_unknown`.
+
+Two rules are enforced rather than intended:
+
+- **A non-`ok` hop must carry a `reason`.** The ledger refuses to store an
+  unexplained failure and counts it (`stats.rejected`) so a gap in the view is
+  never invisible. An input event that failed with no recorded reason is a
+  defect in the tooling.
+- **`confidence_unknown` is its own state**, never folded into `ok`. Today no
+  intake surface in this repo reports a recogniser confidence, so this is what
+  every dictation actually lands in, and the view says so instead of implying
+  confidence it does not have.
+
+## What was built
+
+- `packages/go-server/internal/inputlog` — the durable ledger: append-only
+  JSONL, bounded in-memory ring (5,000 events / 8 MiB), and a **non-blocking**
+  writer (256-deep queue, single drain goroutine, drop counted on a full queue,
+  budgeted flush on close). `Log.Record` never touches disk, never blocks, and
+  never returns an error.
+- Recording call sites (`internal/handlers/input_seam.go`): the `queued` hop of
+  every operator message accepted by `/send` and `/alert`, the `delivered` hop
+  at both poll delivery points (`poll-wake` vs `poll-backlog`, kept distinct so
+  a hot delivery is not confused with a drain after a reconnect), and a
+  `refused` hop for a `/send` the intake rejected.
+- `GET /api/chat/input-events` — the read surface (ledger + its own counters).
+  Classified as an unguarded read in `internal/guard`'s `TestUnguardedRoutes`
+  with a written reason: it hands out only message ids and channel names, which
+  `/api/chat/history` already returns unguarded, and it writes nothing.
+- `parlay input [--input <id>] [--watch] [--json] [--limit N] [--stale-after S]`
+  — the live view, the replay, and JSON for scripts.
+- Contracts and docs: `docs/api-contract.md`, `docs/api-contract.openapi.yaml`,
+  and `docs/input-seam.md` (indexed in `docs/README.md`).
+
+## Hard constraints, and how each is met
+
+- **Observability never sits in the delivery path.**
+  `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` installs a ledger whose sink
+  never returns, then drives `POST /api/chat/send` and a poll: both succeed,
+  promptly, and the message is still durably stored.
+  `TestRecordNeverBlocksOnAWedgedSink` pins the same property at the ledger's
+  own boundary (50,000 `Record` calls against a wedged sink, with drops
+  counted).
+- **Never record raw audio; do not change message-history retention or
+  privacy.** The ledger stores ids, stages, classes, short reason tokens and
+  numbers — **never message text**. It is a separate file with its own bound,
+  not a second copy of `messages.jsonl`.
+- **Never weaken `internal/guard.GuardedPaths`; never reimplement its checks.**
+  No guard check was touched or re-implemented. The new route is a read and is
+  classified as one, with a reason, in the enforced route-coverage test.
+- **Do not touch deployment scripts, public endpoint shapes, or downstream
+  consumers.** No existing route's request or response shape changed. A refused
+  input gets a ledger-local id (`in-…`) precisely so the frozen error bodies
+  need no new field.
+- **Nothing under `.pi/` is committed.** `.pi/` is now in `.gitignore` (it is
+  harness scratch; without the entry it dirties `git status --porcelain` for
+  the whole session running in this checkout — the same reason `.fm-hooks/` is
+  listed).
+
+## Deliberately not built (and why)
+
+- **A producer for `low_confidence`, `recogniser_error`, `no_match`,
+  `superseded`, `held`.** The vocabulary, the storage, the wire contract and
+  the view states all exist; nothing emits them yet. Two reasons, both
+  deliberate: `remote-input` and the panel are the only surfaces that could
+  report a recogniser confidence, and **no public endpoint shape may change**,
+  so a confidence field cannot simply be bolted onto `POST /send`. The honest
+  state meanwhile is `confidence_unknown`, which the view prints rather than
+  papering over.
+- **A confidence/provenance threshold that actually holds input.** Nothing
+  reports a confidence yet, so there is nothing to compare against and nothing
+  to hold — a threshold over an always-absent value would be theatre.
+- **`received` / `interpreted` hops for accepted input.** The `queued` row
+  already carries the id, stage and source; a `received` row would duplicate
+  the same facts until an intake surface has something extra to say at that
+  moment.
+- **The remote-input intake's hops.** It injects through Talon and never
+  becomes a chat message, so its hops need their own keying; its outcome map is
+  not durable today.
+- **A push stream for the ledger.** `--watch` polls (default 2s) and its header
+  says so. An SSE event would imply delivery latency the ledger does not have.
+
+## Left undone
+
+- Failure-class demonstrations are complete for the three classes the product
+  can actually produce today (`delivered`, `queued (unpicked)`, `refused`) —
+  pasted in the run log. The remaining classes are pinned by unit tests on the
+  derivation (`internal/commands/input_model_test.go`) rather than by
+  end-to-end injection, because no producer exists (above).
+- `parlay input --watch` prints hops as they arrive; it does not yet aggregate a
+  per-input state while watching.
+- The ledger's read route has no `limit` cursor for incremental tailing beyond
+  newest-N.
+
+## File size
+
+This repository enforces no per-file line budget (CI gates are conflict
+markers, a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and
+docs-index completeness — `.github/workflows/ci.yml`). Following the
+objective, every new file is **under 250 lines**; that ceiling was chosen, not
+inherited.

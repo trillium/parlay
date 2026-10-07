@@ -196,6 +196,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AppError" }
 
+  /api/chat/input-events:
+    get:
+      operationId: inputEvents
+      x-parlay-server: go-only
+      x-parlay-guard: unguarded-read
+      summary: The input-seam ledger — every recorded hop of operator input
+      description: >-
+        One append-only record per hop an operator input made between an intake
+        surface accepting it and a listener being handed it, keyed by the
+        input's id (a stored message id, or a ledger-local `in-…` id for a
+        request an intake refused before storing anything). `inputId` narrows
+        the answer to one input's hops — the material a replay renders. The
+        response always carries the ledger's own counters, so an empty event
+        list and a ledger that is silently shedding records cannot look alike.
+        Unguarded deliberately: it hands out only message ids and channel names,
+        which `/api/chat/history` already returns unguarded, and it never
+        stores anything (an unknown `inputId` is an empty list). The ledger
+        holds no message text.
+      parameters:
+        - name: inputId
+          in: query
+          schema: { type: string }
+          description: Return only this input's hops; unknown ids return an empty list.
+        - name: limit
+          in: query
+          schema: { type: integer }
+          description: Return at most the newest N retained events; absent or unparseable means all retained.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InputEventPage" }
+
   /api/chat/history:
     get:
       operationId: history
@@ -1575,6 +1608,48 @@ components:
         images: { type: array, items: { type: string } }
         from: { type: string, description: User-role sender attribution; absent = the captain. }
         received: { type: boolean, description: Runtime-only delivery pip; stripped from disk. }
+
+    InputEvent:
+      type: object
+      description: >-
+        One hop of one operator input through the input seam. Never carries
+        message text.
+      required: [seq, ts, inputId, stage, class]
+      properties:
+        seq: { type: integer, description: Monotonic within the retained ledger; the replay ordering key. }
+        ts: { type: string, description: ISO 8601. }
+        inputId: { type: string, description: The stored message id, or a ledger-local `in-…` id for a refused input. }
+        stage:
+          enum: [received, interpreted, routed, queued, delivered, held, superseded]
+          description: What had happened to the input at this hop.
+        class:
+          enum: [ok, recogniser_error, low_confidence, confidence_unknown, no_match, refused, unpicked, superseded, held]
+          description: >-
+            The hop's outcome. Anything but `ok` carries a reason. `confidence_unknown`
+            is the honest state when no recognition confidence was reported — never
+            folded into `ok`.
+        source: { type: string, description: The surface or mechanism that produced this hop, e.g. send, alert, poll-wake, poll-backlog. }
+        channel: { type: string, description: Destination agent/channel, when one had been chosen. }
+        confidence: { type: number, description: "Reported recognition confidence in [0,1]; absent means not reported." }
+        threshold: { type: number, description: The confidence threshold it was compared against; present iff the hold was decided by one. }
+        reason: { type: string, description: Short machine-readable token for a non-ok hop. Required for every class but `ok`. Never a message body. }
+        detail: { type: string, description: Bounded non-content context. Never message text. }
+
+    InputEventStats:
+      type: object
+      description: The ledger's own honesty report; travels with every page.
+      properties:
+        retained: { type: integer, description: Events currently in the in-memory ring. }
+        written: { type: integer, description: Events durably appended this process. }
+        dropped: { type: integer, description: Events shed because the writer queue was full. }
+        rejected: { type: integer, description: Events refused as malformed (e.g. a failure with no reason). }
+        queue: { type: integer, description: Events queued and not yet written. }
+
+    InputEventPage:
+      type: object
+      properties:
+        events: { type: array, items: { $ref: "#/components/schemas/InputEvent" } }
+        stats: { $ref: "#/components/schemas/InputEventStats" }
 
     AgentInfo:
       type: object

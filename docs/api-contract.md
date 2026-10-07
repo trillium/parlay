@@ -243,6 +243,57 @@ interface ChatMessage {
 }
 ```
 
+### `GET /api/chat/input-events?inputId=<id>&limit=N`
+The input-seam ledger: what happened to operator input between an intake
+surface accepting it and a listener being handed it. See
+[`input-seam.md`](input-seam.md) for the vocabulary and the failure classes it
+tells apart.
+
+One record per hop, append-only, keyed by the input's id — the stored message
+id, or a ledger-local `in-…` id for a request an intake surface refused before
+storing anything. `inputId` narrows the answer to one input's hops (what a
+replay renders); an unknown id is an **empty list**, not an error and not a
+created record. `limit` returns at most the newest N retained events.
+
+Response: `{ events: InputEvent[], stats: InputEventStats }`
+```ts
+interface InputEvent {
+  seq: number          // monotonic within the retained ledger; the replay ordering key
+  ts: string           // ISO 8601
+  inputId: string
+  stage: "received" | "interpreted" | "routed" | "queued" | "delivered" | "held" | "superseded"
+  class: "ok" | "recogniser_error" | "low_confidence" | "confidence_unknown"
+       | "no_match" | "refused" | "unpicked" | "superseded" | "held"
+  source?: string      // the surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog
+  channel?: string     // destination agent/channel, once one was chosen
+  confidence?: number  // reported recognition confidence in [0,1]; absent = not reported
+  threshold?: number   // the threshold a hold was decided against
+  reason?: string      // short token; REQUIRED for every class but "ok"
+  detail?: string      // bounded non-content context
+}
+interface InputEventStats {
+  retained: number; written: number; dropped: number; rejected: number; queue: number
+}
+```
+
+Three invariants a reader can rely on, because each is enforced rather than
+intended:
+
+- **No message text, ever.** The ledger holds ids, stages, classes, short
+  reason tokens and numbers. The full transcript lives in `messages.jsonl`
+  under its own retention rule; this is not a second copy of it.
+- **A non-`ok` hop always carries a `reason`.** A failure with no recorded
+  reason is a defect in the tooling, so the ledger refuses to store one and
+  counts it in `stats.rejected` instead.
+- **`stats` travels with `events`.** An empty list and a ledger that is
+  silently shedding records must never look the same.
+
+Unguarded: it returns only message ids and channel names, which
+`/api/chat/history` already returns unguarded, and it writes nothing. Recording
+is asynchronous and never sits in the delivery path — a wedged ledger sink
+cannot slow or fail a send or a poll (pinned by
+`TestDeliveryIsNotSlowedOrFailedByAWedgedLedger`).
+
 ### `GET /api/chat/poll?after=<lastId>&channel=<agentId>`
 Agent long-poll. Blocks until a message for the channel arrives or the
 server-side timeout elapses (25s), then returns exactly one

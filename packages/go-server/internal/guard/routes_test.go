@@ -40,7 +40,7 @@ func newServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	t.Cleanup(func() { st.Messages.Close() })
+	t.Cleanup(st.Close)
 
 	mux := http.NewServeMux()
 	handlers.Register(mux, st)

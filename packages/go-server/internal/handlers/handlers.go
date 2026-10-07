@@ -106,6 +106,7 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 
 	registerCommands(mux, st, hub)
 	registerPanel(mux, st, b, hub)
+	registerInputEvents(mux, st)
 
 	return hub
 }

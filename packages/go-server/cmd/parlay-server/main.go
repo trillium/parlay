@@ -64,7 +64,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
-	defer st.Messages.Close()
+	defer st.Close()
 
 	mux := http.NewServeMux()
 	registerHealth(mux, st)

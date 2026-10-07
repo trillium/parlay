@@ -82,13 +82,13 @@ func TestDeclareChannelPersistsAcrossReopen(t *testing.T) {
 	if _, err := st.Channels.Declare("s1", "edgar"); err != nil {
 		t.Fatalf("Declare: %v", err)
 	}
-	st.Messages.Close()
+	st.Close()
 
 	reopened, err := store.Open(store.Config{Dir: dir})
 	if err != nil {
 		t.Fatalf("store.Open (reopen): %v", err)
 	}
-	t.Cleanup(func() { reopened.Messages.Close() })
+	t.Cleanup(reopened.Close)
 
 	got, ok := reopened.Channels.ChannelFor("s1")
 	if !ok || got != "edgar" {

@@ -190,6 +190,7 @@ func handlePoll(st *store.Store, b *broker, hub *Hub, timeout time.Duration) htt
 				resp.CursorReset = reset
 				resp.Skipped = skipped
 				writeJSON(w, resp)
+				recordDelivered(st, m, inputSourcePollBacklog)
 				hub.broadcast(eventMessageReceived, messageReceivedPayload{ID: m.ID})
 				return
 			}
@@ -206,6 +207,7 @@ func handlePoll(st *store.Store, b *broker, hub *Hub, timeout time.Duration) htt
 		select {
 		case m := <-ch:
 			writeJSON(w, toPollMessage(m))
+			recordDelivered(st, m, inputSourcePollWake)
 			hub.broadcast(eventMessageReceived, messageReceivedPayload{ID: m.ID})
 		case <-timer.C:
 			writeJSON(w, map[string]bool{"timeout": true})
