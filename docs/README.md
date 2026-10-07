@@ -43,6 +43,7 @@ Linked from the root README's system map.
 | [`launcher.md`](launcher.md) | `parlay spawn` — the in-process Go launcher (`tools/cli/internal/spawn`), the only spawner. |
 | [`relay.md`](relay.md) | The per-runtime-dir fan-out daemon between the server and every enrolled agent's monitor. |
 | [`live-commands.md`](live-commands.md) | The live-command registry: how a running `parlay` verb reports itself, why the registry stores no free-form text (verb, agent id, pid, flag *names* only), and the 90s staleness reaper that keeps a crashed command from becoming a permanent zombie entry. |
+| [`action-log.md`](action-log.md) | The **command log** — one row per *evaluated string* (not per process), its four-value outcome vocabulary (`delivered`/`queued`/`dropped`/`refused`), the filter axes, and the off switch that turns a connection or an action off from the same place you read the rows. The sandbox test site's backing surfaces. |
 
 ### Contracts — wire shapes other code is built against
 

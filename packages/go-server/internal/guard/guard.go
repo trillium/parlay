@@ -234,6 +234,20 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/command-start":     true,
 	"/api/chat/command-heartbeat": true,
 	"/api/chat/command-end":       true,
+
+	// The command log and the off switch (sandbox task). /off-switch is
+	// mutating on POST — it turns a connection or an action off, or back on — so
+	// the method-independent rule puts the GET on the same path inside the
+	// boundary too. /action-log is a GET that hands out device ids, command ids
+	// and per-action verbs: identifier-disclosure by the same test that guards
+	// /subscribers, and it is in noGuardedCORSReads below so guarding it does not
+	// newly reflect an ACAO on a body that has never sent one.
+	//
+	// Neither route is an authorization layer and neither reimplements a guard
+	// check: the switch can only ever SUBTRACT delivery from work this server was
+	// already willing to do, and a request the guard refuses never reaches it.
+	"/api/chat/action-log": true,
+	"/api/chat/off-switch": true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
@@ -467,6 +481,10 @@ func setGuardedCORS(w http.ResponseWriter, r *http.Request) {
 // executes but its frames stay unreadable — divergence 1's posture, preserved.
 var noGuardedCORSReads = map[string]string{
 	"/api/chat/events": http.MethodGet,
+	// /action-log is a guarded READ: the guard is there because the path's
+	// sibling POST mutates and because the body carries device ids, but the GET
+	// itself has never sent CORS headers and must not start doing so.
+	"/api/chat/action-log": http.MethodGet,
 }
 
 // suppressesGuardedCORS reports whether this guarded request is one of the

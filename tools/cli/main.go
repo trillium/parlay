@@ -185,6 +185,12 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.BranchAudit(args)
 	case "commands":
 		commands.Commands(args)
+	case "action-log":
+		commands.ActionLog(args)
+	case "off":
+		commands.OffSwitch(args, true, "off")
+	case "on":
+		commands.OffSwitch(args, false, "on")
 	case "landed":
 		commands.Landed(args)
 	case "lavish-import":

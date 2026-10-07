@@ -9,6 +9,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"parlay/go-server/internal/store"
 )
 
 // Ticket C4: eval relay routes. The Go server relays input evaluation to the
@@ -128,9 +130,89 @@ func deviceForStream(streamID string) (string, bool) {
 	return device, ok
 }
 
+// streamFiredMap remembers the command id the last evaluation on a stream
+// fired. /eval-push receives only a streamId and a bare submitNow action, so
+// without this an ACTION mute could stop new timers from arming while leaving
+// an already-armed one — armed milliseconds before the mute — free to fire a
+// second later. Bounded and evicted exactly like streamDeviceMap, for the same
+// reason: streamId is caller-supplied and this API has no authentication.
+var (
+	streamFiredMapMu sync.RWMutex
+	streamFiredMap   = make(map[string]string)
+	streamFiredOrder []string
+)
+
+// rememberFired records which command a stream's evaluation fired, evicting the
+// oldest stream's entry when the table is full.
+func rememberFired(streamID, commandID string) {
+	if streamID == "" || commandID == "" {
+		return
+	}
+	streamFiredMapMu.Lock()
+	defer streamFiredMapMu.Unlock()
+	if _, exists := streamFiredMap[streamID]; exists {
+		streamFiredMap[streamID] = commandID
+		return
+	}
+	for len(streamFiredOrder) >= maxTrackedStreams {
+		oldest := streamFiredOrder[0]
+		streamFiredOrder = streamFiredOrder[1:]
+		delete(streamFiredMap, oldest)
+	}
+	streamFiredMap[streamID] = commandID
+	streamFiredOrder = append(streamFiredOrder, streamID)
+}
+
+// firedForStream returns the command id a stream's last evaluation fired, if the
+// stream is still tracked.
+func firedForStream(streamID string) string {
+	streamFiredMapMu.RLock()
+	defer streamFiredMapMu.RUnlock()
+	return streamFiredMap[streamID]
+}
+
+// knowActionVerbs are the verbs whose presence changes what the outcome of an
+// evaluation MEANS. armTimer is the only one today: it is the engine telling the
+// client to render a countdown for a submit the server has already deferred, so
+// the string was accepted and QUEUED rather than delivered.
+const armTimerVerb = "armTimer"
+
+// actionVerbs extracts the emitted verb names from an engine response, in order,
+// for the log's output-action axis. The engine's action array is `any` shaped by
+// contract; an element that is not an object with a string verb is skipped
+// rather than guessed at.
+func actionVerbs(actions []interface{}) []string {
+	out := make([]string, 0, len(actions))
+	for _, raw := range actions {
+		a, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if v, ok := a["verb"].(string); ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// hasVerb reports whether want appears among verbs.
+func hasVerb(verbs []string, want string) bool {
+	for _, v := range verbs {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
 // handleEval implements POST /api/chat/eval — the up-channel. Relays the request
 // to the compiled Go eval engine and broadcasts its response over device-scoped SSE.
-func handleEval(hub *Hub) http.HandlerFunc {
+//
+// It also owns two things the relay alone did not: the OFF SWITCH (a muted
+// connection is refused before the engine is called; a muted action has its
+// emission suppressed after it), and the command-log record for every
+// evaluation, whatever its outcome. Both are why this handler needs the store.
+func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -154,6 +236,30 @@ func handleEval(hub *Hub) http.HandlerFunc {
 		}
 		if req.Reason == "" {
 			req.Reason = "input"
+		}
+
+		// THE OFF SWITCH, connection half. A muted device is refused here, before
+		// the engine ever sees the text: the surface stops being an action source,
+		// which is what "turn this connection off" has to mean to be worth having.
+		// The refusal is recorded, because an act that leaves no trace is
+		// indistinguishable from a silent failure — which is the whole reason the
+		// log exists.
+		if st.OffSwitch.IsConnectionOff(req.Device) {
+			st.ActionLog.Append(store.ActionRecord{
+				Source:   evalSource(req.StreamID),
+				Device:   req.Device,
+				StreamID: req.StreamID,
+				Outcome:  store.OutcomeRefused,
+				Reason:   "off-connection",
+			})
+			writeJSON(w, map[string]interface{}{
+				"ok":      false,
+				"refused": store.OffKindConnection,
+				"device":  req.Device,
+				"hint": "this connection is OFF — re-enable it with POST /api/chat/off-switch " +
+					"{kind:\"connection\",id:<device>,off:false} or `parlay on connection <device>`",
+			})
+			return
 		}
 
 		// Remember which device owns this stream so a later server-owned submit fire
@@ -188,29 +294,94 @@ func handleEval(hub *Hub) http.HandlerFunc {
 		relayMs := time.Since(t0).Milliseconds()
 
 		if err != nil {
+			st.ActionLog.Append(store.ActionRecord{
+				Source:   evalSource(req.StreamID),
+				Device:   req.Device,
+				StreamID: req.StreamID,
+				Outcome:  store.OutcomeDropped,
+				Reason:   "engine-unreachable",
+				RelayMs:  relayMs,
+			})
 			writeStatusError(w, http.StatusBadGateway, "engine unreachable: "+err.Error())
 			return
 		}
 
 		var env evalEnvelope
 		if err := json.Unmarshal(engineResp, &env); err != nil {
+			st.ActionLog.Append(store.ActionRecord{
+				Source:   evalSource(req.StreamID),
+				Device:   req.Device,
+				StreamID: req.StreamID,
+				Outcome:  store.OutcomeDropped,
+				Reason:   "engine-bad-response",
+				RelayMs:  relayMs,
+			})
 			writeStatusError(w, http.StatusBadGateway, "invalid engine response")
 			return
 		}
+
+		// THE OFF SWITCH, action half. The engine names the command it fired; a
+		// muted command's emission is suppressed and the evaluation recorded as a
+		// refusal. Suppressed, not delivered-and-hidden: the client is told the
+		// action is off rather than being left to wonder why nothing happened.
+		if env.Fired != "" && st.OffSwitch.IsActionOff(env.Fired) {
+			st.ActionLog.Append(store.ActionRecord{
+				Source:        evalSource(req.StreamID),
+				Device:        req.Device,
+				StreamID:      req.StreamID,
+				InputAction:   env.Fired,
+				OutputActions: actionVerbs(env.Actions),
+				Outcome:       store.OutcomeRefused,
+				Reason:        "off-action",
+				RelayMs:       relayMs,
+				EngineEvalNs:  env.EngineEvalNs,
+			})
+			writeJSON(w, map[string]interface{}{
+				"ok":      false,
+				"refused": store.OffKindAction,
+				"action":  env.Fired,
+				"hint": "this action is OFF — re-enable it with POST /api/chat/off-switch " +
+					"{kind:\"action\",id:<command-id>,off:false} or `parlay on action <command-id>`",
+			})
+			return
+		}
+
+		rememberFired(req.StreamID, env.Fired)
 
 		timing := relayTiming{
 			EngineEvalNs: env.EngineEvalNs,
 			RelayMs:      relayMs,
 		}
 
-		// Broadcast the response over device-scoped SSE as input_action
-		matched := hub.broadcastToDevice(req.Device, "input_action", map[string]interface{}{
-			"v":           env.V,
-			"streamId":    env.StreamID,
-			"seq":         env.Seq,
-			"baseVersion": env.BaseVersion,
-			"actions":     env.Actions,
-			"timing":      timing,
+		// PREVIEW vs FIRE, the whole gate. A stream whose id carries the preview
+		// marker is evaluated against the REAL engine and its result is NEVER
+		// broadcast to a device — that is the difference between "show me what this
+		// would do" and "do it". A sandbox-fire stream has no marker and is
+		// delivered exactly like a production panel.
+		preview := isPreviewStream(req.StreamID)
+		verbs := actionVerbs(env.Actions)
+		matched := 0
+		if !preview {
+			matched = hub.broadcastToDevice(req.Device, "input_action", map[string]interface{}{
+				"v":           env.V,
+				"streamId":    env.StreamID,
+				"seq":         env.Seq,
+				"baseVersion": env.BaseVersion,
+				"actions":     env.Actions,
+				"timing":      timing,
+			})
+		}
+
+		st.ActionLog.Append(store.ActionRecord{
+			Source:        evalSource(req.StreamID),
+			Device:        req.Device,
+			StreamID:      req.StreamID,
+			InputAction:   env.Fired,
+			OutputActions: verbs,
+			Outcome:       evalOutcome(preview, matched, verbs),
+			Reason:        evalOutcomeReason(preview, matched, verbs),
+			RelayMs:       relayMs,
+			EngineEvalNs:  env.EngineEvalNs,
 		})
 
 		// Return the envelope + timing synchronously
@@ -231,6 +402,47 @@ func handleEval(hub *Hub) http.HandlerFunc {
 	}
 }
 
+// evalOutcome maps what actually happened to the log's four-value vocabulary.
+// The order of the cases is the meaning of the log:
+//
+//	preview          — never delivered by construction, so never "delivered"
+//	armTimer present — the submit was accepted and DEFERRED, which is queued
+//	actions delivered— reached at least one live SSE client
+//	actions, no client— produced a result nothing received, which is dropped
+//	no actions       — nothing matched, so nothing was sent: dropped, and the
+//	                   reason says "no-match" so this is never mistaken for a
+//	                   lost delivery
+func evalOutcome(preview bool, matched int, verbs []string) string {
+	switch {
+	case preview:
+		return store.OutcomeDropped
+	case hasVerb(verbs, armTimerVerb):
+		return store.OutcomeQueued
+	case len(verbs) > 0 && matched > 0:
+		return store.OutcomeDelivered
+	default:
+		return store.OutcomeDropped
+	}
+}
+
+// evalOutcomeReason is evalOutcome's companion token, and it is the half that
+// makes the outcome actionable: "dropped" alone cannot tell a lost delivery
+// from a string that simply matched nothing.
+func evalOutcomeReason(preview bool, matched int, verbs []string) string {
+	switch {
+	case preview:
+		return "preview-suppressed"
+	case hasVerb(verbs, armTimerVerb):
+		return "submit-armed"
+	case len(verbs) > 0 && matched > 0:
+		return ""
+	case len(verbs) > 0:
+		return "no-subscriber"
+	default:
+		return "no-match"
+	}
+}
+
 // evalPushRequest is the request shape for POST /api/chat/eval-push.
 type evalPushRequest struct {
 	StreamID    string      `json:"streamId"`
@@ -243,7 +455,12 @@ type evalPushRequest struct {
 // handleEvalPush implements POST /api/chat/eval-push — the down-channel for
 // SERVER-OWNED submit fires. The Go engine calls this when its per-stream timer
 // elapses; we look up the owning device and broadcast the submitNow over SSE.
-func handleEvalPush(hub *Hub) http.HandlerFunc {
+//
+// This is the second half of the off switch and the second half of the preview
+// gate: a fire belongs to a stream, and if that stream is a preview or its
+// device or command is muted, the fire is refused here rather than delivered. A
+// timer armed a second before a mute must not be a way around it.
+func handleEvalPush(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -264,6 +481,37 @@ func handleEvalPush(hub *Hub) http.HandlerFunc {
 		device, ok := deviceForStream(req.StreamID)
 		if !ok {
 			writeStatusError(w, http.StatusNotFound, "unknown stream")
+			return
+		}
+
+		fired := firedForStream(req.StreamID)
+		switch {
+		case isPreviewStream(req.StreamID):
+			st.ActionLog.Append(store.ActionRecord{
+				Source: evalSource(req.StreamID), Device: device, StreamID: req.StreamID,
+				InputAction: fired, OutputActions: []string{"submitNow"},
+				Outcome: store.OutcomeDropped, Reason: "preview-suppressed",
+			})
+			writeJSON(w, map[string]interface{}{
+				"ok": false, "refused": "preview", "streamId": req.StreamID})
+			return
+		case st.OffSwitch.IsConnectionOff(device):
+			st.ActionLog.Append(store.ActionRecord{
+				Source: evalSource(req.StreamID), Device: device, StreamID: req.StreamID,
+				InputAction: fired, OutputActions: []string{"submitNow"},
+				Outcome: store.OutcomeRefused, Reason: "off-connection",
+			})
+			writeJSON(w, map[string]interface{}{
+				"ok": false, "refused": store.OffKindConnection, "device": device})
+			return
+		case fired != "" && st.OffSwitch.IsActionOff(fired):
+			st.ActionLog.Append(store.ActionRecord{
+				Source: evalSource(req.StreamID), Device: device, StreamID: req.StreamID,
+				InputAction: fired, OutputActions: []string{"submitNow"},
+				Outcome: store.OutcomeRefused, Reason: "off-action",
+			})
+			writeJSON(w, map[string]interface{}{
+				"ok": false, "refused": store.OffKindAction, "action": fired})
 			return
 		}
 
@@ -289,6 +537,17 @@ func handleEvalPush(hub *Hub) http.HandlerFunc {
 			"timing": map[string]interface{}{
 				"serverOwnedFire": true,
 			},
+		})
+
+		outcome := store.OutcomeDelivered
+		reason := ""
+		if matched == 0 {
+			outcome, reason = store.OutcomeDropped, "no-subscriber"
+		}
+		st.ActionLog.Append(store.ActionRecord{
+			Source: evalSource(req.StreamID), Device: device, StreamID: req.StreamID,
+			InputAction: fired, OutputActions: []string{"submitNow"},
+			Outcome: outcome, Reason: reason, RelayMs: 0, EngineEvalNs: 0,
 		})
 
 		writeJSON(w, map[string]interface{}{

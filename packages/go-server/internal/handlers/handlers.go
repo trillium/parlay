@@ -92,9 +92,14 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	// external-producer ingress. See events_ingress.go.
 	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub))
 
-	// Eval relay routes (ticket C4)
-	mux.HandleFunc("/api/chat/eval", handleEval(hub))
-	mux.HandleFunc("/api/chat/eval-push", handleEvalPush(hub))
+	// Eval relay routes (ticket C4). Both take the store: they own the off
+	// switch and the command log for every evaluation.
+	mux.HandleFunc("/api/chat/eval", handleEval(st, hub))
+	mux.HandleFunc("/api/chat/eval-push", handleEvalPush(st, hub))
+
+	// The command log and the off switch (sandbox task): the read a
+	// renderer filters on, and the kill switch reachable from it.
+	registerActionLog(mux, st)
 
 	// Remote-input intake (task-57ltl): accepted text → Talon injection.
 	registerRemoteInput(mux, hub)

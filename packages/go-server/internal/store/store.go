@@ -51,6 +51,12 @@ type Store struct {
 	Uploads  *UploadStore
 	Commands *CommandRegistry
 	Channels *ChannelStore
+	// ActionLog holds one record per EVALUATED string (a command log), where
+	// Commands holds one per invoked process. OffSwitch is the operator's kill
+	// switch for connections and actions. Both are in-memory for the same reason
+	// Presence and Commands are.
+	ActionLog *ActionLog
+	OffSwitch *OffSwitch
 }
 
 // Config controls where and how much Open persists.
@@ -102,13 +108,15 @@ func Open(cfg Config) (*Store, error) {
 	}
 
 	return &Store{
-		Messages: messages,
-		Registry: registry,
-		Drafts:   drafts,
-		Settings: settings,
-		Presence: newPresenceTracker(),
-		Uploads:  uploads,
-		Commands: NewCommandRegistry(CommandRegistryConfig{}),
-		Channels: channels,
+		Messages:  messages,
+		Registry:  registry,
+		Drafts:    drafts,
+		Settings:  settings,
+		Presence:  newPresenceTracker(),
+		Uploads:   uploads,
+		Commands:  NewCommandRegistry(CommandRegistryConfig{}),
+		Channels:  channels,
+		ActionLog: NewActionLog(ActionLogConfig{}),
+		OffSwitch: NewOffSwitch(),
 	}, nil
 }

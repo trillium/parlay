@@ -11,7 +11,7 @@ import (
 func TestHandleEvalMissingDevice(t *testing.T) {
 	// Use a nil hub since we're just testing the request validation
 	var hub *Hub
-	handler := handleEval(hub)
+	handler := handleEval(newTestStore(t), hub)
 
 	body := evalRequest{
 		StreamID: "test-stream",
@@ -40,7 +40,7 @@ func TestHandleEvalWithDevice(t *testing.T) {
 	// This is a basic test that checks the request is accepted
 	// A full test would need to mock the eval engine
 	var hub *Hub // Use nil hub since we're testing request validation
-	handler := handleEval(hub)
+	handler := handleEval(newTestStore(t), hub)
 
 	body := evalRequest{
 		StreamID: "test-stream",
@@ -67,7 +67,7 @@ func TestHandleEvalWithDevice(t *testing.T) {
 
 func TestHandleEvalPushMissingStream(t *testing.T) {
 	hub := newHubCore()
-	handler := handleEvalPush(hub)
+	handler := handleEvalPush(newTestStore(t), hub)
 
 	body := evalPushRequest{
 		Seq:         1,
@@ -88,7 +88,7 @@ func TestHandleEvalPushMissingStream(t *testing.T) {
 
 func TestHandleEvalPushUnknownStream(t *testing.T) {
 	hub := newHubCore()
-	handler := handleEvalPush(hub)
+	handler := handleEvalPush(newTestStore(t), hub)
 
 	body := evalPushRequest{
 		StreamID:    "unknown-stream",
@@ -120,7 +120,7 @@ func TestHandleEvalPushWithKnownStream(t *testing.T) {
 	}()
 
 	hub := newHubCore()
-	handler := handleEvalPush(hub)
+	handler := handleEvalPush(newTestStore(t), hub)
 
 	body := evalPushRequest{
 		StreamID:    "test-stream",
