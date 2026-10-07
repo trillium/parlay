@@ -169,6 +169,31 @@ describe('the sandbox page', () => {
     expect(calls.filter((c) => c.url === '/api/chat/eval')).toHaveLength(0)
   })
 
+  test('a preview that lands AFTER an edit cannot re-arm Fire for the old string', async () => {
+    // The other half of the same gate, and the one a "clear results on change"
+    // alone cannot cover: the response arrives from a preview of the PREVIOUS
+    // text, after the input has already moved on. If Fire were gated only on
+    // kind === 'ok', that late arrival would re-enable it over a string that was
+    // never evaluated.
+    const { fetchImpl } = fakeServer({ delayMs: 80 })
+    await mount(fetchImpl, new StubEventSource(''))
+    await flush()
+
+    await type('clear that')
+    await click('button.primary')
+    await type('send it')
+    expect(host.querySelector<HTMLButtonElement>('button.fire')!.disabled).toBe(true)
+
+    // Let the in-flight preview land.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250))
+    })
+
+    const row = host.querySelector('tr[data-config]')!
+    expect(row.getAttribute('data-kind')).toBe('ok') // the late result DID arrive
+    expect(host.querySelector<HTMLButtonElement>('button.fire')!.disabled).toBe(true)
+  })
+
   test('an empty string cannot be previewed or fired', async () => {
     const { calls, fetchImpl } = fakeServer()
     await mount(fetchImpl, new StubEventSource(''))

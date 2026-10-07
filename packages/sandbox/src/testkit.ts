@@ -34,7 +34,7 @@ interface FakeRecord {
  *  input-action join testable — the row's `streamId` is generated at runtime by
  *  the page, so only a server that records what it was sent can answer the
  *  question back. */
-export function fakeServer() {
+export function fakeServer(opts: { delayMs?: number } = {}) {
   const calls: Call[] = []
   const records: FakeRecord[] = []
   let seq = 0
@@ -73,6 +73,8 @@ export function fakeServer() {
       )
     }
     if (String(url) === '/api/chat/eval') {
+      // A slow engine, so a test can edit the input while a preview is in flight.
+      if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs))
       const b = body as { streamId: string; device: string; commands: { commands: { id: string }[] } }
       const inputAction = b.commands.commands[0].id
       seq += 1
