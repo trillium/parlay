@@ -13,7 +13,8 @@ import "fmt"
 const inputLegend = "Legend: delivered = handed a listener or typed at the target; queued = waiting;\n" +
 	"refused = an intake or the target declined it; no match = it named a destination that\n" +
 	"did not match; low confidence = measured below the threshold; held = actually stopped\n" +
-	"by it. WHY names the reason in every case. See docs/input-seam.md."
+	"by it. WHY names the reason in every case. Every INPUT id is printed whole, and pasting\n" +
+	"one into `parlay input --input <id>` replays its hops. See docs/input-seam.md."
 
 // thresholdLine states the hold threshold in force, so a hold is never
 // inferred from a row: the operator can see the number the server compares

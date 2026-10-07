@@ -103,12 +103,12 @@ func renderInputRows(w io.Writer, rows []inputRow, stats inputStats, limit int) 
 			"not evidence that input is flowing.")
 		return
 	}
-	fmt.Fprintf(w, "%-16s %-22s %-12s %-10s %-9s %-8s %s\n",
-		"STATE", "INPUT", "SOURCE", "CHANNEL", "WHEN", "LATENCY", "WHY")
+	fmt.Fprintf(w, "%-16s %-*s %-12s %-10s %-9s %-8s %s\n",
+		"STATE", inputIDWidth, "INPUT", "SOURCE", "CHANNEL", "WHEN", "LATENCY", "WHY")
 	now := time.Now()
 	for _, r := range rows {
-		fmt.Fprintf(w, "%-16s %-22s %-12s %-10s %-9s %-8s %s\n",
-			r.State, cell(r.ID, 22), cell(r.Source, 12), cell(r.Channel, 10),
+		fmt.Fprintf(w, "%-16s %-*s %-12s %-10s %-9s %-8s %s\n",
+			r.State, inputIDWidth, cell(r.ID, inputIDWidth), cell(r.Source, 12), cell(r.Channel, 10),
 			humanAge(now.Sub(r.At)), latencyCell(r), whyCell(r))
 	}
 	fmt.Fprintln(w)
@@ -188,50 +188,4 @@ func renderInputReplay(w io.Writer, id string, events []inputEvent, now time.Tim
 	fmt.Fprintf(w, "Outcome: %s\n", replayOutcome(inputRowFor(hops, now, stale), last, now))
 }
 
-// watchInputs polls the ledger and prints each new hop as it appears. The
-// header states the cadence, because implying instant delivery would lie.
-func watchInputs(limit int, interval time.Duration, asJSON bool) {
-	fmt.Printf("WATCHING the input seam — polling every %s (the ledger has no push stream yet)\n", interval)
-	fmt.Printf("%-12s %-22s %-11s %-18s %-14s %s\n", "TIME", "INPUT", "STAGE", "CLASS", "SOURCE", "LATENCY")
-	lastSeq := uint64(0)
-	lastHop := map[string]time.Time{}
-	for {
-		page, ok := httpc.TryGetJSON[inputPage]("/api/chat/input-events?limit="+strconv.Itoa(limit), httpc.DefaultTimeout)
-		if !ok {
-			fmt.Println("  (server unreachable — still watching)")
-			time.Sleep(interval)
-			continue
-		}
-		if asJSON {
-			printJSON(page)
-			time.Sleep(interval)
-			continue
-		}
-		fresh := make([]inputEvent, 0, len(page.Events))
-		for _, e := range page.Events {
-			if e.Seq > lastSeq {
-				fresh = append(fresh, e)
-			}
-		}
-		sort.SliceStable(fresh, func(i, j int) bool { return fresh[i].Seq < fresh[j].Seq })
-		for _, e := range fresh {
-			delta := "—"
-			if t, ok := parseInputTs(e.Ts); ok {
-				if p, seen := lastHop[e.InputID]; seen {
-					delta = "+" + humanAge(t.Sub(p))
-				}
-				lastHop[e.InputID] = t
-			}
-			extra := ""
-			if e.Reason != "" {
-				extra = " why=" + e.Reason
-			}
-			fmt.Printf("%-12s %-14s %-11s %-18s %-13s %s%s\n",
-				inputClock(e.Ts), cell(e.InputID, 22), e.Stage, e.Class, cell(e.Source, 14), delta, extra)
-			if e.Seq > lastSeq {
-				lastSeq = e.Seq
-			}
-		}
-		time.Sleep(interval)
-	}
-}
+// watchInputs, watchHeader and watchRowLine live in input_watch.go.

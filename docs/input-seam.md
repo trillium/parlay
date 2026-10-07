@@ -177,3 +177,9 @@ hops as they arrive. All three are pure readers of
 replay of the same id cannot disagree. `--watch` polls (default every 2s) and
 says so in its header: the ledger has no push stream yet, and implying instant
 delivery would be a lie about its own cadence.
+
+The view prints each INPUT id whole — including the `in-…` ids minted for a
+refusal, which exist nowhere else, since the refusal id is deliberately kept
+off every wire response. A truncated row would therefore be the only copy of
+an id it could not be pasted back into `--input`; the column is as wide as the
+longest id the ledger mints precisely so that every row is replayable.
