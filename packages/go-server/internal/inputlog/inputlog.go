@@ -155,17 +155,33 @@ func Judge(minConfidence, confidence *float64) Verdict {
 	return Verdict{Class: ClassOK}
 }
 
-// inputIDSeq disambiguates two refusals minted in the same nanosecond.
+// inputIDSeq disambiguates two inputs minted in the same nanosecond.
 var inputIDSeq atomic.Uint64
 
-// NewInputID mints a ledger-local id for an input that never became a
-// message — a request an intake surface refused before storing anything.
+// mintedIDWidth is the widest id NewInputID can produce, and it is a contract
+// with the reader rather than a decoration: `parlay input` sizes its INPUT
+// column once (tools/cli/internal/commands/input_watch.go, inputIDWidth = 27)
+// so that every row is printable whole and pasteable back into `--input`. An
+// id wider than that column is truncated, and a truncated minted id resolves
+// to nothing — it appears on no wire response, so the view is its only copy.
 //
-// Such a refusal has no message id to key on, and the alternative (skipping
-// it) would make the most common failure on the seam invisible. The id is
+// The arithmetic: "in-" (3) + a 19-digit UnixNano (19) + "-" (1) + a 2-digit
+// sequence (2) = 25. TestMintedIDsFitTheViewsColumn pins it.
+const mintedIDWidth = 25
+
+// NewInputID mints a ledger-local id for an input that never became a
+// message — a request an intake surface refused before storing anything, or a
+// composer snapshot the eval engine dropped as superseded.
+//
+// Such input has no message id to key on, and the alternative (skipping it)
+// would make the most common failures on the seam invisible. The id is
 // deliberately not exposed on any wire response: the public endpoint shapes
-// are frozen, and a refusal is something the operator reads in the view
-// rather than something it replays by id.
+// are frozen, and these are things the operator reads in the view.
+//
+// The sequence suffix wraps at two digits so the id's LENGTH is bounded, which
+// is what makes it safe to print in a fixed-width column. Uniqueness still
+// comes from the nanosecond stamp; the suffix only has to separate ids minted
+// inside the same nanosecond, and no process mints a hundred in one.
 func NewInputID() string {
-	return fmt.Sprintf("in-%d-%d", time.Now().UnixNano(), inputIDSeq.Add(1))
+	return fmt.Sprintf("in-%d-%02d", time.Now().UnixNano(), inputIDSeq.Add(1)%100)
 }

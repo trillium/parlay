@@ -1884,8 +1884,10 @@ The sections above are main's onboarding account (PR #314) and runtime-observabi
 
 # Input-seam observability — working notes
 
-Status: both doors are instrumented end to end, with a real confidence hold. This
-file records what the tooling can and cannot tell the operator **right now**.
+Status: both doors are instrumented end to end, the confidence hold is real, and
+all six named failure classes now have a real producer and an end-to-end
+demonstration. This file records what the tooling can and cannot tell the
+operator **right now**.
 
 ## What the operator can now tell apart
 
@@ -1896,11 +1898,10 @@ never send it?
 There is a durable **input-seam ledger** (`input.jsonl` beside
 `messages.jsonl`): one record per **hop** an input made, keyed by the input's own
 id, plus a live view (`parlay input`), a replay (`parlay input --input <id>`)
-and a JSON form for scripts. Both doors are instrumented. The **dictation door**
-(`POST /api/chat/remote-input/submit`) previously recorded nothing: a submission
-that was held, one whose transcript never arrived, and one that typed
-successfully left the same silence. It is now keyed by the same `ri-N` id the
-phone polls, so a replay names the submission the operator saw.
+and a JSON form for scripts. Four doors are instrumented: the chat door
+(`POST /api/chat/send`, `/alert`), the dictation door
+(`POST /api/chat/remote-input/submit`), the delivery hop at both poll points,
+and the composer door (`POST /api/chat/eval`).
 
 These states are now distinguishable where four failures previously looked
 identical:
@@ -1915,7 +1916,7 @@ identical:
 | `no match` | The input named a destination that matched nothing — today, a focus target that did not become the active app/window. | The submission settled `focus_failed` in an in-memory map nothing read. |
 | `held` | A reported confidence fell below the configured threshold. `WHY` names the number. Nothing was typed; the text is preserved. | Did not exist: no surface reported a confidence at all. |
 | `confidence_unknown` | No recognition confidence was reported for this input. | Did not exist, and would otherwise read as "confident". |
-| `superseded` | A later input replaced this one before it was acted on. | Vocabulary + view state only: no producer (below). |
+| `superseded` | A later input replaced this one before it was acted on — today, a composer snapshot the eval engine dropped because a newer snapshot of the same buffer had already been evaluated. | The engine fast-returned a noop and the relay forwarded it: no hop, no record, no trace anywhere. |
 | `received`/`interpreted`/`routed` with no later hop | Where the input **stopped** (`WHY` says so, with the age). | Read as ordinary silence. |
 
 Two rules are enforced rather than intended:
@@ -1947,111 +1948,207 @@ silent fallback to disabled. `stats.minConfidence` carries it to the reader and
 `parlay input` prints it above the table, so a hold always has its number beside
 it.
 
+## The sixth class: a superseding message
+
+The composer posts every text change — typed or dictated — as a **versioned
+buffer snapshot** to `POST /api/chat/eval`, and the compiled engine answers with
+actions against it. When a newer snapshot for the same stream has already been
+evaluated, the engine fast-returns a `noop` whose reason is
+`stale-request-version`: its own name for "a later input replaced this one
+before it was acted on" (`tools/cli/internal/evalengine/engine.go`).
+
+That is the failure class the objective names and the product's own semantics
+supply. It is now recorded as its own hop, with the stream and version it
+belonged to and the engine token that produced the verdict:
+
+```
+superseded  superseded  source=eval  why=superseded-by-newer-version
+            detail=stream=eval-phone-1-main v=3 engine=stale-request-version
+```
+
+Two deliberate choices:
+
+- **The verdict is read, never recomputed.** The relay inspects the engine's own
+  action batch; it does not compare versions a second time, because the engine
+  owns last-write-wins and a second comparison could disagree with the decision
+  that actually produced what the panel saw. The batch is walked as the generic
+  JSON shape rather than re-typed into structs, because re-typing it would
+  re-encode it and drop any field the relay did not know about.
+- **Ordinary evals record nothing.** A row per keystroke would swamp the
+  retained window and drown the seam it exists to make legible. Only the
+  superseded verdict is recorded (`TestOrdinaryEvalRecordsNothing`).
+
+This class needs no separate guard: the engine has already refused to act on the
+snapshot. It is the one failure the product drops *before* the ledger existed;
+what was missing was the operator being able to see that it happened.
+
 ## Demonstration (isolated server, `TALON_REPL_PATH` pinned away from the live machine)
 
-Four failures and two healthy states, one injection each, then the view:
+Eight injections covering the six named failure classes plus two healthy
+deliveries, one each, then the view. The eval injection runs through a stub
+engine that answers the way the real engine answers a stale snapshot; the
+relay, the verdict read and the ledger hop are all the real ones.
+
+```
+-- recogniser error: the dictation produced nothing --
+-> POST /api/chat/remote-input/submit {"device":"phone-1","text":"","app":"Terminal"}
+   HTTP 400  {"error":"text is required"}
+
+-- low confidence below the 0.80 threshold: held, nothing typed --
+-> POST /api/chat/remote-input/submit {"device":"phone-1","text":"ship it maybe","dryRun":true,"allowUnfocused":true,"confidence":0.25}
+   HTTP 202  {"id":"ri-1","status":"held"}
+
+-- named a target that does not match: no_match --
+-> POST /api/chat/remote-input/submit {"device":"phone-1","text":"ship it","app":"NoSuchApp","dryRun":true}
+   HTTP 202  {"id":"ri-2","status":"queued"}
+
+-- intake refused it before storing anything (no device) --
+-> POST /api/chat/remote-input/submit {"text":"ship it"}
+   HTTP 400  {"error":"device is required"}
+
+-- dictation that reached the target (dry run: nothing typed) --
+-> POST /api/chat/remote-input/submit {"device":"phone-1","text":"ship it","dryRun":true,"allowUnfocused":true}
+   HTTP 202  {"id":"ri-3","status":"queued"}
+
+-- a chat message nobody polls: queued, then unpicked --
+-> POST /api/chat/send {"text":"this one is never picked up","toAgent":"nobody"}
+   HTTP 200  {"ok":true,"id":"m0"}
+
+-- a chat message that IS delivered --
+-> POST /api/chat/send {"text":"this one is delivered","toAgent":"c0"}
+   HTTP 200  {"ok":true,"id":"m1"}
+-> GET /api/chat/poll?channel=c0&after=nonexistent  (the delivery hop)
+   HTTP 200
+{"id":"m1","role":"user","text":"this one is delivered","cursorReset":true}
+
+-- a composer snapshot a newer one already replaced: superseded --
+-> POST /api/chat/eval {"device":"phone-1","streamId":"eval-phone-1-main","version":3,"text":"ship it"}
+   HTTP 200  {"actions":[{"args":{"reason":"stale-request-version"},"verb":"noop"}],"baseVersion":1,"engineEvalNs":1,"ok":true,"seq":3,"sseClients":0,"streamId":"eval-phone-1-main","timing":{"engineEvalNs":1},"v":1}
+```
+
+The view over that ledger:
 
 ```
 ==================== parlay input ====================
-INPUT SEAM — 7 input(s) from the last 60 retained hop(s)
-ledger: 12 retained, 12 written, 0 dropped, 0 rejected, 0 queued
+INPUT SEAM — 8 input(s) from the last 60 retained hop(s)
+ledger: 13 retained, 13 written, 0 dropped, 0 rejected, 0 queued
 threshold: hold below confidence 0.80 (server PARLAY_INPUT_MIN_CONFIDENCE); a hold needs a reported confidence — unreported input is never held
 STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  WHY
-delivered        m1                          poll-backlog c0         3.4s      +6ms     —
-queued (unpicked) m0                          send         nobody     3.4s      —        no listener picked it up in 3.4s
-delivered        ri-3                        remote-input -          3.5s      +0ms     —
-refused          in-1791365584964891000-4    remote-input -          3.5s      —        missing-device
-no match         ri-2                        remote-input -          3.5s      —        target-not-matched
-held             ri-1                        remote-input -          3.5s      —        confidence 0.25 below threshold 0.80
-recogniser error in-1791365584938507000-1    remote-input -          3.5s      —        empty-transcript
+superseded       in-1791366538395417000-08   eval         -          2.5s      —        superseded-by-newer-version
+delivered        m1                          poll-backlog c0         2.5s      +6ms     —
+queued (unpicked) m0                          send         nobody     2.5s      —        no listener picked it up in 2.5s
+delivered        ri-3                        remote-input -          2.5s      +0ms     —
+refused          in-1791366538360701000-04   remote-input -          2.5s      —        missing-device
+no match         ri-2                        remote-input -          2.5s      —        target-not-matched
+held             ri-1                        remote-input -          2.5s      —        confidence 0.25 below threshold 0.80
+recogniser error in-1791366538331951000-01   remote-input -          2.5s      —        empty-transcript
 
-Confidence: reported for 1 of 7 input(s) in this window.
+Confidence: reported for 1 of 8 input(s) in this window.
 Legend: delivered = handed a listener or typed at the target; queued = waiting;
 refused = an intake or the target declined it; no match = it named a destination that
 did not match; low confidence = measured below the threshold; held = actually stopped
-by it. WHY names the reason in every case. Every INPUT id is printed whole, and pasting
-one into `parlay input --input <id>` replays its hops. See docs/input-seam.md.
+by it; superseded = a later input replaced it before it was acted on. WHY names the
+reason in every case. Every INPUT id is printed whole, and pasting one into
+`parlay input --input <id>` replays its hops. See docs/input-seam.md.
 ```
 
-The live tail over the same window (`--watch`) — the minted ids are 25–27
-characters, so the header and the rows have to agree on one width:
+The live tail over the same window (`--watch`) — the minted ids are ≤25 bytes,
+so the header and the rows have to agree on one width:
 
 ```
 ==================== parlay input --watch (3s of live tail) ====================
 WATCHING the input seam — polling every 1s (the ledger has no push stream yet)
 TIME         INPUT                       STAGE       CLASS              SOURCE         LATENCY
-02:33:04.938 in-1791365584938507000-1    interpreted recogniser_error   remote-input   — why=empty-transcript
-02:33:04.948 ri-1                        interpreted low_confidence     remote-input   +2ms why=below-confidence-threshold
+02:48:58.332 in-1791366538331951000-01   interpreted recogniser_error   remote-input   — why=empty-transcript
+02:48:58.342 ri-1                        received    ok                 remote-input   —
+02:48:58.342 ri-1                        interpreted low_confidence     remote-input   +0ms why=below-confidence-threshold
+02:48:58.342 ri-1                        held        held               remote-input   +0ms why=below-confidence-threshold
 ```
 
-Not one of the four failures reads as healthy, and the two healthy rows carry
-their own latency. Replays, straight off the durable ledger:
+Not one of the six failures reads as healthy. Replays, straight off the durable
+ledger (`parlay input --input <id>`), one per class:
 
 ```
-==================== parlay input --input in-1791365584964891000-4 ====================
-REPLAY in-1791365584964891000-4 — 1 hop(s)
-  #1 —       2026-10-07T02:33:04.964  interpreted refused            source=remote-input  channel=- why=missing-device
+REPLAY in-1791366538331951000-01 — 1 hop(s)
+  #1 —       2026-10-07T02:48:58.332  interpreted recogniser_error   source=remote-input  channel=- why=empty-transcript
+Outcome: RECOGNISER ERROR — empty-transcript
 
+REPLAY ri-1 — 3 hop(s)
+  #1 —       2026-10-07T02:48:58.342  received    ok                 source=remote-input  channel=- detail=mode=inject
+  #2 +0ms    2026-10-07T02:48:58.342  interpreted low_confidence     source=remote-input  channel=- why=below-confidence-threshold
+  #3 +0ms    2026-10-07T02:48:58.342  held        held               source=remote-input  channel=- why=below-confidence-threshold
+Outcome: HELD in 0ms — confidence 0.25 below threshold 0.80
+
+REPLAY ri-2 — 2 hop(s)
+  #1 —       2026-10-07T02:48:58.351  received    ok                 source=remote-input  channel=- detail=mode=inject
+  #2 +1ms    2026-10-07T02:48:58.353  routed      no_match           source=remote-input  channel=- why=target-not-matched detail=outcome=focus_failed
+Outcome: NO MATCH in 1ms — target-not-matched
+
+REPLAY in-1791366538360701000-04 — 1 hop(s)
+  #1 —       2026-10-07T02:48:58.360  interpreted refused            source=remote-input  channel=- why=missing-device
 Outcome: REFUSED — missing-device
 
-==================== parlay input --input ri-1 ====================
-REPLAY ri-1 — 3 hop(s)
-  #1 —       2026-10-07T02:33:04.946  received    ok                 source=remote-input  channel=- detail=mode=inject
-  #2 +2ms    2026-10-07T02:33:04.948  interpreted low_confidence     source=remote-input  channel=- why=below-confidence-threshold
-  #3 +0ms    2026-10-07T02:33:04.948  held        held               source=remote-input  channel=- why=below-confidence-threshold
+REPLAY ri-3 — 2 hop(s)
+  #1 —       2026-10-07T02:48:58.368  received    ok                 source=remote-input  channel=- detail=mode=inject
+  #2 +0ms    2026-10-07T02:48:58.368  delivered   ok                 source=remote-input  channel=- detail=outcome=dry_run_passed
+Outcome: DELIVERED in 0ms
 
-Outcome: HELD in 2ms — confidence 0.25 below threshold 0.80
+REPLAY m0 — 1 hop(s)          <-- the dropped one: queued, never polled
+  #1 —       2026-10-07T02:48:58.375  queued      ok                 source=send          channel=nobody
+Outcome: QUEUED (UNPICKED) — no listener picked it up in 5.7s
 
-==================== parlay input --input m0 ====================
-REPLAY m0 — 1 hop(s)
-  #1 —       2026-10-07T02:33:04.982  queued      ok                 source=send          channel=nobody
-
-Outcome: QUEUED (UNPICKED) — no listener picked it up in 6.5s
-
-==================== parlay input --input m1 ====================
 REPLAY m1 — 2 hop(s)
-  #1 —       2026-10-07T02:33:04.989  queued      ok                 source=send          channel=c0
-  #2 +6ms    2026-10-07T02:33:04.996  delivered   ok                 source=poll-backlog  channel=c0
-
+  #1 —       2026-10-07T02:48:58.382  queued      ok                 source=send          channel=c0
+  #2 +6ms    2026-10-07T02:48:58.388  delivered   ok                 source=poll-backlog  channel=c0
 Outcome: DELIVERED in 6ms
+
+REPLAY in-1791366538395417000-08 — 1 hop(s)
+  #1 —       2026-10-07T02:48:58.395  superseded  superseded         source=eval          channel=- why=superseded-by-newer-version detail=stream=eval-phone-1-main v=3 engine=stale-request-version
+Outcome: SUPERSEDED — superseded-by-newer-version
 ```
 
-The `in-…` replay is the point: that id exists on no wire response, so the view
-is its only copy — and it is one of the two classes an operator most often needs
-to chase. `m0` is the dropped one: queued, never polled, and the replay says so
-rather than stopping silently.
+`m0` is the dropped one: queued, never polled, and the replay says so rather
+than stopping silently. The `in-…` ids exist on no wire response, so the view is
+their only copy — and two of the six classes (refusals, recogniser errors,
+superseded snapshots) are keyed by one.
 
 The pastes come from `.pi/demo/input-seam-demo.sh` — run-local scratch,
 deliberately **not** part of the diff. It pins `TALON_REPL_PATH` away from the
-live REPL, so nothing can be typed or focused on this machine, and uses a fresh
+live REPL so nothing can be typed or focused on this machine, and uses a fresh
 temp state dir.
 
 ## What running it caught
 
-Both were invisible to unit tests and obvious the first time the demo ran end to
-end on a fresh ledger:
-
-- **A truncated id made two classes unreplayable.** Refusals and recogniser
-  errors are keyed by an id the server mints locally (`in-<nano>-<seq>`) that by
-  design appears on no wire response, so the view is its only copy — and the
-  INPUT column cut it at 22 characters, leaving `in-1791364792779429...`, which
-  `--input` cannot resolve. The column is now as wide as the longest id the
-  ledger mints; `TestInputViewPrintsWholeIDsAndAlignsColumns` pins it.
-- **The live tail's header disagreed with its own rows.** `--watch` announced a
-  14-character INPUT column and printed 22-character ids into it, drifting 8
-  columns. `watchHeader` and `watchRowLine` now share one width, pinned by
-  `TestWatchHeaderAlignsWithWatchRows`.
+- **A truncated id made two classes unreplayable** (iteration 3). Refusals and
+  recogniser errors are keyed by a server-minted `in-…` id that appears on no
+  wire response, so the view is its only copy — and the INPUT column cut it at
+  22 characters, leaving a string `--input` cannot resolve.
+- **The live tail's header disagreed with its own rows** (iteration 3): a
+  14-character INPUT column with 22-character ids in it, drifting 8 columns.
+- **The minted id's width was not actually a bound** (this iteration). The id
+  was `in-<UnixNano>-<seq>` with an *unpadded* sequence, so it grew a digit at
+  every power of ten and would have exceeded any fixed column after ten
+  thousand minted ids in one process — silently truncating exactly the ids the
+  view is the only copy of. The suffix is now two digits (`in-…-08`, 25 bytes
+  maximum) and `TestMintedIDsFitTheViewsColumn` pins both ends of the contract
+  (producer ≤ 25, consumer column 27).
 
 ## Verification (per module)
 
 This repository has four independent Go modules and no root `go.work`: the
 repo-root `go build ./...` form of the stop condition fails there on the missing
-main module. The equivalent per-module sweep, matching CI's `GO_MODULES`, green:
+main module — `pattern ./...: directory prefix . does not contain main module or
+its selected dependencies`, exit 1, identical before and after every change on
+this branch. The equivalent per-module sweep, matching CI's `GO_MODULES`
+(`tools/cli tools/relay packages/go-server packages/spawn-profiles`), is green:
 
-    gofmt -l + build + vet:   clean/green across all four modules
-    go test ./...:            ok for all four
-    go test -race:            ok for go-server inputlog / remoteinput / handlers
-    make test-bdd:            7 scenarios, 21 steps, all passed
+    gofmt -l (whole tree):    clean
+    build + vet + test:       green across all four modules
+    go test -race:            green for go-server (handlers, inputlog, remoteinput)
+    make test-bdd:            7 scenarios, 21 steps, all passed (exit 0)
+
+There is no known-red BDD baseline on this box: `make test-bdd` is green at
+baseline and remains green.
 
 `go test` needs `CGO_ENABLED=0` here, and that is a **baseline of this box, not
 a regression**: with cgo on, `tools/cli` — including `internal/parlaybeads`, a
@@ -2063,36 +2160,41 @@ go-server only.
 ## Hard constraints, and how each is met
 
 - **Observability never sits in the delivery path.**
-  `TestRemoteInputDeliveryIsNotSlowedOrFailedByAWedgedLedger` submits a
-  dictation through a ledger whose sink never returns: it is still accepted,
-  still reaches its target and still settles, promptly.
-  `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` does the same for
-  `/send` + poll, and `TestRecordNeverBlocksOnAWedgedSink` pins it at the ledger
-  boundary (50,000 records against a wedged sink).
+  `TestSupersededEvalStillDeliversWithAWedgedLedger` drives the eval relay
+  through a ledger whose sink never returns: the relay still answers 200 with
+  the engine's verdict, promptly, and the panel still receives its frame.
+  `TestFailingLedgerSinkDoesNotFailTheRelay` does the same with a sink that
+  errors. `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` covers `/send` +
+  poll, `TestRemoteInputDeliveryIsNotSlowedOrFailedByAWedgedLedger` the
+  dictation door, and `TestRecordNeverBlocksOnAWedgedSink` the ledger boundary
+  (50,000 records against a wedged sink).
 - **No raw audio, no change to message-history retention or privacy.** The
   ledger stores ids, stages, classes, short reason tokens and numbers —
   **never message text**. Backend error strings are not copied in either: a
-  Talon or bead error can echo the text being typed.
+  Talon or bead error can echo the text being typed, and the eval row carries a
+  stream id and a version, never the buffer.
 - **`internal/guard.GuardedPaths` untouched; no guard check reimplemented.**
-  The dictation routes keep their existing guarded classification.
+  No route was added: `POST /api/chat/eval` keeps the guarded classification it
+  already had, and the read surface `/api/chat/input-events` is unchanged.
 - **No deployment scripts, endpoint shapes or downstream consumers touched.**
-  `confidence` on the submit body is optional and additive — omitting it is
-  byte-identical to before. `held` is a new terminal status downstream readers
-  already handle: Parlay clears input state only on `injected` and preserves the
-  text on anything else, which is what a hold wants.
+  The relay's action batch is passed through byte-for-byte: it is inspected,
+  never re-typed and never re-encoded. `confidence` on the submit body is
+  optional and additive, and `held` is a new terminal status downstream readers
+  already handle (Parlay clears input state only on `injected` and preserves
+  the text on anything else, which is what a hold wants).
 - **No harness scratch committed.** `.pi/` is in `.gitignore`.
 
 ## Deliberately not built (and why)
 
-- **A producer for `superseded`.** Nothing here discards an input in favour of
-  a newer one — the injection queue is FIFO with "no interleaving, no
-  dropping", and the chat store appends. Inventing a supersession would be worse
-  than an absent one, so the vocabulary, storage and view state exist for the
-  day it becomes real; `TestDeriveInputRowNamesEveryFailureClass` pins the
-  rendering.
+- **A recorded `unpicked` producer.** "No listener picked it up in 60s" is a
+  read-time judgement over a queued hop; nothing has to fire for it to become
+  true, and a producer would have to invent a timeout owner. The view derives
+  it from the queued hop's age and says the age.
 - **`received`/`interpreted` hops for accepted `/send` and `/alert`.** The
   `queued` row already carries the id, stage and source; those doors can gain
   hops the day they have something extra to say.
+- **Rows for successful evals.** Only the superseded verdict is a named input
+  outcome; a row per keystroke would swamp the window.
 - **The phone side's confidence reporting.** The server accepts and enforces
   `confidence`; nothing in this repo sends it (the panel is not open-sourced
   here, and `remote-input` has no in-repo client). Until something reports one,
@@ -2106,28 +2208,29 @@ go-server only.
 ## Left undone
 
 - **The branch lags the working tree by one commit.** PR
-  [#312](https://github.com/trillium/parlay/pull/312) is open against `main` at
-  the head of `gnhf/objective-give-the-o-ad0a88`. This run's harness authors the
-  commit for each unit of work and never pushes, and this unit was forbidden to
-  commit, so the ID-width fix and the vocabulary split reach the PR on the next
-  push of the branch. Nothing blocks that.
+  [#312](https://github.com/trillium/parlay/pull/312) is open against `main`,
+  now at iteration 3's head; this iteration's changes (the eval-door producer,
+  the minted-id bound, the docs) reach it on **the next push of
+  `gnhf/objective-give-the-o-ad0a88`**. Nothing blocks that: re-push the branch
+  before anything else next iteration.
 - `parlay input --watch` prints hops as they arrive; it does not aggregate a
   per-input state while watching.
 - The ledger's read route has no cursor for incremental tailing beyond
   newest-N.
+- The eval row's stream and version appear in the replay's `detail`, not in the
+  snapshot table's columns (CHANNEL is a destination, and a stream id is 20+
+  characters). One command away, but worth saying.
 - The stop condition literally configured for this run cannot exit zero here:
   there is no root `go.mod`, so its repo-root form fails on the missing main
-  module. Confirmed identical at baseline; the per-module equivalent is green
-  (above).
+  module. Confirmed identical at baseline; the per-module equivalent is green.
 
 ## File size
 
 This repository enforces no per-file line budget (CI gates are conflict markers,
 a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and docs-index completeness —
 `.github/workflows/ci.yml`). Following the objective, every new file is **under
-250 lines**; that ceiling was chosen, not inherited. Two splits exist for that
-reason alone: the view's threshold/legend helpers (`input_threshold.go`) and the
-ledger's closed vocabulary (`inputlog/vocabulary.go`). The second was a repair —
-the vocabulary had grown `inputlog.go` to 267 lines and nothing caught it,
-because a line budget is not a test: measure the largest new file, do not assume
-it.
+250 lines**; that ceiling was chosen, not inherited. This iteration's new files:
+`eval_supersede.go` (82) and `eval_supersede_test.go` (222). Two earlier splits
+exist for the same reason: the view's threshold/legend helpers
+(`input_threshold.go`) and the ledger's closed vocabulary
+(`inputlog/vocabulary.go`).

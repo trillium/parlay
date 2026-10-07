@@ -250,10 +250,12 @@ surface accepting it and a listener being handed it. See
 tells apart.
 
 One record per hop, append-only, keyed by the input's id — the stored message
-id, or a ledger-local `in-…` id for a request an intake surface refused before
-storing anything. `inputId` narrows the answer to one input's hops (what a
-replay renders); an unknown id is an **empty list**, not an error and not a
-created record. `limit` returns at most the newest N retained events.
+id, or a ledger-local `in-…` id for input that never became a message (a
+request an intake surface refused before storing anything, or a composer
+snapshot the eval engine dropped as superseded). `inputId` narrows the answer
+to one input's hops (what a replay renders); an unknown id is an **empty
+list**, not an error and not a created record. `limit` returns at most the
+newest N retained events.
 
 Response: `{ events: InputEvent[], stats: InputEventStats }`
 ```ts
@@ -264,7 +266,7 @@ interface InputEvent {
   stage: "received" | "interpreted" | "routed" | "queued" | "delivered" | "held" | "superseded"
   class: "ok" | "recogniser_error" | "low_confidence" | "confidence_unknown"
        | "no_match" | "refused" | "unpicked" | "superseded" | "held"
-  source?: string      // the surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input
+  source?: string      // the surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input, eval
   channel?: string     // destination agent/channel, once one was chosen
   confidence?: number  // reported recognition confidence in [0,1]; absent = not reported
   threshold?: number   // the threshold a hold was decided against

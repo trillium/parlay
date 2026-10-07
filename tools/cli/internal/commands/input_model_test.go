@@ -62,12 +62,16 @@ func TestDeriveInputRowNamesEveryFailureClass(t *testing.T) {
 			wantState: "held", wantWhy: "held by policy",
 		},
 		{
+			// The eval relay's producer (docs/input-seam.md, the eval door): a
+			// composer snapshot the engine dropped because a newer one had
+			// already replaced it. It is a named state, never a health report.
 			name: "superseded",
 			hops: []inputEvent{
-				{Seq: 1, Ts: at(9), Stage: "queued", Class: "ok"},
-				{Seq: 2, Ts: at(5), Stage: "superseded", Class: "superseded", Reason: "replaced-by-newer-input"},
+				{Seq: 1, Ts: at(5), Stage: "superseded", Class: "superseded",
+					Reason: "superseded-by-newer-version", Source: "eval",
+					Detail: "stream=eval-dev-1-main v=3 engine=stale-request-version"},
 			},
-			wantState: "superseded", wantWhy: "replaced-by-newer-input",
+			wantState: "superseded", wantWhy: "superseded-by-newer-version",
 		},
 		{
 			name:      "a queued input past the window is unpicked, not queued",

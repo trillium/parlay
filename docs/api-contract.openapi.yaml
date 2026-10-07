@@ -1629,7 +1629,7 @@ components:
       properties:
         seq: { type: integer, description: Monotonic within the retained ledger; the replay ordering key. }
         ts: { type: string, description: ISO 8601. }
-        inputId: { type: string, description: The stored message id, or a ledger-local `in-…` id for a refused input. }
+        inputId: { type: string, description: The stored message id, or a ledger-local `in-…` id for input that never became a message (a refusal, or a superseded composer snapshot). }
         stage:
           enum: [received, interpreted, routed, queued, delivered, held, superseded]
           description: What had happened to the input at this hop.
@@ -1639,7 +1639,7 @@ components:
             The hop's outcome. Anything but `ok` carries a reason. `confidence_unknown`
             is the honest state when no recognition confidence was reported — never
             folded into `ok`.
-        source: { type: string, description: "The surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input." }
+        source: { type: string, description: "The surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input, eval." }
         channel: { type: string, description: Destination agent/channel, when one had been chosen. }
         confidence: { type: number, description: "Reported recognition confidence in [0,1]; absent means not reported." }
         threshold: { type: number, description: The confidence threshold it was compared against; present iff the hold was decided by one. }

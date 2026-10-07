@@ -221,4 +221,24 @@ func TestNewInputIDIsUnique(t *testing.T) {
 	}
 }
 
+// The minted id is printed in a fixed-width column by a reader that sizes the
+// column ONCE (`parlay input`, tools/cli/internal/commands/input_watch.go). An
+// id longer than that column is truncated, and a truncated minted id resolves
+// to nothing — it is on no wire response, so the view is its only copy. This
+// pins the producer's half of that contract; the earlier format grew a digit
+// every time the sequence crossed a power of ten, so it silently outgrew the
+// column after ten thousand refusals in one process.
+func TestMintedIDsFitTheViewsColumn(t *testing.T) {
+	const viewColumn = 27 // tools/cli/internal/commands/input_watch.go, inputIDWidth
+	for i := 0; i < 300; i++ {
+		id := NewInputID()
+		if len(id) > viewColumn {
+			t.Fatalf("minted id %q is %d bytes, wider than the view's %d-character column", id, len(id), viewColumn)
+		}
+		if len(id) > mintedIDWidth {
+			t.Fatalf("minted id %q is wider than the documented %d", id, mintedIDWidth)
+		}
+	}
+}
+
 func f(v float64) *float64 { return &v }

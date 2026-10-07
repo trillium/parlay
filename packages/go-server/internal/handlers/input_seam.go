@@ -23,6 +23,7 @@ const (
 	inputSourceAlert       = "alert"        // POST /api/chat/alert
 	inputSourcePollWake    = "poll-wake"    // GET /api/chat/poll, handed to a parked waiter
 	inputSourcePollBacklog = "poll-backlog" // GET /api/chat/poll, answered from the retained store
+	inputSourceEval        = "eval"         // POST /api/chat/eval, the composer's text-change up-channel
 )
 
 // recordQueued notes that a stored message is waiting to be picked up.
@@ -76,5 +77,25 @@ func recordRefused(st *store.Store, inputID, source, reason string) {
 		Class:   inputlog.ClassRefused,
 		Reason:  reason,
 		Source:  source,
+	})
+}
+
+// recordSuperseded notes an input a later one replaced before it was acted on.
+//
+// Like a refusal it keys on a minted ledger-local id: a superseded composer
+// snapshot never became a message, so there is no message id to join on. The
+// Detail names the stream and version it belonged to, which is the join an
+// operator needs and the only context the ledger may keep — never the text.
+func recordSuperseded(st *store.Store, inputID, source, reason, detail string) {
+	if st == nil {
+		return
+	}
+	st.Input.Record(inputlog.Event{
+		InputID: inputID,
+		Stage:   inputlog.StageSuperseded,
+		Class:   inputlog.ClassSuperseded,
+		Source:  source,
+		Reason:  reason,
+		Detail:  detail,
 	})
 }

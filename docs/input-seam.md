@@ -1,8 +1,8 @@
 # The input seam
 
 **Code:** `packages/go-server/internal/inputlog` (the ledger),
-`packages/go-server/internal/handlers/input_seam.go` and
-`input_remote.go` (the recording call sites),
+`packages/go-server/internal/handlers/input_seam.go`, `input_remote.go` and
+`eval.go`/`eval_supersede.go` (the recording call sites),
 `packages/go-server/internal/handlers/input_events.go` (the read
 surface). Wire contract: [`api-contract.md`](api-contract.md)
 §`GET /api/chat/input-events` and its machine-readable twin
@@ -65,7 +65,7 @@ answer to "where did it stop".
 | `queued` | The input is durably held, awaiting pickup. Not a failure. |
 | `delivered` | A listener was handed the input. |
 | `held` | Deliberately not routed, pending an operator decision. |
-| `superseded` | A later input replaced this one before it was acted on. |
+| `superseded` | A later input replaced this one before it was acted on. Produced by the eval door (below). |
 
 **Classes** say how the hop turned out.
 
@@ -80,6 +80,7 @@ answer to "where did it stop".
 | `unpicked` | The input was queued and no listener picked it up. Recorded only once something has actually waited long enough to say so. |
 | `superseded` | A later input for the same destination replaced this one before it was acted on. |
 | `held` | Held rather than routed, by policy. |
+| `superseded` | A later input for the same destination replaced this one before it was acted on. Produced today by the eval door, from the engine's own `stale-request-version` verdict. |
 
 A view turns this into named states rather than absences: received-then-nothing
 is *dropped before interpretation*, queued-with-no-delivered-hop-past-a-window
@@ -88,12 +89,48 @@ is *queued but never picked up*, and a refusal row names its reason directly.
 ## `source`: which door, and which delivery path
 
 `source` names the surface or mechanism that produced the hop. Intake sources
-today are `send` (`POST /api/chat/send`), `alert` (`POST /api/chat/alert`) and
-`remote-input` (`POST /api/chat/remote-input/submit`, the phone dictation door).
-Delivery is one of `poll-wake` (a parked long-poll resolved by the new message)
-or `poll-backlog` (the retained store answered a cursor) — keeping those
-distinct is what makes "delivered hot" tell apart from "drained after a
-reconnect".
+today are `send` (`POST /api/chat/send`), `alert` (`POST /api/chat/alert`),
+`remote-input` (`POST /api/chat/remote-input/submit`, the phone dictation door)
+and `eval` (`POST /api/chat/eval`, the composer's text-change up-channel that
+typed and dictated text actually rides). Delivery is one of `poll-wake` (a
+parked long-poll resolved by the new message) or `poll-backlog` (the retained
+store answered a cursor) — keeping those distinct is what makes "delivered
+hot" tell apart from "drained after a reconnect".
+
+## The eval door, and the superseded snapshot
+
+The composer posts every text change — typed or dictated — as a versioned
+buffer snapshot to `POST /api/chat/eval`, and the compiled engine answers with
+actions against that snapshot. When a newer snapshot for the same stream has
+already been evaluated, the engine fast-returns a `noop` whose reason is
+`stale-request-version`: its own name for **a later input replaced this one
+before it was acted on** (`tools/cli/internal/evalengine/engine.go`,
+"Last-write-wins").
+
+That is the sixth failure class, and it used to be completely invisible. The
+relay forwarded the noop to the panel, nothing acted, and the ledger recorded
+no hop at all — so "your composer had already moved on" and "the phone never
+sent it" were the same silence. The relay now reads the engine's verdict out of
+the action batch and records one hop:
+
+| Field | Value |
+|---|---|
+| `stage` / `class` | `superseded` / `superseded` |
+| `source` | `eval` |
+| `reason` | `superseded-by-newer-version` |
+| `detail` | `stream=<streamId> v=<version> engine=stale-request-version`, bounded to 64 runes |
+| `inputId` | a ledger-local `in-…` id: the snapshot never became a message, so there is no message id to join on |
+
+The verdict is **read, never recomputed**: the engine owns last-write-wins, and
+a second version comparison in the relay could disagree with the decision that
+actually produced what the panel saw. Ordinary evals record nothing at all — a
+row per keystroke would drown the seam it exists to make legible — and the
+detail carries the stream and version but never the text.
+
+Because the engine has already dropped the snapshot, this class needs no
+guard of its own: it is the one failure the product refuses to act on *before*
+this ledger existed. What was missing was the operator being able to see that
+it happened.
 
 ## The dictation door, and the hold
 
@@ -145,8 +182,10 @@ row without the number behind it.
 
 Recorded: the full hop set of the dictation intake (above); the `queued` hop of
 every operator (`role: "user"`) message accepted by `/send` or `/alert`; the
-`delivered` hop at both poll delivery points; and a `refused` hop for a `/send`
-or remote-input submit the intake rejected before storing anything.
+`delivered` hop at both poll delivery points; a `refused` hop for a `/send` or
+remote-input submit the intake rejected before storing anything; and a
+`superseded` hop for every eval the engine dropped because a newer snapshot of
+the same buffer had already replaced it.
 
 **Not yet recorded, deliberately:**
 
@@ -154,12 +193,12 @@ or remote-input submit the intake rejected before storing anything.
   `queued` row already carries the id, stage and source, and a `received` row
   would duplicate the same facts until those doors have something extra to say
   at that moment (a reported confidence, a source device).
-- The `unpicked` and `superseded` classes. `unpicked` is a read-time judgement
-  over a queued hop, not a producer, and the view already makes it. Nothing in
-  the product yet discards an input in favour of a newer one, so a
-  `superseded` producer would be an invented semantic rather than an observed
-  one — the vocabulary and the view state exist so that the day something does
-  supersede, it is visible instead of silent.
+- Successful evals. The eval door records only the superseded verdict: a row
+  per keystroke would swamp the retained window, and an eval that produced
+  actions is not a failure to name.
+- The `unpicked` class as a producer. It is a read-time judgement over a queued
+  hop — nothing has to fire for "no listener picked it up in 60s" to become
+  true, and the view derives it from the queued hop's age.
 - A provenance threshold. The threshold today is over reported confidence
   only. No surface reports provenance strength, so a provenance hold would
   compare against a value nothing produces.
@@ -178,8 +217,12 @@ replay of the same id cannot disagree. `--watch` polls (default every 2s) and
 says so in its header: the ledger has no push stream yet, and implying instant
 delivery would be a lie about its own cadence.
 
-The view prints each INPUT id whole — including the `in-…` ids minted for a
-refusal, which exist nowhere else, since the refusal id is deliberately kept
-off every wire response. A truncated row would therefore be the only copy of
-an id it could not be pasted back into `--input`; the column is as wide as the
-longest id the ledger mints precisely so that every row is replayable.
+The view prints each INPUT id whole — including the `in-…` ids minted for
+input that never became a message (a refusal, or a superseded snapshot),
+which exist nowhere else, since such an id is deliberately kept off every wire
+response. A truncated row would therefore be the only copy of an id it could
+not be pasted back into `--input`; the column is as wide as the longest id the
+ledger can mint precisely so that every row is replayable. That width is a
+two-sided contract: the printer sizes its column once, and the mint keeps the
+id inside it (`in-` + a 19-digit nanosecond + a two-digit suffix = 25 bytes,
+pinned by `TestMintedIDsFitTheViewsColumn`).

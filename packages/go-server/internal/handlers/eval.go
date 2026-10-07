@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"parlay/go-server/internal/inputlog"
 	"parlay/go-server/internal/store"
 )
 
@@ -212,6 +213,10 @@ func hasVerb(verbs []string, want string) bool {
 // connection is refused before the engine is called; a muted action has its
 // emission suppressed after it), and the command-log record for every
 // evaluation, whatever its outcome. Both are why this handler needs the store.
+//
+// st is also the input-seam ledger, which records the one verdict on this path that
+// is an input outcome rather than a transport detail: a snapshot the engine
+// dropped because a newer one had already replaced it. See eval_supersede.go.
 func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -347,6 +352,17 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 		}
 
 		rememberFired(req.StreamID, env.Fired)
+
+		// A stale-request-version noop is the engine saying a later snapshot of
+		// this same buffer replaced this one before it was acted on. That is a
+		// real, named input outcome and it used to be invisible: the relay
+		// forwarded the noop and the ledger recorded no hop at all. Recording
+		// is asynchronous and cannot slow or fail the relay (see inputlog.Log).
+		if evalWasSuperseded(env.Actions) {
+			recordSuperseded(st, inputlog.NewInputID(), inputSourceEval,
+				reasonSupersededByNewerVersion,
+				evalSupersessionDetail(req.StreamID, req.Version))
+		}
 
 		timing := relayTiming{
 			EngineEvalNs: env.EngineEvalNs,
