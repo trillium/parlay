@@ -384,11 +384,78 @@ touch delivery: an unwritable ledger is logged and dropped, pinned by a test
 that makes the ledger unwritable and asserts the spool still receives the
 message.
 
+### 4. `parlay liveness` — "who has gone quiet, and is that heartbeat absent or merely expired?" (iteration 4)
+
+`parlay explain` answers that for one agent; `parlay launch` reports
+live/ghost/offline but has no clock and no last-activity notion. One read-only
+table now answers it for the fleet, with four columns that are four different
+facts:
+
+```
+parlay liveness — 4 agent(s) in the fleet · silence window 10m
+server          http://127.0.0.1:34517
+relay runtime   /tmp/plv.DPg6yg/rt
+sources
+  registry + presence    read — GET /api/chat/subscribers answered — 4 registered agent(s), 3 presence row(s)
+  process table          read — 0 live listener process(es) on this host
+  relay                  unreachable — no answer at /tmp/plv.DPg6yg/rt/relay.sock — the relay is not running (or uses another runtime dir). Its delivery trail is a FILE and is still read below; only the relay's live state is unknown
+  delivery ledger        read — 2 delivery event(s) read (oldest first); the relay's own rotation is recorded in the trail, so a shortened history says so
+
+AGENT                STATE     HEARTBEAT              SILENT     LAST OBSERVED ACTIVITY
+crew-3               ghost     no row                 3h00m      status "blocked" 3h00m ago
+crew-4               ghost     expired (3h00m ago)    3h00m      channel activity 3h00m ago
+crew-2               ghost     never observed         unknown    no dated record
+crew-1               ghost     fresh (32s ago)        no         channel activity 32s ago
+
+notes
+  crew-2               heartbeat  a presence row exists with no lastSeen — the server has never observed activity on this channel (absent, not expired)
+  crew-2               silence    no dated activity record exists (looked at: the server's presence row for this channel) — silence is unmeasurable here, not zero
+  crew-4               heartbeat  the server's last recorded activity on this channel is 3h00m old — past the 10m window (expired, not absent)
+  …
+
+2 of 4 silent beyond 10m · 2 with no heartbeat record (never observed or no presence row)
+```
+
+The four fixture agents have no listener process, so they correctly read
+`ghost` — that is the process-table half of `STATE` doing its job.
+
+Questions it answers that nothing answered before:
+
+- **Which agents are silent, and since when.** One column, measured over the
+  newest dated record of ANY source — the server's channel stamp, the agent's
+  own status file, the relay's delivery trail — so an agent that is working
+  without talking (crew-4 above: expired channel stamp, status line 20s old) is
+  not falsely reported silent. `--silent` narrows to the rows whose activity is
+  older than the window or whose channel has no heartbeat record at all, and
+  `--silent-for 10s` asks the same question with a tighter window.
+- **Absent vs expired.** A stamp can expire; a presence row with no `lastSeen`
+  and an absent row CANNOT. They print as `never observed` and `no row`, carry
+  no parsed time at all, and `SILENT` is `unknown` with the reason — never `0`,
+  and never an invented age.
+- **What the last observed activity was.** Which record saw it, what it
+  recorded, and how long ago.
+- **Blind vs drifted vs deaf.** `STATE` is the registry intersected with the
+  process table, and a process table that could not be read leaves a registered
+  agent `live` with a caveat note instead of becoming a `ghost` — a wrong ghost
+  sends an operator to clear the registration of a working agent.
+- **One agent, or the whole fleet.** A bare id or `--agent <id>` filters to one
+  row; `--json` carries the closed vocabularies (`state`, `heartbeat`,
+  `silence`, `last_source`, each source's `state`) verbatim plus the same note
+  sentences the text mode prints.
+
+It reads no spool and no resume cursor on purpose: those are per-agent facts
+(`parlay explain` owns them), and opening N spool files to answer "is this
+channel being heard from" would make a fleet-wide read slower for a fact that
+belongs to the per-agent surface. Its four sources are the registry snapshot,
+the process table, the relay's control socket, and the two durable files (the
+delivery ledger, the status files).
+
 ## What each new surface degrades to, and how it says so
 
 Doc-level contracts, all indexed in [`docs/README.md`](docs/README.md):
-[`docs/explain.md`](docs/explain.md), [`docs/timeline.md`](docs/timeline.md) and
-[`docs/relay.md`](docs/relay.md) (plus `tools/relay/NOTES.md`).
+[`docs/explain.md`](docs/explain.md), [`docs/timeline.md`](docs/timeline.md),
+[`docs/liveness.md`](docs/liveness.md) and [`docs/relay.md`](docs/relay.md)
+(plus `tools/relay/NOTES.md`).
 
 The governing rule is **an absence is never reported as a healthy value**. Every
 line below is real output from `tools/cli` against a private fixture (a private
@@ -433,11 +500,55 @@ the relay is dead and the answer still has to exist:
 | Spool reconciliation past the cap | outcome `unknown`: `this trail mentions <n> agents and one timeline read reconciles at most 64 spools; narrow with --agent to get a per-message answer` |
 | Nothing observable at all (`timeline`) | stderr `parlay timeline: nothing was observable — no delivery ledger, no audit log, the relay at <sock> did not answer, and no command registry at <url>`, exit **1**; the header says `no event matched. No record answered at all, so an empty timeline means nothing was observable — see sources.` instead of a bare empty list |
 
+`parlay liveness` keeps the same rule with a different set of sources — two of
+its four degraded modes are about a record that is absent rather than stale:
+
+| Degraded mode | What `parlay liveness` prints |
+|---|---|
+| Server unreachable | `registry + presence    unreachable — no answer from <url> — registration and channel activity are UNKNOWN, not absent (an unreachable server is not an empty fleet)`; per row `STATE unknown` with `the server did not answer, so registration is unknown — this is not the same as offline` and `HEARTBEAT unknown` with `the server did not answer, so channel activity is unknown (not absent, and not fresh)`. Exit stays **0** when a local record answered. |
+| Process table unreadable | `process table          unreadable — the process table could not be read, so a dead listener cannot be ruled out — registered agents are NOT reported as ghosts on a failed probe`; every registered agent stays `STATE live` with `registered; the process table could not be read, so a listener cannot be confirmed OR ruled out` |
+| Relay not running | `relay                  unreachable — no answer at <sock> — the relay is not running (or uses another runtime dir). Its delivery trail is a FILE and is still read below; only the relay's live state is unknown`; `LAST OBSERVED ACTIVITY` still comes from the ledger (`relay spool-failed 1h30m ago`) |
+| Relay bound to another server | the relay line gains `· WARNING this relay polls <other>, NOT the server this CLI targets (<url>)` |
+| Heartbeat expired vs absent | `expired (3h00m ago)` **vs** `never observed` (a presence row with no `lastSeen`) **vs** `no row` (no presence row at all) **vs** `unknown` (the server did not answer, or the stamp does not parse). Only the two ages carry a parsed stamp at all. |
+| No dated record anywhere | `SILENT unknown` plus `no dated activity record exists (looked at: <what was consulted>) — silence is unmeasurable here, not zero` |
+| No local home for the id | `no agent home for this id on this host, so its status file could not be consulted either — run this where the agent runs to see local activity` |
+| Ledger never written | `delivery ledger        absent — no ledger — this relay has never recorded a delivery event. That is NOT the same as 'nothing was delivered': an older relay build has no ledger at all` |
+| Nothing observable at all | `no agents to report — the server lists none and this host has no agent homes`, stderr `parlay liveness: nothing was observable — the server did not answer at <url> and no relay trail or agent home exists under <agents-root>`, exit **1** |
+| `--silent` with nothing to show | `no agent is silent beyond 10m0s, and none is missing a heartbeat record` — an explicit empty, not a bare table |
+
 Exit codes: `0` at least one source answered (including bad news), `1` nothing
 observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
 
 ## Tests
 
+- `tools/cli/internal/liveness/liveness_test.go` — the pure classifier, with no
+  clock, files or network: an unreadable registry is `unknown` and never
+  `offline`; a failed process-table probe never becomes `ghost`; the four
+  heartbeat shapes stay four (only the two ages carry a parsed stamp);
+  `HeartbeatFor` is the channel record's own age and never the silence
+  duration; a fresh status file beats a three-hour-old channel stamp (the
+  false-alarm case); silence expires on the NEWEST record of any source; no
+  dated record is `unknown` with the list of what was looked at, not `0`; a
+  future stamp is not negative silence; the default clock and window.
+- `tools/cli/internal/commands/liveness_test.go` — end-to-end against private
+  fixtures (a private server, a private runtime dir with a real `delivery.log`,
+  private agent homes, an injected process table): the four-agent fleet table
+  with all four row shapes; `--silent` and `--silent-for`; the
+  absent-heartbeat-is-not-expired pin; relay down with the trail still
+  answering; server down with local activity still answering (exit 0) and the
+  `unknown ≠ offline` pin; nothing observable at all (exit 1); a failed
+  process-table probe; the relay-bound-elsewhere warning; the `--json`
+  envelope; the read-only assertion (every control-socket request a `GET`, and
+  the ledger plus the status file byte-identical afterwards); four usage
+  errors; and the single-agent filter.
+- **Tests that bite.** The honesty rules were mutation-checked rather than
+  assumed. Four separate mutations each turn tests red: making `never observed`
+  fall through to the stamp path (7 tests), measuring silence from the channel
+  stamp alone (6 tests), reporting `ghost` on a failed process-table probe (2
+  tests), and not counting a local roster as an observable source (1 test).
+  `explain_test.go`'s `explainRun` was split into a shared `verbRun` so both
+  verbs' tests own their pipes identically (the exit path panics through a test
+  double, and a panic unwinding through `captureStdout` leaks a goroutine).
 - `tools/cli/internal/timeline/timeline_test.go` — the pure classify/select
   layer, with no I/O: spooled-still-present → `queued` and never "delivered";
   spooled-but-gone → `left-spool`; an unreadable or never-looked-up spool →
@@ -519,25 +630,45 @@ $ for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do
     (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... &&
              gofmt -l . | (! grep .) && CGO_ENABLED=0 go test ./...)
   done && make test-bdd
-=== tools/cli ===
-ok  github.com/trillium/parlay/tools/cli                              1.148s
-ok  github.com/trillium/parlay/tools/cli/internal/commands           50.707s
-ok  github.com/trillium/parlay/tools/cli/internal/timeline            1.804s
-ok  github.com/trillium/parlay/tools/cli/internal/relayctl            2.084s
-      …28 more packages ok, 0 FAIL
-=== tools/relay ===             ok  github.com/trillium/parlay/tools/relay  3.018s
-=== packages/go-server ===      ok  parlay/go-server/internal/{store,handlers,guard,bus,…}  (11 packages, 0 FAIL)
+=== tools/cli ===            33 packages: 31 ok, 2 "no test files", 0 FAIL
+      ok  github.com/trillium/parlay/tools/cli                       0.750s
+      ok  github.com/trillium/parlay/tools/cli/internal/commands    33.601s
+      ok  github.com/trillium/parlay/tools/cli/internal/liveness     0.271s
+      ok  github.com/trillium/parlay/tools/cli/internal/timeline     …
+      ok  github.com/trillium/parlay/tools/cli/internal/relayctl     …
+      ok  github.com/trillium/parlay/tools/cli/internal/help         …
+      … and 25 more, every one ok
+=== tools/relay ===          ok  github.com/trillium/parlay/tools/relay  2.888s
+=== packages/go-server ===   ok  parlay/go-server/internal/{atomicfile,bus,capability,guard,
+                                 handlers,linkrewrite,remoteinput,sourcecontracts,static,store}
+                                 + cmd/parlay-server  (11 packages, 0 FAIL)
 === packages/spawn-profiles === ok  parlay/spawn-profiles/cmd/validate  0.276s
 $ make test-bdd
 17 scenarios (17 passed) / 55 steps (55 passed)   ok internal/evalengine
  7 scenarios ( 7 passed) / 21 steps (21 passed)   ok internal/spawn
-make test-bdd exit=0    (42 packages ok, zero FAIL, zero build/vet/gofmt failures)
+make test-bdd exit=0    (no MODULE-FAIL line, zero build/vet/gofmt failures)
 ```
 
-`-race` on the three touched packages (`internal/timeline`, `internal/relayctl`,
-`internal/commands`) is green as well — CI's Go job runs `-race` by default, and
-the exit-path test helper owns its pipes so an exiting verb leaves no goroutine
-behind.
+`-race` on the two touched packages (`internal/liveness`, `internal/commands`) is
+green as well — CI's Go job runs `-race` by default, and the exit-path test
+helper owns its pipes so an exiting verb leaves no goroutine behind. On this box
+that needs the ICU cgo flags the beads dependency's embedded-Dolt tree wants:
+
+```
+$ cd tools/cli && CGO_ENABLED=1 \
+    CGO_CFLAGS=-I/opt/homebrew/opt/icu4c/include \
+    CGO_CXXFLAGS=-I/opt/homebrew/opt/icu4c/include \
+    CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c/lib \
+    go test -race ./internal/liveness/... ./internal/commands/...
+ok  github.com/trillium/parlay/tools/cli/internal/liveness   1.257s
+ok  github.com/trillium/parlay/tools/cli/internal/commands  35.355s
+```
+
+Without those flags `-race` on `tools/cli` dies at compile time in
+`github.com/dolthub/go-icu-regex/internal/icu` (`unicode/regex.h` not found),
+which is a **pre-existing environment gap on macOS**, not a red test: CI's
+ubuntu runner has the headers. Plain `CGO_ENABLED=0 go test` needs no flags and
+is what the chain above uses.
 
 **Known-red baseline: none.** `make test-bdd` was green on this box before this
 iteration's work and after it; the literal root-command failure above is a
@@ -548,7 +679,12 @@ was the same before iteration 1.
 
 This repository enforces no per-file line budget (only a 2 MiB tracked-blob
 ceiling and a docs-index gate) — the 250-line cap on every new **production**
-file is my choice. Split to stay under it: `internal/timeline` is
+file is my choice. `parlay liveness` is split to stay under it:
+`internal/liveness/liveness.go` (238, the vocabulary and `Classify`) +
+`classify.go` (156, the three pure steps); the verb is `commands/liveness.go`
+(180, flags, entry and ranking) + `liveness_sources.go` (207, the reads) +
+`liveness_render.go` (177, the table and notes) + `liveness_json.go` (102, the
+envelope). Earlier iterations: `internal/timeline` is
 `timeline.go` (159, types and vocabulary) + `build.go` (166, classification) +
 `select.go` (158, narrowing and ordering); the verb is `timeline.go` (188,
 flags) + `timeline_sources.go` (177, the reads) + `timeline_notes.go` (84, the
@@ -559,6 +695,17 @@ files follow the package's own existing convention instead:
 `internal/relayctl/relayctl_test.go` ends at 220, so
 `commands/timeline_test.go` (482) and `timeline/timeline_test.go` (329) are in
 line with their neighbours.
+
+## Harness scratch, and one accidental commit repaired
+
+A hard constraint of this run is that nothing under `.pi/`, `.gnhf/` or any
+other harness scratch directory is ever committed. Iteration 3's commit violated
+it: `4aaaa1e` added four `.pi/tasks/**/*.output` files. This iteration deletes
+them and adds `.pi/` and `.gnhf/` to `.gitignore`, with the reason written beside
+the entries — the ignore rule is what makes the constraint structural rather
+than remembered, and a gitignore alone would not have untracked the four files
+already in the index (hence the explicit deletion). Neither directory is tracked
+on `origin/main`, so nothing of the captain's is affected.
 
 ## Deliberately not built
 
@@ -587,19 +734,13 @@ line with their neighbours.
 
 ## Left undone (with the reason)
 
-- **The final PR.** The run's orchestrator owns commits, so no iteration pushed
-  or opened a PR. When the loop finishes, push the branch and
-  `gh-axi pr create --base main --head <branch>`; do not merge.
-- **Fleet-wide liveness** (objective item 2's operator surface): which agents
-  are silent, since when, whether their last heartbeat is genuinely absent or
-  merely expired, and the last observed activity for each. Every ingredient is
-  now reader-accessible per agent — the presence row's `lastSeen` versus its
-  absence (`explain` already prints the blind-vs-drifted distinction), relay
-  enrollment, the spool and its resume cursor — but there is no single fleet
-  view. `parlay timeline` covers the "since when" half for delivery and
-  lifecycle; it does not answer "which agent is silent right now", and building
-  that means deciding whether it belongs in `parlay stale`, `parlay crew-state`
-  or a new verb rather than inventing a fourth overlapping surface.
+- **The final PR.** The run's orchestrator owns commits, so the branch is pushed
+  and the PR opened from the commits already made —
+  <https://github.com/trillium/parlay/pull/313> (head
+  `gnhf/objective-make-parla-ea8605`, base `main`, **not merged**). Because each
+  iteration's work is committed after that iteration, the branch has to be
+  pushed again at the end of any later iteration for the PR head to include it;
+  the PR body says which surfaces its current head contains.
 - **A `delivered` outcome, and therefore a read receipt.** Not built because it
   cannot be built honestly without a change to the delivery path itself: the
   monitor would have to acknowledge what it consumed (a new wire field, a new

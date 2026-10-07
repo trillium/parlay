@@ -29,6 +29,14 @@ import (
 // from leaving a goroutine behind (CI runs with the race detector).
 func explainRun(t *testing.T, argv []string) (stdout, stderr string, code int, exited bool) {
 	t.Helper()
+	return verbRun(t, Explain, argv)
+}
+
+// verbRun is the same capture for any verb — one implementation, so a second
+// verb's tests cannot drift from the first's on the pipe ownership that keeps
+// -race clean.
+func verbRun(t *testing.T, fn func([]string), argv []string) (stdout, stderr string, code int, exited bool) {
+	t.Helper()
 	outR, outW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
@@ -47,7 +55,7 @@ func explainRun(t *testing.T, argv []string) (stdout, stderr string, code int, e
 	go func() { var b bytes.Buffer; io.Copy(&b, outR); outCh <- b.String() }()
 	go func() { var b bytes.Buffer; io.Copy(&b, errR); errCh <- b.String() }()
 
-	code, exited = testsupport.Capture(func() { Explain(argv) })
+	code, exited = testsupport.Capture(func() { fn(argv) })
 
 	os.Stdout, os.Stderr = origOut, origErr
 	httpc.Exit = origExit
