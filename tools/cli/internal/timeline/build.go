@@ -40,6 +40,12 @@ func Build(recs Records, presence map[string]Presence) []Event {
 			ev.Outcome = OutcomeRotated
 			ev.Detail = "the ledger rotated here (" + reasonOr(e.Reason, "unspecified") +
 				") — every event older than this line is gone, so a trail that starts at this marker is not a quiet fleet"
+		case "started":
+			ev.Outcome = OutcomeStarted
+			ev.Detail = "the relay process started here: it took its control socket and began serving. Deliveries cannot flow from a relay that is not running, so a gap between two of these lines is a RESTART, not a quiet fleet — and a burst of them is a crash loop. It names no channel: what came back is the `resumed` rows"
+		case "resumed":
+			ev.Outcome = OutcomeResumed
+			ev.Detail = "the relay resumed polling this channel at its start, from the spool it found on disk — so this channel HAD A POLL LOOP from this instant. It is not proof the agent was listening, and not proof any queued line was read"
 		case "spool-failed":
 			ev.Outcome = OutcomeDropped
 			ev.Detail = "the append to the agent's spool FAILED — this message did not reach the agent (the failure detail is in the relay's own log, not in this identifier-only trail)"

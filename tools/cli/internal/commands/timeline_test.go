@@ -232,6 +232,72 @@ func TestTimelineReadsTheRotatedGeneration(t *testing.T) {
 	)
 }
 
+// TestTimelineTellsTheRestartStory: the relay's own start and the channels it
+// brought back are on the same axis as the deliveries they interrupted. That is
+// what makes a gap in deliveries explainable instead of indistinguishable from a
+// quiet fleet — and what makes a crash loop visible as a burst of starts.
+func TestTimelineTellsTheRestartStory(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.ledger(t,
+		`{"ts":"`+f.at(-90*time.Minute)+`","event":"spooled","agent":"crew-1","msg":"m-1","role":"user"}`,
+		`{"ts":"`+f.at(-60*time.Minute)+`","event":"delivery-ended","agent":"crew-1","reason":"shutdown","spoolLines":1}`,
+		`{"ts":"`+f.at(-60*time.Minute)+`","event":"delivery-ended","agent":"crew-2","reason":"shutdown","spoolLines":0}`,
+		`{"ts":"`+f.at(-59*time.Minute)+`","event":"started"}`,
+		`{"ts":"`+f.at(-58*time.Minute)+`","event":"resumed","agent":"crew-1"}`,
+		`{"ts":"`+f.at(-57*time.Minute)+`","event":"spooled","agent":"crew-1","msg":"m-2","role":"user"}`,
+	)
+	f.spool(t, "CHAT_MSG|m-1|user|x", "CHAT_MSG|m-2|user|y")
+	f.deadServer(t)
+
+	out, _, _, exited := timelineRun(t, nil)
+	if exited {
+		t.Fatalf("the ledger answered, so the command must not exit non-zero:\n%s", out)
+	}
+	wantLine(t, out,
+		"started",
+		"the relay process started here",
+		"a gap between two of these lines is a RESTART, not a quiet fleet",
+		"resumed",
+		"the relay resumed polling this channel at its start",
+		"not proof the agent was listening",
+		"reason=shutdown",
+		"msg m-2 (user)",
+	)
+	// The other channel stopped at the same shutdown and has no resume row. It
+	// is left as its last known fact: nothing in this trail can prove it stayed
+	// down, and inventing that verdict from an absence is the one thing this
+	// surface must not do.
+	notWantLine(t, out, "never came back", "did not come back", "was not resumed", "is deaf")
+
+	// The query the restart story exists for.
+	only, _, _, _ := timelineRun(t, []string{"--outcome", "started,resumed"})
+	wantLine(t, only, "2 matching event(s)", "started", "resumed")
+	notWantLine(t, only, "reason=shutdown", "msg m-1", "msg m-2")
+
+	js, _, _, _ := timelineRun(t, []string{"--outcome", "started,resumed", "--json"})
+	var doc struct {
+		Shown  int `json:"shown"`
+		Events []struct {
+			Outcome string `json:"outcome"`
+			Source  string `json:"source"`
+			Agent   string `json:"agent"`
+			Detail  string `json:"detail"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json did not decode: %v\n%s", err, js)
+	}
+	if doc.Shown != 2 || doc.Events[0].Outcome != "started" || doc.Events[1].Outcome != "resumed" {
+		t.Fatalf("--json events wrong: %+v", doc)
+	}
+	if doc.Events[0].Agent != "" || doc.Events[1].Agent != "crew-1" {
+		t.Errorf("--json must keep the fleet-wide start agentless and the resume attributed: %+v", doc.Events)
+	}
+	if doc.Events[0].Source != "delivery" {
+		t.Errorf("the relay's own lifecycle comes from the delivery ledger, got source %q", doc.Events[0].Source)
+	}
+}
+
 // TestTimelineRecordingSwitchedOffIsNamed: only the live socket can say that
 // recording is off right now; the file cannot.
 func TestTimelineRecordingSwitchedOffIsNamed(t *testing.T) {

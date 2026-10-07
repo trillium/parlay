@@ -194,6 +194,44 @@ func find2(t *testing.T, events []Event) Event {
 	return events[0]
 }
 
+// TestRelayStartAndResumeAreTheirOwnOutcomes: the relay's own lifecycle is a
+// fact only the relay witnesses, and it is the one that explains a gap in
+// deliveries. Two rules are pinned here — `started` names no channel (it is the
+// process, not a channel) and `resumed` claims POLLING, never a read.
+func TestRelayStartAndResumeAreTheirOwnOutcomes(t *testing.T) {
+	recs := Records{Delivery: []DeliveryRecord{
+		{Entry: relayctl.DeliveryEntry{Ts: "2026-10-07T08:00:00Z", Event: "started"}},
+		{Entry: relayctl.DeliveryEntry{Ts: "2026-10-07T08:00:01Z", Event: "resumed", Agent: "crew-1"}},
+	}}
+	events := Build(recs, nil)
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+
+	start, res := events[0], events[1]
+	if start.Outcome != OutcomeStarted {
+		t.Fatalf("started outcome = %q, want %q", start.Outcome, OutcomeStarted)
+	}
+	if start.Agent != "" {
+		t.Errorf("a relay start names no channel, got agent %q — an invented agent would send an operator to the wrong one", start.Agent)
+	}
+	if !strings.Contains(start.Detail, "RESTART") {
+		t.Errorf("the start row must say a gap is a restart, not a quiet fleet: %q", start.Detail)
+	}
+
+	if res.Outcome != OutcomeResumed || res.Agent != "crew-1" {
+		t.Fatalf("resumed event = %+v, want a resumed outcome for crew-1", res)
+	}
+	if !strings.Contains(res.Detail, "POLL") {
+		t.Errorf("resumed must claim polling: %q", res.Detail)
+	}
+	for _, forbidden := range []string{"delivered", "READ", "read it"} {
+		if strings.Contains(res.Detail, forbidden) {
+			t.Errorf("a resumed row must never claim a read (%q): %q", forbidden, res.Detail)
+		}
+	}
+}
+
 // TestLifecycleAndRefusalOutcomes maps the control plane onto the vocabulary.
 func TestLifecycleAndRefusalOutcomes(t *testing.T) {
 	recs := Records{Audit: []relayctl.AuditEntry{

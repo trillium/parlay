@@ -152,6 +152,9 @@ func livenessNotes(rows []livenessRow, window time.Duration) []livenessNote {
 		if v.Silence == liveness.SilenceUnknown {
 			add(r.Agent, "silence", v.SilenceNote)
 		}
+		if r.RelayNote != "" {
+			add(r.Agent, "relay", r.RelayNote)
+		}
 		if v.Silence == liveness.SilenceExpired && !r.LocalHome && v.State != liveness.StateLive {
 			add(r.Agent, "home", "no agent home for this id on this host, so its status file could not be consulted either — run this where the agent runs to see local activity")
 		}

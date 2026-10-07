@@ -129,11 +129,26 @@ func gatherLiveness(a livenessArgs) livenessGather {
 	// generation comes first and the last entry seen per agent is its newest.
 	// No timestamp comparison is needed, and a corrupt stamp cannot reorder
 	// history.
+	//
+	// Two event kinds are the RELAY PROCESS's own lifecycle rather than traffic on
+	// that channel: `resumed` (a boot re-registered this channel) and
+	// `delivery-ended` with reason=shutdown (the relay process stopped). A restart
+	// writes one of EACH for every channel it was polling, so counting them as an
+	// agent's "last observed activity" would report a fleet that has been deaf for
+	// hours as freshly active — the false-healthy direction this whole table
+	// exists to avoid. They are kept aside and named on the row's note instead of
+	// being silently dropped.
 	newestDelivery := map[string]relayctl.DeliveryEntry{}
+	newestRelayEvent := map[string]relayctl.DeliveryEntry{}
 	for _, e := range ledger.Entries {
-		if e.Agent != "" {
-			newestDelivery[e.Agent] = e
+		if e.Agent == "" {
+			continue
 		}
+		if relayProcessEvent(e) {
+			newestRelayEvent[e.Agent] = e
+			continue
+		}
+		newestDelivery[e.Agent] = e
 	}
 
 	// --- the fleet: everyone the server or this host knows about ---
@@ -197,7 +212,13 @@ func gatherLiveness(a livenessArgs) livenessGather {
 		}
 		obs.Looked = looked
 		v := liveness.Classify(obs)
-		g.Rows = append(g.Rows, livenessRow{Agent: id, Verdict: v, LocalHome: local[id], rank: attentionRank(v)})
+		row := livenessRow{Agent: id, Verdict: v, LocalHome: local[id], rank: attentionRank(v)}
+		if e, ok := newestRelayEvent[id]; ok {
+			if at, ok := liveness.ParseStamp(e.Ts); ok {
+				row.RelayNote = relayEventNote(e, at)
+			}
+		}
+		g.Rows = append(g.Rows, row)
 	}
 	sortRows(g.Rows)
 	return g
@@ -245,4 +266,26 @@ func localStatus(agentID string) (statusRead, time.Time, bool) {
 		return sr, time.Time{}, false
 	}
 	return sr, st.ModTime(), true
+}
+
+// relayProcessEvent reports whether a delivery entry describes THE RELAY's own
+// lifecycle rather than traffic on that channel. `started` carries no agent and
+// never reaches the per-agent maps; these two DO name an agent, and they are
+// exactly what a restart writes for every channel the relay was polling.
+func relayProcessEvent(e relayctl.DeliveryEntry) bool {
+	return e.Event == "resumed" || (e.Event == "delivery-ended" && e.Reason == "shutdown")
+}
+
+// relayEventNote explains, on the row it belongs to, why the relay's own
+// restart did not clear that agent's silence. Without it an operator sees a
+// three-hour silence with no visible explanation for the two-minute-old ledger
+// row that was deliberately not counted.
+func relayEventNote(e relayctl.DeliveryEntry, at time.Time) string {
+	what := "stopped being polled because the relay process shut down"
+	if e.Event == "resumed" {
+		what = "resumed polling this channel when it started"
+	}
+	return fmt.Sprintf(
+		"the relay %s at %s — that is the RELAY's own event, not this agent's activity, so it was NOT counted toward the silence above: a restart writes one for every channel it was polling, and counting it would report a deaf fleet as freshly active",
+		what, at.UTC().Format(time.RFC3339))
 }

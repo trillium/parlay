@@ -288,6 +288,44 @@ func TestLivenessRelayDownReadsTheTrail(t *testing.T) {
 	rowFor(t, out, "crew-1")
 }
 
+// TestLivenessDoesNotCountTheRelaysOwnRestartAsAgentActivity: a relay restart
+// writes `resumed` and `delivery-ended reason=shutdown` for EVERY channel it was
+// polling. Counting those as an agent's last observed activity would report a
+// fleet that has been deaf for hours as freshly active — the false-healthy
+// direction this table exists to avoid — so they are excluded from the silence
+// measurement and named on the row instead.
+func TestLivenessDoesNotCountTheRelaysOwnRestartAsAgentActivity(t *testing.T) {
+	noSleep(t)
+	f := newExplainFixture(t, "crew-1")
+	f.deadServer(t)
+	fakeListeners(t, true, "crew-1")
+	// A local home (so the fleet lists this agent with the server down) whose
+	// status is older than its spooled traffic, so the activity column is the
+	// agent's real traffic and not the restart.
+	writeAgentStatus(t, f.home, "crew-1", "working [k]: building", 5*time.Hour)
+	writeLedger(t, f.runtime,
+		relayctl.DeliveryEntry{Ts: ago(3 * time.Hour), Event: "spooled", Agent: "crew-1", Msg: "m-1"},
+		relayctl.DeliveryEntry{Ts: ago(2 * time.Minute), Event: "delivery-ended", Agent: "crew-1", Reason: "shutdown"},
+		relayctl.DeliveryEntry{Ts: ago(110 * time.Second), Event: "started"},
+		relayctl.DeliveryEntry{Ts: ago(100 * time.Second), Event: "resumed", Agent: "crew-1"},
+	)
+
+	out, _, code, exited := livenessRun(t, nil)
+	if exited {
+		t.Fatalf("Liveness exited with code %d; want none:\n%s", code, out)
+	}
+	// The silence is measured from the agent's real traffic, not the restart.
+	wantLine(t, out, "relay spooled 3h00m ago")
+	notWantLine(t, out, "relay resumed 1m40s ago", "relay delivery-ended 2m00s ago")
+	// And the exclusion is explained where the operator is looking.
+	wantLine(t, out,
+		noteLine("crew-1", "relay"),
+		"resumed polling this channel when it started",
+		"the RELAY's own event, not this agent's activity",
+		"NOT counted toward the silence above",
+	)
+}
+
 // TestLivenessServerDownKeepsLocalActivity is the half-broken-fleet case: the
 // server is gone, so registration is UNKNOWN (never "offline"), yet the local
 // status file still dates the agent and the exit code stays 0.

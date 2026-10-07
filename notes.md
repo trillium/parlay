@@ -253,7 +253,7 @@ The section above is main's onboarding account (PR #314), which landed while thi
 
 # notes.md — making parlay's runtime observable without reading its source
 
-Status: **in progress** — iterations 1–10 (see "Left undone" for what is not
+Status: **in progress** — iterations 1–11 (see "Left undone" for what is not
 done and the PR's head state).
 
 ## What an operator can now answer that they could not before
@@ -835,6 +835,126 @@ C5 (both shapes, plus why a silent warning is the real defect),
 and the per-verb `HELP` text for all three verbs.
 
 
+### 11. The relay's own restart is on the timeline, and it is not agent activity (iteration 11)
+
+A restart is the one event that explains a gap in deliveries, and nothing
+recorded it: the spool replay that re-registers every channel was invisible, so
+a restart looked exactly like a quiet fleet — and the 2026-07-17 shape (19
+agents deaf until hand re-enrolled) left no durable trace anywhere. The relay's
+data-plane ledger gained two events, so it now has **six**:
+
+- `started` — fleet-wide (it names no agent), written by `main()` **after the
+  control socket binds** and before the spool replay. After the bind is what
+  makes the row mean "this relay came up and served": a second boot refused the
+  socket by a live relay records nothing (pinned end-to-end), and writing it
+  before the replay keeps an append-only trail's read order equal to its write
+  order, which the reader depends on.
+- `resumed` — one row per channel the replay brought up (`resumeFromSpools`),
+  including a channel `-agents` had already registered, so SILENCE is
+  unambiguous. Per channel rather than a count on `started`, because the
+  operator's real question is "WHICH channel did not come back", and a count
+  cannot be diffed against the `delivery-ended reason=shutdown` rows.
+
+`parlay timeline` classifies both as their own outcomes, so the 2am query is one
+line: `parlay timeline --outcome started,resumed`. Verbatim from the built
+binary against a private runtime dir and a refused port (`exit 0`) — two channels
+stopped with the relay at 08:30, the relay came back at 08:31, and **`crew-1`
+has a `resumed` row while `crew-2` does not**:
+
+```
+2026-10-07T08:00:00Z  3h35m ago  queued       crew-1            msg m-1 (user) — still in the agent's spool — …
+2026-10-07T08:30:00Z  3h05m ago  ended        crew-1            the channel stopped being polled — reason=shutdown; 1 line(s) were still in the spool at that moment, unproven-consumed
+2026-10-07T08:30:00Z  3h05m ago  ended        crew-2            the channel stopped being polled — reason=shutdown; 0 line(s) were still in the spool at that moment, unproven-consumed
+2026-10-07T08:31:00Z  3h04m ago  started      -                 the relay process started here: it took its control socket and began serving. Deliveries cannot flow from a relay that is not running, so a gap between two of these lines is a RESTART, not a quiet fleet — and a burst of them is a crash loop. It names no channel: what came back is the `resumed` rows
+2026-10-07T08:32:00Z  3h03m ago  resumed      crew-1            the relay resumed polling this channel at its start, from the spool it found on disk — so this channel HAD A POLL LOOP from this instant. It is not proof the agent was listening, and not proof any queued line was read
+2026-10-07T08:34:00Z  3h01m ago  queued       crew-1            msg m-2 (user) — still in the agent's spool — …
+
+  shown: queued=2 · ended=2 · started=1 · resumed=1
+```
+
+What the rows do NOT say, deliberately:
+
+- **No verdict is made from a missing `resumed` row.** `crew-2` is left as its
+  last known fact. A resume can fail (the error goes to the relay's own stderr,
+  not into an identifier-only trail) and a ledger written before these events
+  existed holds no such rows at all, so absence is a question to follow up, not
+  a claim that a channel stayed deaf. Pinned by a test that asserts the words
+  `never came back`, `did not come back`, `was not resumed` and `is deaf` appear
+  nowhere in the output.
+- **`resumed` is polling, never a read** — the sentence says so, and a test
+  forbids `delivered`/`READ` in its text.
+- **One restart row, no agent** (`started`), which is why `--outcome
+  started,resumed` is the query rather than a fleet-wide row repeated per agent.
+
+#### The consequence in `parlay liveness`: a restart is not agent activity
+
+Both new rows name an agent in one case (`resumed`) or carry a fresh stamp, and
+`liveness` measures `SILENT` over the newest dated record of ANY source — so
+without a rule, a restarted relay would have reported a fleet that had been deaf
+for three hours as active two minutes ago. **A relay-process event is therefore
+not counted as the agent's activity**: `resumed` and `delivery-ended
+reason=shutdown` are excluded from the clock (and `delivery-ended
+channel-gone`/`unregister` are not — that is the channel really ending, the last
+thing known about it), and the exclusion is stated on the row instead of being
+left invisible. Verbatim (server refused, relay socket absent, this agent's
+spooled traffic three hours old):
+
+```
+AGENT                STATE     HEARTBEAT              SILENT     LAST OBSERVED ACTIVITY
+crew-1               unknown   unknown                3h00m      relay spooled 3h00m ago
+
+notes
+  crew-1               state      the server did not answer, so registration is unknown — this is not the same as offline
+  crew-1               heartbeat  the server did not answer, so channel activity is unknown (not absent, and not fresh)
+  crew-1               relay      the relay resumed polling this channel when it started at 2026-10-07T11:40:36Z — that is the RELAY's own event, not this agent's activity, so it was NOT counted toward the silence above: a restart writes one for every channel it was polling, and counting it would report a deaf fleet as freshly active
+```
+
+`SILENT` stays `3h00m` instead of collapsing to `0s`, the sentence is in the
+text notes **and** in `--json` (`relay_note`), and `parlay explain` shows the
+same pair for one agent — its `delivery` block reads `delivery ended —
+reason=shutdown spoolLines=1`, then `resumed polling at relay start — the relay
+registered this channel's poll loop then. Polling, not delivery: it does not say
+the agent read anything`.
+
+Tests and mutations:
+
+- `tools/relay/startup_test.go` — `TestResumeFromSpoolsRecordsEveryChannelItBroughtUp`
+  (one `resumed` row per channel brought up, none for a file the walk skipped,
+  never a `started` row from the walk, every row stamped),
+  `TestResumeRecordsAChannelAlreadyHeldByFlag` (silence stays unambiguous), plus
+  the ledger assertions added to the existing end-to-end
+  `TestControlSocketBindsBeforeSpoolResume` (`started` is the **first** line,
+  exactly one of them, and all 40 channels have exactly one `resumed` row) and
+  `TestABootThatCannotTakeTheSocketRecordsNoStart` (a second relay refused the
+  socket records no new `started` row).
+- `tools/cli/internal/timeline/timeline_test.go` — `TestRelayStartAndResumeAreTheirOwnOutcomes`
+  (the fleet-wide row names no agent and says RESTART; `resumed` claims POLLING
+  and must not contain `delivered`/`READ`).
+- `tools/cli/internal/commands/timeline_test.go` — `TestTimelineTellsTheRestartStory`
+  (end to end: the restart story on one axis, `--outcome started,resumed`
+  narrowing to exactly two rows, the absence of any "did not come back" claim,
+  and `--json` carrying `started`/`resumed` with the start agentless).
+- `tools/cli/internal/commands/liveness_test.go` — `TestLivenessDoesNotCountTheRelaysOwnRestartAsAgentActivity`
+  (SILENT measured from the agent's own traffic, the relay rows absent from the
+  activity column, and the explanatory note present).
+- Mutation-verified, each restoring green immediately after: removing both relay
+  hooks (`r.recordStarted()`/`r.recordResumed()`) turns **4 relay tests red**
+  (`no ledger at … after resuming two channels`, `delivery ledger … does not
+  exist`, `first ledger line = [], want "started"`, `the first relay recorded 0
+  "started" row(s), want 1`); disabling the two classification cases turns the
+  timeline unit test red (`started outcome = "unknown", want "started"`) and the
+  end-to-end restart test red; making `relayProcessEvent` return false turns the
+  liveness test red (5 missing assertions, recorded above).
+
+Docs: [`docs/relay.md`](docs/relay.md) (six events, per-event table, and a
+fourth honest limit on silence), [`docs/timeline.md`](docs/timeline.md) (the
+outcome rows plus an "A relay restart, verbatim" section),
+[`docs/explain.md`](docs/explain.md) (the `resumed` row block),
+[`docs/liveness.md`](docs/liveness.md) (section F, the exclusion table),
+`tools/relay/NOTES.md`, and the per-verb `HELP` text for `timeline`, `explain`
+and `liveness`.
+
+
 ## What each new surface degrades to, and how it says so
 
 Doc-level contracts, all indexed in [`docs/README.md`](docs/README.md):
@@ -924,6 +1044,7 @@ its four degraded modes are about a record that is absent rather than stale:
 | Process table unreadable | `process table          unreadable — the process table could not be read, so a dead listener cannot be ruled out — registered agents are NOT reported as ghosts on a failed probe`; every registered agent stays `STATE live` with `registered; the process table could not be read, so a listener cannot be confirmed OR ruled out` |
 | Relay not running | `relay                  unreachable — no answer at <sock> — the relay is not running (or uses another runtime dir). Its delivery trail is a FILE and is still read below; only the relay's live state is unknown`; `LAST OBSERVED ACTIVITY` still comes from the ledger (`relay spool-failed 1h30m ago`) |
 | Relay bound to another server | the relay line gains `· WARNING this relay polls <other>, NOT the server this CLI targets (<url>)` |
+| The relay restarted (its own rows on this channel) | `resumed` and `delivery-ended reason=shutdown` are **not** counted toward `SILENT` or shown as activity, and the row carries `relay      the relay resumed polling this channel when it started at <ts> — that is the RELAY's own event, not this agent's activity, so it was NOT counted toward the silence above: a restart writes one for every channel it was polling, and counting it would report a deaf fleet as freshly active`. The same sentence travels in `--json` as `relay_note`. |
 | Heartbeat expired vs absent | `expired (3h00m ago)` **vs** `never observed` (a presence row with no `lastSeen`) **vs** `no row` (no presence row at all) **vs** `unknown` (the server did not answer, or the stamp does not parse). Only the two ages carry a parsed stamp at all. |
 | No dated record anywhere | `SILENT unknown` plus `no dated activity record exists (looked at: <what was consulted>) — silence is unmeasurable here, not zero` |
 | No local home for the id | `no agent home for this id on this host, so its status file could not be consulted either — run this where the agent runs to see local activity` |
@@ -1182,6 +1303,14 @@ before this iteration.
 - Every relay-ledger test from iteration 1 still pins "a broken ledger is only
   possible when no spool has ever accepted a message".
 
+- **Tests that bite (iteration 11).** The four relay tests, the timeline unit
+  test, the end-to-end restart test and the liveness exclusion test are listed
+  with their mutation evidence in section 11: removing both relay hooks turns 4
+  red, disabling the two classification cases turns 2 red (one per package), and
+  making `relayProcessEvent` false turns the liveness test red with 5 missing
+  assertions recorded verbatim. The liveness test is the one that fails if a
+  relay restart is ever counted as an agent's activity again.
+
 ## Verification
 
 The stop condition is written for a single Go module, but this repository is
@@ -1199,7 +1328,60 @@ I deliberately did NOT add a root `go.work` to make that string exit zero: it
 would also make `go build ./...` drop `relay` and `cli` executables (~9 MB) into
 the repo root, and a committed one would trip CI's 2 MiB tracked-blob hygiene
 gate. The honest equivalent is the same chain inside each module, which is the
-form the stop condition names. The chain below was re-run end-to-end on iteration 10's tree (each step's
+form the stop condition names.
+
+### Iteration 11, verbatim
+
+The full chain re-run on the FINAL tree of this iteration (after the last edit
+of the iteration), each step's exit code captured from a subshell with **no
+pipe** in front of it (a `cmd | tail` reports tail's status — the bug recorded
+in iterations 6 and 9), and `-count=1` so nothing is `(cached)` in the module
+runs:
+
+```
+$ ( cd tools/cli && go build ./... ); echo build=$?; ( cd tools/cli && go vet ./... ); echo vet=$?; ( cd tools/cli && go test -count=1 ./... ) > log; echo test=$?
+tools/cli  build=0 vet=0 test=0  (32 package(s) ok, 0 FAIL line(s))
+tools/relay  build=0 vet=0 test=0  (1 package(s) ok, 0 FAIL line(s))
+packages/go-server  build=0 vet=0 test=0  (11 package(s) ok, 0 FAIL line(s))
+packages/spawn-profiles  build=0 vet=0 test=0  (1 package(s) ok, 0 FAIL line(s))
+gofmt  exit=0  unformatted file(s)=0
+make test-bdd  exit=0
+17 scenarios (17 passed)
+55 steps (55 passed)
+PASS
+ok  	github.com/trillium/parlay/tools/cli/internal/evalengine	(cached)
+7 scenarios (7 passed)
+21 steps (21 passed)
+PASS
+ok  	github.com/trillium/parlay/tools/cli/internal/spawn	(cached)
+```
+
+Under the race detector (needs the ICU include/lib flags on this macOS box, as
+recorded in iteration 4's learnings):
+
+```
+=== -race on the touched packages ===
+ok  	github.com/trillium/parlay/tools/cli/internal/commands	47.158s
+ok  	github.com/trillium/parlay/tools/cli/internal/timeline	1.362s
+ok  	github.com/trillium/parlay/tools/cli/internal/relayctl	1.927s
+ok  	github.com/trillium/parlay/tools/cli/internal/help	1.599s
+ok  	github.com/trillium/parlay/tools/relay	4.446s
+```
+
+And the literal stop condition at the repo root is unchanged, by shape:
+
+```
+$ go build ./...
+pattern ./...: directory prefix . does not contain main module or its selected dependencies
+root build exit=1
+```
+
+**Known-red baseline: none.** `make test-bdd` (17 scenarios / 55 steps and 7
+scenarios / 21 steps) is green on this box, as it was before iteration 1; the
+root-command failure above is the four-modules-no-`go.work` shape, not a red
+test.
+
+The chain below was re-run end-to-end on iteration 10's tree (each step's
 **true** exit code — no pipe swallowing it — and `make test-bdd` at the end),
 pasted verbatim:
 
@@ -1488,7 +1670,18 @@ was the same before iteration 1.
 
 This repository enforces no per-file line budget (only a 2 MiB tracked-blob
 ceiling and a docs-index gate) — the 250-line cap on every new **production**
-file is my choice. Iteration 10 added no new file at all: `commands/relay_health_note.go`
+file is my choice. Iteration 11 added **no new file at all** (23 files touched,
+22 changed): the production change is 35 lines in `relay_delivery.go`
+(242 → 277, an existing file that was already near the cap, not split because
+the six events and their limits read as one unit — stated rather than hidden),
+20 in `main.go` (182 → 202, the hook plus the reason it sits after the bind),
+3 switch cases in `timeline/build.go` (243) and 8 lines in `timeline.go` (231),
+the exclusion maps and its two helpers in `liveness_sources.go` (248 → 291,
+existing, already over the choice), one note in `liveness_render.go` (178),
+the field in `liveness.go` (184) and `liveness_json.go` (107). Everything else
+is tests (in the range this package's test files already occupy: `startup_test.go`
+206 → 431, `liveness_test.go` 531 → 569, `timeline_test.go` 489 → 555) and prose.
+Iteration 10 added no new file at all: `commands/relay_health_note.go`
 (39 → 128, still well inside the cap) gained the merge and its provenance
 wording, and the change touched three existing call sites — `explain.go`
 (252 → 261) and `explain_render.go` (220, the renderer now reads the merged
@@ -1628,17 +1821,17 @@ on `origin/main`, so nothing of the captain's is affected.
 ## Left undone (with the reason)
 
 - **The last commit's push.** The run's orchestrator owns commits, and a commit
-  only reaches the PR once the branch is pushed again afterwards. Iteration 10
-  pushed at its start, so the remote head is `edc5c9a` (iterations 1–9: the
+  only reaches the PR once the branch is pushed again afterwards. Iteration 11
+  pushed at its end, so the remote head is `4918031` (iterations 1–10: the
   ledger, `explain` with its disk and roster fallbacks, `timeline` with server
-  history and the claim-trail guard, `liveness`, and iteration 9's
-  absence-never-printed-as-a-value fix). Iteration 10's own change (a binding the
-  relay reported is never printed as unknown, across all three surfaces) is
-  uncommitted in this worktree and reaches
-  <https://github.com/trillium/parlay/pull/313> on the orchestrator's next
-  commit and push (head `gnhf/objective-make-parla-ea8605`, base `main`, **not
-  merged**). A push is checked every iteration because the remote head was wrong
-  once before: read it, never trust a note.
+  history and the claim-trail guard, `liveness`, and the two live-fleet honesty
+  fixes of iterations 9–10). Iteration 11's own change (the relay's `started`
+  and `resumed` rows, the two timeline outcomes, and the liveness rule that a
+  relay-process event is not agent activity) is uncommitted in this worktree and
+  reaches <https://github.com/trillium/parlay/pull/313> on the orchestrator's
+  next commit and push (head `gnhf/objective-make-parla-ea8605`, base `main`,
+  **not merged**). A push is checked every iteration because the remote head was
+  wrong once before: read it, never trust a note.
 - **`explain` still does not read the chat server's own history** (the
   `recorded` / `unhanded` half iteration 5 added to `timeline`). It is
   deliberate: the per-agent screen already carries the relay's whole trail and

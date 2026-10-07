@@ -100,6 +100,8 @@ func deliveryEventText(e relayctl.DeliveryEntry) string {
 		return s
 	case "rotated":
 		return "ledger rotated (" + orUnknown(e.Reason) + ") — history before this line lives in delivery.log.1"
+	case "resumed":
+		return "resumed polling at relay start — the relay registered this channel's poll loop then. Polling, not delivery: it does not say the agent read anything"
 	default:
 		return orUnknown(e.Event)
 	}

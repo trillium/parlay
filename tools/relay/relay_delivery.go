@@ -26,8 +26,10 @@ import (
 //	{"ts":"…","event":"spool-failed","agent":"crew-1","msg":"m-2"}
 //	{"ts":"…","event":"delivery-ended","agent":"crew-1","reason":"channel-gone","spoolLines":1}
 //	{"ts":"…","event":"rotated","reason":"size-cap"}
+//	{"ts":"…","event":"started"}
+//	{"ts":"…","event":"resumed","agent":"crew-1"}
 //
-// Four events, each a fact only the relay witnesses:
+// Six events, each a fact only the relay witnesses:
 //
 //   - spooled        — appended to that agent's spool. The relay's delivery
 //     boundary, NOT proof the agent read it: nothing in the fleet acknowledges
@@ -42,6 +44,20 @@ import (
 //     moved to delivery.log.1. Rotation is lossy, so it is recorded rather than
 //     silent: a trail that merely starts mid-history is indistinguishable from
 //     a quiet fleet.
+//   - started        — THIS relay process took its control socket and began
+//     serving. Why it matters: a restart is the one event that explains a gap
+//     in deliveries. Without it the gap is indistinguishable from a quiet
+//     fleet, and a crash loop is invisible. It is deliberately one fleet-wide
+//     line written AFTER the bind succeeded, so it never claims a start for a
+//     process that immediately failed to take the socket. It carries no
+//     channels: what came back is the `resumed` lines below.
+//   - resumed        — this boot brought a poll loop up for that channel from
+//     the spool it found on disk (or confirmed the one -agents already
+//     started). It is the durable answer to "did my agents come back after the
+//     restart?" — 2026-07-17 was 19 agents left deaf by a restart with no such
+//     record. It proves the relay was POLLING that channel from this instant;
+//     it is not proof the agent was listening, and not proof any queued line
+//     was read.
 //
 // One entry per delivered message is the hot path, so writes are best-effort
 // exactly like audit() and can never slow or fail a delivery.
@@ -66,6 +82,8 @@ const (
 	deliverySpoolFailed = "spool-failed"
 	deliveryEnded       = "delivery-ended"
 	deliveryRotated     = "rotated"
+	deliveryStarted     = "started"
+	deliveryResumed     = "resumed"
 )
 
 // delivery end reasons — who stopped this channel being polled.
@@ -100,6 +118,23 @@ func deliveryLogEnabled() bool {
 // deliveryPath is the active ledger in the relay's runtime dir.
 func (r *relay) deliveryPath() string {
 	return filepath.Join(r.runtimeDir, deliveryFileName)
+}
+
+// recordStarted notes that THIS relay process took its control socket and began
+// serving. One line per boot, written after a successful bind and before the
+// spool replay, so read order is write order (the trail's reader relies on
+// that) and a boot that never served records nothing at all.
+func (r *relay) recordStarted() {
+	r.appendDelivery(deliveryEntry{Event: deliveryStarted})
+}
+
+// recordResumed notes that this boot has a poll loop up for one channel — the
+// spool replay registered it, or found it already registered by -agents. It is
+// written per channel rather than as a count on `started`, so an operator can
+// diff it against the `delivery-ended reason=shutdown` lines and see WHICH
+// channel did not come back. Counts cannot be diffed.
+func (r *relay) recordResumed(agent string) {
+	r.appendDelivery(deliveryEntry{Event: deliveryResumed, Agent: agent})
 }
 
 // recordSpooled notes one message appended to an agent's spool.

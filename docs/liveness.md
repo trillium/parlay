@@ -33,8 +33,8 @@ what produces the wrong repair:
 |---|---|---|
 | `STATE` | `GET /api/chat/subscribers` ∩ the process table, falling back to the roster **file** (`agents.json`) when the server does not answer | A registration is a row nothing removes when a listener dies (robots-jkwc: 148 registered against 11 real listeners). A failed process-table probe is **not** evidence of a dead listener, so it never becomes `ghost`. The file fallback answers "who is enrolled" from the server's last write and never "who is talking"; the note on the row says which source it was. |
 | `HEARTBEAT` | the same snapshot's `presence` row | A stamp can **expire**; a row with no `lastSeen` and an absent row **cannot** — those are *absence*, and only the stamp shapes carry a parsed time at all. Presence is never written to disk, so the file fallback cannot answer this column and says so. |
-| `SILENT` | the newest dated record of **any** source | An agent that is working without talking has a stale channel stamp and a fresh status file. Measuring silence from the channel alone raises a false alarm on the healthiest agent in the fleet. |
-| `LAST OBSERVED ACTIVITY` | channel record, status file, relay delivery trail | Which record actually saw the agent last, and how long ago. |
+| `SILENT` | the newest dated record of **any** source (`resumed` and `delivery-ended reason=shutdown` excluded — see F) | An agent that is working without talking has a stale channel stamp and a fresh status file. Measuring silence from the channel alone raises a false alarm on the healthiest agent in the fleet — and measuring it from the RELAY's own restart would raise a false all-clear across the fleet. |
+| `LAST OBSERVED ACTIVITY` | channel record, status file, relay delivery trail | Which record actually saw the agent last, and how long ago. A relay-process event (F) is not a sighting of the agent: it is excluded from both clock columns and named on the row's note instead. |
 
 An `unknown` is always attributed to the source that failed. A missing record
 never becomes a healthy value, and no unmeasurable question is answered with `0`.
@@ -240,6 +240,45 @@ crew-1               live      fresh (31s ago)        no         channel activit
 Every registered agent stays `live` with a caveat note. A wrong `ghost` sends an
 operator to `parlay agent-down` on a working agent, which costs more than a
 missed stale row.
+
+### F. The relay restarted — why a fresh ledger row is not agent activity
+
+A relay restart writes two durable rows for **every** channel it was polling:
+`delivery-ended reason=shutdown` (it stopped) and `resumed` (its spool replay
+brought the channel back). Both name the agent, so both used to be candidates
+for that agent's `LAST OBSERVED ACTIVITY` — and a fleet that had been deaf for
+three hours would have reported as active two minutes ago. That is the
+false-healthy direction this table exists to avoid, so a **relay-process event
+is not counted as the agent's activity**, and the exclusion is stated on the row
+rather than left invisible. Real output of the built CLI against the private
+fixture (server refused, relay socket absent, this agent's spooled traffic three
+hours old):
+
+```
+AGENT                STATE     HEARTBEAT              SILENT     LAST OBSERVED ACTIVITY
+crew-1               unknown   unknown                3h00m      relay spooled 3h00m ago
+
+notes
+  crew-1               state      the server did not answer, so registration is unknown — this is not the same as offline
+  crew-1               heartbeat  the server did not answer, so channel activity is unknown (not absent, and not fresh)
+  crew-1               relay      the relay resumed polling this channel when it started at 2026-10-07T11:40:36Z — that is the RELAY's own event, not this agent's activity, so it was NOT counted toward the silence above: a restart writes one for every channel it was polling, and counting it would report a deaf fleet as freshly active
+```
+
+`SILENT` stays `3h00m` — measured from the agent's own traffic — instead of
+collapsing to `0s` because the relay came back. What is excluded, precisely:
+
+| event | counted as this agent's activity? |
+|---|---|
+| `spooled`, `spool-failed` | yes — the relay handed this channel a message, or failed to |
+| `delivery-ended` with `channel-gone` or `unregister` | yes — this channel really ended, and that is the last thing known about it |
+| `delivery-ended` with `shutdown` | **no** — the relay process stopped, not the channel |
+| `resumed` | **no** — the relay's boot re-registered the channel; nothing says the agent is alive |
+| `started`, `rotated` | not applicable — they name no agent at all |
+
+The relay's live state is still reported (`STATE`, `relay enroll`, and the
+`relay` source line), and `parlay timeline --outcome started,resumed` is the
+query for "did the relay restart, and what came back?". The `relay_note` field
+carries the same sentence in `--json`.
 
 ### Not applicable here: "missing cursor" and "spool with no writer"
 

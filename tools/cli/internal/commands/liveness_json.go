@@ -48,6 +48,10 @@ type livenessAgentJSON struct {
 	LocalHome     bool    `json:"local_home"`
 	RelayKnown    bool    `json:"relay_known"`
 	RelayEnrolled bool    `json:"relay_enrolled"`
+	// RelayNote carries the same sentence the text mode prints for a
+	// relay-process lifecycle row that was not counted as this agent's activity,
+	// so the machine-readable form cannot drop the caveat.
+	RelayNote string `json:"relay_note,omitempty"`
 }
 
 func renderLivenessJSON(g livenessGather, a livenessArgs) {
@@ -81,6 +85,7 @@ func renderLivenessJSON(g livenessGather, a livenessArgs) {
 			LocalHome:     r.LocalHome,
 			RelayKnown:    v.RelayKnown,
 			RelayEnrolled: v.RelayEnrolled,
+			RelayNote:     r.RelayNote,
 		}
 		if !v.HeartbeatAt.IsZero() {
 			row.HeartbeatAt = v.HeartbeatAt.UTC().Format(time.RFC3339)

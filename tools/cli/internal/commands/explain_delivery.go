@@ -70,6 +70,11 @@ func deliverySocket(d relayctl.Delivery) *explainDelivery {
 // sources pick the same rows for the same trail. A `rotated` marker is kept
 // even though it names no agent: it is the only evidence that everything older
 // is GONE, and without it a partial trail reads as a quiet fleet.
+//
+// `started` is deliberately NOT kept: it is the relay process's own event, it
+// says nothing about this channel, and every agent's screen carrying every
+// restart of the box's relay would be noise of exactly the kind a reader learns
+// to skip. `parlay timeline --outcome started,resumed` is that query.
 func deliveryOnDisk(agentID string) *explainDelivery {
 	l := relayctl.ReadLedger()
 	d := &explainDelivery{

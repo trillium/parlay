@@ -53,6 +53,10 @@ type livenessRow struct {
 	Agent     string
 	Verdict   liveness.Verdict
 	LocalHome bool
+	// RelayNote, when set, explains a relay-process lifecycle row on this
+	// channel that was deliberately NOT counted as the agent's activity (see
+	// relayProcessEvent). Empty for every ordinary row.
+	RelayNote string
 	// rank orders the table by how much attention the row deserves; see
 	// attentionRank.
 	rank int

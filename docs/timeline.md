@@ -27,7 +27,7 @@ history file are byte-identical afterwards.
 | Source | Record | Answers |
 |---|---|---|
 | `history` | `{PARLAY_STATE_HOME}/messages.jsonl`, read **off disk** | what the **server** persisted — the only record that exists when nothing ever collected a message |
-| `delivery` | `{runtime}/delivery.log` + `delivery.log.1`, read **off disk** | what the relay handed to a spool, and how each channel's delivery ended |
+| `delivery` | `{runtime}/delivery.log` + `delivery.log.1`, read **off disk** | what the relay handed to a spool, how each channel's delivery ended, and the relay's own starts and channel resumes |
 | `audit` | `{runtime}/audit.log` | a channel claimed, released, or a takeover refused — who/what/when |
 | `command` | `GET /api/chat/commands` | an invocation's verb, state, exit code, outcome and timing |
 
@@ -62,6 +62,8 @@ delivered` is a usage error, deliberately.
 | `superseded` | an earlier hand-over of a message id that was handed over again later (a channel replay) |
 | `ended` | the channel stopped being polled — with the reason and how many lines were still waiting |
 | `rotated` | the ledger rotated here; everything older than this line is gone |
+| `started` | **the relay process** took its control socket and began serving — fleet-wide, it names no channel. A gap between two of these is a restart; a burst of them is a crash loop |
+| `resumed` | this relay's boot brought a poll loop up for that channel, so it was **polling** again from that instant. Polling, never reading — and its absence is not proof the channel stayed down |
 | `enrolled` / `retired` / `refused` | relay control-plane actions on a channel |
 | `command` | one registry invocation: `verb → state · exit=N · outcome=T · took=D` |
 | `unknown` | recorded, and this reader cannot classify it — always with the reason |
@@ -118,6 +120,72 @@ An event whose stamp does not parse keeps its row with `?` in the time column
 and sorts after the dated ones. Dropping evidence because it cannot be dated
 would be the same silent loss this surface exists to remove; it is also kept
 inside a `--since/--until` window, for the same reason.
+
+## A relay restart, verbatim
+
+The two lifecycle outcomes exist because a restart is the one event that explains
+a gap in deliveries, and until now nothing recorded it: the spool replay that
+re-registers every channel was invisible, so a restart looked exactly like a
+quiet fleet — and the 2026-07-17 shape (19 agents left deaf until hand
+re-enrolled) left no durable trace at all.
+
+A restart between two deliveries, captured from the built binary against a
+private runtime dir and a refused port (`exit 0`):
+
+```
+parlay timeline — oldest first; 6 matching event(s)
+  asked: everything the records still hold
+  runtime /tmp/it11demo/rt · server http://127.0.0.1:1
+
+2026-10-07T08:00:00Z  3h35m ago  queued       crew-1            msg m-1 (user) — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
+2026-10-07T08:30:00Z  3h05m ago  ended        crew-1            the channel stopped being polled — reason=shutdown; 1 line(s) were still in the spool at that moment, unproven-consumed
+2026-10-07T08:30:00Z  3h05m ago  ended        crew-2            the channel stopped being polled — reason=shutdown; 0 line(s) were still in the spool at that moment, unproven-consumed
+2026-10-07T08:31:00Z  3h04m ago  started      -                 the relay process started here: it took its control socket and began serving. Deliveries cannot flow from a relay that is not running, so a gap between two of these lines is a RESTART, not a quiet fleet — and a burst of them is a crash loop. It names no channel: what came back is the `resumed` rows
+2026-10-07T08:32:00Z  3h03m ago  resumed      crew-1            the relay resumed polling this channel at its start, from the spool it found on disk — so this channel HAD A POLL LOOP from this instant. It is not proof the agent was listening, and not proof any queued line was read
+2026-10-07T08:34:00Z  3h01m ago  queued       crew-1            msg m-2 (user) — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
+
+  shown: queued=2 · ended=2 · started=1 · resumed=1
+```
+
+Read it the way an operator does: both channels stopped being polled at 08:30
+with the relay shutting down; the relay came back at 08:31; **`crew-1` has a
+`resumed` row and `crew-2` does not.** That difference is the whole reason the
+resumes are per channel instead of a count on the start row — a count cannot be
+diffed.
+
+What the rows do **not** say, deliberately:
+
+- **No verdict is made from a missing `resumed` row.** `crew-2` above is left as
+  its last known fact. A resume can fail (the error goes to the relay's own
+  stderr, not into an identifier-only trail) and a ledger written before these
+  events existed has no such rows at all, so absence is a question to follow up,
+  not a claim that the channel stayed deaf. The rendered row for `crew-2` says
+  it stopped; nothing on this axis says it never came back.
+- **`resumed` is polling, not delivery.** It is written when the relay registers
+  the channel's poll loop, so it is proof the relay was listening upstream — not
+  proof the agent was reading anything, and not proof of what happened to the
+  lines already in the spool.
+- **`started` is one fleet-wide row with no agent**, because it is the process's
+  event. `--outcome started,resumed` is the two-line query for "did the relay
+  restart, and what came back?":
+
+```
+$ parlay timeline --outcome started,resumed
+parlay timeline — oldest first; 2 matching event(s)
+  asked: outcome started,resumed
+  runtime /tmp/it11demo/rt · server http://127.0.0.1:1
+
+2026-10-07T08:31:00Z  3h04m ago  started      -                 the relay process started here: it took its control socket and began serving. …
+2026-10-07T08:32:00Z  3h03m ago  resumed      crew-1            the relay resumed polling this channel at its start, from the spool it found on disk — …
+
+  shown: started=1 · resumed=1
+```
+
+`parlay explain <id>` renders the same rows for one agent (its `delivery` block
+shows `delivery ended — reason=shutdown`, then `resumed polling at relay start`),
+but deliberately omits the fleet-wide `started` row: it says nothing about that
+channel, and repeating the relay's own restarts on every agent's screen is noise
+an operator learns to skip.
 
 ## Degraded modes, verbatim
 

@@ -33,11 +33,11 @@ mistake.
 | `relay` | relay control socket `/health` | is the relay up, and **which server is it bound to** |
 | `relay enroll` | relay control socket `/agents` | does this relay hold a poll loop for *this* agent |
 | `queue` | `<runtime>/<agent>.chan` | queued lines (unconfirmed-consumed) and the cursor a monitor restarting here would resume after |
-| `delivery` | relay control socket `/delivery`, falling back to the ledger **file** | the relay's durable data-plane trail: `spooled`, `spool-failed`, `delivery-ended`, `rotated`. The socket is asked first because only a live relay can say whether recording is switched off *right now*; when it does not answer the file is read instead, and the line says so |
+| `delivery` | relay control socket `/delivery`, falling back to the ledger **file** | the relay's durable data-plane trail: `spooled`, `spool-failed`, `delivery-ended`, `resumed`. The socket is asked first because only a live relay can say whether recording is switched off *right now*; when it does not answer the file is read instead, and the line says so |
 | `commands` | `GET /api/chat/commands` | recent invocations with state, timing, exit code, outcome |
 | `last error` | whichever of the above answered | the newest failure, or an explicit "none observed (looked at: …)" |
 
-`GET /delivery`, the ledger's four events, and their three honest limits are
+`GET /delivery`, the ledger's six events, and their honest limits are
 [`relay.md`](relay.md)'s; `explain` adds a reader, not a truth. The on-disk
 fallback reads the same two generations `parlay timeline` reads, so both verbs
 see the same trail with the clock stopped; the file-then-socket resolution
@@ -178,6 +178,26 @@ Four properties of that path, each pinned by a test:
 
 The disk path uses the ledger's own vocabulary unchanged — `spooled` is still
 never printed as "delivered".
+
+**A relay restart on this agent's channel** — the same screen, with the relay's
+own lifecycle rows in it. `delivery-ended reason=shutdown` followed by
+`resumed` is how "why did this agent stop receiving?" is answered for one
+agent without reading the relay's source; the fleet-wide `started` row is
+deliberately not shown here (it says nothing about this channel —
+`parlay timeline --outcome started,resumed` is that query):
+
+```
+delivery        read from disk (/…/rt/delivery.log) because the relay did not answer — 4 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown
+                  2026-10-07T08:00:00Z  spooled msg m-1 role=user
+                  2026-10-07T08:30:00Z  delivery ended — reason=shutdown spoolLines=1
+                  2026-10-07T08:32:00Z  resumed polling at relay start — the relay registered this channel's poll loop then. Polling, not delivery: it does not say the agent read anything
+                  2026-10-07T08:34:00Z  spooled msg m-2 role=user
+```
+
+The `resumed` row proves the relay was polling this channel again from that
+instant. It is not proof the agent was listening, and its absence is not a
+verdict — a failed resume is logged to the relay's own stderr, not into an
+identifier-only trail.
 
 **Relay up, but this build has no delivery trail** — the relay answers
 `/health` and `/agents` and 404s `/delivery`, which is what a relay built before

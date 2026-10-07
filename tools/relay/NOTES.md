@@ -91,6 +91,8 @@ reached an agent — recorded nothing about delivery. The ledger is that answer:
 {"ts":"...","event":"spool-failed","agent":"a","msg":"m-2"}
 {"ts":"...","event":"delivery-ended","agent":"a","reason":"channel-gone","spoolLines":1}
 {"ts":"...","event":"rotated","reason":"size-cap"}
+{"ts":"...","event":"started"}
+{"ts":"...","event":"resumed","agent":"a"}
 ```
 
 - `spooled` — appended to that agent's spool. This is the relay's delivery
@@ -103,6 +105,16 @@ reached an agent — recorded nothing about delivery. The ledger is that answer:
   *before* the spool is tombstoned.
 - `rotated` — the active file hit 8 MiB and the previous generation moved to
   `delivery.log.1`. Rotation is lossy, so it is recorded rather than silent.
+- `started` — this relay process took its control socket and began serving. One
+  fleet-wide line per boot, written AFTER the bind (`TestABootThatCannotTakeTheSocketRecordsNoStart`
+  pins that a second boot refused the socket records none), and before the spool
+  replay, so read order stays write order. It is the event that makes a gap in
+  deliveries a RESTART instead of an unexplained quiet and makes a crash loop
+  visible as a burst.
+- `resumed` — this boot has a poll loop up for that agent, from the spool the
+  replay found on disk (`resumeFromSpools`). One per channel on purpose: a count
+  could not be diffed against the `delivery-ended reason=shutdown` lines to show
+  WHICH channel did not come back. It proves polling, never a read.
 
 Nothing free-form is stored — never a message body, path, or error string —
 the same posture as the audit log, which is why this cannot become a second copy

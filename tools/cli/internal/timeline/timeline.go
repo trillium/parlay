@@ -82,6 +82,17 @@ const (
 	OutcomeEnded Outcome = "ended"
 	// OutcomeRotated: the ledger rotated here. Everything older is gone.
 	OutcomeRotated Outcome = "rotated"
+	// OutcomeStarted: the relay process took its control socket and began
+	// serving at this instant. It carries no agent — it is the fleet-wide event
+	// that explains a gap in deliveries, and without it a restart is
+	// indistinguishable from a quiet fleet. It says nothing about what the relay
+	// was polling; the `resumed` rows do that.
+	OutcomeStarted Outcome = "started"
+	// OutcomeResumed: this relay's boot brought a poll loop up for this channel
+	// (from the spool it found on disk), so the channel was being POLLED again
+	// from this instant. It is not a message and not proof of a read: it cannot
+	// say the agent was listening, and it cannot say a queued line was consumed.
+	OutcomeResumed Outcome = "resumed"
 	// OutcomeRecorded: the CHAT SERVER persisted this message on this channel.
 	// It is the server's own history, not a delivery: a recorded message can sit
 	// unhanded forever, and the relay's hand-over (if any) is a separate event.
@@ -112,8 +123,8 @@ const (
 // list, so the two cannot drift.
 var Outcomes = []Outcome{
 	OutcomeRecorded, OutcomeUnhanded, OutcomeQueued, OutcomeLeftSpool, OutcomeDropped,
-	OutcomeSuperseded, OutcomeEnded, OutcomeRotated, OutcomeEnrolled, OutcomeRetired,
-	OutcomeRefused, OutcomeCommand, OutcomeUnknown,
+	OutcomeSuperseded, OutcomeEnded, OutcomeRotated, OutcomeStarted, OutcomeResumed,
+	OutcomeEnrolled, OutcomeRetired, OutcomeRefused, OutcomeCommand, OutcomeUnknown,
 }
 
 // ParseOutcome resolves one --outcome token, case-insensitively.

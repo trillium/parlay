@@ -93,9 +93,11 @@ The relay keeps **two durable trails**, and the split is the point:
 {"ts":"2026-10-07T08:23:19Z","event":"spool-failed","agent":"crew-1","msg":"m-2"}
 {"ts":"2026-10-07T08:24:02Z","event":"delivery-ended","agent":"crew-1","reason":"channel-gone","spoolLines":1}
 {"ts":"2026-10-07T08:24:02Z","event":"rotated","reason":"size-cap"}
+{"ts":"2026-10-07T08:31:00Z","event":"started"}
+{"ts":"2026-10-07T08:31:00Z","event":"resumed","agent":"crew-1"}
 ```
 
-Four events, each a fact only the relay witnesses:
+Six events, each a fact only the relay witnesses:
 
 | event | says |
 |---|---|
@@ -103,12 +105,24 @@ Four events, each a fact only the relay witnesses:
 | `spool-failed` | the append failed, so the message did **not** reach the agent |
 | `delivery-ended` | the channel stopped being polled, with `reason` (`channel-gone` \| `unregister` \| `shutdown`) and `spoolLines` |
 | `rotated` | the active file hit 8 MiB; `delivery.log.1` holds the previous generation |
+| `started` | THIS relay process took its control socket and began serving (one line per boot, fleet-wide, written after the bind) |
+| `resumed` | this boot brought a poll loop up for that channel from the spool it found on disk |
 
-Three honest limits, stated rather than papered over:
+The last two exist because a restart is the one event that explains a gap in
+deliveries, and nothing recorded it: the spool replay that re-registers every
+channel was invisible, so a restart looked exactly like a quiet fleet and the
+2026-07-17 shape (19 agents left deaf until hand re-enrolled) left no durable
+trace. Per channel rather than a count on `started`, so it can be diffed against
+the `delivery-ended reason=shutdown` lines to see *which* channel did not come
+back.
+
+Four honest limits, stated rather than papered over:
 
 - **`spooled` is not "read".** Nothing in the fleet acknowledges consumption, so
   the ledger records the boundary it can see. It never claims an agent saw
-  anything.
+  anything. `resumed` is the same posture in the other direction: it proves the
+  relay was polling that channel again from that instant, never that the agent
+  was listening or that a queued line was consumed.
 - **`spoolLines` is a count, not a diagnosis.** It is the number of messages in
   the spool when the channel stopped, taken *before* the spool is tombstoned. It
   counts what was spooled and unproven-consumed — never what the agent missed,
@@ -116,6 +130,12 @@ Three honest limits, stated rather than papered over:
 - **Rotation is lossy and says so.** A trail that simply begins mid-history is
   indistinguishable from a quiet fleet, so the new file's first line is a
   `rotated` marker.
+- **Silence has more than one cause.** A channel with a spool that failed to
+  re-register at boot (an error logged to the relay's own stderr) records no
+  `resumed` line; so does a ledger written by a relay that predates these two
+  events. Absence of a `resumed` line is therefore a question to follow up, not
+  a verdict — the trail explains what it saw and says nothing about what it
+  could not see.
 
 Nothing free-form is stored: no message body, no path, no error string — the
 same posture as `audit.log`. Writes are best-effort exactly like the audit

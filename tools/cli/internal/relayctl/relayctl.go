@@ -109,7 +109,8 @@ type Agents struct {
 // DeliveryEntry is one delivery.log line, field-for-field the relay's own
 // deliveryEntry (tools/relay/relay_delivery.go). SpoolLines is a pointer so an
 // explicit 0 survives: "nothing was waiting" and "not recorded" are different
-// facts.
+// facts. Agent is empty on the fleet-wide events (`started`, `rotated`) — the
+// reader names which is which rather than inventing an agent for them.
 type DeliveryEntry struct {
 	Ts         string `json:"ts"`
 	Event      string `json:"event"`
@@ -125,6 +126,11 @@ type DeliveryEntry struct {
 // two fields that keep absence from reading as health — Exists=false is a
 // ledger that was never written, Enabled=false is one switched off with
 // PARLAY_RELAY_DELIVERY_LOG=0, and both differ from an empty trail.
+//
+// The relay's ?agent= narrows to that agent's own rows, so the fleet-wide
+// `started` and `rotated` markers are ABSENT from an agent-filtered answer.
+// That is the route's contract, not a property of the trail: ReadLedger on the
+// disk path returns every row and the caller decides what to keep.
 type Delivery struct {
 	OK      bool            `json:"ok"`
 	Enabled bool            `json:"enabled"`
