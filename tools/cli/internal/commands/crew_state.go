@@ -151,25 +151,39 @@ func agentEnrollment(agentID string) enrollment {
 // (>120s wall clock, sometimes far more). The registry answer does not vary
 // by agent, so batch callers fetch it once and share it across the pass.
 func fetchRegisteredAgents() (map[string]bool, bool) {
+	subs, ok := fetchSubscribers()
+	if !ok {
+		return nil, false
+	}
+	// A 2xx with no registered block is a real answer ("nobody is
+	// registered"), not a failed lookup.
+	reg := map[string]bool{}
+	if subs.Registered != nil {
+		for _, a := range subs.Registered.Agents {
+			reg[a.ID] = true
+		}
+	}
+	return reg, true
+}
+
+// fetchSubscribers reads the relay's whole presence/registration snapshot once
+// (with the retry/backoff above). ok=false means the relay could not be asked.
+//
+// Callers that need more than the registration set — `parlay explain` wants a
+// channel's presence row and the registered AgentInfo in the same answer — get
+// the whole snapshot here rather than issuing a second read, so the two
+// surfaces can never disagree about who is enrolled.
+func fetchSubscribers() (wire.SubscribersInfo, bool) {
 	for attempt := 0; attempt < relayLookupAttempts; attempt++ {
 		if attempt > 0 {
 			sleep(relayLookupBackoff)
 		}
 		subs, ok := httpc.TryGetJSON[wire.SubscribersInfo]("/api/chat/subscribers", relayLookupTimeout)
-		if !ok {
-			continue
+		if ok {
+			return subs, true
 		}
-		// A 2xx with no registered block is a real answer ("nobody is
-		// registered"), not a failed lookup.
-		reg := map[string]bool{}
-		if subs.Registered != nil {
-			for _, a := range subs.Registered.Agents {
-				reg[a.ID] = true
-			}
-		}
-		return reg, true
 	}
-	return nil, false
+	return wire.SubscribersInfo{}, false
 }
 
 // enrollmentOf maps one agent's presence in a fetched registry snapshot onto

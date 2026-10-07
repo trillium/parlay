@@ -1,0 +1,154 @@
+# `parlay explain` — one agent's whole story
+
+**Code:** `tools/cli/internal/commands/explain.go` (gather), `explain_render.go`
+(one line per fact), `tools/cli/internal/relayctl` (the read-only relay client).
+
+```
+parlay explain <agent-id>
+```
+
+The 2am question is **"why is this agent not answering?"** Answering it used to
+mean running four commands — `parlay agents`, `parlay crew-state`,
+`parlay commands --agent`, and something that read the relay's runtime dir by
+hand — and then reading source to interpret them, because each surface knew one
+slice and none could see the others. `explain` performs those reads once and
+renders a single story, in the order an operator reads it.
+
+It is **read-only**. It never sends, enrolls, or tears down. The relay client it
+uses exposes GET routes only, so there is no mutation path to reach even by
+mistake.
+
+## The six sources, and what each answers
+
+| Section | Source | Answers |
+|---|---|---|
+| `registration` | `GET /api/chat/subscribers` | is it registered, name, colour |
+| `channel` | the same snapshot's `presence` row | when its channel was last observed — and whether it ever was |
+| `crew state` | the frozen `reconcileCrewState` contract | state + source + detail, **from the same registry read** `parlay crew-state` performs, so the two verbs cannot disagree about enrollment |
+| `status file` | `<agents-root>/<id>/status` (or the crew bead) | the words the agent last said about itself, and when it wrote them |
+| `pane age` | `<agents-root>/<id>/session-start` | how long this pane has been up |
+| `relay` | relay control socket `/health` | is the relay up, and **which server is it bound to** |
+| `relay enroll` | relay control socket `/agents` | does this relay hold a poll loop for *this* agent |
+| `queue` | `<runtime>/<agent>.chan` | queued lines (unconfirmed-consumed) and the cursor a monitor restarting here would resume after |
+| `delivery` | relay control socket `/delivery` | the relay's durable data-plane trail: `spooled`, `spool-failed`, `delivery-ended`, `rotated` |
+| `commands` | `GET /api/chat/commands` | recent invocations with state, timing, exit code, outcome |
+| `last error` | whichever of the above answered | the newest failure, or an explicit "none observed (looked at: …)" |
+
+`GET /delivery`, the ledger's four events, and their three honest limits are
+[`relay.md`](relay.md)'s; `explain` adds a reader, not a truth.
+
+## The rule that governs every line
+
+**An absence is never reported as a healthy value.** A section whose source did
+not answer says `unknown` and names the source, and a section whose source did
+answer says what it saw — including "there is nothing". Concretely:
+
+- a failed `GET /api/chat/subscribers` renders `registration unknown — the
+  server did not answer <url>`, never "not registered";
+- a relay with no control socket says so on the `relay` line, and every
+  relay-derived section separately says unknown;
+- a spool that exists is not called empty, an empty spool is not called absent,
+  and an unreadable one says so;
+- a ledger that was never written (`exists:false`), one switched off
+  (`enabled:false`), and one with no events for this agent are three different
+  sentences.
+
+## Degraded modes, verbatim
+
+Fixture: a private chat server, a private relay socket, a private agent home.
+Nothing here touches the live fleet.
+
+**All sources answering**
+
+```
+registration    registered — name Crew One, color #abc
+channel         last observed 12m ago (2026-10-07T08:37:56Z)
+crew state      working · source: status · building the parser
+relay           up — polling http://127.0.0.1:60533, runtime /…/rt1
+relay enroll    polling this agent
+queue           2 line(s) queued in /…/rt1/crew-1.chan, unconfirmed-consumed (nothing in the fleet acknowledges a read); resume cursor m-2
+delivery        3 of the last 20 ledger event(s), oldest first:
+                  2026-10-07T08:37:56Z  spooled msg m-1 role=user
+                  2026-10-07T08:47:56Z  SPOOL FAILED for msg m-9 — it did not reach the agent
+                  2026-10-07T08:48:56Z  delivery ended — reason=channel-gone spoolLines=2
+commands        2 record(s) for this agent, newest first:
+                  failed   send             ended 2m ago · took 1.2s · exit 1 error
+                  running  listen           started 12m ago · took 12m00s
+last error      `parlay send` ended failed exit 1 outcome error (2m ago)
+```
+
+**Relay down, spool exists with no writer** — exit 0
+
+```
+relay           no answer at /…/rt2/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment and the delivery trail are unknown
+relay enroll    unknown — the relay did not answer GET /agents
+queue           2 line(s) queued in /…/rt2/crew-1.chan, unconfirmed-consumed (nothing in the fleet acknowledges a read); resume cursor m-2; no relay is answering, so these lines have no writer
+delivery        unknown — the relay did not answer, so what was handed over is not observable from here
+```
+
+**Relay up but bound to another server** (the registered-but-deaf trap)
+
+```
+relay           up — polling http://somewhere-else:4242, runtime /…/rt3
+                WARNING: this relay polls http://somewhere-else:4242, NOT the server this CLI targets (http://127.0.0.1:60533) — anything sent to http://127.0.0.1:60533 does not reach this relay
+```
+
+**Ledger never written**
+
+```
+delivery        no ledger at /…/rt4/delivery.log — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
+```
+
+**Channel never observed** (blind, as distinct from drifted)
+
+```
+channel         row present, lastSeen absent — the server has never observed activity on this channel
+```
+
+An *expired* stamp instead reads `channel last observed 2.0h ago (…)`. The two
+are different lines on purpose: one is an agent that went quiet, the other is an
+agent the server has never heard from.
+
+**Server unreachable** — exit 0, because the relay and the local records still
+answered
+
+```
+registration    unknown — the server did not answer http://127.0.0.1:1
+channel         unknown — the server did not answer http://127.0.0.1:1
+crew state      working · source: status-degraded · building the parser (relay unreachable; status may be stale)
+commands        unknown — the server did not answer /api/chat/commands
+relay enroll    unknown — the relay did not answer GET /agents
+last error      none observed (looked at: relay delivery ledger)
+```
+
+**Nothing observable at all** — the one non-zero exit
+
+```
+parlay explain: nothing was observable about crew-1 — the server did not answer at http://127.0.0.1:1 and no local relay record or status file exists
+--- exit 1
+```
+
+## Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | at least one source answered — **including bad news**, which is the point in a half-broken fleet |
+| 1 | NOTHING was observable: no server, no relay, no spool, no status, no session record |
+| 2 | usage (exactly one agent id is required; an unknown flag is a hard exit, never ignored) |
+
+## What it deliberately does not do
+
+- No `--json`. The story is for a human at 2am; the machine-readable halves
+  already exist (`parlay commands --json`, `GET /api/chat/subscribers`,
+  `GET /delivery` on the relay socket) and a third schema would be one to keep
+  in sync for nothing.
+- It does not scan history for messages. Delivery is the relay's record, not the
+  chat log's, and replaying message bodies into a diagnostic is a privacy
+  regression with no diagnostic value.
+- It never claims a message was **read**. Nothing in the fleet acknowledges
+  consumption, so the queue line says `unconfirmed-consumed` and the ledger
+  event is `spooled`, exactly as [`relay.md`](relay.md) requires.
+
+Env: `PARLAY_SERVER`, `PARLAY_RELAY_RUNTIME`, `PARLAY_RELAY_SOCK` (the same
+runtime-dir resolution `tools/monitor/parlay-monitor.sh` uses), `PARLAY_AGENT_HOME`,
+`PARLAY_CREW_READ_BEADS` / `PARLAY_CREW_STORE`.

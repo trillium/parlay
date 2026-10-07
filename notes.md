@@ -245,3 +245,222 @@ this file. The gate is a step inside `ci.yml`, not a new script.
 - **The stop condition is unmet and cannot be met for this build topology** — literal output above.
 - **No harness scratch is in the PR**: an auto-commit once captured eight `.pi/tasks/**` files, so
   `.pi/` and `.gnhf/` are tracked-ignored now; the net PR diff contains none of them.
+
+---
+
+## Runtime observability work (branch notes for PR #313 follow, unmodified)
+The section above is main's onboarding account (PR #314), which landed while this branch was in flight.
+
+# notes.md — making parlay's runtime observable without reading its source
+
+Status: **in progress** (this file is maintained across the run; see "Left undone").
+
+## What an operator can now answer that they could not before
+
+### 1. `parlay explain <agent-id>` — "why is this agent not answering?"
+
+One read-only command, one screen, six sources. Before it, this took four
+commands plus source-reading:
+
+```
+parlay explain crew-1
+server          http://127.0.0.1:60533
+relay runtime   /…/rt1
+
+registration    registered — name Crew One, color #abc
+channel         last observed 12m ago (2026-10-07T08:37:56Z)
+crew state      working · source: status · building the parser
+status file     working [key=parser]: building the parser [last written 0s ago]
+pane age        started 2026-10-07T05:37:56Z (3.2h ago)
+relay           up — polling http://127.0.0.1:60533, runtime /…/rt1
+relay enroll    polling this agent
+queue           2 line(s) queued in /…/rt1/crew-1.chan, unconfirmed-consumed (nothing in the fleet acknowledges a read); resume cursor m-2
+delivery        3 of the last 20 ledger event(s), oldest first:
+                  2026-10-07T08:37:56Z  spooled msg m-1 role=user
+                  2026-10-07T08:47:56Z  SPOOL FAILED for msg m-9 — it did not reach the agent
+                  2026-10-07T08:48:56Z  delivery ended — reason=channel-gone spoolLines=2
+commands        2 record(s) for this agent, newest first:
+                  failed   send             ended 2m ago · took 1.2s · exit 1 error
+                  running  listen           started 12m ago · took 12m00s
+last error      `parlay send` ended failed exit 1 outcome error (2m ago)
+```
+
+Questions it answers that previously required reading code:
+
+- **Blind vs drifted.** `channel last observed 12m ago` (an agent that went
+  quiet) and `row present, lastSeen absent — the server has never observed
+  activity on this channel` (an agent that was never heard from) are different
+  lines. A missing `presence` row is a third line. None collapses into another.
+- **Registered-but-deaf.** The relay's `/health` names the upstream it is bound
+  to, so a relay that answers but polls a different chat server prints
+  `WARNING: this relay polls X, NOT the server this CLI targets (Y)` instead of
+  "relay up". This is the failure mode `docs/monitor.md` describes as the agent
+  appearing live and taking nothing.
+- **What is actually queued, and whether anyone is going to read it.** Queue
+  lines, the resume cursor a monitor restarting here would use (`NONE` means a
+  restart would replay the channel's backlog), and an explicit
+  `no relay is answering, so these lines have no writer` when the spool exists
+  and the relay does not.
+- **What was handed over, and how it ended.** The relay's delivery ledger
+  (`spooled` / `spool-failed` / `delivery-ended` / `rotated`) is now readable
+  from the CLI, in the ledger's own vocabulary — `spooled` is never printed as
+  "delivered".
+- **Wedged work.** A command whose heartbeats stopped shows as
+  `dropped … (heartbeats stopped without an end report)` and becomes the
+  `last error` line.
+- **Consistency by construction.** The crew-state line comes from the SAME
+  `reconcileCrewState` function and the SAME registry read as `parlay
+  crew-state`, so `explain` and `crew-state` cannot report different enrollment
+  for one agent in one instant.
+
+### 2. The relay's data plane became queryable (iteration 1)
+
+`{runtime-dir}/delivery.log` — one JSON line per `spooled`, `spool-failed`,
+`delivery-ended` and `rotated` event, identifiers and a clock only, never a
+message body — readable with `GET /delivery?limit=N&agent=<id>` on the relay's
+local control socket, and now surfaced in `parlay explain`. Writers: every
+place the relay is the only witness (spool append, both terminal 410/`gone`
+paths, `POST /unregister`, process shutdown). It is best-effort and cannot
+touch delivery: an unwritable ledger is logged and dropped, pinned by a test
+that makes the ledger unwritable and asserts the spool still receives the
+message.
+
+## What each new surface degrades to, and how it says so
+
+`README`-level contract: [`docs/explain.md`](docs/explain.md) (also indexed in
+[`docs/README.md`](docs/README.md)) and [`docs/relay.md`](docs/relay.md).
+
+The governing rule is **an absence is never reported as a healthy value**. Every
+line below is real output from `tools/cli` against a private fixture (a private
+chat server, a private relay socket, a private agent home — the live fleet was
+never touched).
+
+| Degraded mode | What it prints |
+|---|---|
+| Relay not running (no control socket) | `relay  no answer at <sock> — the relay is not running (or is using another runtime dir), so relay enrollment and the delivery trail are unknown`; `relay enroll  unknown — the relay did not answer GET /agents`; `delivery  unknown — the relay did not answer, so what was handed over is not observable from here` |
+| Spool exists, no writer | `queue  2 line(s) queued in <spool>, unconfirmed-consumed (…); resume cursor m-2; no relay is answering, so these lines have no writer` |
+| Relay up, bound to another server | `WARNING: this relay polls http://somewhere-else:4242, NOT the server this CLI targets (http://127.0.0.1:60533) — anything sent to http://127.0.0.1:60533 does not reach this relay` |
+| Ledger never written | `delivery  no ledger at <path> — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'` |
+| Ledger switched off | `delivery  recording is OFF in the running relay (PARLAY_RELAY_DELIVERY_LOG=0) — nothing is being written to <path>` |
+| Ledger rotated (history lossy) | `ledger rotated (size-cap) — history before this line lives in delivery.log.1` |
+| Old relay, no `/delivery` route (404) | `delivery  unknown — the relay did not answer …` (a 404 is "could not ask", never an empty trail) |
+| Heartbeat stale vs missing | `channel  last observed 2.0h ago (<stamp>)` **vs** `channel  row present, lastSeen absent — the server has never observed activity on this channel` **vs** `channel  no presence row in the server's snapshot — never observed on this channel (or not registered)` |
+| Server unreachable | `registration  unknown — the server did not answer <url>`; `channel  unknown — …`; `commands  unknown — the server did not answer /api/chat/commands`; `crew state  working · source: status-degraded · … (relay unreachable; status may be stale)`. Exit stays **0** because the relay and the local records still answered. |
+| Status file absent / unreadable / unparseable | `status file  nothing recorded` / the reader's own `unreadable`/`unparseable` detail (the frozen crew-state contract) |
+| Relay did not answer, so enrollment unknown | `relay enroll  NOT polled by this relay — whether the server registry lists it is unknown (the server did not answer)` — a failed server read is never rendered as "not registered either" |
+| Nothing observable at all | stderr `parlay explain: nothing was observable about <id> — the server did not answer at <url> and no local relay record or status file exists`, exit **1** (the only non-zero outcome besides usage) |
+
+Exit codes: `0` at least one source answered (including bad news), `1` nothing
+observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
+
+## Tests
+
+- `tools/cli/internal/relayctl/relayctl_test.go` — runtime-dir/socket
+  resolution, spool absent vs empty vs readable, the five `SpoolCursor` rules
+  copied from the relay's `lastSpooledID` (id required, role must be
+  `user`/`agent`, tail-only read), a 404 from `/delivery` treated as "could not
+  ask", and the limit/agent query the client actually sends.
+- `tools/cli/internal/commands/explain_test.go` — end-to-end against a fixture
+  chat server + a fixture relay socket + a fixture agent home: the full story,
+  each degraded mode above, the missing-vs-stale `lastSeen` split, the
+  registered-but-deaf warning, dropped-command wedging, last-error source
+  precedence, and the exit-code contract. These fail before the change (the
+  verb did not exist); the healthy-story assertion in particular reddens if any
+  section is dropped or if a "spooled" entry is ever relabelled "delivered".
+- Both new test files also pin the **read-only** promise structurally:
+  `TestEveryControlReadIsAGet` (in `relayctl`) and the fixture assertion in the
+  healthy-story test record the HTTP method of every request the client makes
+  to the relay's socket — which also serves `POST /register` and
+  `POST /unregister` — and fail if anything but `GET` is used. That is the test
+  that says the observability surface cannot mutate or slow a delivery path.
+- Every relay-ledger test from iteration 1 still pins "a broken ledger is only
+  possible when no spool has ever accepted a message".
+
+## Verification
+
+The stop condition is written for a single Go module, but this repository is
+**four separate modules with deliberately no root `go.work`** (`.github/workflows/ci.yml`
+iterates a `GO_MODULES` list and proves it equals `find . -name go.mod`). Run
+verbatim at the repo root:
+
+```
+$ go build ./... && go vet ./... && gofmt -l . | (! grep .) && go test ./... && make test-bdd
+pattern ./...: directory prefix . does not contain main module or its selected dependencies
+exit 1
+```
+
+The equivalent per module (`CGO_ENABLED=0`, the same list CI uses) is green, with
+`make test-bdd` green:
+
+```
+$ for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do
+    (cd $m && go build ./... && go vet ./... && test -z "$(gofmt -l .)" && go test ./...)
+  done && make test-bdd
+tools/cli:      ok github.com/trillium/parlay/tools/cli/internal/commands 49.7s (+ every other package ok)
+tools/relay:    ok github.com/trillium/parlay/tools/relay 2.9s
+packages/go-server: ok parlay/go-server/internal/{store,handlers,guard,bus,…}
+packages/spawn-profiles: ok parlay/spawn-profiles/cmd/validate
+make test-bdd:  PASS (evalengine + spawn suites)
+```
+
+`go build ./...`, `go vet ./...` and `go test ./...` were also run with
+`-race` on the two touched packages (`internal/commands`, `internal/relayctl`).
+
+**Known-red baseline:** none. `make test-bdd` is green on this box, as it was at
+the start of the run — there is no pre-existing red to carry.
+
+## Line budget
+
+This repository enforces no per-file line budget (only a 2 MiB tracked-blob
+ceiling and a docs-index gate) — the 250-line cap on every new **production**
+file is my choice. New test files follow the package's own existing convention
+instead: `internal/commands` test files run 216–2055 lines and
+`internal/relayctl/relayctl_test.go` ends at 220.
+
+## Deliberately not built
+
+- **No new HTTP route.** Every read `explain` performs already exists
+  (`GET /api/chat/subscribers`, `GET /api/chat/commands`, and the relay
+  socket's `GET /health|/agents|/delivery`), so `internal/guard.GuardedPaths`
+  is untouched and no guard classification/test was needed. A `GET
+  /api/chat/explain` would have to re-implement enrollment, presence and
+  command filtering server-side for no added truth.
+- **No `--json` on `explain`.** The machine-readable halves already exist
+  (`parlay commands --json`, the subscribers snapshot, the relay's `/delivery`);
+  a third schema would be another thing to keep in sync for a surface an
+  operator reads by eye at 2am.
+- **No message bodies anywhere new.** The ledger stores identifiers, a role, a
+  clock and a count — never text, a path, or an error string — and `explain`
+  prints what the ledger holds plus the agent's own status line (which is
+  already durable state, not new retention).
+- **No dashboard/panel surface, no query language, no new store.** The
+  timeline that answers the 2am question is text, and the durable records it
+  reads are the ones the relay and the server already keep.
+- **Not widened:** `JSON_EXEMPT_PATHS`, `GuardedPaths`, `internal/httpc`'s
+  timeout-less client, the spool's `CHAT_MSG` line format, and any deployment
+  script or public endpoint shape.
+
+## Left undone (with the reason)
+
+- **The final PR.** The run's orchestrator owns commits, so this iteration did
+  not push or open a PR. When the loop finishes, push the branch and
+  `gh-axi pr create --base main --head <branch>`; do not merge.
+- **A single cross-agent timeline** (objective item 1: queryable by channel,
+  window and outcome, distinguishing delivered from queued from dropped from
+  superseded). The durable material for it now exists: the relay's delivery
+  ledger (per-agent, filterable) and the server's command registry. What is
+  missing is a reader that merges those two into one time-ordered view and a
+  defined answer for "superseded" (the chat server has no supersession record
+  today — `internal/supersession` is representation-plane and does not touch
+  chat history). `parlay explain` is the per-agent slice of that timeline; a
+  fleet-wide `parlay timeline` is the next unit and should reuse `relayctl`
+  rather than invent a second relay client.
+- **Fleet-wide liveness** (objective item 2's operator surface): which agents
+  are silent, since when, and last observed activity for each. Every
+  ingredient is now reader-accessible (presence rows, relay enrollment,
+  spool/cursor state), but the fleet view has not been built.
+- **`parlay commands` does not read the relay.** It reports only the server's
+  live-command registry, so a delivery that never reached an agent is invisible
+  there. `explain` bridges that for one agent; `commands --agent <id>` could
+  too, by joining the ledger, but that changes an existing surface's contract
+  and deserves its own decision.

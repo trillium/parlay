@@ -164,20 +164,31 @@ func formatSessionAge(d time.Duration) string {
 	return strconv.FormatFloat(d.Hours(), 'f', 1, 64) + "h"
 }
 
-// readSessionAge reads ~/.parlay/agents/<id>/session-start (a unix timestamp
-// written at spawn) and returns how long the pane has been up. Any unreadable
-// or unparseable stamp is 0 — this is reporting colour, never a decision
-// input, so it must not be able to fail the caller.
-func readSessionAge(agentID string) time.Duration {
+// readSessionStart reads ~/.parlay/agents/<id>/session-start (a unix
+// timestamp written at spawn). ok=false for an absent, unreadable or
+// unparseable stamp — "unknown" is a different fact from "just started",
+// which is why the zero time and not a 1970 epoch is returned.
+func readSessionStart(agentID string) (time.Time, bool) {
 	data, err := os.ReadFile(filepath.Join(identity.AgentsRoot(), agentID, "session-start"))
 	if err != nil {
-		return 0
+		return time.Time{}, false
 	}
 	secs, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
 	if err != nil || secs <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(secs, 0), true
+}
+
+// readSessionAge is session-start as an age, for reporting colour. Any
+// unreadable or unparseable stamp is 0 — this is never a decision input, so
+// it must not be able to fail the caller.
+func readSessionAge(agentID string) time.Duration {
+	started, ok := readSessionStart(agentID)
+	if !ok {
 		return 0
 	}
-	age := time.Since(time.Unix(secs, 0))
+	age := time.Since(started)
 	if age < 0 {
 		return 0
 	}

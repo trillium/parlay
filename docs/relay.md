@@ -120,5 +120,8 @@ turns recording off, and `GET /delivery` then reports `enabled:false` while
 `exists:false` tells a never-written ledger apart from an empty one.
 
 Both trails are local reads on the control socket, they are read-only, and the
-chat API's guard is untouched by them. See `tools/relay/NOTES.md` for the
-route table and `tools/relay/relay_delivery.go` for the writer.
+chat API's guard is untouched by them. `parlay explain <agent-id>` is the
+operator-facing reader of all of the above — relay health, relay enrollment,
+this agent's ledger entries and its spool — rendered next to the server-side
+facts in [`explain.md`](explain.md). See `tools/relay/NOTES.md` for the route
+table and `tools/relay/relay_delivery.go` for the writer.
