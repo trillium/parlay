@@ -58,4 +58,11 @@ executable-relative lookup finds nothing. Until you build the bundle, `GET /`
 answers `503` with the build command on its body and every `/api/chat/*` route
 works unchanged.
 
+That resolution happens **once, when the server starts**, not per request: a server
+started before the bundle exists keeps the bare `dist` fallback and answers `503` for the
+rest of its life even after `bun run build`, which is why the README's step 5 restarts
+it. A relative `-assets-dir` is resolved from the server's own working directory — for
+the documented `cd packages/go-server && go run ./cmd/parlay-server`, `../client/dist`,
+not `packages/client/dist`.
+
 **Env vars** (`PARLAY_STATE_HOME`, `PAI_DIR`, `PARLAY_HUB_URL`, `PARLAY_ALLOWED_ORIGINS`, `PARLAY_PUBLIC_HOST`, `PARLAY_SERVER_ADDR`, …) are documented canonically in [`examples/env.example`](../examples/env.example) — not repeated here.

@@ -54,6 +54,20 @@ city/.gc/
 # Safe to drop once no pre-fix process remains.
 .fm-hooks/
 
+# .pi/ is the pi harness's own scratch directory — task logs under .pi/tasks/,
+# generated images under .pi/generated-images/. None of it is product source,
+# and the rule is that no harness scratch file is ever committed. It has
+# already been broken once: a harness auto-commit captured four .pi/tasks/
+# task-log files onto an onboarding branch (2026-10-07), which is why this is
+# an ignore entry rather than a convention.
+.pi/
+
+# .gnhf/ is the gnhf run harness's own scratch directory (run prompts, iteration
+# logs, orchestration state). Only `.gnhf/runs/` was covered, by a
+# checkout-local `.git/info/exclude` that no fresh clone inherits — so the rule
+# lives here too, where it travels with the repo (CodeRabbit review, PR #314).
+.gnhf/
+
 # packages/server/ is a two-file leftover of the completed Bun→Go cutover
 # (1e05e859, #277), restored locally and never re-tracked. server.js is a Bun
 # bundle artifact — it opens with `// @bun` and carries __defProp/__export

@@ -256,6 +256,15 @@ jobs:
   #   tools/relay/deploy/ensure-up.test.sh   — drives launchctl (macOS launchd).
   #   tools/relay/deploy/install.test.sh     — launchctl + plist/PlistBuddy.
   #
+  # bin/parlay-preflight.test.sh is hermetic in the same sense. It redirects
+  # HOME/PARLAY_*/TMPDIR into one mktemp root, builds its cases against a
+  # synthetic checkout there, and occupies exactly one kernel-chosen port with a
+  # listener it kills on exit. Its last case does point the preflight at the real
+  # checkout under `env -i` — that command only reads (it resolves paths and
+  # probes a port) and writes nothing, which is why it can be run here at all.
+  # It needs no Go: the toolchain it checks for is stubbed, so this job does not
+  # silently depend on a toolchain it never installed.
+  #
   # HOME is redirected here too, and PARLAY_SERVER is pointed at a closed port
   # so that any spawn path which somehow reached a network call fails fast
   # instead of registering against a live Pulse instance.
@@ -312,6 +321,7 @@ jobs:
           git config --global user.email ci@example.invalid
           git config --global user.name  "parlay ci"
           for t in bin/parlay-treehouse-guard.test.sh \
+                   bin/parlay-preflight.test.sh \
                    bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
                    tools/hooks/hooks.test.sh \
@@ -461,6 +471,106 @@ jobs:
             exit 1
           fi
           echo "all $scanned top-level docs are indexed in $index"
+
+      # The documents a newcomer follows top to bottom are a path, and a path
+      # with a link that goes nowhere or a note nobody placed is a dead end with
+      # no error message. Both halves of that were real here.
+      #
+      # docs/agent-notes/bun-test-ts-gate-is-repo-wide.md was linked from no
+      # top-level document at all, so its rule about the bun job's repo-wide
+      # *.test.ts glob was findable only by listing the directory — the index
+      # check above scans docs/*.md, and a note under docs/agent-notes/ is not in
+      # that glob. docs/traps.md (the same incidents reordered into the stages a
+      # newcomer walks through) is what makes every note reachable, and this is
+      # what keeps it that way as notes are added.
+      #
+      # A broken relative link renders as ordinary text on GitHub, so no other
+      # check here sees one.
+      #
+      # Remedy for the first failure: place the note in docs/traps.md at the
+      # stage where a newcomer meets it. Do not delete the note.
+      #
+      # Remedy for the second: fix the link target, or the file it names.
+      #
+      # Both sides are derived rather than listed, so neither can go stale: the
+      # notes come from `find`, and each link is resolved against the directory
+      # of the file that contains it — a link is relative to its own file, and a
+      # checker resolving against the repo root reported 117 false failures the
+      # one time this was done by hand.
+      #
+      # Scope for the link half is the newcomer path on purpose, not all of
+      # docs/. docs/ also holds dated snapshots (ux-eval-*, dogfood/) whose value
+      # is being what was true that day; gate-fixing one would mean editing a
+      # past record to satisfy today's tree.
+      #
+      # As above, both scanned counts are asserted: a listing of zero means the
+      # check proved nothing, which must never read as a pass.
+      - name: The newcomer path is complete, and its links resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          ordering=docs/traps.md
+          path="README.md AGENTS.md docs/README.md docs/traps.md examples/README.md"
+          fail=0
+
+          notes="$(find docs/agent-notes -name '*.md' | sort)"
+          scanned=$(printf '%s\n' "$notes" | grep -c . || true)
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no agent-notes were found: the completeness check proved nothing"
+            exit 1
+          fi
+          for note in $notes; do
+            # The note must be a LINK TARGET, not merely a filename mentioned in
+            # prose: a name with no link leaves the note unreachable, which is
+            # the orphan this check exists to prevent. An optional #fragment is
+            # accepted so a note can be linked to a named section.
+            if ! grep -qF "](agent-notes/$(basename "$note"))" "$ordering" \
+               && ! grep -qF "](agent-notes/$(basename "$note")#" "$ordering"; then
+              echo "::error file=$note::$note is not placed in $ordering — put it at the stage where a newcomer meets it"
+              fail=1
+            fi
+          done
+
+          misses="$(mktemp)"
+          links=0
+          docs=0
+          for doc in $path; do
+            # A missing document fails its own grep inside the process
+            # substitution below, which yields no lines and lets the loop move
+            # on — so the other four documents keep $links non-zero and the step
+            # passes having silently skipped one. Name it and fail instead.
+            if [ ! -f "$doc" ]; then
+              echo "::error file=$doc::$doc is a document of the newcomer path but does not exist, so its links were never checked"
+              fail=1
+              continue
+            fi
+            docs=$((docs + 1))
+            dir="$(dirname "$doc")"
+            while IFS= read -r target; do
+              links=$((links + 1))
+              case "$target" in
+                http://*|https://*|mailto:*|\#*) continue ;;
+              esac
+              rel="${target%%#*}"
+              [ -n "$rel" ] || continue
+              [ -e "$dir/$rel" ] || printf '%s -> %s\n' "$doc" "$target" >> "$misses"
+            done < <(grep -oE '\]\([^()]+\)' "$doc" | sed -e 's/^](//' -e 's/)$//')
+          done
+          if [ -s "$misses" ]; then
+            echo "::error::these links in the newcomer path do not resolve:"
+            cat "$misses"
+            fail=1
+          fi
+          rm -f "$misses"
+          if [ "$links" -eq 0 ]; then
+            echo "::error::no links were scanned: the link check proved nothing"
+            exit 1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "$scanned agent-notes are placed in $ordering; $links links across $docs documents resolve"
 
       # A committed shell script that reaches for a deleted artifact is a dead
       # instruction: nothing runs them, so it rots silently until somebody

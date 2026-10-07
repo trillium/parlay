@@ -29,6 +29,12 @@ unindexed doc is one nobody finds.
 
 ## Generally useful — if you run parlay
 
+### Start here, in the order you will meet things
+
+| Doc | What it is |
+|---|---|
+| [`traps.md`](traps.md) | The same knowledge as [`AGENTS.md`](../AGENTS.md) and `agent-notes/`, but ordered by **when it will bite you** rather than by when the incident happened: nine stages from "before you have run anything" to "only if you go deeper", every note linking its full rationale. Read the stage you are in. |
+
 ### One deep-dive per load-bearing part
 
 Linked from the root README's system map.
@@ -118,6 +124,7 @@ so read the one that names the surface you care about; each carries its own
 
 The directory beside this file is the reverse of this index: not documents, but
 **one lesson per file**, each written when something in this repo caused a real
-incident on the author's machine. There is deliberately no per-note index —
+incident on the author's machine. There is no alphabetical per-note index —
 [`AGENTS.md`](../AGENTS.md) is the one that matters, and it loads into every agent
-session; read it first and follow its pointers here when one applies.
+session, so read it first and follow its pointers here when one applies. Ordered by the
+order a newcomer meets them, the same notes are [`traps.md`](traps.md).
