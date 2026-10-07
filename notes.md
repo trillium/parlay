@@ -1,62 +1,40 @@
 # Onboarding work: what changed, and the evidence
 
-This branch makes the first hour in this repo readable instead of source-bound. Three pieces,
-in the order a newcomer meets them:
+This branch makes the first hour in this repo readable instead of source-bound. Four
+pieces, in the order a newcomer meets them:
 
 | Piece | What it is |
 |---|---|
 | `bin/parlay-preflight` (+ `bin/parlay-preflight.test.sh`) | One bash-only command that checks the whole prerequisite set and names **every** missing thing in one run with its exact `fix:` command. Step 0 of the README path, and the command to re-run when a machine misbehaves. |
 | `docs/traps.md` | `AGENTS.md`'s incident record reordered into the nine stages a newcomer walks through. All 64 `docs/agent-notes/` notes appear, none dropped, none rewritten, every link target unchanged. |
 | `README.md` Quickstart | One ordered five-step path with a real first command, an isolated-fleet step, one health surface named in both roles, and success/failure criteria on every step. |
+| `.gitignore` | `.pi/` ignored, and the harness task-log files an auto-commit had picked up are untracked — so no harness scratch file can be committed again. |
 
 ## What a newcomer can now do without reading source
 
-1. **Run `./bin/parlay-preflight`** and be told everything the machine needs at once,
-   with the exact remedy for each, rather than one blocker per failed build.
-2. **Run `./examples/bootstrap-sandbox.sh`** and watch the whole stack work — server,
-   CLI, registry, history, the reply path, `doctor` — in a throwaway sandbox, with a
-   `LIMITS` block saying what it did *not* prove.
-3. **Start a real server, point the CLI at it, send a message, read it back**, and know
-   that `./bin/parlay health` exits 1 for the optional voice engine, not for a broken
-   install.
-4. **Know where to look when it breaks**: the same `./bin/parlay-preflight` an operator
-   runs, then `docs/traps.md` at the stage they are in.
+1. **Run `./bin/parlay-preflight`** and be told everything the machine needs at once, with the exact remedy for each, rather than one blocker per failed build.
+2. **Run `./examples/bootstrap-sandbox.sh`** and watch the whole stack work — server, CLI, registry, history, the reply path, `doctor` — in a throwaway sandbox, with a `LIMITS` block saying what it did *not* prove.
+3. **Start a real server, point the CLI at it, send a message, read it back**, and know that `./bin/parlay health` exits 1 for the optional voice engine, not for a broken install.
+4. **Know where to look when it breaks**: the same `./bin/parlay-preflight` an operator runs, then `docs/traps.md` at the stage they are in.
 
 ## What was reordered, and why
 
-- **`docs/traps.md` is new** (247 lines). `AGENTS.md` and `docs/agent-notes/` are in
-  incident order, which is right to maintain and wrong to meet; `traps.md` orders the
-  same facts by when they bite: before you run anything → first server and message →
-  an agent that receives → a second instance or fleet → when something looks wrong →
-  spawning → changing the code → landing the change → only if you go deeper.
-- **The README Quickstart gained a step and was renumbered** (step 1 is now the sandbox,
-  server → 2, CLI → 3, talk/health → 4, panel → 5), every internal step reference
-  updated, and every step now states what success and failure look like.
-- **The `-state-dir` advice was corrected.** It previously read "To keep a dev run fully
-  isolated from live state", which overclaims: `-state-dir` moves the server's store and
-  nothing else — `HOME`, the agent store, the TTS cache and the listener layer are
-  untouched. The step now says exactly that and points at the sandbox for a whole fleet.
-- **The health surface is one surface, named in both roles.** `./bin/parlay-preflight`
-  is the machine half, `./bin/parlay health` the running-instance half, and the README
-  says so in step 0, step 4 and "when a step fails". The preflight is now state-aware:
-  with a parlay instance already answering on the resolved port it prints `Ready. A
-  parlay instance already answers on 127.0.0.1:4242 — nothing to start.` instead of
-  telling you to start a server you already have.
+- **`docs/traps.md` is new** (247 lines). `AGENTS.md` and `docs/agent-notes/` are in incident order, which is right to maintain and wrong to meet; `traps.md` orders the same facts by when they bite: before you run anything → first server and message → an agent that receives → a second instance or fleet → when something looks wrong → spawning → changing the code → landing the change → only if you go deeper.
+- **The README Quickstart gained a step and was renumbered** (step 1 is now the sandbox, server → 2, CLI → 3, talk/health → 4, panel → 5), every internal step reference updated, and every step now states what success and failure look like.
+- **The `-state-dir` advice was corrected.** It previously read "To keep a dev run fully isolated from live state", which overclaims: `-state-dir` moves the server's store and nothing else — `HOME`, the agent store, the TTS cache and the listener layer are untouched. The step now says exactly that and points at the sandbox for a whole fleet.
+- **The health surface is one surface, named in both roles.** `./bin/parlay-preflight` is the machine half, `./bin/parlay health` the running-instance half, and the README says so in step 0, step 4 and "when a step fails". The preflight is state-aware: with a parlay instance already answering on the resolved port it prints `Ready. A parlay instance already answers on 127.0.0.1:4242 — nothing to start.` instead of telling you to start a server you already have.
+
+## Harness scratch was committed once, and now cannot be
+
+The constraint is that nothing under `.pi/`, `.gnhf/` or any other harness scratch directory is ever committed. It was already broken on this branch: the auto-commit that landed `docs/traps.md` also captured four `.pi/tasks/<session>/*.json` + `*.output` task-log files, because `.pi/` was not ignored and nothing else kept them out. This iteration untracked them (`git rm --cached`, files kept on disk) and added `.pi/` to `.gitignore` with the incident recorded next to the entry. `.gnhf/` needs no such entry here: the harness already excludes `.gnhf/runs/` through `.git/info/exclude`.
 
 ## What was deliberately left alone
 
-- `AGENTS.md`, `docs/agent-notes/*`, and every existing incident record: no fact was
-  changed. `AGENTS.md` gained one paragraph naming the preflight as the first command.
-- `examples/bootstrap-sandbox.sh` itself: reused as-is, not reimplemented — it already
-  encodes the isolation recipe, including the hardcoded paths.
+- `AGENTS.md`, `docs/agent-notes/*`, and every existing incident record: no fact was changed. `AGENTS.md` gained one paragraph naming the preflight as the first command.
+- `examples/bootstrap-sandbox.sh` itself: reused as-is, not reimplemented — it already encodes the isolation recipe, including the hardcoded paths.
 - Deployment scripts, `internal/guard.GuardedPaths`, and every public endpoint shape.
-- `docs/ux-eval-2026-08-30.md`: a dated field report that cites the README's old step
-  numbers. Rewriting a historical record to match today's numbering would falsify
-  evidence.
-- A root `go.work`: not added. It would make repo-root-relative module paths work, but
-  it contradicts the README, `AGENTS.md` and CI doctrine that all state there is no root
-  workspace, and adds a `go.work.sum` to maintain. A deliberate decision, not an
-  oversight.
+- `docs/ux-eval-2026-08-30.md`: a dated field report that cites the README's old step numbers. Rewriting a historical record to match today's numbering would falsify evidence.
+- A root `go.work`: not added. It would make repo-root-relative module paths work, but it contradicts the README, `AGENTS.md` and CI doctrine that all state there is no root workspace, and adds a `go.work.sum` to maintain. A deliberate decision, not an oversight.
 
 ## Verification
 
@@ -68,10 +46,7 @@ pattern ./...: directory prefix . does not contain main module or its selected d
 exit=1
 ```
 
-This repo is four Go modules with no root module, so `./...` at the root cannot resolve.
-That is pre-existing, unrelated to this branch, and **not gamed**: a vacuous root module
-would make the command exit 0 while proving nothing. The per-module equivalent, plus the
-rest of the chain, is what was actually run:
+This repo is four Go modules with no root module, so `./...` at the root cannot resolve. That is pre-existing, unrelated to this branch, and **not gamed**: a vacuous root module would make the command exit 0 while proving nothing. The per-module equivalent, plus the rest of the chain, is what was actually run:
 
 ```
 $ for m in tools/cli packages/go-server tools/relay packages/spawn-profiles; do (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...); echo "$m exit=$?"; done
@@ -192,7 +167,7 @@ is a non-blocking WARN); a live parlay instance answering `/health` (exit 0, rep
 and **not** told to start a server); six simultaneous blockers in one deliberately broken
 environment (exactly six FAILs named in one run, each with its `fix:`, plus the summary's
 own count asserted equal to the FAIL lines printed); and `env -i PATH=/nonexistent`
-against the real checkout.
+against the real checkout. It is wired into CI's hermetic shell job.
 
 ### Links, and claims checked against the code
 
@@ -200,8 +175,9 @@ against the real checkout.
 README.md: 39 links, 32 local checked, 0 broken
 docs/traps.md: 75 links, 75 local checked, 0 broken
 docs/README.md: 44 links, 40 local checked, 0 broken
-examples/README.md: 2 links, 2 local checked, 0 broken
-link check: PASS
+examples/README.md: 4 links, 2 local checked, 0 broken
+AGENTS.md: 74 links, 74 local checked, 0 broken
+link check: PASS (223 local links, 0 broken)
 
 $ (CI docs-index gate, run locally)  scanned=30 fail=0   → PASS
 ```
@@ -235,11 +211,21 @@ HTTP/1.1 404 Not Found
 The repo enforces a 250-line limit only for staged `*.ts` files (`tools/hooks/pre-commit`),
 so markdown has no enforced budget. Self-imposed anyway: every file added or touched on
 this branch is ≤ 250 lines (`bin/parlay-preflight` 249, `bin/parlay-preflight.test.sh`
-250, `docs/traps.md` 247, this file).
+250, `docs/traps.md` 247, `.gitignore` 74, this file 236).
 
 ## Left undone, with reasons
 
-- **The PR is not opened yet**: it is the next step of this run, after the branch commits.
+- **The branch is not pushed and the PR is not open yet.** This harness commits locally
+  at the end of the turn and does not push, so pushing now would publish the very
+  `.pi/tasks/` scratch files this iteration just untracked. The next iteration's first
+  two commands are the fix — `git push -u origin gnhf/objective-make-a-new-904428`, then
+  `gh-axi pr create --base main --head gnhf/objective-make-a-new-904428 --title ...
+  --body-file .pi/pr-body.md` (body already written). `gh` is authenticated as
+  `trillium` with `repo` scope, and `origin` is `trillium/parlay`, so no `--repo` is
+  needed. The PR then contains the clean diff and nothing else: the `.pi/` files were
+  added in one commit and removed in another, so they do not appear in the net diff.
+- **CodeRabbit review is not requested yet**, for the same reason: the repo's gate needs
+  the final commit, and its review pool is three per account (`AGENTS.md`).
 - **`docs/traps.md` completeness is not gated.** The CI docs-index gate covers `docs/*.md`
   only, so a future `docs/agent-notes/*.md` that no document links is invisible to every
   gate. `traps.md` is currently the only thing that makes all 64 reachable; a gate for
