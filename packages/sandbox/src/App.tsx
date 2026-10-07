@@ -100,7 +100,13 @@ export function App({ fetchImpl, eventSourceFactory, server = '', device }: AppP
               buildEvalBody({ config, text: target, streamId, device: dev, version: version.current }),
               server,
             )
-            setResults((prev) => ({ ...prev, [config.id]: decode(config.id, res, streamId, Math.round(performance.now() - started)) }))
+            setResults((prev) => ({
+              ...prev,
+              [config.id]: {
+                ...decode(config.id, res, streamId, Math.round(performance.now() - started)),
+                previewedText: target,
+              },
+            }))
           } catch (err) {
             setResults((prev) => ({
               ...prev,
@@ -147,7 +153,7 @@ export function App({ fetchImpl, eventSourceFactory, server = '', device }: AppP
           buildEvalBody({ config, text, streamId, device: dev, version: version.current }),
           server,
         )
-        setResults((prev) => ({ ...prev, [config.id]: decode(config.id, res, streamId) }))
+        setResults((prev) => ({ ...prev, [config.id]: { ...decode(config.id, res, streamId), previewedText: text } }))
       } catch (err) {
         setResults((prev) => ({ ...prev, [config.id]: { configId: config.id, streamId, kind: 'error', detail: String(err) } }))
       }
@@ -168,7 +174,13 @@ export function App({ fetchImpl, eventSourceFactory, server = '', device }: AppP
         <span>test string</span>
         <input
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            // A preview belongs to the string it previewed. Keeping it across an
+            // edit would leave Fire enabled over text that was never evaluated —
+            // exactly the implicit trigger the gate exists to prevent.
+            setText(e.target.value)
+            setResults({})
+          }}
           placeholder="change inside input · send it · go to mayor"
           aria-label="test string"
         />

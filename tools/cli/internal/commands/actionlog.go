@@ -14,6 +14,8 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -75,6 +77,11 @@ type actionLogResponse struct {
 	Facets            actionLogFacets `json:"facets"`
 	Targets           []offEntry      `json:"targets"`
 	OutcomeVocabulary []string        `json:"outcomeVocabulary"`
+	// FilterVocabulary must be present even though the text renderer ignores it:
+	// --json DECODES AND RE-ENCODES this struct, so a field the server sends and
+	// this type does not carry is silently dropped from the output — which would
+	// break the promise that --json has "the same field names the API sends".
+	FilterVocabulary json.RawMessage `json:"filterVocabulary"`
 }
 
 // ActionLog is `parlay action-log`'s entry point.
@@ -86,11 +93,19 @@ func ActionLog(argv []string) {
 		[]string{"--json", "--status"},
 		[]string{"--source", "--input-action", "--output-action", "--outcome", "--reason", "--device", "--since", "--until", "--limit", "--off"},
 	)
+	// --status reports the off-set and --off flips a target: two different
+	// operations. Silently doing only the first would leave the requested flip
+	// undone behind a success exit, so the combination is refused.
 	if r.Bool("--status") {
+		if target, _ := r.String("--off"); target != "" {
+			httpc.Die("action-log: --status and --off are different operations — pass one (--status reads the off-set; --off changes it)", config.ExitUsage)
+			return
+		}
 		offStatus("action-log")
 		return
 	}
 
+	asJSON := r.Bool("--json")
 	query := actionLogQuery(r)
 	if target, _ := r.String("--off"); target != "" {
 		kind, id, ok := splitOffTarget(target)
@@ -98,13 +113,22 @@ func ActionLog(argv []string) {
 			httpc.Die(fmt.Sprintf("action-log --off: want <kind>:<id> with kind one of connection|action (got %q)", target), config.ExitUsage)
 			return
 		}
-		setOffSwitch(kind, id, true, "", "cli")
-		fmt.Println()
+		// Quiet under --json: the flip still happens, but stdout has to stay ONE
+		// JSON document, and a text confirmation in front of it makes the output
+		// undecodable even though the change already landed.
+		setOffSwitch(kind, id, true, "", "cli", asJSON)
+		if !asJSON {
+			fmt.Println()
+		}
 	}
 
-	resp, supported := fetchActionLog(query)
-	if !supported {
-		if r.Bool("--json") {
+	resp, unsupported, err := fetchActionLog(query)
+	if err != nil {
+		httpc.Die("action-log: "+err.Error(), config.ExitRuntime)
+		return
+	}
+	if unsupported {
+		if asJSON {
 			out, _ := json.MarshalIndent(map[string]any{"ok": false, "supported": false, "records": []actionRecord{}}, "", "  ")
 			fmt.Println(string(out))
 			return
@@ -114,7 +138,7 @@ func ActionLog(argv []string) {
 		fmt.Println("at the sandbox page. This is a coverage limit, not an empty result.")
 		return
 	}
-	if r.Bool("--json") {
+	if asJSON {
 		out, _ := json.MarshalIndent(resp, "", "  ")
 		fmt.Println(string(out))
 		return
@@ -144,13 +168,50 @@ func actionLogQuery(r args.Result) url.Values {
 	return q
 }
 
-func fetchActionLog(q url.Values) (actionLogResponse, bool) {
+// fetchActionLog reads the log, distinguishing the two failure classes because
+// they mean opposite things to the operator.
+//
+// httpc.TryGetJSON collapses every failure into ok=false, which for this route is
+// wrong: an HTTP 400 from a mistyped --since is a REAL error the caller must see
+// and exit non-zero on, while a missing route is an older server worth a plain
+// explanation and a success exit. Reporting the first as the second would make a
+// typo look like an install problem, behind a green exit code.
+//
+// `unsupported` therefore means exactly "this path answered with something that
+// is not a command log" — a 404, or a 2xx that is not decodable as one (an older
+// server's static/SPA fallback answering the path with HTML).
+func fetchActionLog(q url.Values) (resp actionLogResponse, unsupported bool, err error) {
 	path := "/api/chat/action-log"
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
-	resp, ok := httpc.TryGetJSON[actionLogResponse](path, actionLogReadTimeout)
-	return resp, ok
+	client := &http.Client{Timeout: actionLogReadTimeout}
+	r, err := client.Get(config.ServerURL() + path)
+	if err != nil {
+		return actionLogResponse{}, false, err
+	}
+	defer r.Body.Close()
+
+	if r.StatusCode == http.StatusNotFound {
+		return actionLogResponse{}, true, nil
+	}
+	if r.StatusCode < 200 || r.StatusCode >= 300 {
+		if detail := strings.TrimSpace(string(readBounded(r.Body, 400))); detail != "" {
+			return actionLogResponse{}, false, fmt.Errorf("HTTP %d — %s", r.StatusCode, detail)
+		}
+		return actionLogResponse{}, false, fmt.Errorf("HTTP %d", r.StatusCode)
+	}
+	if decodeErr := json.NewDecoder(r.Body).Decode(&resp); decodeErr != nil {
+		return actionLogResponse{}, true, nil
+	}
+	return resp, false, nil
+}
+
+// readBounded reads at most n bytes, so an oversized error body cannot be echoed
+// into a terminal unbounded.
+func readBounded(r io.Reader, n int64) []byte {
+	b, _ := io.ReadAll(io.LimitReader(r, n))
+	return b
 }
 
 // printActionLog renders the rows newest-first with a header naming the active
@@ -175,8 +236,13 @@ func printActionLog(q url.Values, resp actionLogResponse) {
 	printVocabulary(resp)
 }
 
-// actionRow is one line per record: when, where from, what happened and why,
-// what it resolved to, and what it would emit.
+// actionRow is one line per record: when, where from, which connection, what
+// happened and why, what it resolved to, and what it would emit.
+//
+// The connection column is not decoration: `parlay off connection <id>` is one of
+// the documented off-switch controls, and a reader who cannot see the device id in
+// the row has to switch to --json to use it — which is exactly the "reachable from
+// where the logs are read" property this verb exists for.
 func actionRow(rec actionRecord) string {
 	outcome := rec.Outcome
 	if rec.Reason != "" {
@@ -190,8 +256,12 @@ func actionRow(rec actionRecord) string {
 	if out == "" {
 		out = "—"
 	}
-	return fmt.Sprintf("%s  %-9s  %-24s  %-14s → %s",
-		shortTime(rec.At), rec.Source, outcome, in, out)
+	device := rec.Device
+	if device == "" {
+		device = "—"
+	}
+	return fmt.Sprintf("%s  %-9s  %-16s  %-24s  %-14s → %s",
+		shortTime(rec.At), rec.Source, device, outcome, in, out)
 }
 
 func describeFilters(q url.Values) string {

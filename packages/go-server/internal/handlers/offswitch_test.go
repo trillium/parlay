@@ -191,3 +191,55 @@ func TestOffSwitchRouteLifecycle(t *testing.T) {
 		t.Fatal("turning the last target back on left entries behind")
 	}
 }
+
+// A muted SUBMIT must not fire through the back door. The engine has already
+// evaluated the text and armed its own timer by the time the relay refuses the
+// action, so the refusal has to leave the stream's fired command recorded —
+// otherwise /eval-push looks up the stream's PREVIOUS command, its own mute check
+// misses, and the deferred fire is broadcast. That ordering bug is what this
+// pins: rememberFired must run before the mute check returns.
+func TestMutedSubmitIsRefusedWhenItsOwnTimerFires(t *testing.T) {
+	st := newTestStore(t)
+	hub := newHub(newBroker())
+	// The engine arms the submit timer, naming `submit` as the fired command.
+	fakeEngine(t, okEngine("submit", "armTimer"))
+	if _, _, err := st.OffSwitch.Set(store.OffKindAction, "submit", true, "tester", "cli"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := evalWithStore(t, st, hub,
+		`{"device":"dev-x","streamId":"eval-dev-x-main","version":1,"text":"send it","voiceEnabled":true}`)
+	var evalResp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &evalResp); err != nil {
+		t.Fatalf("decode eval response: %v", err)
+	}
+	if evalResp["refused"] != store.OffKindAction {
+		t.Fatalf("eval was not refused for the muted action: %v", evalResp)
+	}
+
+	// Now the engine's timer elapses and it pushes the fire it armed.
+	pushReq := httptest.NewRequest(http.MethodPost, "/api/chat/eval-push", strings.NewReader(
+		`{"streamId":"eval-dev-x-main","seq":2,"baseVersion":1,"v":1,"action":{"verb":"submitNow"}}`))
+	pushReq.Header.Set("Content-Type", "application/json")
+	pushRec := httptest.NewRecorder()
+	handleEvalPush(st, hub)(pushRec, pushReq)
+
+	var pushResp map[string]any
+	if err := json.Unmarshal(pushRec.Body.Bytes(), &pushResp); err != nil {
+		t.Fatalf("decode push response: %v", err)
+	}
+	if pushResp["ok"] != false || pushResp["refused"] != store.OffKindAction {
+		t.Errorf("a muted submit's own timer still fired: %v", pushResp)
+	}
+
+	// And the refusal is readable in the log, twice: the evaluation and the fire.
+	var refused []store.ActionRecord
+	for _, r := range st.ActionLog.List(store.ActionLogFilter{Outcome: store.OutcomeRefused}) {
+		if r.Reason == "off-action" {
+			refused = append(refused, r)
+		}
+	}
+	if len(refused) != 2 {
+		t.Errorf("refused/off-action rows = %d, want 2 (the evaluation and the refused fire): %+v", len(refused), refused)
+	}
+}

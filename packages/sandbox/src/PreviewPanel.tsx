@@ -15,6 +15,15 @@ export interface ConfigResult {
   detail?: string
   relayMs?: number
   engineEvalNs?: number
+  /** The exact string this row previewed.
+   *
+   *  Fire is gated on this equalling the current input, not merely on `kind`
+   *  being `ok`. Without it the gate is a lie in two ways: editing the string
+   *  leaves the previous preview "successful" (so Fire would deliver an action
+   *  for text that was never previewed), and a preview that lands AFTER the user
+   *  typed something new would re-arm the button from a stale result. Keying on
+   *  the text closes both. */
+  previewedText?: string
 }
 
 export function rowFor(results: Record<string, ConfigResult>, id: string): ConfigResult {
@@ -88,12 +97,14 @@ export function PreviewPanel({
                 <td>
                   <button
                     className="fire"
-                    disabled={busy || text.trim() === '' || r.kind !== 'ok'}
+                    disabled={busy || text.trim() === '' || r.kind !== 'ok' || r.previewedText !== text}
                     onClick={() => onFire(c)}
                     title={
-                      r.kind === 'ok'
-                        ? `deliver this result now, through the production path (${r.actions?.join(', ') || 'no action'})`
-                        : 'preview first'
+                      r.kind !== 'ok'
+                        ? 'preview first'
+                        : r.previewedText !== text
+                          ? 'the string changed since this preview — preview again'
+                          : `deliver this result now, through the production path (${r.actions?.join(', ') || 'no action'})`
                     }
                   >
                     Fire “{r.fired || r.actions?.[0] || 'this'}”

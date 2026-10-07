@@ -20,12 +20,25 @@ type actionLogServer struct {
 }
 
 func newActionLogServer(t *testing.T, resp actionLogResponse, postResp map[string]any) (*actionLogServer, *httptest.Server) {
+	return newActionLogServerStatus(t, resp, postResp, http.StatusOK)
+}
+
+// newActionLogServerStatus is newActionLogServer with control over the log
+// route's status, so the two failure classes can each be exercised: a 404 means
+// "older server" and must read as one, while any other non-2xx is a REAL error
+// that must exit non-zero.
+func newActionLogServerStatus(t *testing.T, resp actionLogResponse, postResp map[string]any, logStatus int) (*actionLogServer, *httptest.Server) {
 	t.Helper()
 	rec := &actionLogServer{t: t}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/chat/action-log", func(w http.ResponseWriter, r *http.Request) {
 		rec.queries = append(rec.queries, r.URL.RawQuery)
 		w.Header().Set("Content-Type", "application/json")
+		if logStatus != http.StatusOK {
+			w.WriteHeader(logStatus)
+			json.NewEncoder(w).Encode(map[string]string{"error": "since: want an RFC3339 timestamp or a duration like 15m"})
+			return
+		}
 		json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("/api/chat/off-switch", func(w http.ResponseWriter, r *http.Request) {
@@ -202,5 +215,124 @@ func TestActionLogJSONRoundTrip(t *testing.T) {
 	}
 	if decoded.Records[0].RelayMs != 0 || decoded.Records[0].EngineEvalNs != 0 {
 		t.Errorf("unexpected timings: %+v", decoded.Records[0])
+	}
+}
+
+// --json decodes and re-encodes the server's payload, so a field the server sends
+// and the CLI's type does not carry is silently dropped. filterVocabulary is the
+// one field that was missing, and the CLI's own help promises "the same field
+// names the API sends".
+func TestActionLogJSONKeepsTheServersFilterVocabulary(t *testing.T) {
+	resp := sampleLog()
+	resp.FilterVocabulary = json.RawMessage(`{"fields":["source","inputAction"],"times":["since","until"]}`)
+	_, _ = newActionLogServer(t, resp, nil)
+
+	out := captureStdout(t, func() { ActionLog([]string{"--json"}) })
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("--json is not one JSON document: %v\n%s", err, out)
+	}
+	if _, ok := decoded["filterVocabulary"]; !ok {
+		t.Errorf("--json dropped the server's filterVocabulary:\n%s", out)
+	}
+}
+
+// --status reports the off-set; --off changes it. Doing only the first would
+// leave the requested flip undone behind a success exit.
+func TestActionLogRefusesStatusTogetherWithOff(t *testing.T) {
+	rec, _ := newActionLogServer(t, sampleLog(), map[string]any{"ok": true})
+
+	code, exited := withExitTrap(t, func() { ActionLog([]string{"--status", "--off", "action:clear"}) })
+
+	if !exited || code != config.ExitUsage {
+		t.Errorf("exit = (%d, %v), want usage exit 2", code, exited)
+	}
+	if len(rec.posts) != 0 {
+		t.Errorf("a refused combination still flipped a target: %v", rec.posts)
+	}
+}
+
+// --json --off must still flip, and must still leave stdout as ONE JSON document:
+// a text confirmation printed in front of the JSON makes the output undecodable
+// even though the change already landed.
+func TestActionLogJSONOffKeepsStdoutDecodable(t *testing.T) {
+	rec, _ := newActionLogServer(t, sampleLog(), map[string]any{"ok": true, "changed": true, "targets": []any{}})
+
+	out := captureStdout(t, func() { ActionLog([]string{"--json", "--off", "action:clear"}) })
+
+	if len(rec.posts) != 1 {
+		t.Fatalf("--json --off made %d flips, want 1", len(rec.posts))
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("stdout is not a single JSON document: %v\n%s", err, out)
+	}
+	if _, ok := decoded["records"]; !ok {
+		t.Errorf("stdout decoded but is not the log payload:\n%s", out)
+	}
+}
+
+// A real server error (a mistyped --since is an HTTP 400) must NOT be reported as
+// an older server, and must exit non-zero — otherwise a typo looks like an
+// install problem behind a green exit code.
+func TestActionLogSurfacesAServerErrorRatherThanCallingItUnsupported(t *testing.T) {
+	_, _ = newActionLogServerStatus(t, sampleLog(), nil, http.StatusBadRequest)
+
+	var code int
+	var exited bool
+	var out string
+	// httpc.Die writes the refusal to stderr, so both descriptors are watched:
+	// stdout for what was printed, stderr for why it refused.
+	err := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			code, exited = withExitTrap(t, func() { ActionLog([]string{"--since", "not-a-time"}) })
+		})
+	})
+
+	if !exited || code != config.ExitRuntime {
+		t.Errorf("exit = (%d, %v), want runtime exit 1", code, exited)
+	}
+	if strings.Contains(out, "has no command log") {
+		t.Errorf("an HTTP 400 was reported as an older server on stdout:\n%s", out)
+	}
+	if !strings.Contains(err, "400") {
+		t.Errorf("the server's status did not reach the user on stderr:\n%s", err)
+	}
+}
+
+// A genuinely missing route is the older-server case, and stays a success with a
+// plain explanation.
+func TestActionLogTreatsAMissingRouteAsAnOlderServer(t *testing.T) {
+	_, _ = newActionLogServerStatus(t, sampleLog(), nil, http.StatusNotFound)
+
+	var code int
+	var exited bool
+	out := captureStdout(t, func() {
+		code, exited = withExitTrap(t, func() { ActionLog(nil) })
+	})
+
+	if exited && code != 0 {
+		t.Errorf("a missing route exited %d, want success", code)
+	}
+	if !strings.Contains(out, "has no command log") {
+		t.Errorf("a missing route was not explained as an older server:\n%s", out)
+	}
+}
+
+// The connection column is how a reader gets a device id to feed the documented
+// `parlay off connection <id>` control without switching to --json.
+func TestActionLogRowShowsTheConnection(t *testing.T) {
+	row := actionRow(actionRecord{
+		At: "2026-10-07T17:00:00Z", Source: "test-site", Device: "dev-42",
+		InputAction: "clear", OutputActions: []string{"clear"}, Outcome: "delivered",
+	})
+	if !strings.Contains(row, "dev-42") {
+		t.Errorf("row omits the connection id:\n%s", row)
+	}
+	// A record with no connection must not print a misleading one.
+	blank := actionRow(actionRecord{At: "2026-10-07T17:00:00Z", Source: "panel", Outcome: "dropped", Reason: "no-match"})
+	if strings.Contains(blank, "dev") {
+		t.Errorf("row invented a connection:\n%s", blank)
 	}
 }

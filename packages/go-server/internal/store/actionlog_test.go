@@ -147,3 +147,33 @@ func TestActionLogSanitizesIdentifiersAndHasNoTextField(t *testing.T) {
 		}
 	}
 }
+
+// Newest-first must follow INSERTION order, not a comparison of the formatted
+// timestamps. time.RFC3339Nano drops the trailing zeros of an exact second, and
+// 'Z' (0x5A) sorts after '.' (0x2E), so the formatted strings of an
+// exact-second record compare GREATER than those of a later fractional one — a
+// string sort would present the older row as newer. The ring is appended in
+// order, so walking it backwards is both correct and comparison-free.
+func TestActionLogNewestFirstFollowsInsertionNotFormattedString(t *testing.T) {
+	base := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	clock := base
+	al := NewActionLog(ActionLogConfig{Now: func() time.Time { return clock }})
+	al.Append(ActionRecord{Source: "exact-second", Outcome: OutcomeDelivered})
+	clock = base.Add(100 * time.Millisecond)
+	al.Append(ActionRecord{Source: "fractional", Outcome: OutcomeDelivered})
+
+	got := al.List(ActionLogFilter{})
+	if len(got) != 2 {
+		t.Fatalf("got %d records, want 2", len(got))
+	}
+	if got[0].Source != "fractional" || got[1].Source != "exact-second" {
+		t.Errorf("newest-first = [%s, %s], want [fractional, exact-second]", got[0].Source, got[1].Source)
+	}
+
+	// Test the test: if these two formatted stamps did NOT compare backwards, the
+	// case above would pass for the wrong reason and prove nothing. This asserts
+	// the hazard is real, so the ordering assertion above is load-bearing.
+	if !(got[1].At > got[0].At) {
+		t.Fatalf("this fixture does not exercise the hazard — %q does not sort after %q", got[1].At, got[0].At)
+	}
+}

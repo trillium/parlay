@@ -324,6 +324,17 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 		// muted command's emission is suppressed and the evaluation recorded as a
 		// refusal. Suppressed, not delivered-and-hidden: the client is told the
 		// action is off rather than being left to wonder why nothing happened.
+		//
+		// REMEMBER THE FIRED COMMAND BEFORE THE MUTE CHECK, not after. The engine
+		// has already evaluated this text by the time we get here, so it may
+		// already have armed its server-owned submit timer. If the mute check
+		// returned first, /eval-push would look up the STREAM's previous command
+		// (or nothing), fail its own mute check, and broadcast the fire — the
+		// exact bypass rememberFired exists to close. Recording first means the
+		// deferred push sees the muted command and is refused
+		// (TestMutedSubmitIsRefusedWhenItsOwnTimerFires fails without this order).
+		rememberFired(req.StreamID, env.Fired)
+
 		if env.Fired != "" && st.OffSwitch.IsActionOff(env.Fired) {
 			st.ActionLog.Append(store.ActionRecord{
 				Source:        evalSource(req.StreamID),
@@ -345,8 +356,6 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 			})
 			return
 		}
-
-		rememberFired(req.StreamID, env.Fired)
 
 		timing := relayTiming{
 			EngineEvalNs: env.EngineEvalNs,

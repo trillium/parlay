@@ -143,6 +143,32 @@ describe('the sandbox page', () => {
     expect(calls.filter((c) => c.url === '/api/chat/eval')).toHaveLength(0)
   })
 
+  test('editing the string invalidates the preview, so Fire cannot deliver text never previewed', async () => {
+    const { calls, fetchImpl } = fakeServer()
+    await mount(fetchImpl, new StubEventSource(''))
+    await flush()
+
+    await type('clear that')
+    await click('button.primary')
+    await flush()
+    expect(host.querySelector<HTMLButtonElement>('button.fire')!.disabled).toBe(false)
+    expect(host.querySelector('tr[data-config]')!.textContent).toContain('clear')
+
+    // The user edits the string. The successful preview belongs to the OLD text,
+    // so it must stop licensing a real delivery — otherwise the "Fire requires a
+    // preview of this row" gate is a lie and one click would deliver an action
+    // for a string that was never evaluated.
+    await type('send it')
+    await flush()
+    expect(host.querySelector<HTMLButtonElement>('button.fire')!.disabled).toBe(true)
+    expect(host.querySelector('tr[data-config]')!.textContent).not.toContain('clear')
+
+    calls.length = 0
+    await click('button.fire')
+    await flush()
+    expect(calls.filter((c) => c.url === '/api/chat/eval')).toHaveLength(0)
+  })
+
   test('an empty string cannot be previewed or fired', async () => {
     const { calls, fetchImpl } = fakeServer()
     await mount(fetchImpl, new StubEventSource(''))

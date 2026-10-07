@@ -39,14 +39,19 @@ func OffSwitch(argv []string, off bool, verb string) {
 	if surface == "" {
 		surface = "cli"
 	}
-	setOffSwitch(kind, id, off, by, surface)
+	setOffSwitch(kind, id, off, by, surface, false)
 }
 
-// setOffSwitch performs the flip and prints the resulting state. It always
-// re-reads the server's answer rather than assuming success: the whole point of
-// the off switch is that it takes effect, and a printout that claims a state
-// the server did not accept would be worse than no printout.
-func setOffSwitch(kind, id string, off bool, by, surface string) []offEntry {
+// setOffSwitch performs the flip and ALWAYS re-reads the server's answer rather
+// than assuming success: the whole point of the off switch is that it takes
+// effect, and a printout claiming a state the server did not accept would be
+// worse than no printout.
+//
+// `quiet` suppresses the human confirmation while keeping the flip and the
+// server's verdict. It exists for callers whose stdout must remain ONE machine-
+// readable document (`parlay action-log --json --off …`), where a text line in
+// front of the JSON makes the output undecodable even though the change landed.
+func setOffSwitch(kind, id string, off bool, by, surface string, quiet bool) []offEntry {
 	body := map[string]any{"kind": kind, "id": id, "off": off, "surface": surface}
 	if by != "" {
 		body["by"] = by
@@ -64,19 +69,21 @@ func setOffSwitch(kind, id string, off bool, by, surface string) []offEntry {
 		httpc.Die("off switch refused: "+resp.Error, config.ExitRuntime)
 		return nil
 	}
-	state := "ON"
-	if resp.Off {
-		state = "OFF"
+	if !quiet {
+		state := "ON"
+		if resp.Off {
+			state = "OFF"
+		}
+		change := "already"
+		if resp.Changed {
+			change = "changed"
+		}
+		fmt.Printf("%s %s: %s (%s)\n", resp.Kind, resp.ID, state, change)
+		if resp.Off {
+			fmt.Printf("  effect: %s\n", offEffect(resp.Kind))
+		}
+		printOffLine(resp.Targets)
 	}
-	change := "already"
-	if resp.Changed {
-		change = "changed"
-	}
-	fmt.Printf("%s %s: %s (%s)\n", resp.Kind, resp.ID, state, change)
-	if resp.Off {
-		fmt.Printf("  effect: %s\n", offEffect(resp.Kind))
-	}
-	printOffLine(resp.Targets)
 	return resp.Targets
 }
 

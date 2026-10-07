@@ -17,14 +17,21 @@ func (al *ActionLog) List(f ActionLogFilter) []ActionRecord {
 	snapshot := append([]ActionRecord(nil), al.records...)
 	al.mu.RUnlock()
 
+	// The ring is stored oldest-first, in APPEND order, so walking it backwards is
+	// the newest-first order every renderer wants — without a comparison.
+	//
+	// Sorting by the formatted At string instead would be wrong: time.RFC3339Nano
+	// drops trailing zeros from the fractional second, so lexical order is not
+	// chronological order. `12:00:00Z` compares GREATER than `12:00:00.1Z`
+	// because 'Z' (0x5A) > '.' (0x2E), which would sort a record stamped on an
+	// exact second as newer than a later one. A clock step backwards is the same
+	// hazard from the other side. Insertion order has neither problem.
 	out := make([]ActionRecord, 0, len(snapshot))
-	for _, rec := range snapshot {
-		if !f.matches(rec) {
-			continue
+	for i := len(snapshot) - 1; i >= 0; i-- {
+		if f.matches(snapshot[i]) {
+			out = append(out, snapshot[i])
 		}
-		out = append(out, rec)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At > out[j].At })
 	return out
 }
 
