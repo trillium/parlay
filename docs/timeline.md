@@ -83,9 +83,25 @@ the one record that survives the server dying.
 reachable when every guard below says the absence of a hand-over **is**
 evidence. Each weaker case stays `recorded` and names the guard that stopped it:
 
+**Two questions, not one.** A hand-over line is absent for two different reasons:
+the relay never took the message, or *the relay was never the delivery path for
+that channel at all*. The second is not a defect — `parlay listen --legacy-poll`
+polls the chat server directly with no relay involved (`docs/monitor.md`), and
+what such a poll consumes leaves no spool line, no ledger line and no claim
+anywhere in this fleet. The relay's own control-plane trail (`audit.log`, read
+off disk in the same runtime dir) is the durable proof of which case this is: it
+records `register` when a monitor claims a channel and `unregister` when the
+claim is released. So the verdict needs a claim covering the message's time, and
+a channel the relay never claimed is never reported as lost.
+
 | Guard | Why the verdict cannot be made |
 |---|---|
 | no delivery trail at all | the ledger is a young record: a relay built before it exists has no ledger, so absence of a hand-over is absence of a *record* |
+| the claim trail could not be read | whether the relay was ever the delivery path for this channel is then **unknown**, not empty — an older relay, or another runtime dir |
+| the claim trail was truncated | its oldest claims are missing, so a missing claim is not evidence either |
+| a claim for the channel cannot be dated | it can neither cover the message nor be ruled out |
+| the relay never claimed the channel | no hand-over line was ever going to exist — a direct poll (`--legacy-poll`) leaves no record here |
+| the relay's last claim on the channel ended before the message | the relay was not the delivery path any more, so its silence means nothing |
 | the ledger rotated | rotation is lossy — everything older than the marker is gone |
 | the ledger read was truncated | the reader's own cap means it holds a prefix, not the whole trail |
 | the message is younger than the hand-over window (90s ≈ two of the relay's 45s long-polls) | the relay may simply not have polled it yet |
@@ -113,28 +129,30 @@ names the socket, the server and the reason each was silent — and no row is
 lost:
 
 ```
-parlay timeline — oldest first; 6 matching event(s)
+parlay timeline — oldest first; 4 matching event(s)
   asked: everything the records still hold
-  runtime /tmp/ptlA.PzWpdi · server http://127.0.0.1:1
+  runtime /tmp/obsdemo/rt · server http://127.0.0.1:1
 
-2026-10-07T06:54:59Z  3h00m ago  queued       crew-1            msg m-1 (user) from captain — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
-2026-10-07T06:54:59Z  3h00m ago  recorded     crew-1            msg m-1 (user) from captain — the chat server persisted this message on this channel; the relay's own hand-over line for this message is in this timeline — that line, not this one, says what happened next
-2026-10-07T07:54:59Z  2h00m ago  unhanded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it: NOTHING picked this message up. Either no relay is enrolled for this channel, the relay polls a different chat server, or the hand-over failed without leaving a line. The message is still in the agent's history, so it can be resent
+2026-10-07T06:46:49Z  4h00m ago  enrolled     crew-1            channel claimed by actor fp1
+2026-10-07T07:46:49Z  3h00m ago  queued       crew-1            msg m-1 (user) from captain — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
+2026-10-07T07:46:49Z  3h00m ago  recorded     crew-1            msg m-1 (user) from captain — the chat server persisted this message on this channel; the relay's own hand-over line for this message is in this timeline — that line, not this one, says what happened next
+2026-10-07T08:46:49Z  2h00m ago  unhanded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it around the time its claim on this channel covers: NOTHING picked this message up. Either the relay polls a different chat server, or the hand-over failed without leaving a line. The message is still in the agent's history, so it can be resent
 
-  shown: recorded=1 · unhanded=1 · queued=1
+  shown: recorded=1 · unhanded=1 · queued=1 · enrolled=1
 
 sources
-  delivery ledger (read) 1 delivery event(s) read (oldest first); the relay's own rotation is recorded in the trail, so a shortened history says so · /tmp/obsdemo.Dp1MUz/rt/delivery.log
-  audit log (absent)     no audit log — no channel has ever been claimed or released through THIS relay's control socket, so enrollment has no local record here · /tmp/obsdemo.Dp1MUz/rt/audit.log
-  chat history (read)    2 message record(s) read, oldest first (id/ts/channel/role only — the reader has no field for a message body) · /tmp/obsdemo.Dp1MUz/state/messages.jsonl
-  relay control socket (unreachable) no answer at /tmp/obsdemo.Dp1MUz/rt/relay.sock — the relay is not running (or uses another runtime dir). The trails above are files and were still read; only the relay's live state is unknown
+  delivery ledger (read) 1 delivery event(s) read (oldest first); the relay's own rotation is recorded in the trail, so a shortened history says so · /tmp/obsdemo/rt/delivery.log
+  audit log (read)       1 control-plane action(s) (register/unregister/denied) read · /tmp/obsdemo/rt/audit.log
+  chat history (read)    2 message record(s) read, oldest first (id/ts/channel/role only — the reader has no field for a message body) · /tmp/obsdemo/state/messages.jsonl
+  relay control socket (unreachable) no answer at /tmp/obsdemo/rt/relay.sock — the relay is not running (or uses another runtime dir). The trails above are files and were still read; only the relay's live state is unknown
   command registry (unreachable) could not ask http://127.0.0.1:1/api/chat/commands — the server did not answer (Get "http://127.0.0.1:1/api/chat/commands": dial tcp 127.0.0.1:1: connect: connection refused); commands are unknown, not absent
-
 
 Nothing here is a claim that a message was READ: this fleet has no read receipt anywhere, so
 `queued` means the line is still in the spool and says nothing more. `recorded` is the chat server's
 own history, not a delivery; `unhanded` is the one verdict made from it, and only when the delivery
-trail can be shown to be a complete record covering that message.
+trail can be shown to be a complete record covering that message AND the relay's own claim trail
+shows it was polling that channel at the time — a channel the relay never claimed, the `--legacy-poll`
+path most of all, leaves no record here and is never reported as lost.
 ```
 
 `--outcome unhanded` is the 2am query, and it is a first-class filter rather
@@ -145,7 +163,41 @@ $ parlay timeline --outcome unhanded
 parlay timeline — oldest first; 1 matching event(s)
   asked: outcome unhanded
 
-2026-10-07T07:54:59Z  2h00m ago  unhanded     crew-1            msg m-2 (user) from captain — … NOTHING picked this message up. …
+2026-10-07T08:46:49Z  2h00m ago  unhanded     crew-1            msg m-2 (user) from captain — … NOTHING picked this message up. …
+```
+
+**A channel the relay never claimed is never called lost.** This is the same
+class of false accusation as the old-relay case below, and the most likely one on
+a fleet that uses `--legacy-poll`: the message was consumed by a direct poll, and
+that leaves no record here at all. The relay is enrolled for a *different*
+channel in this fixture, so the claim trail is read and readable — the absence of
+a claim for `crew-1` is positive evidence, not a failure to look:
+
+```
+2026-10-07T08:46:49Z  2h00m ago  recorded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel. The relay's claim trail (audit.log, read in full) holds NO claim for this channel at all — the relay was never the delivery path for it, so no hand-over line was ever going to exist. An agent can receive messages without the relay (`parlay listen --legacy-poll` polls the chat server directly), and what such a poll consumed is recorded nowhere in this fleet
+
+$ parlay timeline --outcome unhanded
+parlay timeline — oldest first; 0 event(s) matched
+  no event matched. At least one record answered and held no event for this question, so the fleet really is quiet over it (see sources for what was read).
+```
+
+**The relay's claim on the channel had ended before the message.** The channel
+was polled once and then released (both rows are in the timeline), so the relay
+was not the delivery path when the message arrived:
+
+```
+2026-10-07T05:46:49Z  5h00m ago  enrolled     crew-1            channel claimed by actor fp1
+2026-10-07T06:46:49Z  4h00m ago  retired      crew-1            channel released by actor fp1
+2026-10-07T08:46:49Z  2h00m ago  recorded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel. The relay's claim trail (audit.log, read in full) shows the relay's last claim on this channel ended at 2026-10-07T06:46:49Z, before this message was recorded — the relay was not the delivery path for it, so a missing hand-over line is not evidence: nothing in this fleet records what has no relay behind it, including a direct poll (`parlay listen --legacy-poll`)
+```
+
+**No claim trail at all.** With no `audit.log` in the runtime dir the relay's
+enrollment is **unknown**, not absent, so the verdict falls toward silence. The
+`audit log (absent)` source row says which file is missing and why:
+
+```
+  audit log (absent)     no audit log — no channel has ever been claimed or released through THIS relay's control socket, so enrollment has no local record here · /tmp/obsdemo/rt/audit.log
+2026-10-07T08:46:49Z  2h00m ago  recorded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel. The relay's claim trail (audit.log) could not be read (no audit trail at /tmp/obsdemo/rt/audit.log — this relay has never enrolled a channel here (an older relay build, or another runtime dir)), so whether the relay was ever the delivery path for this channel is unknown — a missing hand-over line is not evidence
 ```
 
 **An old relay has no ledger at all — so nothing is accused.** This is the

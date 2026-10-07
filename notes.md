@@ -253,7 +253,7 @@ The section above is main's onboarding account (PR #314), which landed while thi
 
 # notes.md — making parlay's runtime observable without reading its source
 
-Status: **in progress** — iterations 1–7 (see "Left undone" for what is not
+Status: **in progress** — iterations 1–8 (see "Left undone" for what is not
 done and the PR's head state).
 
 ## What an operator can now answer that they could not before
@@ -611,6 +611,80 @@ Four rules keep this honest, each pinned by tests that go red without it:
 The fallback is a read, never a write: two runs of both verbs over one roster
 leave it byte-identical (`TestRegistryFallbackIsReadOnly`).
 
+### 8. `unhanded` now requires the relay to have been the delivery path (iteration 8)
+
+`unhanded` is the one verdict in the timeline that **accuses** something:
+"NOTHING picked this message up". Its guard list (iteration 5) covered every way
+the *delivery trail* could be an incomplete record, but not a second failure
+mode: a channel the relay was **never** the delivery path for can never have a
+hand-over line either. That is exactly what `parlay listen --legacy-poll` looks
+like from the relay's side — it polls the chat server directly, with no relay,
+and what it consumes leaves no spool line, no ledger line and no record anywhere
+in this fleet. So on any fleet that uses it, every message it delivered was
+reported as lost, and `--outcome unhanded` (the 2am query for "what did we
+lose") returned nothing but false positives.
+
+The relay's own control-plane trail is the missing half. `audit.log` records
+`register` when a monitor claims a channel and `unregister` when the claim is
+released, so `parlay timeline` now builds **claim intervals per channel** and
+only states the accusation when a claim covers the message's own time. The file
+is read off disk in the same runtime dir as the ledger, so the guard survives
+the relay dying, and every way it can fail falls toward silence:
+
+| The relay ... | What the row now says |
+|---|---|
+| never claimed the channel (a direct poll) | `holds NO claim for this channel at all — the relay was never the delivery path for it, so no hand-over line was ever going to exist. An agent can receive messages without the relay (`parlay listen --legacy-poll` polls the chat server directly), and what such a poll consumed is recorded nowhere in this fleet` |
+| released the channel before the message | `shows the relay's last claim on this channel ended at <ts>, before this message was recorded — the relay was not the delivery path for it, so a missing hand-over line is not evidence` |
+| has a claim trail that cannot be read | `could not be read (<why>) … whether the relay was ever the delivery path for this channel is unknown — a missing hand-over line is not evidence` |
+| has a claim trail that was truncated, or a claim that cannot be dated | named in the row; the verdict stays `recorded` for the same reason |
+| claimed the channel and still never handed the message over | `unhanded` fires exactly as before — the accusation is unchanged where the evidence supports it |
+
+`unhanded`'s own sentence also stopped offering an explanation the guard had
+ruled out: it no longer says "Either no relay is enrolled for this channel, …"
+(the claim trail now shows it was), leaving the two causes that remain — a relay
+polling a different chat server, or a hand-over that failed without leaving a
+line.
+
+Verbatim, from the built CLI against a private runtime dir and a refused server
+port (reproduced in full in [`docs/timeline.md`](docs/timeline.md)):
+
+```
+$ parlay timeline                                     # relay claimed crew-1, never handed m-2 over
+2026-10-07T06:46:49Z  4h00m ago  enrolled     crew-1   channel claimed by actor fp1
+2026-10-07T07:46:49Z  3h00m ago  queued       crew-1   msg m-1 (user) from captain — still in the agent's spool — …
+2026-10-07T08:46:49Z  2h00m ago  unhanded     crew-1   msg m-2 (user) from captain — … holds no hand-over for it around the time its claim on this channel covers: NOTHING picked this message up. Either the relay polls a different chat server, or the hand-over failed without leaving a line. …
+
+$ parlay timeline                                     # the relay never claimed crew-1 (a direct poll)
+2026-10-07T08:46:49Z  2h00m ago  recorded     crew-1   msg m-2 (user) from captain — … The relay's claim trail (audit.log, read in full) holds NO claim for this channel at all — the relay was never the delivery path for it, so no hand-over line was ever going to exist. An agent can receive messages without the relay (`parlay listen --legacy-poll` polls the chat server directly), and what such a poll consumed is recorded nowhere in this fleet
+
+$ parlay timeline --outcome unhanded                   # on that same fleet — the 2am "what did we lose"
+parlay timeline — oldest first; 0 event(s) matched
+  no event matched. At least one record answered and held no event for this question, so the fleet really is quiet over it (see sources for what was read).
+
+$ parlay timeline                                     # the relay released crew-1 before the message
+2026-10-07T06:46:49Z  4h00m ago  retired      crew-1   channel released by actor fp1
+2026-10-07T08:46:49Z  2h00m ago  recorded     crew-1   msg m-2 (user) from captain — … shows the relay's last claim on this channel ended at 2026-10-07T06:46:49Z, before this message was recorded — the relay was not the delivery path for it …
+
+$ parlay timeline                                     # no audit.log at all — enrollment UNKNOWN, not absent
+  audit log (absent)     no audit log — no channel has ever been claimed or released through THIS relay's control socket, so enrollment has no local record here · /tmp/obsdemo/rt/audit.log
+2026-10-07T08:46:49Z  2h00m ago  recorded     crew-1   msg m-2 (user) from captain — … The relay's claim trail (audit.log) could not be read (no audit trail at …/audit.log — this relay has never enrolled a channel here (an older relay build, or another runtime dir)), so whether the relay was ever the delivery path for this channel is unknown — a missing hand-over line is not evidence
+```
+
+Questions it answers that previously had a **wrong** answer:
+
+- **"Did we lose a message, or was it delivered without the relay?"** Before
+  this, `--outcome unhanded` could not tell them apart, and the honest answer for
+  a `--legacy-poll` agent was the more alarming one. Now the claim trail decides
+  it, and the row names the alternative path.
+- **"Is this silence a defect?"** A channel the relay never claimed is not a
+  defect in the relay, and the row no longer implies one. The relay's
+  enrollment state, when it matters, is `parlay liveness`'s and `parlay
+  explain`'s question — this row says what it can prove and stops.
+- **"Has the relay's delivery trail gone quiet because it stopped polling?"**
+  The claim intervals are *in the same timeline*, as `enrolled` / `retired`
+  rows, so the release that explains the missing hand-over is visible next to it.
+
+
 ## What each new surface degrades to, and how it says so
 
 Doc-level contracts, all indexed in [`docs/README.md`](docs/README.md):
@@ -679,6 +753,10 @@ the relay is dead and the answer still has to exist:
 | History read of another host's state dir (`timeline`) | `… · WARNING this is the state dir of THIS host (<statehome>), and the CLI targets http://macbook:31337 — a server on another host keeps its own history there, so these records may be a different server's` |
 | A recorded message with no hand-over, on a complete trail (`timeline`) | outcome `unhanded`: `the chat server persisted this message on this channel and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it: NOTHING picked this message up. … The message is still in the agent's history, so it can be resent` |
 | …on a trail that cannot prove it | outcome `recorded` with the guard: `NO delivery trail could be read, so whether the relay ever took it is unknown — not absent` (old relay) / `The delivery trail was read but it has rotated, … — a missing hand-over line is not evidence` / `The delivery trail was read but the file exceeded this reader's cap, …` / `younger than the hand-over window (1m30s) the relay is allowed before silence means something, so this is not counted as unhanded` / `The delivery trail begins at <ts>, AFTER this message` / `no dated line to date itself from` / `Its stamp does not parse` |
+| …on a channel the relay never claimed (`timeline`) | outcome `recorded`: `The relay's claim trail (audit.log, read in full) holds NO claim for this channel at all — the relay was never the delivery path for it, so no hand-over line was ever going to exist. An agent can receive messages without the relay (`parlay listen --legacy-poll` polls the chat server directly), and what such a poll consumed is recorded nowhere in this fleet` — and `--outcome unhanded` matches nothing |
+| …on a channel whose claim had ended (`timeline`) | outcome `recorded`: `The relay's claim trail (audit.log, read in full) shows the relay's last claim on this channel ended at <ts>, before this message was recorded — the relay was not the delivery path for it, so a missing hand-over line is not evidence: nothing in this fleet records what has no relay behind it, including a direct poll (`parlay listen --legacy-poll`)` |
+| No claim trail at all (`timeline`) | outcome `recorded`: `The relay's claim trail (audit.log) could not be read (no audit trail at <path> — this relay has never enrolled a channel here (an older relay build, or another runtime dir)), so whether the relay was ever the delivery path for this channel is unknown — a missing hand-over line is not evidence`; the `audit log (absent)` source row names the same file |
+| Claim trail truncated, or a claim with no readable stamp (`timeline`) | outcome `recorded`: `… exceeded this reader's cap, so its OLDEST claims are not in it — a missing claim for this channel is not evidence` / `… holds a claim for this channel whose time cannot be read, so whether it covers this message is unknown` |
 
 `parlay liveness` keeps the same rule with a different set of sources — two of
 its four degraded modes are about a record that is absent rather than stale:
@@ -706,6 +784,40 @@ observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
 
 ## Tests
 
+- `tools/cli/internal/timeline/enrollment_test.go` (iteration 8) — the claim
+  intervals themselves, with no files or clock: a message stamped exactly at the
+  `register` or the `unregister` is INSIDE the relay's window (inclusive at both
+  ends, because getting that backwards accuses the relay of losing a message it
+  was claiming at the time); a channel claimed, released and re-claimed uses the
+  LATEST release, so the first interval's end cannot be read as the second's;
+  another channel's claim never answers for this one; and the four
+  cannot-tell shapes (never read, an unreadable trail with its reason, a
+  truncated one, an undated claim) each come back not-claimed WITH a reason
+  rather than silently claimed.
+- `tools/cli/internal/timeline/history_test.go` (iteration 8 additions) — five
+  new rows in the guard table: `claim trail never read (enrollment unknown)`,
+  `claim trail truncated`, `channel never claimed (a direct poll)`, `claim ended
+  before the message`, `claim exists but cannot be dated` — each must land on
+  `recorded` and name itself. The `trail()` helper now supplies a claim covering
+  the fixture stamp, so the two tests that assert `unhanded` DO fire also pin
+  that the guard did not simply turn the verdict off.
+- `tools/cli/internal/commands/timeline_history_test.go` (iteration 8) —
+  end-to-end against private fixtures: the direct-poll case (the relay is
+  enrolled for a DIFFERENT channel, so absence of a claim for this one is
+  positive evidence) staying `recorded` and `--outcome unhanded` matching
+  nothing; a claim released before the message; no `audit.log` at all
+  (enrollment unknown, with the `audit log (absent)` source row naming the file);
+  and the two tests that assert `unhanded` still does fire now write the claim
+  that licenses it.
+- **Tests that bite (iteration 8).** Three mutations each turn tests red:
+  dropping the `Enrollment.ClaimAt` guard from `classifyHistory` turns the five
+  guard-table cases AND all three new end-to-end tests red (the pre-change
+  behaviour is exactly the false accusation); making `ClaimAt` always answer
+  "claimed" turns the four pure `ClaimAt` tests, the five guard cases and the
+  direct-poll end-to-end test red; and making `unregister` never close a claim
+  turns the claim-ended test red. The pre-change tree, run against the same
+  fixtures, reports `outcome unhanded — NOTHING picked this message up` for a
+  message the relay never had a path to.
 - `tools/cli/internal/commands/registry_file_test.go` (iteration 7) — the roster
   fallback end-to-end for BOTH verbs over a private state home: the fleet table
   with `STATE` answered from disk (`live` from the process table, `ghost` for a
@@ -892,91 +1004,116 @@ I deliberately did NOT add a root `go.work` to make that string exit zero: it
 would also make `go build ./...` drop `relay` and `cli` executables (~9 MB) into
 the repo root, and a committed one would trip CI's 2 MiB tracked-blob hygiene
 gate. The honest equivalent is the same chain inside each module, which is the
-form the stop condition names. Re-run end-to-end on iteration 7's frozen tree
-(each step's **true** exit code — no pipe swallowing it — with
-`go test -count=1`, and `make test-bdd` at the end), pasted verbatim:
+form the stop condition names. Re-run end-to-end on iteration 8's frozen tree
+(each step's **true** exit code — no pipe swallowing it — with `go test -count=1`,
+and `make test-bdd` at the end), pasted verbatim:
 
 ```
 === root: go build ./... (expected to fail: 4 modules, no root go.work) ===
 pattern ./...: directory prefix . does not contain main module or its selected dependencies
 --- root build exit=1
-=== root: gofmt -l . ===
---- gofmt exit=0 (empty list above = pass)
-=== tools/cli go build ===                --- tools/cli build exit=0
-=== tools/cli go vet ===                  --- tools/cli vet exit=0
+=== root: gofmt -l . (empty list = pass) ===
+--- gofmt exit=0
+=== tools/cli go build === OK
+--- tools/cli build exit=0
+=== tools/cli go vet ===
+--- tools/cli vet exit=0
 === tools/cli go test ===
-ok   github.com/trillium/parlay/tools/cli                       1.294s
-ok   github.com/trillium/parlay/tools/cli/internal/agentregistry 0.303s
-ok   github.com/trillium/parlay/tools/cli/internal/args         0.756s
-ok   github.com/trillium/parlay/tools/cli/internal/capability   1.407s
-ok   github.com/trillium/parlay/tools/cli/internal/chathistory  1.991s
-ok   github.com/trillium/parlay/tools/cli/internal/cityscaffold 0.539s
-ok   github.com/trillium/parlay/tools/cli/internal/commandreport 1.902s
-ok   github.com/trillium/parlay/tools/cli/internal/commands     50.586s
-ok   github.com/trillium/parlay/tools/cli/internal/config       2.139s
-ok   github.com/trillium/parlay/tools/cli/internal/crewevents   2.303s
-ok   github.com/trillium/parlay/tools/cli/internal/evalengine   14.634s
-ok   github.com/trillium/parlay/tools/cli/internal/format       2.701s
-ok   github.com/trillium/parlay/tools/cli/internal/gctemplate   2.715s
-ok   github.com/trillium/parlay/tools/cli/internal/help         2.362s
-ok   github.com/trillium/parlay/tools/cli/internal/httpc        2.653s
-ok   github.com/trillium/parlay/tools/cli/internal/identity     21.074s
-?    github.com/trillium/parlay/tools/cli/internal/juggle       [no test files]
-ok   github.com/trillium/parlay/tools/cli/internal/liveness     2.371s
-ok   github.com/trillium/parlay/tools/cli/internal/monitor      3.741s
-ok   github.com/trillium/parlay/tools/cli/internal/parlaybeads  2.729s
-ok   github.com/trillium/parlay/tools/cli/internal/procscan     2.186s
-ok   github.com/trillium/parlay/tools/cli/internal/relayctl     2.061s
-ok   github.com/trillium/parlay/tools/cli/internal/resolvehandoff 19.694s
-ok   github.com/trillium/parlay/tools/cli/internal/robotswatch  14.593s
-ok   github.com/trillium/parlay/tools/cli/internal/routing      2.065s
-ok   github.com/trillium/parlay/tools/cli/internal/sayguard     1.709s
-ok   github.com/trillium/parlay/tools/cli/internal/sourcecontract 1.583s
-ok   github.com/trillium/parlay/tools/cli/internal/spawn        22.527s
-ok   github.com/trillium/parlay/tools/cli/internal/staleness    1.751s
-ok   github.com/trillium/parlay/tools/cli/internal/supersession 1.686s
-?    github.com/trillium/parlay/tools/cli/internal/testsupport  [no test files]
-ok   github.com/trillium/parlay/tools/cli/internal/timeline     1.558s
-ok   github.com/trillium/parlay/tools/cli/internal/wire         1.561s
-ok   github.com/trillium/parlay/tools/cli/internal/worktreeliveness 1.630s
---- tools/cli test exit=0 (34 packages: 32 ok + 2 "no test files", 0 FAIL)
-=== tools/relay go build ===              --- tools/relay build exit=0
-=== tools/relay go vet ===                --- tools/relay vet exit=0
+ok  	github.com/trillium/parlay/tools/cli	0.734s
+ok  	github.com/trillium/parlay/tools/cli/internal/agentregistry	0.809s
+ok  	github.com/trillium/parlay/tools/cli/internal/args	1.007s
+ok  	github.com/trillium/parlay/tools/cli/internal/capability	1.185s
+ok  	github.com/trillium/parlay/tools/cli/internal/chathistory	1.718s
+ok  	github.com/trillium/parlay/tools/cli/internal/cityscaffold	1.566s
+ok  	github.com/trillium/parlay/tools/cli/internal/commandreport	1.754s
+ok  	github.com/trillium/parlay/tools/cli/internal/commands	49.026s
+ok  	github.com/trillium/parlay/tools/cli/internal/config	2.413s
+ok  	github.com/trillium/parlay/tools/cli/internal/crewevents	2.539s
+ok  	github.com/trillium/parlay/tools/cli/internal/evalengine	14.123s
+ok  	github.com/trillium/parlay/tools/cli/internal/format	2.302s
+ok  	github.com/trillium/parlay/tools/cli/internal/gctemplate	2.292s
+ok  	github.com/trillium/parlay/tools/cli/internal/help	2.286s
+ok  	github.com/trillium/parlay/tools/cli/internal/httpc	2.241s
+ok  	github.com/trillium/parlay/tools/cli/internal/identity	21.370s
+?   	github.com/trillium/parlay/tools/cli/internal/juggle	[no test files]
+ok  	github.com/trillium/parlay/tools/cli/internal/liveness	2.281s
+ok  	github.com/trillium/parlay/tools/cli/internal/monitor	3.194s
+ok  	github.com/trillium/parlay/tools/cli/internal/parlaybeads	2.122s
+ok  	github.com/trillium/parlay/tools/cli/internal/procscan	2.037s
+ok  	github.com/trillium/parlay/tools/cli/internal/relayctl	1.890s
+ok  	github.com/trillium/parlay/tools/cli/internal/resolvehandoff	19.453s
+ok  	github.com/trillium/parlay/tools/cli/internal/robotswatch	14.198s
+ok  	github.com/trillium/parlay/tools/cli/internal/routing	2.064s
+ok  	github.com/trillium/parlay/tools/cli/internal/sayguard	1.574s
+ok  	github.com/trillium/parlay/tools/cli/internal/sourcecontract	1.444s
+ok  	github.com/trillium/parlay/tools/cli/internal/spawn	22.543s
+ok  	github.com/trillium/parlay/tools/cli/internal/staleness	1.459s
+ok  	github.com/trillium/parlay/tools/cli/internal/supersession	1.397s
+?   	github.com/trillium/parlay/tools/cli/internal/testsupport	[no test files]
+ok  	github.com/trillium/parlay/tools/cli/internal/timeline	1.418s
+ok  	github.com/trillium/parlay/tools/cli/internal/wire	1.600s
+ok  	github.com/trillium/parlay/tools/cli/internal/worktreeliveness	1.470s
+--- tools/cli test exit=0
+=== tools/relay go build === OK
+--- tools/relay build exit=0
+=== tools/relay go vet ===
+--- tools/relay vet exit=0
 === tools/relay go test ===
-ok   github.com/trillium/parlay/tools/relay  3.073s
+ok  	github.com/trillium/parlay/tools/relay	2.942s
 --- tools/relay test exit=0
-=== packages/spawn-profiles go build ===  --- packages/spawn-profiles build exit=0
-=== packages/spawn-profiles go vet ===    --- packages/spawn-profiles vet exit=0
+=== packages/spawn-profiles go build === OK
+--- packages/spawn-profiles build exit=0
+=== packages/spawn-profiles go vet ===
+--- packages/spawn-profiles vet exit=0
 === packages/spawn-profiles go test ===
-ok   parlay/spawn-profiles/cmd/validate  0.341s
+ok  	parlay/spawn-profiles/cmd/validate	0.274s
 --- packages/spawn-profiles test exit=0
-=== packages/go-server go build ===       --- packages/go-server build exit=0
-=== packages/go-server go vet ===         --- packages/go-server vet exit=0
+=== packages/go-server go build === OK
+--- packages/go-server build exit=0
+=== packages/go-server go vet ===
+--- packages/go-server vet exit=0
 === packages/go-server go test ===
-ok   parlay/go-server/cmd/parlay-server + 9 more internal packages, every one ok, 0 FAIL
+ok  	parlay/go-server/cmd/parlay-server	0.732s
+ok  	parlay/go-server/internal/atomicfile	0.974s
+ok  	parlay/go-server/internal/bus	7.106s
+ok  	parlay/go-server/internal/capability	0.949s
+ok  	parlay/go-server/internal/guard	1.230s
+ok  	parlay/go-server/internal/handlers	16.643s
+ok  	parlay/go-server/internal/linkrewrite	1.849s
+ok  	parlay/go-server/internal/remoteinput	6.188s
+ok  	parlay/go-server/internal/sourcecontracts	2.289s
+ok  	parlay/go-server/internal/static	2.084s
+ok  	parlay/go-server/internal/store	2.206s
 --- packages/go-server test exit=0
 === make test-bdd ===
-17 scenarios (17 passed) / 55 steps (55 passed)    ok internal/evalengine
- 7 scenarios ( 7 passed) / 21 steps (21 passed)    ok internal/spawn
+21 steps ([32m21 passed[0m)
+243.194458ms
+--- PASS: TestFeatures (0.24s)
+    --- PASS: TestFeatures/Spawning_the_same_agent_id_twice_is_rejected (0.10s)
+    --- PASS: TestFeatures/Stopping_a_spawned_agent_leaves_no_live_process (0.11s)
+    --- PASS: TestFeatures/No_accounts_configured (0.00s)
+    --- PASS: TestFeatures/A_token_stored_under_one_account_name_is_not_found_under_a_different_name (0.00s)
+    --- PASS: TestFeatures/An_account_missing_from_the_accounts_file_is_not_resolved (0.00s)
+    --- PASS: TestFeatures/Resolution_of_a_stored_account_without_a_keychain_entry_fails (0.03s)
+    --- PASS: TestFeatures/The_default_working_directory_is_the_current_user's_home (0.00s)
+PASS
+ok  	github.com/trillium/parlay/tools/cli/internal/spawn	(cached)
 --- make test-bdd exit=0
 === VERIFY DONE ===
 ```
 
-`-race` on the packages this iteration touched is green as well — CI's Go job
-runs `-race` by default, and the exit-path test helper owns its pipes so an
-exiting verb leaves no goroutine behind. On this box that needs the ICU cgo
-flags the beads dependency's embedded-Dolt tree wants (run separately so the
-exit code is the test's, not a pipe's):
+`-race` on the packages this iteration touched is green as well (CI's Go job runs
+`-race` by default). On this box that needs the ICU cgo flags the beads
+dependency's embedded-Dolt tree wants:
 
 ```
 $ cd tools/cli && CGO_ENABLED=1 \
     CGO_CFLAGS=-I/opt/homebrew/opt/icu4c/include \
     CGO_CXXFLAGS=-I/opt/homebrew/opt/icu4c/include \
     CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c/lib \
-    go test -race -count=1 ./internal/commands/ ./internal/liveness/ ./internal/agentregistry/
-ok  github.com/trillium/parlay/tools/cli/internal/commands      35.736s
-ok  github.com/trillium/parlay/tools/cli/internal/liveness       2.615s
-ok  github.com/trillium/parlay/tools/cli/internal/agentregistry  2.365s
+    go test -race -count=1 ./internal/timeline/ ./internal/commands/
+ok  github.com/trillium/parlay/tools/cli/internal/timeline      1.273s
+ok  github.com/trillium/parlay/tools/cli/internal/commands     35.642s
 $ echo $?
 0
 ```
@@ -1006,7 +1143,14 @@ the prose it saves), the disk-roster branch (~20) in `liveness_sources.go` (236)
 and the vocabulary member in `timeline_sources.go` (245, both still inside).
 `commands/registry_file_test.go` (317) and `agentregistry_test.go` (131) follow
 the package convention rather than the production cap, as every earlier test
-file here does. Iteration 6: `commands/explain_delivery.go` (151, the two
+file here does. Iteration 8: `internal/timeline/enrollment.go` (93, the claim
+intervals and `ClaimAt`) and `commands/timeline_enrollment.go` (84, the audit
+trail → intervals mapping) are new production files well inside the cap; the
+change grew `internal/timeline/build.go` (229 → 237), `commands/timeline_sources.go`
+(245 → 249), `internal/timeline/timeline.go` (212 → 220) and
+`commands/timeline_render.go` (235 → 237, the footer now names the claim guard) —
+all existing files, all still inside 250. `internal/timeline/enrollment_test.go`
+(91) is a new test file in the range its neighbours occupy. Iteration 6: `commands/explain_delivery.go` (151, the two
 sources and the coverage note) is a new production file inside the cap, and the
 change it belongs to touched ~60 lines (additions and deletions) across the
 existing `explain.go`, `explain_render.go` and `explain_render_detail.go`
@@ -1102,18 +1246,26 @@ on `origin/main`, so nothing of the captain's is affected.
 - **Not widened:** `JSON_EXEMPT_PATHS`, `GuardedPaths`, `internal/httpc`'s
   timeout-less client, the spool's `CHAT_MSG` line format, and any deployment
   script or public endpoint shape.
+- **No new outcome for "the relay was not the delivery path".** A channel the
+  relay never claimed is not a delivery outcome at all — it is the absence of
+  one — and `recorded` already means the weak true statement ("the server
+  persisted this message") with the guard sentence explaining what could not be
+  concluded. Adding a twelfth vocabulary member would mean a new `--outcome`
+  name, help text and `--json` value for a case the guard already names in
+  prose.
 
 ## Left undone (with the reason)
 
 - **The last commit's push.** The run's orchestrator owns commits, and a commit
-  only reaches the PR once the branch is pushed again afterwards. Iteration 7
-  pushed, so the remote head is now `d9ce80e` (iterations 1–6: the ledger,
-  `explain` with its disk fallback, `timeline`, `liveness`, the server history) —
-  the earlier note that iteration 5 had pushed was wrong, the remote was still
-  at `f3dcf41`, which is why this iteration pushed instead of assuming. Iteration
-  7's own change is uncommitted in this worktree and reaches
+  only reaches the PR once the branch is pushed again afterwards. Iteration 8
+  pushed, so the remote head is now `8f1d320` (iterations 1–7: the ledger,
+  `explain` with its disk and roster fallbacks, `timeline` with server history,
+  `liveness`). Iteration 8's own change (the claim-trail guard) is uncommitted in
+  this worktree and reaches
   <https://github.com/trillium/parlay/pull/313> on the orchestrator's next commit
   and push (head `gnhf/objective-make-parla-ea8605`, base `main`, **not merged**).
+  A push was necessary because the previous iteration's own note claiming a push
+  was wrong once before: the remote head must be read, never trusted from notes.
 - **`explain` still does not read the chat server's own history** (the
   `recorded` / `unhanded` half iteration 5 added to `timeline`). It is
   deliberate: the per-agent screen already carries the relay's whole trail and
@@ -1141,3 +1293,20 @@ on `origin/main`, so nothing of the captain's is affected.
   with `--agent` as the remedy) and **no `--json` on `explain`** (the
   machine-readable halves already exist; a third schema is another thing to
   keep in sync).
+- **`unhanded` is a claim about the RELAY's path, not about delivery.** Even
+  with a claim covering the message, the verdict says the relay never handed it
+  over; it cannot say nothing else did. That is the ceiling of what any record
+  here supports (no read receipt exists — see above), and the row now names the
+  claim trail as the basis for the accusation rather than implying it covers
+  every possible consumer.
+- **The claim intervals come from `audit.log` alone; the live socket is not
+  consulted for the guard.** A `GET /agents` answer says who is enrolled *now*,
+  which cannot speak about a message from an hour ago, and `audit.log` is the
+  durable record that survives the relay — the same reason the trails are read
+  as files. If that file is gone (deleted, or a runtime dir that moved),
+  enrollment is unknown and the verdict stays silent rather than guessing.
+- **`register-denied` opens a claim, `unregister-denied` closes nothing.** A
+  denied register proves the channel was held (by another caller), so it is
+  evidence the relay was polling it; a denied unregister proves the caller held
+  nothing, so it cannot end an interval. Both are pinned by tests, not by
+  convention.

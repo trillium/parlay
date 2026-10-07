@@ -114,7 +114,7 @@ func gatherTimeline(agentFilter string) timelineGather {
 	// answer when the server is the broken thing. ---
 	hist := chathistory.Read(filepath.Join(config.StateHome(), chathistory.FileName), chathistory.DefaultMaxRecords)
 	g.Records.History = hist.Records
-	g.Records.Handover = handoverEvidence(ledger)
+	g.Records.Handover = handoverEvidence(ledger, audit)
 	g.Sources = append(g.Sources, historyNote(hist, config.ServerURL()))
 	if hist.State == chathistory.StateRead {
 		g.answered = true
@@ -180,16 +180,20 @@ func gatherSpoolPresence(recs []timeline.DeliveryRecord) map[string]timeline.Pre
 	return out
 }
 
-// handoverEvidence turns the caller's two reads — the relay's ledger and the
-// server's history — into the one question Build may ask: is a MISSING
-// hand-over line for a recorded message evidence the relay never took it?
+// handoverEvidence turns the caller's reads — the relay's ledger, its audit
+// trail and the server's history — into the one question Build may ask: is a
+// MISSING hand-over line for a recorded message evidence the relay never took
+// it?
 //
 // Every guard here exists to keep that answer "no" unless it is safe. The
 // ledger is a young record: a relay built before iteration 1 has no ledger at
 // all, so on a healthy fleet with an old relay, absence of a hand-over is
-// absence of a RECORD, and saying otherwise would accuse a working relay.
-func handoverEvidence(l relayctl.Ledger) timeline.HandoverEvidence {
-	he := timeline.HandoverEvidence{Grace: timelineHandoverGrace, Now: time.Now()}
+// absence of a RECORD, and saying otherwise would accuse a working relay. The
+// audit trail is the second half for the same reason: a channel the relay never
+// claimed (a `--legacy-poll` agent, most commonly) can never have a hand-over
+// line, so its absence says nothing about loss either.
+func handoverEvidence(l relayctl.Ledger, a relayctl.Audit) timeline.HandoverEvidence {
+	he := timeline.HandoverEvidence{Grace: timelineHandoverGrace, Now: time.Now(), Enrollment: enrollmentEvidence(a)}
 	switch {
 	case l.State != relayctl.TrailRead:
 		he.Reason = "the relay's delivery ledger is absent or unreadable — an older relay build has no ledger at all, so it records no hand-over to compare against"

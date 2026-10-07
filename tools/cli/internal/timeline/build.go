@@ -154,7 +154,15 @@ func classifyHistory(ev Event, handed map[string]bool, he HandoverEvidence) (Out
 		return OutcomeRecorded, fmt.Sprintf("%s. The delivery trail begins at %s, AFTER this message, so it cannot say whether the relay handled it",
 			base, he.CoveredFrom.UTC().Format(time.RFC3339))
 	default:
-		return OutcomeUnhanded, base + " and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it: NOTHING picked this message up. Either no relay is enrolled for this channel, the relay polls a different chat server, or the hand-over failed without leaving a line. The message is still in the agent's history, so it can be resent"
+		// The trail's coverage is not enough on its own: a hand-over is also
+		// absent for a channel the relay was never the delivery path for. That
+		// is what a direct poll (`parlay listen --legacy-poll`) looks like from
+		// here, and accusing it of losing the message would be the exact false
+		// verdict this whole rule exists to prevent.
+		if claimed, why := he.Enrollment.ClaimAt(ev.Agent, ev.At); !claimed {
+			return OutcomeRecorded, base + ". " + why
+		}
+		return OutcomeUnhanded, base + " and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it around the time its claim on this channel covers: NOTHING picked this message up. Either the relay polls a different chat server, or the hand-over failed without leaving a line. The message is still in the agent's history, so it can be resent"
 	}
 }
 

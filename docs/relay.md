@@ -80,6 +80,10 @@ The relay keeps **two durable trails**, and the split is the point:
   channel and when (`register`, `unregister`, and the denials), one line per
   enroll, with the caller's owner-token fingerprint and never the raw token.
   Shape: `{"ts","actor","action","agent"}`. Read it with `GET /audit?limit=N`.
+  It is also the evidence of *which delivery path* a channel had: `parlay
+  timeline` reads these lines as claim intervals, so a message on a channel the
+  relay never claimed (a `--legacy-poll` agent) is never reported as lost — see
+  [`timeline.md`](timeline.md).
 - `{runtime-dir}/delivery.log` — the **data plane**: what this relay actually
   spooled, for whom, when, and how each channel's delivery ended. One line per
   message. Read it with `GET /delivery?limit=N&agent=<id>`.

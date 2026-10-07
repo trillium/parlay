@@ -17,10 +17,22 @@ func rec(id string) chathistory.Record {
 
 // trail is the evidence a caller supplies after reading the relay's ledger in
 // full: it can speak for messages at or after coveredFrom, and the reader's
-// clock is now.
+// clock is now. It also carries a claim on crew-1 that covers the fixture
+// stamp, because the delivery trail alone never justifies the unhanded verdict
+// — a channel the relay was never the path for can never have a hand-over line.
 func trail(coveredFrom, now time.Time) HandoverEvidence {
-	return HandoverEvidence{Read: true, Complete: true, HasCoveredFrom: true,
+	ev := HandoverEvidence{Read: true, Complete: true, HasCoveredFrom: true,
 		CoveredFrom: coveredFrom, Grace: 90 * time.Second, Now: now}
+	ev.Enrollment = claimedSince(coveredFrom)
+	return ev
+}
+
+// claimedSince is a claim trail that proves the relay held crew-1 from the
+// first recorded event onward and has not released it.
+func claimedSince(from time.Time) EnrollmentEvidence {
+	return EnrollmentEvidence{Read: true, Claims: map[string][]Claim{
+		"crew-1": {{From: from, HasFrom: true}},
+	}}
 }
 
 // findSource picks one event by WHICH RECORD it came from, not just by message
@@ -112,6 +124,32 @@ func TestHistoryGuardsKeepItFromAccusingTheRelay(t *testing.T) {
 			"The delivery trail begins at"},
 		{"trail holds no dated line", HandoverEvidence{Read: true, Complete: true, Now: at.Add(time.Hour)},
 			"no dated line"},
+		{"claim trail never read (enrollment unknown)",
+			HandoverEvidence{Read: true, Complete: true, HasCoveredFrom: true,
+				CoveredFrom: at.Add(-time.Hour), Grace: time.Minute, Now: at.Add(time.Hour)},
+			"claim trail (audit.log) could not be read"},
+		{"claim trail truncated",
+			HandoverEvidence{Read: true, Complete: true, HasCoveredFrom: true,
+				CoveredFrom: at.Add(-time.Hour), Grace: time.Minute, Now: at.Add(time.Hour),
+				Enrollment: EnrollmentEvidence{Read: true, Truncated: true}},
+			"exceeded this reader's cap"},
+		{"channel never claimed (a direct poll)",
+			HandoverEvidence{Read: true, Complete: true, HasCoveredFrom: true,
+				CoveredFrom: at.Add(-time.Hour), Grace: time.Minute, Now: at.Add(time.Hour),
+				Enrollment: EnrollmentEvidence{Read: true, Claims: map[string][]Claim{}}},
+			"holds NO claim for this channel at all"},
+		{"claim ended before the message",
+			HandoverEvidence{Read: true, Complete: true, HasCoveredFrom: true,
+				CoveredFrom: at.Add(-time.Hour), Grace: time.Minute, Now: at.Add(time.Hour),
+				Enrollment: EnrollmentEvidence{Read: true, Claims: map[string][]Claim{
+					"crew-1": {{From: at.Add(-time.Hour), HasFrom: true, To: at.Add(-30 * time.Minute), HasTo: true}}}}},
+			"last claim on this channel ended at"},
+		{"claim exists but cannot be dated",
+			HandoverEvidence{Read: true, Complete: true, HasCoveredFrom: true,
+				CoveredFrom: at.Add(-time.Hour), Grace: time.Minute, Now: at.Add(time.Hour),
+				Enrollment: EnrollmentEvidence{Read: true, Claims: map[string][]Claim{
+					"crew-1": {{Undated: true}}}}},
+			"whose time cannot be read"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -33,6 +33,10 @@ func histLine(id, channel, stamp, text string) string {
 func TestTimelineRecordedMessageWithNoHandOverIsUnhanded(t *testing.T) {
 	f := newTimelineFixture(t)
 	f.ledger(t, `{"ts":"`+f.at(-3*time.Hour)+`","event":"spooled","agent":"crew-1","msg":"m-1","role":"user"}`)
+	// The relay is on record as having claimed this channel before the
+	// message: without that, the absence of a hand-over line would say nothing
+	// about the relay (see the direct-poll test below).
+	f.audit(t, `{"ts":"`+f.at(-4*time.Hour)+`","actor":"fp1","action":"register","agent":"crew-1"}`)
 	f.spool(t, "CHAT_MSG|m-1|user|still waiting")
 	f.history(t,
 		histLine("m-1", "crew-1", f.at(-3*time.Hour), "SECRETBODY-one"),
@@ -156,6 +160,7 @@ func TestTimelineWarnsWhenTheHistoryFileMayBelongToAnotherServer(t *testing.T) {
 func TestTimelineUnhandedIsInTheJSONVocabulary(t *testing.T) {
 	f := newTimelineFixture(t)
 	f.ledger(t, `{"ts":"`+f.at(-3*time.Hour)+`","event":"spooled","agent":"crew-1","msg":"m-1","role":"user"}`)
+	f.audit(t, `{"ts":"`+f.at(-4*time.Hour)+`","actor":"fp1","action":"register","agent":"crew-1"}`)
 	f.history(t, histLine("m-2", "crew-1", f.at(-2*time.Hour), "x"))
 	f.deadServer(t)
 
@@ -192,4 +197,82 @@ func TestTimelineUnhandedIsInTheJSONVocabulary(t *testing.T) {
 	if !found {
 		t.Errorf("the history source is missing from --json: %+v", doc.Sources)
 	}
+}
+
+// TestTimelineDirectPollIsNeverCalledLost is the false accusation this guard
+// exists for. `parlay listen --legacy-poll` polls the chat server directly with
+// no relay involved, so a message it consumed leaves no spool line, no ledger
+// hand-over and no claim. Without the claim check, every such message would be
+// reported as "NOTHING picked this message up" — the exact verdict an operator
+// would then chase for hours.
+func TestTimelineDirectPollIsNeverCalledLost(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.ledger(t, `{"ts":"`+f.at(-3*time.Hour)+`","event":"spooled","agent":"crew-2","msg":"m-9","role":"user"}`)
+	// The relay is on record here — for ANOTHER channel. Claiming one channel
+	// must not license a verdict about another.
+	f.audit(t, `{"ts":"`+f.at(-4*time.Hour)+`","actor":"fp1","action":"register","agent":"crew-2"}`)
+	f.history(t, histLine("m-1", "crew-1", f.at(-2*time.Hour), "delivered by a direct poll"))
+	f.deadServer(t)
+
+	out, _, code, exited := timelineRun(t, nil)
+	if exited {
+		t.Fatalf("records answered, so no non-zero exit (code %d):\n%s", code, out)
+	}
+	wantLine(t, out,
+		"recorded",
+		"holds NO claim for this channel at all",
+		"never the delivery path",
+		"parlay listen --legacy-poll",
+	)
+	notWantLine(t, out, "NOTHING picked")
+
+	// The 2am query for "what did we lose" must match nothing here.
+	out, _, _, _ = timelineRun(t, []string{"--outcome", "unhanded"})
+	wantLine(t, out, "0 event(s) matched")
+	notWantLine(t, out, "m-1")
+}
+
+// TestTimelineClaimThatEndedBeforeTheMessage: the relay polled this channel and
+// then let it go, and the message arrived afterwards. That is not a lost
+// delivery — the relay was not the delivery path any more — so the recorded row
+// names the release instead of accusing the relay.
+func TestTimelineClaimThatEndedBeforeTheMessage(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.ledger(t, `{"ts":"`+f.at(-3*time.Hour)+`","event":"spooled","agent":"crew-1","msg":"m-1","role":"user"}`)
+	f.audit(t,
+		`{"ts":"`+f.at(-5*time.Hour)+`","actor":"fp1","action":"register","agent":"crew-1"}`,
+		`{"ts":"`+f.at(-4*time.Hour)+`","actor":"fp1","action":"unregister","agent":"crew-1"}`,
+	)
+	f.history(t, histLine("m-2", "crew-1", f.at(-2*time.Hour), "sent after the channel was released"))
+	f.deadServer(t)
+
+	out, _, _, _ := timelineRun(t, nil)
+	wantLine(t, out, "recorded", "last claim on this channel ended at", "not the delivery path for it")
+	notWantLine(t, out, "NOTHING picked")
+
+	out, _, _, _ = timelineRun(t, []string{"--outcome", "unhanded"})
+	wantLine(t, out, "0 event(s) matched")
+}
+
+// TestTimelineUnreadableClaimTrailSuppressesTheVerdict: with no claim trail at
+// all the relay's enrollment is UNKNOWN, not absent, so the verdict falls toward
+// silence rather than an accusation. The audit log's own source note names the
+// missing file, so the operator can see why the timeline is being careful.
+func TestTimelineUnreadableClaimTrailSuppressesTheVerdict(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.ledger(t, `{"ts":"`+f.at(-3*time.Hour)+`","event":"spooled","agent":"crew-1","msg":"m-1","role":"user"}`)
+	f.history(t, histLine("m-2", "crew-1", f.at(-2*time.Hour), "who knows"))
+	f.deadServer(t)
+
+	out, _, _, _ := timelineRun(t, nil)
+	wantLine(t, out,
+		"audit log (absent)",
+		"recorded",
+		"claim trail (audit.log) could not be read",
+		"not evidence",
+	)
+	notWantLine(t, out, "NOTHING picked")
+
+	out, _, _, _ = timelineRun(t, []string{"--outcome", "unhanded"})
+	wantLine(t, out, "0 event(s) matched")
 }

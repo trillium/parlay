@@ -86,10 +86,12 @@ const (
 	// It is the server's own history, not a delivery: a recorded message can sit
 	// unhanded forever, and the relay's hand-over (if any) is a separate event.
 	OutcomeRecorded Outcome = "recorded"
-	// OutcomeUnhanded: the server recorded the message and the delivery trail —
-	// read in full, and starting before this message — holds no hand-over for
-	// it. Nothing picked it up. Only produced when absence IS evidence: see
-	// HandoverEvidence. Everything weaker stays Recorded with the reason.
+	// OutcomeUnhanded: the server recorded the message, the relay is shown by
+	// its own claim trail to have been the DELIVERY PATH for this channel at
+	// that time, and the delivery trail — read in full, starting before this
+	// message — holds no hand-over for it. Nothing picked it up. Only produced
+	// when absence IS evidence: see HandoverEvidence and EnrollmentEvidence.
+	// Everything weaker stays Recorded with the reason.
 	OutcomeUnhanded Outcome = "unhanded"
 	// OutcomeUnknown: something was recorded and this reader cannot classify
 	// it (an unreadable spool, an event name from a newer relay). Always
@@ -201,6 +203,11 @@ type Records struct {
 //     polled yet.
 //   - Now: the clock the caller read at. Zero disables the verdict entirely,
 //     because an age cannot be computed from a clock nobody supplied.
+//
+// Coverage of the trail is only half of it: a hand-over is also absent for a
+// channel the relay was never polling, which is the normal shape of the
+// `--legacy-poll` delivery path. Enrollment is the other half, and its zero
+// value (not read) suppresses the verdict too.
 type HandoverEvidence struct {
 	Read           bool
 	Complete       bool
@@ -209,4 +216,5 @@ type HandoverEvidence struct {
 	CoveredFrom    time.Time
 	Grace          time.Duration
 	Now            time.Time
+	Enrollment     EnrollmentEvidence
 }
