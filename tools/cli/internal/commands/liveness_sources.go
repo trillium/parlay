@@ -83,15 +83,15 @@ func gatherLiveness(a livenessArgs) livenessGather {
 	relayDetail := fmt.Sprintf("no answer at %s — the relay is not running (or uses another runtime dir). Its delivery trail is a FILE and is still read below; only the relay's live state is unknown", relayctl.SockPath())
 	enrolled := map[string]bool{}
 	relayAgentsKnown := false
+	// Both control-socket routes carry the relay's bindings, so they are read
+	// together and merged (see relaySelfOf): reading /health alone let a relay
+	// that reports `server` on /agents only be printed as `polling unknown`,
+	// and suppressed the polls-another-server warning the fact was there for.
+	var relayHealth relayctl.Health
+	var relayAgents *relayctl.Agents
+	healthOK := false
 	if h, ok := relayctl.ReadHealth(); ok {
-		g.answered = true
-		relayDetail = "up — " + relayHealthNote(h)
-		if equal, comparable := sameServerURL(h.Server, g.Server); comparable && !equal {
-			relayDetail += fmt.Sprintf(" · WARNING this relay polls %s, NOT the server this CLI targets (%s)", h.Server, g.Server)
-		}
-		g.Sources = append(g.Sources, sourceNote{Name: "relay", State: srcRead, Detail: relayDetail})
-	} else {
-		g.Sources = append(g.Sources, sourceNote{Name: "relay", State: srcUnreachable, Detail: relayDetail})
+		relayHealth, healthOK = h, true
 	}
 	// The relay's enrolled set is a second, independent answer to "is anything
 	// reading this channel" — but NOT an equivalent one: the legacy poll path
@@ -100,9 +100,21 @@ func gatherLiveness(a livenessArgs) livenessGather {
 	if ra, ok := relayctl.ReadAgents(); ok {
 		g.answered = true
 		relayAgentsKnown = true
+		relayAgents = &ra
 		for _, id := range ra.Agents {
 			enrolled[id] = true
 		}
+	}
+	if healthOK {
+		g.answered = true
+		self := relaySelfOf(relayHealth, relayAgents)
+		relayDetail = "up — " + relayHealthNote(self)
+		if equal, comparable := sameServerURL(self.Server, g.Server); comparable && !equal {
+			relayDetail += fmt.Sprintf(" · WARNING this relay polls %s, NOT the server this CLI targets (%s)", self.Server, g.Server)
+		}
+		g.Sources = append(g.Sources, sourceNote{Name: "relay", State: srcRead, Detail: relayDetail})
+	} else {
+		g.Sources = append(g.Sources, sourceNote{Name: "relay", State: srcUnreachable, Detail: relayDetail})
 	}
 
 	ledger := relayctl.ReadLedger()

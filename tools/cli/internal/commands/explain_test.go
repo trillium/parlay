@@ -88,6 +88,13 @@ type explainFixture struct {
 	// -race even though the requests have all completed by assertion time.
 	relayMu      sync.Mutex
 	relayMethods []string
+
+	// relayAgentsBinding, when set, is what GET /agents reports about the relay
+	// itself (the agent list still comes from the call). It exists so a test can
+	// reproduce a relay build whose /health omits its bindings while /agents
+	// carries them — the live relay on this box — or one that omits them on both
+	// routes, without inventing a second fake socket.
+	relayAgentsBinding *relayctl.Agents
 }
 
 func newExplainFixture(t *testing.T, agent string) *explainFixture {
@@ -188,7 +195,12 @@ func (f *explainFixture) relay(t *testing.T, health relayctl.Health, agents []st
 	})
 	mux.HandleFunc("/agents", func(w http.ResponseWriter, r *http.Request) {
 		note(r)
-		writeRelayJSON(t, w, relayctl.Agents{Agents: agents, Server: health.Server, Runtime: f.runtime})
+		body := relayctl.Agents{Agents: agents, Server: health.Server, Runtime: f.runtime}
+		if f.relayAgentsBinding != nil {
+			body = *f.relayAgentsBinding
+			body.Agents = agents
+		}
+		writeRelayJSON(t, w, body)
 	})
 	mux.HandleFunc("/delivery", func(w http.ResponseWriter, r *http.Request) {
 		note(r)

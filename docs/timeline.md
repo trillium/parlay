@@ -323,13 +323,28 @@ traffic, so the socket line names both URLs:
   relay control socket (read) up — polling http://somewhere-else:4242, runtime /tmp/… · WARNING this relay polls http://somewhere-else:4242, NOT the server this CLI targets (http://127.0.0.1:60533): nothing sent to http://127.0.0.1:60533 reaches this relay
 ```
 
-**The relay answers but reports no bindings.** An older relay build's `/health`
-carries only its `ok` flag. The source line names that absence as UNKNOWN and
-says it is not a mismatch — a warning here would be invented from silence:
+**The relay answers but its `/health` reports no bindings.** An older relay
+build's `/health` carries only its `ok` flag — the live relay on this box does —
+but `/agents` reports the same two values, and this verb reads both routes, so a
+binding the relay does report is printed with the route it came from. Real
+output against a private fixture (temp path elided):
 
 ```
-  relay control socket (read) up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+  relay control socket (read) up — polling http://127.0.0.1:60533, runtime /…/pdoc (this relay's /health omitted the server and runtime; its /agents answer reported it)
 ```
+
+With **both** routes silent the value really is unknown, and the line says so
+once — verbatim against a private fixture whose `/health` is `{"ok":true}` and
+whose `/agents` reports no bindings either:
+
+```
+  relay control socket (read) up — polling unknown, runtime unknown — neither its /health nor its /agents answer reported the server or its runtime dir, so neither is known — which server it polls is UNKNOWN, not a mismatch
+```
+
+That second line is also the fix for a silent warning: the polls-another-server
+comparison above can only fire on a binding somebody reported, so reading
+`/health` alone dropped it for exactly the relay builds that keep their
+bindings on `/agents`.
 
 **The server is too old for a command registry.** A 404 is "there is no such
 record"; a refused connection is "unknown". They are different lines because

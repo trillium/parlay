@@ -177,19 +177,39 @@ declines and says why — and no agent from that file appears in the table:
 
 ### C5. Relay running, but its `/health` reports no bindings
 
-An older relay build answers `/health` with its `ok` flag alone, and no amount
-of source-reading by the operator makes that say which server it polls. The
-line names the missing binding as UNKNOWN and says outright that this is **not**
-a mismatch — inventing a warning here would send an operator to re-enroll a
-relay that is polling correctly. Verbatim against a private fixture:
+An older relay build answers `/health` with its `ok` flag alone — the live relay
+on this box does exactly that. That is not the end of the answer: `/agents`
+carries the same two values from the same relay fields, and this verb reads both
+routes, so a binding the relay does report is printed (with the route it came
+from) rather than as `unknown`. Real output against the live fleet:
 
 ```
-  relay                  read — up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+  relay                  read — up — polling http://macbook:31337, runtime /var/folders/…/T/parlay (this relay's /health omitted the server and runtime; its /agents answer reported it) · WARNING this relay polls http://macbook:31337, NOT the server this CLI targets (http://localhost:4242)
 ```
 
-Before this iteration the same running relay printed `up — polling , runtime `
-— two empty strings where a sentence expected values, which reads as a
-measurement rather than as a question the relay did not answer.
+Two things follow, and both matter more than the wording. First, `polling
+unknown` here would have been an *invented* unknown — the fact was in a response
+this command had already read. Second, the warning is a comparison, and reading
+only `/health`'s empty string silently dropped it: a relay pointed at another
+server is the registered-but-deaf failure, the one case where an agent looks
+live and receives nothing.
+
+When **both** routes are silent, the line says so once and keeps the value
+unknown. Verbatim against a private fixture whose `/health` is `{"ok":true}`
+and whose `/agents` reports no bindings either:
+
+```
+  relay                  read — up — polling unknown, runtime unknown — neither its /health nor its /agents answer reported the server or its runtime dir, so neither is known — which server it polls is UNKNOWN, not a mismatch
+```
+
+And when the `/agents` route was never read (it did not answer), that is a
+different, weaker fact, and it reads differently: `its /health reported neither,
+and its /agents answer was not read`. "Nobody asked" must not borrow the wording
+of "the relay refused", so the two are pinned apart by a unit test.
+
+Before this work the same running relay printed `up — polling , runtime ` — two
+empty strings where a sentence expected values, which reads as a measurement
+rather than as a question the relay did not answer.
 
 ### D. Nothing observable at all
 

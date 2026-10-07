@@ -155,15 +155,15 @@ func paneLine(r explainReport) string {
 // polling somebody else", which is the registered-but-deaf failure: the agent
 // looks live from the server's side and receives nothing.
 func relayLine(r explainReport) string {
-	if r.relayHealth == nil {
+	if r.relaySelf == nil {
 		return fmt.Sprintf("no answer at %s — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below", relayctl.SockPath())
 	}
-	line := "up — " + relayHealthNote(*r.relayHealth)
-	if !r.relayHealth.OK {
+	line := "up — " + relayHealthNote(*r.relaySelf)
+	if !r.relaySelf.healthOK {
 		line += " (its /health reported ok:false)"
 	}
-	if equal, comparable := sameServerURL(r.relayHealth.Server, r.Server); comparable && !equal {
-		line += fmt.Sprintf("\n                WARNING: this relay polls %s, NOT the server this CLI targets (%s) — anything sent to %s does not reach this relay", r.relayHealth.Server, r.Server, r.Server)
+	if equal, comparable := sameServerURL(r.relaySelf.Server, r.Server); comparable && !equal {
+		line += fmt.Sprintf("\n                WARNING: this relay polls %s, NOT the server this CLI targets (%s) — anything sent to %s does not reach this relay", r.relaySelf.Server, r.Server, r.Server)
 	}
 	return line
 }

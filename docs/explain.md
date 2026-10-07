@@ -182,19 +182,30 @@ never printed as "delivered".
 **Relay up, but this build has no delivery trail** — the relay answers
 `/health` and `/agents` and 404s `/delivery`, which is what a relay built before
 the ledger does. The trail on disk is still the answer, and the line says which
-half of the relay was read. Verbatim against a private fixture; note the relay
-line, which names the bindings this older `/health` does not carry rather than
-printing `polling , runtime `:
+half of the relay was read. Real output of the built CLI against a private
+fixture (temp paths elided); note the relay line, which merges the two
+control-socket routes that carry the relay's bindings (`/health` and `/agents`)
+instead of printing `polling , runtime ` or inventing an unknown:
 
 ```
-relay           up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+relay           up — polling http://127.0.0.1:60533, runtime /…/pdoc (this relay's /health omitted the server and runtime; its /agents answer reported it)
 relay enroll    polling this agent
-queue           no spool file at /…/rt6/crew-1.chan — nothing is queued for this agent, or the relay is not running
-delivery        read from disk (/…/rt6/delivery.log) because the relay did not serve GET /delivery (it answered /health, so it was up; its build may predate the ledger, or that one request failed) — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown
-                  2026-10-07T08:07:09Z  spooled msg m-1 role=user from=captain
-                  2026-10-07T08:37:09Z  SPOOL FAILED for msg m-9 — it did not reach the agent
-                  2026-10-07T08:37:09Z  delivery ended — reason=channel-gone spoolLines=2
-last error      relay could not spool message m-9 — it never reached the agent (2026-10-07T08:37:09Z)
+queue           no spool file at /…/pdoc/crew-1.chan — nothing is queued for this agent, or the relay is not running
+delivery        read from disk (/…/pdoc/delivery.log) because the relay did not serve GET /delivery (it answered /health, so it was up; its build may predate the ledger, or that one request failed) — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown
+                  2026-10-07T10:43:47Z  spooled msg m-1 role=user from=captain
+                  2026-10-07T10:44:47Z  SPOOL FAILED for msg m-9 — it did not reach the agent
+                  2026-10-07T10:45:47Z  delivery ended — reason=channel-gone spoolLines=2
+last error      relay could not spool message m-9 — it never reached the agent (2026-10-07T10:44:47Z)
+```
+
+**Relay polling a different server, reported only on `/agents`** — the
+registered-but-deaf case. The warning is a comparison of the relay's binding
+against the server this CLI targets, so it can only be raised when one of the
+two routes actually reported the binding. Real output against the live fleet:
+
+```
+relay           up — polling http://macbook:31337, runtime /var/folders/…/T/parlay (this relay's /health omitted the server and runtime; its /agents answer reported it)
+                WARNING: this relay polls http://macbook:31337, NOT the server this CLI targets (http://localhost:4242) — anything sent to http://localhost:4242 does not reach this relay
 ```
 
 **Missing resume cursor** — a spool whose lines are all non-chat events (for

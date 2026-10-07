@@ -126,14 +126,23 @@ func gatherTimeline(agentFilter string) timelineGather {
 		Detail: fmt.Sprintf("no answer at %s — the relay is not running (or uses another runtime dir). The trails above are files and were still read; only the relay's live state is unknown", relayctl.SockPath())}
 	if h, ok := relayctl.ReadHealth(); ok {
 		g.answered = true
+		// /agents carries the same two bindings from the same relay fields, so
+		// it is read here too: a relay whose /health omits them still names the
+		// server it polls on /agents, and without it this line printed `polling
+		// unknown` and dropped the polls-another-server warning entirely.
+		var relayAgents *relayctl.Agents
+		if a, ok := relayctl.ReadAgents(); ok {
+			relayAgents = &a
+		}
+		self := relaySelfOf(h, relayAgents)
 		if d, ok := relayctl.ReadDelivery(1, agentFilter); ok && !d.Enabled {
 			g.Sources = append(g.Sources, sourceNote{Name: "delivery recording", State: srcOff, Path: d.Ledger,
 				Detail: "PARLAY_RELAY_DELIVERY_LOG=0 in the relay's environment — it is recording nothing now, so any events below predate the switch-off"})
 		}
 		relayNote = sourceNote{Name: "relay control socket", State: srcRead,
-			Detail: "up — " + relayHealthNote(h)}
-		if equal, comparable := sameServerURL(h.Server, g.Server); comparable && !equal {
-			relayNote.Detail += fmt.Sprintf(" · WARNING this relay polls %s, NOT the server this CLI targets (%s): nothing sent to %s reaches this relay", h.Server, g.Server, g.Server)
+			Detail: "up — " + relayHealthNote(self)}
+		if equal, comparable := sameServerURL(self.Server, g.Server); comparable && !equal {
+			relayNote.Detail += fmt.Sprintf(" · WARNING this relay polls %s, NOT the server this CLI targets (%s): nothing sent to %s reaches this relay", self.Server, g.Server, g.Server)
 		}
 	}
 	g.Sources = append(g.Sources, relayNote)

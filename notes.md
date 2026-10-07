@@ -253,7 +253,7 @@ The section above is main's onboarding account (PR #314), which landed while thi
 
 # notes.md — making parlay's runtime observable without reading its source
 
-Status: **in progress** — iterations 1–9 (see "Left undone" for what is not
+Status: **in progress** — iterations 1–10 (see "Left undone" for what is not
 done and the PR's head state).
 
 ## What an operator can now answer that they could not before
@@ -747,9 +747,92 @@ Questions it answers that previously had a **misleading** answer:
 - **"Is this relay polling my server?"** `up — polling unknown, runtime
   unknown` says the question was not answered, and says it is *not* a mismatch.
   Before, `polling , runtime ` invited exactly the wrong conclusion.
+  *(Iteration 10 went further on the same line: the relay's `/agents` answer
+  carries the same bindings, so "unknown" now appears only when neither route
+  reports them — see section 10.)*
 - **"Is the relay dead?"** The delivery row and the relay row can no longer
   disagree in the same screen: a run that says `relay up` says why the trail
   came from disk instead.
+
+### 10. A binding the relay reported is never printed as unknown (iteration 10)
+
+Iteration 9 fixed an *unmeasured* value printed as a measurement. Running the
+same three surfaces against the same live fleet again found the mirror image:
+a **measured** value printed as unknown, in the one place where the answer was
+most consequential.
+
+The relay running on this box answers `/health` with `{"ok":true}` alone — but
+it reports `server` and `runtime` on `/agents`, and **all three commands already
+read `/agents`** (for relay enrollment). So the truth was in a response the
+command had in hand:
+
+```
+$ parlay liveness          # before iteration 10 (live box)
+  relay                  read — up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+```
+
+The cost was not the wording. The registered-but-deaf warning is a COMPARISON
+(the relay's binding against the server this CLI targets), and it read
+`/health`'s empty string — so for exactly the relay builds that keep their
+bindings on `/agents`, a relay pointed at a different chat server produced no
+warning at all. That is the failure mode the comparison exists for: the agent
+looks live and receives nothing.
+
+After, real output (three surfaces, one running relay, one story):
+
+```
+$ parlay liveness
+  relay                  read — up — polling http://macbook:31337, runtime /var/folders/…/T/parlay (this relay's /health omitted the server and runtime; its /agents answer reported it) · WARNING this relay polls http://macbook:31337, NOT the server this CLI targets (http://localhost:4242)
+
+$ parlay timeline --limit 1
+  relay control socket (read) up — polling http://macbook:31337, runtime /var/folders/…/T/parlay (this relay's /health omitted the server and runtime; its /agents answer reported it) · WARNING this relay polls http://macbook:31337, NOT the server this CLI targets (http://localhost:4242): nothing sent to http://localhost:4242 reaches this relay
+
+$ parlay explain danny
+relay           up — polling http://macbook:31337, runtime /var/folders/…/T/parlay (this relay's /health omitted the server and runtime; its /agents answer reported it)
+                WARNING: this relay polls http://macbook:31337, NOT the server this CLI targets (http://localhost:4242) — anything sent to http://localhost:4242 does not reach this relay
+```
+
+What the merge does, in one rule (`relaySelfOf`, `relay_health_note.go`):
+
+- `/health` wins every field it carries — it is the route the caller asked for
+  the bindings — and `/agents` fills only what `/health` left empty (both
+  routes answer from the same relay fields, `r.server`/`r.runtimeDir`).
+- A filled-in value is printed **with its provenance**: `(this relay's /health
+  omitted the server and runtime; its /agents answer reported it)`. The
+  ordinary case — `/health` carried both — gains no prose at all, which is
+  pinned by a test, because a note that fires on every row is noise an operator
+  learns to skip.
+- When **neither** route reports a value, it stays UNKNOWN, and the reason is
+  chosen from what was observed: `neither its /health nor its /agents answer
+  reported …` when `/agents` answered and omitted it, versus `its /health
+  reported neither, and its /agents answer was not read` when that route never
+  answered. "Nobody asked" may not borrow the wording of "the relay refused".
+  Verified verbatim against a private relay fixture whose `/health` is
+  `{"ok":true}` and whose `/agents` reports no bindings either:
+
+  ```
+  relay                  read — up — polling unknown, runtime unknown — neither its /health nor its /agents answer reported the server or its runtime dir, so neither is known — which server it polls is UNKNOWN, not a mismatch
+  ```
+
+- Nothing was added to a delivery path: this is one pure helper plus a second
+  read of a route each command already called, and the monitor never consults
+  these bindings.
+
+Tests (all in `tools/cli/internal/commands/relay_health_note_test.go`): the
+shape table grew to nine cases including the three merge shapes and the
+not-read-versus-refused wording; a unit test pins the precedence rule itself
+(`/health` wins); and four end-to-end tests cover the merge and the recovered
+warning on all three surfaces. Disabling the merge turns **9 tests red** (3
+subtests of the shape table, the precedence unit test, and all four end-to-end
+tests) — the exact list is under "Tests" below. The new tests reference the new
+`relaySelfOf`/`relayAgentsBinding` symbols, so they do not even compile against
+the pre-change tree.
+
+Docs re-captured from the built binary: [`docs/liveness.md`](docs/liveness.md)
+C5 (both shapes, plus why a silent warning is the real defect),
+[`docs/explain.md`](docs/explain.md) (the disk-trail block, re-captured, and the
+`/agents`-only warning), [`docs/timeline.md`](docs/timeline.md) (both shapes),
+and the per-verb `HELP` text for all three verbs.
 
 
 ## What each new surface degrades to, and how it says so
@@ -771,7 +854,7 @@ never touched).
 | Relay down, no ledger on disk | `delivery  because the relay did not answer — no ledger on disk at <path>: this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'` |
 | Relay down, ledger present but unreadable | `delivery  because the relay did not answer — its ledger at <path> exists but could not be read (<err>): the file is there and what it holds is unknown, not empty` |
 | Live relay up, but its build serves no `/delivery` route (404) | the relay line says `up` and the trail on disk is still read, with the reason naming what happened instead of contradicting that line: `delivery  read from disk (<path>) because the relay did not serve GET /delivery (it answered /health, so it was up; its build may predate the ledger, or that one request failed) — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown` (iteration 9; before it the same run said `because the relay did not answer`, two rows under a `relay up` line) |
-| Running relay whose `/health` reports no bindings (an older build) | `relay  up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch` and the same tail on `timeline`'s `relay control socket (read)` row (iteration 9; before it both printed `up — polling , runtime ` — two empty strings where a measurement belongs) |
+| Running relay whose `/health` reports no bindings (an older build) | iteration 10: the value is taken from the relay's own `/agents` answer, with the route named — `relay  up — polling http://macbook:31337, runtime /var/folders/…/T/parlay (this relay's /health omitted the server and runtime; its /agents answer reported it) · WARNING this relay polls http://macbook:31337, NOT the server this CLI targets (http://localhost:4242)`. When BOTH routes are silent it stays unknown and says so once: `up — polling unknown, runtime unknown — neither its /health nor its /agents answer reported the server or its runtime dir, so neither is known — which server it polls is UNKNOWN, not a mismatch`, and when `/agents` was never read the reason changes to `its /health reported neither, and its /agents answer was not read`. (Iteration 9 gave the unknown wording; before that `liveness` and `timeline` printed `up — polling , runtime ` — two empty strings where a measurement belongs — and the mismatch warning was dropped for any relay that reports its bindings only on `/agents`) |
 | Relay down, ledger read but quiet for this agent | `delivery  read from disk (<path>) because the relay did not answer — ledger present, no events for this agent; whether recording is switched off right now is unknown` (this is an ANSWER, so exit stays 0 — it is not "nothing was observable") |
 | Relay down, ledger rotated / corrupt | `… oldest first · 1 of them from the generation before the last rotation (older history is in <path>.1) · 1 corrupt line(s) skipped`, plus the `rotated` marker row itself — `delivery.log.1` is read, so a shortened trail never reads as a quiet one |
 | Live relay answers while a stale ledger sits on disk | the socket answer wins: the disk wording never appears and the file is not consulted (`TestExplainSocketAnswerBeatsAStaleLedgerOnDisk`) |
@@ -1055,6 +1138,29 @@ before this iteration.
   method of every control-socket request (asserting `GET` only — the same socket
   serves `POST /register` and `POST /unregister`) and hashes both trails plus the
   spool before and after, failing if either changed.
+- **Iteration 10's regression tests.** `relay_health_note_test.go` holds a
+  nine-shape unit table for the two routes that carry the relay's bindings, a
+  unit test for the precedence rule, and four end-to-end tests (liveness merge,
+  liveness recovered warning, timeline merge + warning, explain merge +
+  warning). Disabling the merge (`if a == nil` → `if true`) in `relaySelfOf`
+  turns **NINE checks red**, and the list is the evidence that each surface is
+  covered rather than one shared code path being asserted once:
+
+  ```
+  --- FAIL: TestRelayHealthNoteNeverPrintsAnEmptyValue (0.00s)
+      --- FAIL: TestRelayHealthNoteNeverPrintsAnEmptyValue/both_reported_by_/agents (0.00s)
+      --- FAIL: TestRelayHealthNoteNeverPrintsAnEmptyValue/server_only_from_/agents (0.00s)
+      --- FAIL: TestRelayHealthNoteNeverPrintsAnEmptyValue/runtime_only_from_/agents (0.00s)
+  --- FAIL: TestRelaySelfOfPrefersHealthAndFillsOnlyWhatItLeftEmpty (0.00s)
+  --- FAIL: TestLivenessTakesBindingsFromAgentsWhenHealthOmitsThem (0.00s)
+  --- FAIL: TestLivenessWarnsWhenOnlyAgentsNamesAnotherServer (0.00s)
+  --- FAIL: TestTimelineTakesBindingsFromAgentsWhenHealthOmitsThem (0.00s)
+  --- FAIL: TestExplainWarnsWhenOnlyAgentsNamesAnotherServer (0.00s)
+  ```
+
+  The one shape that stays green under that mutation is the both-routes-silent
+  test, which is correct: it pins the wording of an unknown value and does not
+  depend on a value being merged.
 - Earlier iterations, still green: `tools/cli/internal/relayctl/relayctl_test.go` — runtime-dir/socket
   resolution, spool absent vs empty vs readable, the five `SpoolCursor` rules
   copied from the relay's `lastSpooledID` (id required, role must be
@@ -1093,9 +1199,73 @@ I deliberately did NOT add a root `go.work` to make that string exit zero: it
 would also make `go build ./...` drop `relay` and `cli` executables (~9 MB) into
 the repo root, and a committed one would trip CI's 2 MiB tracked-blob hygiene
 gate. The honest equivalent is the same chain inside each module, which is the
-form the stop condition names. Re-run end-to-end on iteration 8's frozen tree
-(each step's **true** exit code — no pipe swallowing it — with `go test -count=1`,
-and `make test-bdd` at the end), pasted verbatim:
+form the stop condition names. The chain below was re-run end-to-end on iteration 10's tree (each step's
+**true** exit code — no pipe swallowing it — and `make test-bdd` at the end),
+pasted verbatim:
+
+```
+===== MODULE tools/cli =====
+build tools/cli exit=0
+vet tools/cli exit=0
+test tools/cli exit=0
+ok  	github.com/trillium/parlay/tools/cli/internal/timeline	(cached)
+ok  	github.com/trillium/parlay/tools/cli/internal/wire	(cached)
+ok  	github.com/trillium/parlay/tools/cli/internal/worktreeliveness	(cached)
+===== MODULE tools/relay =====
+build tools/relay exit=0
+vet tools/relay exit=0
+test tools/relay exit=0
+ok  	github.com/trillium/parlay/tools/relay	(cached)
+===== MODULE packages/go-server =====
+build packages/go-server exit=0
+vet packages/go-server exit=0
+test packages/go-server exit=0
+ok  	parlay/go-server/internal/sourcecontracts	(cached)
+ok  	parlay/go-server/internal/static	(cached)
+ok  	parlay/go-server/internal/store	(cached)
+===== MODULE packages/spawn-profiles =====
+build packages/spawn-profiles exit=0
+vet packages/spawn-profiles exit=0
+test packages/spawn-profiles exit=0
+ok  	parlay/spawn-profiles/cmd/validate	(cached)
+gofmt clean (whole tree)
+===== make test-bdd =====
+make test-bdd exit=0
+17 scenarios (17 passed)
+55 steps (55 passed)
+--- PASS: TestFeatures (0.03s)      # evalengine
+7 scenarios (7 passed)
+21 steps (21 passed)
+--- PASS: TestFeatures (0.24s)      # spawn
+===== CHAIN fail=0 =====
+```
+
+(The three tailed `ok` lines are only the last three of the `tools/cli` run;
+`go test ./...` there reports every package, and its exit code — 0 — is the
+whole-package verdict. `(cached)` means Go validated that exact package content,
+not that the tests were skipped. The `#` comments in the bdd block are mine: the
+runner prints both suites under the same test name.)
+
+And under the race detector (needs the ICU include/lib flags on this macOS box,
+as recorded in iteration 4's learnings):
+
+```
+=== -race on the touched packages (./internal/commands/ ./internal/help/) ===
+ok  	github.com/trillium/parlay/tools/cli/internal/commands	36.249s
+ok  	github.com/trillium/parlay/tools/cli/internal/help	1.306s
+```
+
+At the repo root the literal stop condition is still:
+
+```
+=== root: go build ./... (expected to fail: 4 modules, no root go.work) ===
+pattern ./...: directory prefix . does not contain main module or its selected dependencies
+--- root build exit=1
+=== root: gofmt -l . (empty list = pass) ===
+--- gofmt exit=0
+```
+
+Older per-package listing (iteration 8, kept for the per-package detail):
 
 ```
 === root: go build ./... (expected to fail: 4 modules, no root go.work) ===
@@ -1318,7 +1488,16 @@ was the same before iteration 1.
 
 This repository enforces no per-file line budget (only a 2 MiB tracked-blob
 ceiling and a docs-index gate) — the 250-line cap on every new **production**
-file is my choice. Iteration 9: `commands/relay_health_note.go` (39, the one
+file is my choice. Iteration 10 added no new file at all: `commands/relay_health_note.go`
+(39 → 128, still well inside the cap) gained the merge and its provenance
+wording, and the change touched three existing call sites — `explain.go`
+(252 → 261) and `explain_render.go` (220, the renderer now reads the merged
+view), `liveness_sources.go` (236 → 248, the two control-socket reads are
+reordered so the merge happens before the source note is written), and
+`timeline_sources.go` (249 → 258) — the last two above the 250 choice on
+existing files, deliberately not split mid-edit for the same reason as before.
+`relay_health_note_test.go` (135 → 273) is a test file in the range the
+package's other test files already occupy. Iteration 9: `commands/relay_health_note.go` (39, the one
 rendering of a live relay's self-reported bindings, shared by `explain`,
 `liveness` and `timeline`) is a new production file far inside the cap, and the
 iteration's production change is three one-line call sites plus ~20 changed
@@ -1449,16 +1628,17 @@ on `origin/main`, so nothing of the captain's is affected.
 ## Left undone (with the reason)
 
 - **The last commit's push.** The run's orchestrator owns commits, and a commit
-  only reaches the PR once the branch is pushed again afterwards. Iteration 9
-  pushed `4ef738b` at the start of its work, so the remote head was
-  `4ef738b` (iterations 1–8: the ledger, `explain` with its disk and roster
-  fallbacks, `timeline` with server history and the claim-trail guard,
-  `liveness`). Iteration 9's own change (absence never printed as a value) is
+  only reaches the PR once the branch is pushed again afterwards. Iteration 10
+  pushed at its start, so the remote head is `edc5c9a` (iterations 1–9: the
+  ledger, `explain` with its disk and roster fallbacks, `timeline` with server
+  history and the claim-trail guard, `liveness`, and iteration 9's
+  absence-never-printed-as-a-value fix). Iteration 10's own change (a binding the
+  relay reported is never printed as unknown, across all three surfaces) is
   uncommitted in this worktree and reaches
-  <https://github.com/trillium/parlay/pull/313> on the orchestrator's next commit
-  and push (head `gnhf/objective-make-parla-ea8605`, base `main`, **not merged**).
-  A push is checked every iteration because the remote head was wrong once
-  before: read it, never trust a note.
+  <https://github.com/trillium/parlay/pull/313> on the orchestrator's next
+  commit and push (head `gnhf/objective-make-parla-ea8605`, base `main`, **not
+  merged**). A push is checked every iteration because the remote head was wrong
+  once before: read it, never trust a note.
 - **`explain` still does not read the chat server's own history** (the
   `recorded` / `unhanded` half iteration 5 added to `timeline`). It is
   deliberate: the per-agent screen already carries the relay's whole trail and

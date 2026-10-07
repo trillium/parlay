@@ -91,6 +91,7 @@ type explainReport struct {
 
 	// --- relay half ---
 	relayHealth   *relayctl.Health // nil = control socket did not answer
+	relaySelf     *relaySelf       // the merged self-report (health ∪ agents); nil = no relay answered
 	relayAgentsOK bool             // GET /agents answered
 	relayEnrolled bool             // ...and lists this agent
 	delivery      *explainDelivery
@@ -211,18 +212,26 @@ func gatherExplain(agentID string) explainReport {
 
 	// The relay half. Health and Agents are separate reads because they answer
 	// separate questions: health says WHICH server the relay polls (the
-	// registered-but-deaf tell), agents says whether this one is enrolled.
+	// registered-but-deaf tell), agents says whether this one is enrolled — and
+	// both carry the same bindings, so the two reads are merged rather than one
+	// being allowed to declare the other's answer unknown.
+	var relayAgents *relayctl.Agents
 	if h, ok := relayctl.ReadHealth(); ok {
 		rep.relayHealth = &h
 	}
 	if a, ok := relayctl.ReadAgents(); ok {
 		rep.relayAgentsOK = true
+		relayAgents = &a
 		for _, id := range a.Agents {
 			if id == agentID {
 				rep.relayEnrolled = true
 				break
 			}
 		}
+	}
+	if rep.relayHealth != nil {
+		self := relaySelfOf(*rep.relayHealth, relayAgents)
+		rep.relaySelf = &self
 	}
 	if d, ok := relayctl.ReadDelivery(explainEventTail, agentID); ok {
 		rep.delivery = deliverySocket(d)
