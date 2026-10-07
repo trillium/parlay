@@ -313,7 +313,66 @@ Questions it answers that previously required reading code:
   crew-state`, so `explain` and `crew-state` cannot report different enrollment
   for one agent in one instant.
 
-### 2. The relay's data plane became queryable (iteration 1)
+### 2. `parlay timeline` — "what happened", on one axis
+
+Before it, answering "what happened to crew-1 between 08:00 and 09:00" meant
+reading the relay's `delivery.log` by hand, reading `audit.log` by hand, calling
+`GET /api/chat/commands` by hand, and interleaving three vocabularies by eye —
+then reading source to know what each one meant. One read-only command now
+merges them, queryable by agent (`--agent`/`--channel` or a bare id), by time
+window (`--since`/`--until`, RFC3339 or `90s`/`45m`/`2h`/`3d`), by outcome
+(`--outcome queued,dropped,…`) and by count (`--limit N`, `0` = all):
+
+```
+parlay timeline — oldest first; 6 matching event(s)
+  asked: everything the records still hold
+  runtime /tmp/ptlA.PzWpdi · server http://127.0.0.1:1
+
+2026-10-07T07:05:22Z  2h00m ago  superseded   crew-1   msg m-1 (user) from captain — an earlier hand-over of this message id — it was handed over 2 time(s) and only the newest one is the live delivery (a channel replay, not a second message)
+2026-10-07T07:05:22Z  2h00m ago  queued       crew-1   msg m-1 (user) from captain — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
+2026-10-07T07:05:22Z  2h00m ago  dropped      crew-1   msg m-9 — the append to the agent's spool FAILED — this message did not reach the agent …
+2026-10-07T07:05:22Z  2h00m ago  enrolled     crew-1   channel claimed by actor a1b2c3d4
+2026-10-07T08:35:22Z  30m01s ago  ended        crew-1   the channel stopped being polled — reason=channel-gone; 2 line(s) were still in the spool at that moment, unproven-consumed
+2026-10-07T08:35:22Z  30m01s ago  refused      crew-1   register-denied by actor none — another caller held the channel; the attempt is recorded, never silent
+
+  shown: queued=1 · dropped=1 · superseded=1 · ended=1 · enrolled=1 · refused=1
+
+sources
+  delivery ledger (read) 4 delivery event(s) read (oldest first); …
+  audit log (read)       2 control-plane action(s) (register/unregister/denied) read · …
+  relay control socket (unreachable) no answer at /tmp/ptlA.PzWpdi/relay.sock — the relay is not running (or uses another runtime dir). The trails above are files and were still read; only the relay's live state is unknown
+  command registry (unreachable) could not ask http://127.0.0.1:1/api/chat/commands — the server did not answer (…); commands are unknown, not absent
+```
+
+Four questions it answers that nothing answered before:
+
+- **What did the relay actually deliver, to whom, and when?** Every hand-over,
+  per agent, with the outcome the records can prove — and the two facts no
+  other surface has: whether the line is *still* in the spool, and whether a
+  message was handed over more than once (`superseded`).
+- **Where did history get lost?** A `rotated` marker sits in the trail at the
+  point of loss, and the generation before it is read too, so a short history
+  is visibly short rather than quietly short.
+- **What did the last command do, and did it succeed?** `send → failed ·
+  exit=1 · outcome=error · took=1.2s`, or `running-for=` when a record has no
+  duration yet.
+- **Did anything answer at all?** The `sources` footer, the header's
+  "newest N of M matching", and exit 1 when nothing was observable.
+
+**The one rule it will not break:** nothing in this fleet acknowledges that a
+message was read — no receipt, no consumer cursor the sender can see, and the
+relay's poll loop never learns what the monitor tailing the spool consumed. So
+`delivered` is deliberately **not an outcome** (`--outcome delivered` is a
+usage error), and `queued` means exactly "spooled, and the line is still in the
+spool", verified against the spool file rather than assumed. The footer of
+every human-readable run restates it.
+
+**It is read-only and cannot slow delivery.** It opens files, asks the local
+socket GETs only, and issues one GET. A test asserts every control-socket
+request was a `GET` and that both trails plus the spool are byte-identical
+after a run.
+
+### 3. The relay's data plane became queryable (iteration 1)
 
 `{runtime-dir}/delivery.log` — one JSON line per `spooled`, `spool-failed`,
 `delivery-ended` and `rotated` event, identifiers and a clock only, never a
@@ -327,8 +386,9 @@ message.
 
 ## What each new surface degrades to, and how it says so
 
-`README`-level contract: [`docs/explain.md`](docs/explain.md) (also indexed in
-[`docs/README.md`](docs/README.md)) and [`docs/relay.md`](docs/relay.md).
+Doc-level contracts, all indexed in [`docs/README.md`](docs/README.md):
+[`docs/explain.md`](docs/explain.md), [`docs/timeline.md`](docs/timeline.md) and
+[`docs/relay.md`](docs/relay.md) (plus `tools/relay/NOTES.md`).
 
 The governing rule is **an absence is never reported as a healthy value**. Every
 line below is real output from `tools/cli` against a private fixture (a private
@@ -348,14 +408,73 @@ never touched).
 | Server unreachable | `registration  unknown — the server did not answer <url>`; `channel  unknown — …`; `commands  unknown — the server did not answer /api/chat/commands`; `crew state  working · source: status-degraded · … (relay unreachable; status may be stale)`. Exit stays **0** because the relay and the local records still answered. |
 | Status file absent / unreadable / unparseable | `status file  nothing recorded` / the reader's own `unreadable`/`unparseable` detail (the frozen crew-state contract) |
 | Relay did not answer, so enrollment unknown | `relay enroll  NOT polled by this relay — whether the server registry lists it is unknown (the server did not answer)` — a failed server read is never rendered as "not registered either" |
-| Nothing observable at all | stderr `parlay explain: nothing was observable about <id> — the server did not answer at <url> and no local relay record or status file exists`, exit **1** (the only non-zero outcome besides usage) |
+| Nothing observable at all (`explain`) | stderr `parlay explain: nothing was observable about <id> — the server did not answer at <url> and no local relay record or status file exists`, exit **1** (the only non-zero outcome besides usage) |
+
+`parlay timeline` adds the file-first half of the same table — the modes where
+the relay is dead and the answer still has to exist:
+
+| Degraded mode | What `parlay timeline` prints |
+|---|---|
+| Relay not running | rows are still printed (the trail is a file); footer: `relay control socket (unreachable)  no answer at <sock> — the relay is not running (or uses another runtime dir). The trails above are files and were still read; only the relay's live state is unknown` |
+| Ledger never written | `delivery ledger (absent)  no ledger — this relay has never recorded a delivery event. That is NOT the same as 'nothing was delivered': an older relay build has no ledger at all` |
+| Ledger unreadable | `delivery ledger (unreadable)  could not read it (<err>) — the trail exists and its contents are unknown` |
+| Ledger recording switched off | `delivery recording (off)  PARLAY_RELAY_DELIVERY_LOG=0 in the relay's environment — it is recording nothing now, so any events below predate the switch-off` (only a live socket can say this; the file is still read) |
+| Rotated ledger | `rotated generation (read)  <n> event(s) from the generation before the last rotation — read as well, so rotation shortens the trail only where the 'rotated' marker says so`, plus a `rotated` row: `every event older than this line is gone, so a trail that starts at this marker is not a quiet fleet` |
+| Spooled, but the spool cannot be read | outcome `unknown`: `the relay spooled it, but the spool could not be read (no spool at <path> — never created here, or removed; if every agent reads this way, the relay and this CLI may be using different runtime dirs), so whether the line is still waiting is not observable from here` |
+| Spool line still present | outcome `queued`: `still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered` |
+| Spool line gone | outcome `left-spool`: `no longer in the agent's spool — read or pruned, and nothing in this fleet records which` |
+| Message handed over twice | outcome `superseded`: `an earlier hand-over of this message id — it was handed over 2 time(s) and only the newest one is the live delivery (a channel replay, not a second message)` |
+| Sprig append failed | outcome `dropped`: `the append to the agent's spool FAILED — this message did not reach the agent` |
+| Old server, no command registry (404) | `command registry (unsupported)  this server answered 404 — it is older than the live-command registry, so no invocation is recorded anywhere` — distinct from `(unreachable) … commands are unknown, not absent` |
+| Relay bound to another server | `relay control socket (read) up — polling <other>, runtime <dir> · WARNING this relay polls <other>, NOT the server this CLI targets (<url>): nothing sent to <url> reaches this relay` |
+| Timestamp missing or unparseable | the row is kept with `?` in the time column and `atKnown:false` in `--json` (never midnight, never dropped); inside a window it is kept and flagged, because a window cannot date it |
+| List truncated by `--limit` | `newest 2 of 5 matching event(s) (--limit 0 shows all)` — the count is of MATCHES, before the limit |
+| Unrecognised event/action name (a newer relay) | outcome `unknown`: `unrecognised delivery event "throttled" — this reader predates it; the record exists and is not classified` (an audit action likewise) |
+| Spool reconciliation past the cap | outcome `unknown`: `this trail mentions <n> agents and one timeline read reconciles at most 64 spools; narrow with --agent to get a per-message answer` |
+| Nothing observable at all (`timeline`) | stderr `parlay timeline: nothing was observable — no delivery ledger, no audit log, the relay at <sock> did not answer, and no command registry at <url>`, exit **1**; the header says `no event matched. No record answered at all, so an empty timeline means nothing was observable — see sources.` instead of a bare empty list |
 
 Exit codes: `0` at least one source answered (including bad news), `1` nothing
 observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
 
 ## Tests
 
-- `tools/cli/internal/relayctl/relayctl_test.go` — runtime-dir/socket
+- `tools/cli/internal/timeline/timeline_test.go` — the pure classify/select
+  layer, with no I/O: spooled-still-present → `queued` and never "delivered";
+  spooled-but-gone → `left-spool`; an unreadable or never-looked-up spool →
+  `unknown` with a reason (never `left-spool`); an earlier hand-over of a
+  message id → `superseded` while the newest stays live; supersession computed
+  in read order so an unparseable stamp cannot reorder it; `spool-failed` →
+  `dropped` and never superseded; `delivery-ended` with an explicit `0` vs an
+  absent `spoolLines`; an unrecognised event name kept as `unknown` rather than
+  dropped; lifecycle/refusal mapping; command detail (exit code, outcome,
+  duration, `running-for`); the undated-keeps-its-row rule; and the filter
+  matrix (agent, outcome, window, newest-N-kept-in-order, empty-not-nil).
+- `tools/cli/internal/relayctl/relayctl_trail_test.go` — the file readers:
+  absent is not empty and not an error; both rotation generations read in order;
+  corrupt lines skipped and counted; unreadable is not absent; the spool reader
+  returns ids only (a test asserts no message body can leak into the id set),
+  counts duplicates, and falls back to the `.retired` generation.
+- `tools/cli/internal/commands/timeline_test.go` — end-to-end against private
+  fixtures (a private runtime dir, private trails, a private server): the full
+  story across all four sources; relay down with the trail still answering;
+  absent vs unreadable vs rotated vs switched-off; spool unreadable → `unknown`;
+  the 404-vs-unreachable split; the another-server warning; filter and limit
+  behaviour; the `--json` envelope including `atKnown:false` for a junk stamp;
+  nine usage errors; and the exit-code contract.
+- **Tests that bite.** The honesty rules were mutation-checked rather than
+  assumed: making `classifySpooled` skip its unknown-spool branch and neutering
+  the supersession check turns SIX tests red —
+  `TestUnreadableSpoolIsUnknownNotGone`, `TestNoPresenceEntryAtAllIsUnknown`,
+  `TestRepeatedHandOverSupersedesTheEarlierOne`,
+  `TestSupersessionUsesReadOrderNotStamps` (package `timeline`), plus
+  `TestTimelineAnswersWhatHappened` and
+  `TestTimelineUnreadableSpoolIsUnknownNotGone` (package `commands`). The whole
+  command is new, so every test in it fails before the change by construction.
+- **Read-only, pinned structurally.** `TestTimelineIsReadOnly` records the HTTP
+  method of every control-socket request (asserting `GET` only — the same socket
+  serves `POST /register` and `POST /unregister`) and hashes both trails plus the
+  spool before and after, failing if either changed.
+- Earlier iterations, still green: `tools/cli/internal/relayctl/relayctl_test.go` — runtime-dir/socket
   resolution, spool absent vs empty vs readable, the five `SpoolCursor` rules
   copied from the relay's `lastSpooledID` (id required, role must be
   `user`/`agent`, tail-only read), a 404 from `/delivery` treated as "could not
@@ -380,8 +499,8 @@ observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
 
 The stop condition is written for a single Go module, but this repository is
 **four separate modules with deliberately no root `go.work`** (`.github/workflows/ci.yml`
-iterates a `GO_MODULES` list and proves it equals `find . -name go.mod`). Run
-verbatim at the repo root:
+iterates a `GO_MODULES` list and proves it equals `find . -name go.mod`, so the
+absence of a root `go.work` is itself enforced). Run verbatim at the repo root:
 
 ```
 $ go build ./... && go vet ./... && gofmt -l . | (! grep .) && go test ./... && make test-bdd
@@ -389,42 +508,68 @@ pattern ./...: directory prefix . does not contain main module or its selected d
 exit 1
 ```
 
-The equivalent per module (`CGO_ENABLED=0`, the same list CI uses) is green, with
-`make test-bdd` green:
+I deliberately did NOT add a root `go.work` to make that string exit zero: it
+would also make `go build ./...` drop `relay` and `cli` executables (~9 MB) into
+the repo root, and a committed one would trip CI's 2 MiB tracked-blob hygiene
+gate. The honest equivalent is the same chain inside each module, which is the
+form the stop condition names, and it is green:
 
 ```
 $ for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do
-    (cd $m && go build ./... && go vet ./... && test -z "$(gofmt -l .)" && go test ./...)
+    (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... &&
+             gofmt -l . | (! grep .) && CGO_ENABLED=0 go test ./...)
   done && make test-bdd
-tools/cli:      ok github.com/trillium/parlay/tools/cli/internal/commands 49.7s (+ every other package ok)
-tools/relay:    ok github.com/trillium/parlay/tools/relay 2.9s
-packages/go-server: ok parlay/go-server/internal/{store,handlers,guard,bus,…}
-packages/spawn-profiles: ok parlay/spawn-profiles/cmd/validate
-make test-bdd:  PASS (evalengine + spawn suites)
+=== tools/cli ===
+ok  github.com/trillium/parlay/tools/cli                              1.148s
+ok  github.com/trillium/parlay/tools/cli/internal/commands           50.707s
+ok  github.com/trillium/parlay/tools/cli/internal/timeline            1.804s
+ok  github.com/trillium/parlay/tools/cli/internal/relayctl            2.084s
+      …28 more packages ok, 0 FAIL
+=== tools/relay ===             ok  github.com/trillium/parlay/tools/relay  3.018s
+=== packages/go-server ===      ok  parlay/go-server/internal/{store,handlers,guard,bus,…}  (11 packages, 0 FAIL)
+=== packages/spawn-profiles === ok  parlay/spawn-profiles/cmd/validate  0.276s
+$ make test-bdd
+17 scenarios (17 passed) / 55 steps (55 passed)   ok internal/evalengine
+ 7 scenarios ( 7 passed) / 21 steps (21 passed)   ok internal/spawn
+make test-bdd exit=0    (42 packages ok, zero FAIL, zero build/vet/gofmt failures)
 ```
 
-`go build ./...`, `go vet ./...` and `go test ./...` were also run with
-`-race` on the two touched packages (`internal/commands`, `internal/relayctl`).
+`-race` on the three touched packages (`internal/timeline`, `internal/relayctl`,
+`internal/commands`) is green as well — CI's Go job runs `-race` by default, and
+the exit-path test helper owns its pipes so an exiting verb leaves no goroutine
+behind.
 
-**Known-red baseline:** none. `make test-bdd` is green on this box, as it was at
-the start of the run — there is no pre-existing red to carry.
+**Known-red baseline: none.** `make test-bdd` was green on this box before this
+iteration's work and after it; the literal root-command failure above is a
+repository-shape fact (four modules, no root `go.work`), not a red test, and it
+was the same before iteration 1.
 
 ## Line budget
 
 This repository enforces no per-file line budget (only a 2 MiB tracked-blob
 ceiling and a docs-index gate) — the 250-line cap on every new **production**
-file is my choice. New test files follow the package's own existing convention
-instead: `internal/commands` test files run 216–2055 lines and
-`internal/relayctl/relayctl_test.go` ends at 220.
+file is my choice. Split to stay under it: `internal/timeline` is
+`timeline.go` (159, types and vocabulary) + `build.go` (166, classification) +
+`select.go` (158, narrowing and ordering); the verb is `timeline.go` (188,
+flags) + `timeline_sources.go` (177, the reads) + `timeline_notes.go` (84, the
+sentences) + `timeline_when.go` (45) + `timeline_render.go` (233); the relay
+readers are `relayctl_trail.go` (181) + `relayctl_spool.go` (89). New **test**
+files follow the package's own existing convention instead:
+`internal/commands` test files run 216–2055 lines and
+`internal/relayctl/relayctl_test.go` ends at 220, so
+`commands/timeline_test.go` (482) and `timeline/timeline_test.go` (329) are in
+line with their neighbours.
 
 ## Deliberately not built
 
-- **No new HTTP route.** Every read `explain` performs already exists
-  (`GET /api/chat/subscribers`, `GET /api/chat/commands`, and the relay
-  socket's `GET /health|/agents|/delivery`), so `internal/guard.GuardedPaths`
-  is untouched and no guard classification/test was needed. A `GET
-  /api/chat/explain` would have to re-implement enrollment, presence and
-  command filtering server-side for no added truth.
+- **No new HTTP route.** Every read `explain` and `timeline` perform already
+  exists (`GET /api/chat/subscribers`, `GET /api/chat/commands`, the relay
+  socket's `GET /health|/agents|/delivery`, and the relay's two trail files),
+  so `internal/guard.GuardedPaths` is untouched and no guard
+  classification/test was needed. A `GET /api/chat/timeline` would have to
+  re-implement enrollment, presence, delivery and command filtering
+  server-side for no added truth — and, worse, could only answer while the
+  server was up, which is the opposite of what a 2am read needs.
 - **No `--json` on `explain`.** The machine-readable halves already exist
   (`parlay commands --json`, the subscribers snapshot, the relay's `/delivery`);
   a third schema would be another thing to keep in sync for a surface an
@@ -442,25 +587,35 @@ instead: `internal/commands` test files run 216–2055 lines and
 
 ## Left undone (with the reason)
 
-- **The final PR.** The run's orchestrator owns commits, so this iteration did
-  not push or open a PR. When the loop finishes, push the branch and
+- **The final PR.** The run's orchestrator owns commits, so no iteration pushed
+  or opened a PR. When the loop finishes, push the branch and
   `gh-axi pr create --base main --head <branch>`; do not merge.
-- **A single cross-agent timeline** (objective item 1: queryable by channel,
-  window and outcome, distinguishing delivered from queued from dropped from
-  superseded). The durable material for it now exists: the relay's delivery
-  ledger (per-agent, filterable) and the server's command registry. What is
-  missing is a reader that merges those two into one time-ordered view and a
-  defined answer for "superseded" (the chat server has no supersession record
-  today — `internal/supersession` is representation-plane and does not touch
-  chat history). `parlay explain` is the per-agent slice of that timeline; a
-  fleet-wide `parlay timeline` is the next unit and should reuse `relayctl`
-  rather than invent a second relay client.
 - **Fleet-wide liveness** (objective item 2's operator surface): which agents
-  are silent, since when, and last observed activity for each. Every
-  ingredient is now reader-accessible (presence rows, relay enrollment,
-  spool/cursor state), but the fleet view has not been built.
+  are silent, since when, whether their last heartbeat is genuinely absent or
+  merely expired, and the last observed activity for each. Every ingredient is
+  now reader-accessible per agent — the presence row's `lastSeen` versus its
+  absence (`explain` already prints the blind-vs-drifted distinction), relay
+  enrollment, the spool and its resume cursor — but there is no single fleet
+  view. `parlay timeline` covers the "since when" half for delivery and
+  lifecycle; it does not answer "which agent is silent right now", and building
+  that means deciding whether it belongs in `parlay stale`, `parlay crew-state`
+  or a new verb rather than inventing a fourth overlapping surface.
+- **A `delivered` outcome, and therefore a read receipt.** Not built because it
+  cannot be built honestly without a change to the delivery path itself: the
+  monitor would have to acknowledge what it consumed (a new wire field, a new
+  round trip, and a delivery path that now depends on an observability hop).
+  That is exactly the regression the objective forbids, so the vocabulary stops
+  at `queued` and says why in the footer of every run.
+- **Supersession beyond message hand-over.** `superseded` here means "an earlier
+  hand-over of a message id that was handed over again later", which is what
+  the delivery trail can prove. `internal/supersession` is
+  representation-plane (records, not chat) and is deliberately not entangled
+  with it.
 - **`parlay commands` does not read the relay.** It reports only the server's
   live-command registry, so a delivery that never reached an agent is invisible
-  there. `explain` bridges that for one agent; `commands --agent <id>` could
-  too, by joining the ledger, but that changes an existing surface's contract
-  and deserves its own decision.
+  there. `explain` bridges that for one agent and `timeline` for a window;
+  changing `commands`' own contract deserves its own decision.
+- **No spool reconciliation past 64 agents in one pass** (named in the output,
+  with `--agent` as the remedy) and **no `--json` on `explain`** (the
+  machine-readable halves already exist; a third schema is another thing to
+  keep in sync).

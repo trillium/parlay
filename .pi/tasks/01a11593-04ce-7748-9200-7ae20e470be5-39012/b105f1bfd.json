@@ -1,0 +1,28 @@
+{
+  "id": "b105f1bfd",
+  "name": "race retest after split",
+  "command": "cd /Users/mini1/fm_home/mini1-ops/projects/parlay-gnhf-worktrees/objective-make-parla-ea8605/tools/cli && CGO_ENABLED=0 go test -race -count=1 ./internal/timeline/ ./internal/relayctl/ ./internal/commands/ 2>&1 | tail -20",
+  "status": "completed",
+  "outputPath": ".pi/tasks/01a11593-04ce-7748-9200-7ae20e470be5-39012/b105f1bfd.output",
+  "cwd": "/Users/mini1/fm_home/mini1-ops/projects/parlay-gnhf-worktrees/objective-make-parla-ea8605",
+  "startTime": 1791364157813,
+  "endTime": 1791364195427,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 770,
+  "bytesWritten": 202,
+  "isAgent": false,
+  "surviveReload": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 2400,
+  "shellPolicy": {
+    "policy": "inherit",
+    "executable": "/bin/zsh",
+    "argvPrefix": [
+      "-c"
+    ],
+    "dialect": "posix"
+  }
+}
