@@ -13,16 +13,15 @@ This branch makes the first hour in this repo readable instead of source-bound. 
 
 ## What a newcomer can now do without reading source
 
-1. **Run `./bin/parlay-preflight`** and be told everything the machine needs at once, with the exact remedy for each, rather than one blocker per failed build.
+1. **Clone the repo, then run `./bin/parlay-preflight`** — step 0's two commands, in that order — and be told everything the machine needs at once, with the exact remedy for each, rather than one blocker per failed build.
 2. **Run `./examples/bootstrap-sandbox.sh`** and watch the server, CLI, registry, history, the reply path and `doctor` work in a throwaway sandbox whose `LIMITS` line names what it does *not* cover (delivery and the relay); steps 2–5 then give a served message, a read-back, a health verdict, a live listener that receives your message, a panel that loads, and three predicted non-zero exits (voice engine; `doctor`; `doctor deploy`).
 3. **Know where to look when it breaks**: the same `./bin/parlay-preflight` an operator runs, then `docs/traps.md` at the stage they are in.
 
 ## What was reordered, or corrected, and why
 
 - **`docs/traps.md` is new** (246 lines): `AGENTS.md` and `docs/agent-notes/` are in incident order — right to maintain, wrong to meet. It orders the same facts by when they bite: before you run anything → first server and message → an agent that receives → a second instance or fleet → when something looks wrong → spawning → changing the code → landing → going deeper.
-- **The README Quickstart gained a step and was renumbered** (step 1 is now the sandbox,
-  server → 2, CLI → 3, talk/health → 4, panel → 5), every internal step reference updated,
-  and every step now states what success and failure look like.
+- **The README Quickstart gained a step and was renumbered** (step 1 is now the sandbox, server → 2, CLI → 3, talk/health → 4, panel → 5), every internal step reference updated, and every step now states what success and failure look like. **Step 0 now opens with the clone itself**: it used to open with `./bin/parlay-preflight` a full section above the file's only `git clone`, so the path's first command was one a newcomer could not run (`No such file or directory`, exit 127); the clone moved up, and the later prereq block keeps only its optional `bun install`.
+- **The prerequisite block contradicted the path.** It said "Every command in this Quickstart is Go" while step 5 is `bun run build`; it now says steps 0–4 are Go and Bun is needed for the panel (step 5) or the git hooks.
 - **The `-state-dir` advice was corrected.** It read "fully isolated from live state", which
   overclaims: `-state-dir` moves the server's store and nothing else — `HOME`, the agent store,
   the TTS cache and the listener layer are untouched. It says that and points at the sandbox.
@@ -108,6 +107,8 @@ makes `go build ./...` exit 0 while printing `matched no packages`, only for `go
 commit and every iteration since.
 
 ### The newcomer path, executed end to end on a fresh clone with a clean `HOME`
+
+Step 0 run from an empty directory: `git clone --branch gnhf/objective-make-a-new-904428 https://github.com/trillium/parlay` exits 0, `./bin/parlay-preflight` in that clone prints `12 checks: 12 ok, 0 warning(s), 0 failure(s).` and exits 0, and `./bin/parlay-preflight` in a directory that is not a clone prints `No such file or directory` (exit 127) — what the old step 0 opened with, a full section above the file's only `git clone`. The branch flag is the point: `main` has no `bin/parlay-preflight` yet, so step 0 becomes runnable there when this PR lands and not before.
 
 `git clone` of this branch, `HOME` at an empty directory, `GOCACHE`/`GOMODCACHE` pinned at the real
 ones. Steps 0–5 run literally as the README writes them:
@@ -233,18 +234,14 @@ this file. The gate is a step inside `ci.yml`, not a new script.
 
 ## Where this stands
 
-- **The PR is open, not merged**: <https://github.com/trillium/parlay/pull/314>,
-  `gnhf/objective-make-a-new-904428` → `main`. HEAD `cd9859d` is pushed and carries the delivery step,
-  the preflight and the hygiene gate; CI run 37641669118 is green on it (Go, Shell harnesses, Hygiene —
-  whose shipped newcomer-path step printed `66 agent-notes are placed in docs/traps.md; 241 links
-  across 5 documents resolve`), and a completed CodeRabbit review covers `cd9859d` (15:42Z).
-- **`parlay merge-gate 314` reads BLOCKED on that head for two expected reasons**: GitGuardian's check
-  was still `in_progress` at verdict time, and the review's one finding is the staleness this revision
-  fixes — this file still called `15f5d4c` the head while the PR already contained `cd9859d`. Every
-  earlier thread (placement as a link target, the sandbox coverage claim, the AGENTS.md index pointer)
-  is resolved, and each fix is in the pushed head.
-- **This revision is one commit ahead of the remote by construction**: the harness commits after the
-  turn, so it travels as the next push, which re-pins the review and spends one more ~1-hour window.
+- **The PR is open and deliberately not merged**: <https://github.com/trillium/parlay/pull/314>,
+  `gnhf/objective-make-a-new-904428` → `main`; it carries the delivery step, the preflight and the
+  hygiene gate. Its live facts — head, checks, review, merge-gate verdict — are the PR's own state
+  and are deliberately not restated here, because a status recorded in this file is stale the moment
+  the harness commits after the turn. Every review finding so far is fixed on the branch.
+- **The branch tip is one documentation commit ahead of the remote by construction** — the harness
+  commits after the turn, so a turn's edit travels as the next push, re-pinning the review and
+  spending one more ~1-hour window.
 - **The stop condition is unmet and cannot be met for this build topology** — literal output above.
 - **No harness scratch is in the PR**: an auto-commit once captured eight `.pi/tasks/**` files, so
   `.pi/` and `.gnhf/` are tracked-ignored now; the net PR diff contains none of them.

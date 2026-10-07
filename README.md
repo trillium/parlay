@@ -55,14 +55,16 @@ the host from a phone; a LAN address or any other private tunnel works the same 
 
 ## Quickstart (local only — no Pulse, no tailnet)
 
-### Step 0 — check the machine before it wastes your time
+### Step 0 — get the code, then check the machine before it wastes your time
 
 ```sh
+git clone https://github.com/trillium/parlay && cd parlay   # the first command of this path
 ./bin/parlay-preflight
 ```
 
-That one command checks the whole prerequisite set at once — Go (and its version
-against the floor `tools/cli/go.mod` declares), `git`, `curl`, the chat-server
+The clone is the one step nothing below can do for you. The preflight then checks
+the whole prerequisite set at once — Go (and its version against the floor
+`tools/cli/go.mod` declares), `git`, `curl`, the chat-server
 port, the eval-engine port, the state directories, and write permission on each —
 and it reports **every** problem it finds in one run, each with the exact command
 that fixes it. It needs nothing installed to run: it is bash and nothing else, on
@@ -97,8 +99,8 @@ hard error.) Step 0 checks all of this for you; this paragraph is what it is
 checking.
 
 [Bun](https://bun.sh) is needed **only** if you want the chat panel
-(`packages/client`) or the git hooks. Every command in this Quickstart is Go, so
-you can skip `bun install` entirely.
+(`packages/client`, step 5) or the git hooks. Steps 0–4 are all Go, so you can
+skip `bun install` entirely unless you want the git hooks or the panel.
 
 > **This repo is four separate Go modules** — `packages/go-server`, `tools/cli`,
 > `tools/relay`, `packages/spawn-profiles` — and there is **no root `go.work`**.
@@ -109,7 +111,6 @@ you can skip `bun install` entirely.
 > relative to the root of the clone unless it says otherwise.
 
 ```sh
-git clone https://github.com/trillium/parlay && cd parlay
 bun install                                   # optional: also wires the git hooks (core.hooksPath tools/hooks)
 ```
 
