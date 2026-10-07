@@ -1,0 +1,27 @@
+{
+  "id": "b993ca73f",
+  "name": "Post-change verification 2",
+  "command": "cd /Users/mini1/fm_home/mini1-ops/projects/parlay-gnhf-worktrees/objective-make-a-new-904428 && export GOCACHE=$(go env GOCACHE) GOMODCACHE=$(go env GOMODCACHE) GOPATH=$(go env GOPATH) && export HOME=$(mktemp -d /tmp/gnhf-home3.XXXXXX) && { echo \"HOME=$HOME (GOCACHE/GOMODCACHE pinned to the real ones)\"; echo \"=== gofmt -l . ===\"; out=$(gofmt -l .); if [ -z \"$out\" ]; then echo \"(clean)\"; else echo \"$out\"; fi; echo \"gofmt-exit=$?\"; for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do slug=$(echo \"$m\" | tr / -); echo \"=== $m ===\"; ( cd \"$m\" && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./... >/tmp/gnhf-test-$slug.log 2>&1 ); echo \"$m-exit=$?\"; tail -2 /tmp/gnhf-test-$slug.log; done; echo \"=== make test-bdd ===\"; make test-bdd > /tmp/gnhf-bdd.log 2>&1; echo \"bdd-exit=$?\"; grep -E \"scenarios \\(|^ok|^FAIL\" /tmp/gnhf-bdd.log | tail -4; } > /tmp/gnhf-verify.txt 2>&1; echo done",
+  "status": "completed",
+  "outputPath": ".pi/tasks/01a11588-5756-7521-81ee-3112272b352f-71931/b993ca73f.output",
+  "cwd": "/Users/mini1/fm_home/mini1-ops/projects/parlay-gnhf-worktrees/objective-make-a-new-904428",
+  "startTime": 1791363236651,
+  "endTime": 1791363313107,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 10801,
+  "bytesWritten": 5,
+  "isAgent": false,
+  "surviveReload": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "shellPolicy": {
+    "policy": "inherit",
+    "executable": "/bin/zsh",
+    "argvPrefix": [
+      "-c"
+    ],
+    "dialect": "posix"
+  }
+}

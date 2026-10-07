@@ -80,6 +80,11 @@ working, or when a later step in this file fails: it is the single prerequisite
 surface, so the newcomer's step 0 and the operator's "what is wrong with this
 machine" are one command and not two.
 
+Steps 1–4 below are the path. When one of them bites — and a few of them will, in
+ways no prerequisite check can see — [`docs/traps.md`](docs/traps.md) is the same
+knowledge ordered by **when you will meet it** rather than by when the incident
+happened, so you can read the stage you are in instead of the whole record.
+
 ### The four steps (step 0 has just checked everything they need)
 
 Prereqs: [Go](https://go.dev) **1.26.5+** — the CLI and server are both Go, and
@@ -343,7 +348,9 @@ question by design. It is for an agent inside a spawned turn, not for you.)
 
 Everything else that has already bitten someone is in [`AGENTS.md`](AGENTS.md), the
 incident record, and the per-fact notes it links to under
-[`docs/agent-notes/`](docs/agent-notes/).
+[`docs/agent-notes/`](docs/agent-notes/) — both ordered by when the incident
+happened. [`docs/traps.md`](docs/traps.md) is that same material ordered by when
+*you* will hit it, which is the better first read and the better one to search.
 
 ## Fleet layer and `parlay-dev`
 
