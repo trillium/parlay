@@ -1886,9 +1886,11 @@ The sections above are main's onboarding account (PR #314) and runtime-observabi
 
 Status: both doors are instrumented end to end, the confidence hold is real,
 all six named failure classes have a real producer, the live view can no longer
-show a gap without naming it, and the eval door's outcomes have been audited
-against the real compiled engine rather than a stub. This file records what the
-tooling can and cannot tell the operator **right now**.
+show a gap without naming it, the eval door's outcomes have been audited
+against the real compiled engine rather than a stub, and the snapshot now
+attributes the seam's delay to the hop that spent it instead of to the input as
+a whole. This file records what the tooling can and cannot tell the operator
+**right now**.
 
 ## What the operator can now tell apart
 
@@ -1929,6 +1931,96 @@ Two rules are enforced rather than intended:
   defect in the tooling, not a quiet night.
 - **`confidence_unknown` is its own state**, never folded into `ok`. `/send` and
   `/alert` have nothing to report, so that is what they honestly are.
+
+## Latency per stage: which hop spent the time (iteration 8)
+
+The view knew whether an input arrived. It could not say **where the time
+went**: `LATENCY` is one number per input (first hop → delivery), and that number
+has the same shape whether the wait was the poll interval, the intake's own
+handling, or the path to the target. "It felt slow" and "the recogniser took
+four seconds" therefore still looked identical outside a per-hop replay.
+
+The snapshot now prints one distribution per hop-to-hop transition over the
+window it read, slowest median first, with end to end last — so the slow hop is
+**named** rather than averaged away:
+
+```
+LATENCY BY STAGE — hop to hop, over THIS window (nearest-rank percentiles)
+  queued→delivered               1 sample(s)  p50 3.0s     p95 3.0s     max 3.0s
+  received→routed                1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  received→delivered             1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  received→interpreted           1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  interpreted→held               1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  end to end (first→last hop)    4 input(s)   p50 <1ms     p95 3.0s     max 3.0s
+A transition with no row is a hop that DID NOT HAPPEN — not a fast hop. received→
+interpreted times this intake's own handling of an already-transcribed submission;
+the recogniser runs on the phone and reports no duration in this repo.
+```
+
+The 3.0s hop is the one the demonstration deliberately created: message `m1` was
+accepted, then polled **three seconds later**, so `queued→delivered p50 3.0s` is
+exactly where the wait was while every other stage in the same window is under a
+millisecond. The table above it shows the same fact per input (`m1`, `LATENCY
++3.0s`), and `parlay input --input m1` shows it hop by hop (`#2 +3.0s`); the new
+block is what turns three inputs' worth of that into "the wait for a listener is
+the slow stage".
+
+The same numbers reach a script, additive to the `events`/`stats` it already
+reads (notably `p50Ms: 0` — integer milliseconds, so a hop under a millisecond
+is `0` there and `<1ms` in the view; neither claims no time passed):
+
+```json
+[
+  { "transition": "queued→delivered", "count": 1, "p50Ms": 3026, "p95Ms": 3026, "maxMs": 3026 },
+  { "transition": "received→routed", "count": 1, "p50Ms": 0, "p95Ms": 0, "maxMs": 0 },
+  { "transition": "received→delivered", "count": 1, "p50Ms": 0, "p95Ms": 0, "maxMs": 0 },
+  { "transition": "received→interpreted", "count": 1, "p50Ms": 0, "p95Ms": 0, "maxMs": 0 },
+  { "transition": "interpreted→held", "count": 1, "p50Ms": 0, "p95Ms": 0, "maxMs": 0 },
+  { "transition": "end to end", "count": 4, "p50Ms": 0, "p95Ms": 3026, "maxMs": 3026 }
+]
+```
+
+Six rules, each of which is a way a latency view lies:
+
+- **Percentiles are nearest-rank and always printed with their sample count.**
+  With two samples a p95 *is* the max; a percentile without `n` implies a
+  distribution the window cannot support.
+- **A transition with no row is a hop that did not happen, not a fast hop.** A
+  still-queued input has no `queued→delivered` row because nothing was delivered;
+  a one-hop input has no transition at all. The block says that in words.
+- **A pair whose timestamp does not parse, or that runs backwards, is counted
+  and excluded** (`N hop pair(s) excluded`), never read as `0` — which would
+  make an unmeasurable hop the fastest stage in the seam.
+- **End to end is timed only when every hop on the path could be timed.**
+  Stitching it from a subset would measure something no input actually did.
+- **An unmeasurable window says so.** "nothing measurable in this window" beats
+  a blank block, which is exactly what a seam with no delay in it looks like.
+- **The recogniser is not timed here, and the view says so.**
+  `received→interpreted` measures this intake's own handling of an
+  already-transcribed submission: recognition runs on the phone, which reports a
+  transcript and an optional confidence but no duration, and nothing in this repo
+  reports one. Calling that hop "the recogniser" would be the same defect this
+  seam exists to remove — a guess dressed as a record.
+
+The block is derived from the same hops the table is built from: no new wire
+field, no server change, nothing on the delivery path (the existing wedged-ledger
+non-interference tests still pin that the ledger cannot fail or slow a delivery;
+this half runs after the page has already been returned). The live tail prints no
+rolling aggregate on purpose — `--watch` shows each hop with the gap since that
+input's previous hop, and a percentile updating under a live tail is a number the
+operator cannot tie to any one input. Rationale and the full rule list: the new
+"Latency per stage" section of `docs/input-seam.md`.
+
+Building this exposed a real defect in the ledger it reads: the hop timestamp
+was taken by the **writer goroutine**, after the event had waited in the
+256-deep queue, so a burst (or a slow disk) would have been charged to the stage
+before the hop — a ledger hiccup reading as a slow relay. `Record` now stamps the
+event while the caller is still the one observing it and the writer only formats
+it (`inputlog.Event.recordedAt`; `TestRecordStampsAHopWhenItIsObservedNotWhenItIsWritten`
+asserts a hop recorded 80 ms before a wedged sink is released is stamped before
+the release, which a writer-side stamp cannot be). Anyone deriving latency from
+this ledger is now timing the seam rather than the observer — which is the whole
+point of the block above.
 
 ## The hold
 
@@ -2176,6 +2268,10 @@ it was acted on. WHY names the reason in every case. Every INPUT id is printed w
 and pasting one into `parlay input --input <id>` replays its hops. See docs/input-seam.md.
 ```
 
+That view paste predates iteration 8's per-stage latency block — the same demo
+re-run with the block is quoted in "Latency per stage" above, and `m1`'s `+3.0s`
+comes from the deliberate three-second wait that run introduced.
+
 Not one of the six failures reads as healthy, the two new eval failures are
 named rather than silent, and `command` is distinguishable from both. Two things
 worth reading twice in that paste:
@@ -2359,7 +2455,7 @@ the diff. They pin `TALON_REPL_PATH` away from the live REPL, pin
 temp state dir; nothing is typed or focused on this machine and the live fleet
 state is never touched.
 
-## Demonstration against the REAL engine (this iteration)
+## Demonstration against the REAL engine (iteration 7)
 
 Sixteen injections against an isolated server whose eval door points at the
 **real compiled engine** (`parlay eval serve`, `PARLAY_EVAL_ENGINE_URL`), no
@@ -2553,6 +2649,7 @@ output, exactly as the gate was run:
 ```
 $ go build ./... && go vet ./... && gofmt -l . | (! grep .) && go test ./... && make test-bdd
 pattern ./...: directory prefix . does not contain main module or its selected dependencies
+literal-stop-condition-exit=1
 ```
 
 Verified in iteration 5 that no workspace arrangement fixes it: with a root
@@ -2565,47 +2662,43 @@ was removed; nothing about it is in the diff.)
 
 The equivalent per-module sweep, matching CI's `GO_MODULES`
 (`tools/cli tools/relay packages/go-server packages/spawn-profiles`), run fresh
-this iteration after every edit, is green:
+this iteration (`-count=1`) after every edit — including the inputlog
+producer-stamp change and the new CLI tests:
 
 ```
 ########## 0. the literal stop condition, at the repo root ##########
 pattern ./...: directory prefix . does not contain main module or its selected dependencies
-go-build-exit=1     <- pre-existing and structural: no root go.mod, so the chain stops here
+literal-stop-condition-exit=1
 
 ########## 1. gofmt -l . (the GATE form: `gofmt -l . | (! grep .)`) ##########
-gofmt: clean (exit 0)
+gofmt-exit=0
 
 ########## 2. per-module build / vet / test (CI's GO_MODULES) ##########
------ tools/cli -----
-?   	github.com/trillium/parlay/tools/cli/internal/testsupport	[no test files]
-ok  	github.com/trillium/parlay/tools/cli/internal/wire	(cached)
-ok  	github.com/trillium/parlay/tools/cli/internal/worktreeliveness	(cached)
-mod-exit=0
------ tools/relay -----
-ok  	github.com/trillium/parlay/tools/relay	(cached)
-mod-exit=0
------ packages/go-server -----
-ok  	parlay/go-server/internal/sourcecontracts	(cached)
-ok  	parlay/go-server/internal/static	(cached)
-ok  	parlay/go-server/internal/store	1.198s
-mod-exit=0
------ packages/spawn-profiles -----
-ok  	parlay/spawn-profiles/cmd/validate	(cached)
-mod-exit=0
+---- tools/cli ----
+tools/cli exit=0 ok-packages=27 fail-lines=0
+ok  	github.com/trillium/parlay/tools/cli/internal/commands	50.793s
+---- tools/relay ----
+tools/relay exit=0 ok-packages=1 fail-lines=0
+---- packages/go-server ----
+packages/go-server exit=0 ok-packages=12 fail-lines=0
+ok  	parlay/go-server/internal/handlers	16.956s
+ok  	parlay/go-server/internal/inputlog	4.927s
+---- packages/spawn-profiles ----
+packages/spawn-profiles exit=0 ok-packages=1 fail-lines=0
 
-########## 3. -race on the packages this change touches (go-server) ##########
-ok  	parlay/go-server/internal/handlers	16.885s
-ok  	parlay/go-server/internal/inputlog	4.374s
+########## 3. -race on the packages this work touches (go-server) ##########
+ok  	parlay/go-server/internal/inputlog	4.497s
+ok  	parlay/go-server/internal/handlers	16.896s
+race-exit=0
 
 ########## 4. make test-bdd ##########
-21 steps (21 passed)
-PASS
-ok  	github.com/trillium/parlay/tools/cli/internal/spawn	(cached)
+17 scenarios (17 passed) / 55 steps (55 passed)   <- evalengine
+7 scenarios (7 passed) / 21 steps (21 passed)     <- spawn
 make-test-bdd-exit=0
 ```
 
 There is no known-red BDD baseline on this box: `make test-bdd` is green at
-baseline and remains green (7 scenarios / 21 steps).
+baseline and remains green (7 + 17 scenarios / 21 + 55 steps, exit 0).
 
 `go test` needs `CGO_ENABLED=0` here, and that is a **baseline of this box, not
 a regression**: with cgo on, `tools/cli` — including `internal/parlaybeads`, a
@@ -2617,13 +2710,20 @@ go-server only.
 ## Hard constraints, and how each is met
 
 - **Observability never sits in the delivery path.**
+  **New this iteration:** the per-stage latency block is computed in the CLI,
+  from a page the server has already returned — after the delivery hop was
+  recorded and answered — so it cannot touch a delivery at all; the one
+  server-side line it added (`Record` stamping the hop's time with a single
+  `time.Now()` before enqueue, instead of formatting a string later in the
+  writer) adds no failure mode to the seam and keeps `Record`'s never-blocks,
+  never-fails contract, which is still pinned by
+  `TestRecordNeverBlocksOnAWedgedSink`.
   `TestSupersededEvalStillDeliversWithAWedgedLedger` drives the eval relay
   through a ledger whose sink never returns: the relay still answers 200 with
   the engine's verdict, promptly, and the panel still receives its frame.
-  **New this iteration** `TestCommandVerdictStillDeliversWithAWedgedLedger`
-  pins the same for the fired-command and picker-miss producers, so the
-  constraint is proved for each verdict the relay now reads rather than once
-  for all of them.
+  `TestCommandVerdictStillDeliversWithAWedgedLedger` pins the same for the
+  fired-command and picker-miss producers, so the constraint is proved for each
+  verdict the relay reads rather than once for all of them.
   `TestFailingLedgerSinkDoesNotFailTheRelay` does the same with a sink that
   errors. `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` covers `/send` + poll,
   `TestRemoteInputDeliveryIsNotSlowedOrFailedByAWedgedLedger` the dictation
@@ -2643,10 +2743,17 @@ go-server only.
   already had, and the read surface `/api/chat/input-events` is unchanged and
   still deliberately unguarded for the reason written beside it.
 - **No deployment scripts, endpoint shapes or downstream consumers touched.**
-  No route was added and no wire field changed this iteration: the new records
+  No route was added and no wire field changed: the new records
   use the `reason`/`detail` tokens the ledger already carries, and the engine's
-  action batch is still passed through byte-for-byte (the new verdicts are read
-  out of it, never re-typed or re-encoded).
+  action batch is still passed through byte-for-byte (the verdicts are read
+  out of it, never re-typed or re-encoded). Iteration 8 adds nothing to the
+  server's wire at all: the stage latencies are derived in the CLI, and their
+  only new surface is an additive `stageLatency` key on `parlay input --json`
+  (`events`/`stats` unchanged, pinned by
+  `TestInputSnapshotJSONKeepsThePageAndAddsLatencies`). The ledger's `ts` field
+  keeps its name, type and RFC3339 nanosecond format and changes only *where its
+  value comes from* (the producer instead of the writer) — described under "The
+  ledger" in `docs/input-seam.md`.
   `?afterSeq=` is a new *optional* parameter on this branch's own read route;
   `stats.newestSeq` is an additive field on the same route; the old shape is
   the absent-parameter path, and it is pinned byte-identical by
@@ -2697,12 +2804,21 @@ go-server only.
 
 - **The branch lags the working tree by one commit.** PR
   [#312](https://github.com/trillium/parlay/pull/312) is open against `main`.
-  This iteration pushed `gnhf/objective-give-the-o-ad0a88` as far as iteration 6's
-  head, so this iteration's changes (the picker-mode `fired` fix, its
-  regression tests, the docs) reach the PR on **the next push of that branch**;
-  nothing blocks that. The PR has still never had a real CodeRabbit review — the
-  repository is under 10 stars, so the bot posts a "skip review" summary unless
-  a comment asks it with `@coderabbitai review`, which is worth spending.
+  This iteration pushed `gnhf/objective-give-the-o-ad0a88` as far as iteration 7's
+  head (`6b217a4`), so this iteration's changes (the per-stage latency block, the
+  producer-clock fix, their tests, the docs) reach the PR on **the next push of
+  that branch**; nothing blocks that. The PR has still never had a real
+  CodeRabbit review — the repository is under 10 stars, so the bot posts a
+  "skip review" summary unless a comment asks it with `@coderabbitai review`,
+  which is worth spending.
+- **The latency window is whatever `--limit` returned.** The block summarises the
+  hops in the page (default 40, max on the paging path), not a time range; there
+  is no `--since`. Sizing it in hops was deliberate — the ledger's own unit — but
+  "the last 10 minutes" is the phrasing an operator would use, and it needs the
+  backwards cursor below.
+- **Per-stage latency is not aggregated across time in the tail.** `--watch`
+  prints each hop's gap and nothing else, by design (see the section above); an
+  operator wanting a distribution re-runs the snapshot.
 - **No upstream surface reports a recogniser confidence**, so the hold is
   enforced and visible but nothing in this repo can trigger it end to end except
   a test or a caller that sends `confidence`. The view says `not reported`
@@ -2734,24 +2850,25 @@ go-server only.
 This repository enforces no per-file line budget (CI gates are conflict markers,
 a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and docs-index completeness —
 `.github/workflows/ci.yml`). Following the objective, every **new** file this
-branch adds is under 250 lines — this iteration's
-`eval_interpret_precedence_test.go` (126), and the previous ones
+branch adds is under 250 lines. This iteration's are `input_latency.go` (232),
+`input_latency_test.go` (230), `input_snapshot_test.go` (75, split out so the
+derivation tests stayed under the ceiling) and `inputlog/timestamp_test.go`
+(95); earlier ones are `eval_interpret_precedence_test.go` (126),
 `eval_interpret.go` (157 → 188 with the picker-mode rule and its comment),
 `eval_interpret_test.go` (219 → 184 after the precedence tests moved out),
-`eval_interpret_unit_test.go` (56 → 85), `eval_door_failure_test.go` (76) and
-`input_command_test.go` (121), plus earlier
-`input_watch.go` (234), `read_after_test.go` (144), `input_watch_test.go` (135),
-`input_events_cursor_test.go` (80), `eval_supersede.go` (82),
-`eval_supersede_test.go` (222), `inputlog/vocabulary.go` (105) and
-`input_threshold.go` (45) — and the ceiling was chosen by this branch, not by the
-repository: 250 lines is small enough that a file has one subject and large
-enough that a real subject fits. The largest file this iteration was split when
-it crossed the line (`eval_interpret_test.go` reached 252 with the new
-regression tests, so the precedence and resolved-picker tests moved into
-`eval_interpret_precedence_test.go`), which is the ceiling doing its job.
+`eval_interpret_unit_test.go` (56 → 85), `eval_door_failure_test.go` (76),
+`input_command_test.go` (121), `input_watch.go` (234), `read_after_test.go`
+(144), `input_watch_test.go` (135), `input_events_cursor_test.go` (80),
+`eval_supersede.go` (82), `eval_supersede_test.go` (222),
+`inputlog/vocabulary.go` (105) and `input_threshold.go` (45). The ceiling was
+chosen by this branch, not by the repository: 250 lines is small enough that a
+file has one subject and large enough that a real subject fits, and it has now
+forced a split three times (`eval_interpret_test.go` at 252, and the latency
+derivation tests, which moved their wiring half into `input_snapshot_test.go`).
 
 The edited files above 250 lines are pre-existing ones this branch only adds to:
-`handlers/eval.go` (380, the eval door itself) and `inputlog/log.go`
-(**already 242**, 254 now, because it owns the `Stats` struct that gained
-`newestSeq`); `tools/cli/internal/commands/input_model.go` is 235. Splitting any
-of them for a handful of lines would hurt more than help.
+`handlers/eval.go` (380, the eval door itself) and `inputlog/log.go` (**242 at
+branch start**, 260 now: it owns the `Stats` struct that gained `newestSeq` and
+`Record`, which gained the two lines that stamp a hop when the producer observes
+it); `tools/cli/internal/commands/input_model.go` is 235. Splitting any of them
+for a handful of lines would hurt more than help.

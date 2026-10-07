@@ -77,7 +77,13 @@ func (l *Log) loadFromDisk() error {
 func (l *Log) write(e Event) {
 	e.Seq = l.lastSeq.Add(1)
 	if e.Ts == "" {
-		e.Ts = time.Now().UTC().Format(time.RFC3339Nano)
+		// Usually the time Record took; the fallback covers an event built by
+		// a caller that went straight to write.
+		at := e.recordedAt
+		if at.IsZero() {
+			at = time.Now()
+		}
+		e.Ts = at.UTC().Format(time.RFC3339Nano)
 	}
 
 	line, err := json.Marshal(e)

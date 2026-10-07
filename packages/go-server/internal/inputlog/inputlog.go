@@ -73,6 +73,17 @@ type Event struct {
 	// Detail is bounded non-content context for a human (a channel count, a
 	// source name). Never message text.
 	Detail string `json:"detail,omitempty"`
+
+	// recordedAt is when the PRODUCER observed this hop, taken by Record
+	// before the event is queued. It is unexported because it is never on the
+	// wire — the wire and the file carry Ts, which the writer formats from it.
+	//
+	// The distinction is not cosmetic: the drain queue is bounded, so a burst
+	// can delay the writer, and a timestamp taken after that wait would charge
+	// the observer's own backlog to the stage BEFORE the hop — turning a
+	// ledger hiccup into an apparently slow relay. A view that attributes
+	// latency must be timing the seam, not the observer.
+	recordedAt time.Time
 }
 
 // Validate reports whether an event may be stored. It is deliberately

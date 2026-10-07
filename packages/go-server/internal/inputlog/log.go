@@ -183,6 +183,12 @@ func (l *Log) Record(e Event) {
 		}
 		return
 	}
+	if e.Ts == "" && e.recordedAt.IsZero() {
+		// Stamp the hop now, while the caller is still the one observing it.
+		// The writer formats this later; see Event.recordedAt for why the
+		// difference matters to anyone reading latency off the ledger.
+		e.recordedAt = time.Now()
+	}
 	select {
 	case l.queue <- e:
 	default:

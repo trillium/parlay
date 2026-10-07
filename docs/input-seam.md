@@ -44,6 +44,13 @@ Three properties are load-bearing:
   no recorded reason is a defect in the tooling, not a quiet night, so
   `Validate` refuses such an event and the ledger counts it in `stats.rejected`
   rather than storing an unexplained failure.
+- **A hop's `ts` is the producer's clock, not the writer's.** `Record` stamps
+  the event before it is queued; the writer only formats it. The queue is
+  bounded, so a burst can delay the drain, and a timestamp taken there would
+  charge the observer's own backlog to the stage *before* the hop — a ledger
+  hiccup reading as a slow relay. Anyone deriving latency from this ledger is
+  timing the seam, not the observer
+  (`TestRecordStampsAHopWhenItIsObservedNotWhenItIsWritten`).
 - **Recording is out of the delivery path.** `Log.Record` only enqueues (256
   deep); one writer goroutine drains to disk. A full queue sheds and counts a
   drop, a failed append is logged and counted, and neither can propagate back
@@ -272,7 +279,8 @@ this ledger over `GET /api/chat/input-events` rather than any second source.
 ## Reading it
 
 `parlay input` renders the live view (one derived state per input, newest
-first), `parlay input --input <id>` replays one input hop by hop with the gap
+first, plus the per-stage latency block described below), `parlay input --input
+<id>` replays one input hop by hop with the gap
 between hops and the hop it stopped at, and `parlay input --watch` follows new
 hops as they arrive. All three are pure readers of
 `GET /api/chat/input-events` and keep no state of their own, so the view and a
@@ -289,6 +297,61 @@ design rather than by failing to move on. The view never prints
 `confidence_unknown` as a row of its own: a hop with no reported confidence is
 reported by the view's confidence line ("not reported by any surface in this
 window"), and folding it into the row would imply the measurement happened.
+
+### Latency per stage
+
+One number per input answers "how long did that one take". It cannot answer
+the question an incident actually asks — *is the seam slow, and where* —
+because "it felt slow" and "the recogniser took four seconds" end the same
+way: the operator waited. So the snapshot prints one distribution per
+hop-to-hop transition over the window it read, slowest median first, with the
+end-to-end summary last:
+
+```
+LATENCY BY STAGE — hop to hop, over THIS window (nearest-rank percentiles)
+  queued→delivered               1 sample(s)  p50 3.0s     p95 3.0s     max 3.0s
+  received→routed                1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  received→delivered             1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  received→interpreted           1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  interpreted→held               1 sample(s)  p50 <1ms     p95 <1ms     max <1ms
+  end to end (first→last hop)    4 input(s)   p50 <1ms     p95 3.0s     max 3.0s
+A transition with no row is a hop that DID NOT HAPPEN — not a fast hop. received→
+interpreted times this intake's own handling of an already-transcribed submission;
+the recogniser runs on the phone and reports no duration in this repo.
+```
+
+The rules below are each a way a latency view lies, which is why they are
+rules:
+
+- **Percentiles are nearest-rank and always printed with their sample count.**
+  With two samples a p95 *is* the max, and a percentile without `n` implies a
+  distribution the window cannot support.
+- **A transition with no row is a hop that did not happen, not a fast hop.** A
+  still-queued input has no `queued→delivered` row because nothing was
+  delivered; a one-hop input has no transition at all.
+- **A pair whose timestamp does not parse, or that runs backwards, is counted
+  and excluded** (`N hop pair(s) excluded`), never read as a duration of zero,
+  which would make an unmeasurable hop the fastest stage in the seam.
+- **End to end is timed only when every hop on the path could be timed.**
+  Stitching it from a subset would measure something no input actually did.
+- **An unmeasurable window says so**, in words: a block that printed nothing
+  would look exactly like a seam with no delay in it.
+- **The recogniser is not timed here, and the view says so.**
+  `received→interpreted` measures *this intake's own handling* of an
+  already-transcribed submission. Recognition runs on the phone, which reports
+  a transcript and an optional confidence but no duration, and no surface in
+  this repo reports one; attributing that hop to the recogniser would be the
+  same defect this seam exists to remove.
+
+The block is derived from the same hops the table is built from — no new wire
+field, no server work, nothing on the delivery path. `--json` carries the same
+numbers under `stageLatency` (integer milliseconds under `p50Ms`/`p95Ms`/
+`maxMs`, plus `excludedHopPairs`), additive to the `events`/`stats` a script
+already reads; a hop under a millisecond is `0` there and `<1ms` in the view, so
+neither reads as "no time passed". The live tail prints no rolling aggregate:
+`--watch` shows each hop with the gap since that same input's previous hop, and
+a percentile running under a live tail is a number the operator cannot tie to
+any one input.
 
 ### The live tail, and the three ways it can be incomplete
 

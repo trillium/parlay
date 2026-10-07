@@ -16,7 +16,8 @@ import (
 )
 
 // `parlay input` — the operator-facing view of the input seam: what came in,
-// through which door, and whether it was delivered, queued, refused or held.
+// through which door, whether it was delivered, queued, refused or held, and
+// — under the table — which hop of the seam is slow (input_latency.go).
 // A pure reader of GET /api/chat/input-events (the server's internal/inputlog
 // ledger) that keeps no state of its own, so the view and a replay of the same
 // id cannot disagree. See docs/input-seam.md for the vocabulary, and for the
@@ -60,10 +61,18 @@ func Input(argv []string) {
 	}
 	page := fetchInputPage("?limit=" + strconv.Itoa(limit))
 	if r.Bool("--json") {
-		printJSON(page)
+		// The stage latencies are derived here, beside the table, so the
+		// snapshot and the JSON cannot disagree about which hop is slow.
+		spans, skipped := inputLatencies(page.Events)
+		wire := make([]stageLatencyWire, 0, len(spans))
+		for _, s := range spans {
+			wire = append(wire, s.wire())
+		}
+		printJSON(inputLatencyPage{inputPage: page, StageLatency: wire, Excluded: skipped})
 		return
 	}
 	renderInputRows(os.Stdout, inputRows(page.Events, time.Now(), stale), page.Stats, limit)
+	renderInputLatency(os.Stdout, page.Events)
 }
 
 func optOr(r args.Result, flag, def string) string {
