@@ -19,8 +19,12 @@ stream.
 > 0.2.0 is published, vendor `dist/` from this repo:
 >
 > ```sh
-> # from a checkout of this repo
-> cp -R packages/input/dist <your-project>/vendor/parlay-input/dist
+> # from a checkout of this repo — copy the package ROOT, not just dist/.
+> # A "file:" dependency resolves against a directory containing package.json;
+> # dist/ alone has none, so copying only dist produces an unresolvable dep.
+> mkdir -p <your-project>/vendor/parlay-input
+> cp -R packages/input/dist packages/input/package.json packages/input/LICENSE \
+>       <your-project>/vendor/parlay-input/
 > ```
 >
 > then depend on it as `"parlay-input": "file:./vendor/parlay-input"`. Keeping the directory
