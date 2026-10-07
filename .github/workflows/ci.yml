@@ -520,7 +520,12 @@ jobs:
             exit 1
           fi
           for note in $notes; do
-            if ! grep -qF "agent-notes/$(basename "$note")" "$ordering"; then
+            # The note must be a LINK TARGET, not merely a filename mentioned in
+            # prose: a name with no link leaves the note unreachable, which is
+            # the orphan this check exists to prevent. An optional #fragment is
+            # accepted so a note can be linked to a named section.
+            if ! grep -qF "](agent-notes/$(basename "$note"))" "$ordering" \
+               && ! grep -qF "](agent-notes/$(basename "$note")#" "$ordering"; then
               echo "::error file=$note::$note is not placed in $ordering — put it at the stage where a newcomer meets it"
               fail=1
             fi
@@ -530,6 +535,15 @@ jobs:
           links=0
           docs=0
           for doc in $path; do
+            # A missing document fails its own grep inside the process
+            # substitution below, which yields no lines and lets the loop move
+            # on — so the other four documents keep $links non-zero and the step
+            # passes having silently skipped one. Name it and fail instead.
+            if [ ! -f "$doc" ]; then
+              echo "::error file=$doc::$doc is a document of the newcomer path but does not exist, so its links were never checked"
+              fail=1
+              continue
+            fi
             docs=$((docs + 1))
             dir="$(dirname "$doc")"
             while IFS= read -r target; do

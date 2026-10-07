@@ -8,7 +8,7 @@ pieces, in the order a newcomer meets them:
 | `bin/parlay-preflight` (+ `bin/parlay-preflight.test.sh`) | One bash-only command that checks the whole prerequisite set and names **every** missing thing in one run with its exact `fix:` command. Step 0 of the README path, and the command to re-run when a machine misbehaves. |
 | `docs/traps.md` | `AGENTS.md`'s incident record reordered into the nine stages a newcomer walks through. All 65 `docs/agent-notes/` notes appear, none dropped, none rewritten, every link target unchanged. |
 | `README.md` Quickstart | One ordered five-step path with a real first command, an isolated-fleet step, one health surface named in both roles, and success/failure criteria on every step. |
-| `.github/workflows/ci.yml` (new hygiene step) | Keeps the two lines above from rotting: every `docs/agent-notes/*.md` must be placed in the ordering, and every local link in the five documents of the path must resolve. |
+| `.github/workflows/ci.yml` (new hygiene step) | Keeps the two lines above from rotting: every `docs/agent-notes/*.md` must appear in the ordering as a **link target** (a prose mention is not placement), every one of the five path documents must exist, and every local link in them must resolve. |
 | `docs/agent-notes/a-relay-that-cannot-name-its-server-passes.md` | A newly observed fact (below): the relay check that protects against cross-instance enrollment is inert against a relay older than its own `server` field. Linked from `traps.md` stage 4. |
 | `.gitignore` | `.pi/` ignored, and the harness task-log files an auto-commit had picked up are untracked — so no harness scratch file can be committed again. |
 
@@ -16,26 +16,21 @@ pieces, in the order a newcomer meets them:
 
 1. **Run `./bin/parlay-preflight`** and be told everything the machine needs at once, with
    the exact remedy for each, rather than one blocker per failed build.
-2. **Run `./examples/bootstrap-sandbox.sh`** and watch the server, CLI, registry, history, the
-   reply path and `doctor` work in a throwaway sandbox whose `LIMITS` line names what it does
-   *not* cover (delivery and the relay); then steps 2–4 give a served message, a read-back, a
-   health verdict, and three predicted non-zero exits (voice engine; `doctor`; `doctor deploy`).
+2. **Run `./examples/bootstrap-sandbox.sh`** and watch the server, CLI, registry, history, the reply path and `doctor` work in a throwaway sandbox whose `LIMITS` line names what it does *not* cover (delivery and the relay); steps 2–4 then give a served message, a read-back, a health verdict and three predicted non-zero exits (voice engine; `doctor`; `doctor deploy`).
 3. **Know where to look when it breaks**: the same `./bin/parlay-preflight` an operator runs, then `docs/traps.md` at the stage they are in.
 
 ## What was reordered, or corrected, and why
 
 - **`docs/traps.md` is new** (250 lines): `AGENTS.md` and `docs/agent-notes/` are in incident
-  order — right to maintain, wrong to meet. It orders the same facts by when they bite:
-  before you run anything → first server and message → an agent that receives → a second
-  instance or fleet → when something looks wrong → spawning → changing the code → landing the
-  change → only if you go deeper.
+  order — right to maintain, wrong to meet. It orders the same facts by when they bite: before
+  you run anything → first server and message → an agent that receives → a second instance or
+  fleet → when something looks wrong → spawning → changing the code → landing → going deeper.
 - **The README Quickstart gained a step and was renumbered** (step 1 is now the sandbox,
   server → 2, CLI → 3, talk/health → 4, panel → 5), every internal step reference updated,
   and every step now states what success and failure look like.
 - **The `-state-dir` advice was corrected.** It read "fully isolated from live state", which
-  overclaims: `-state-dir` moves the server's store and nothing else — `HOME`, the agent
-  store, the TTS cache and the listener layer are untouched. It now says exactly that and
-  points at the sandbox for a whole fleet.
+  overclaims: `-state-dir` moves the server's store and nothing else — `HOME`, the agent store,
+  the TTS cache and the listener layer are untouched. It says that and points at the sandbox.
 - **The health surface is one surface, named in both roles.** `./bin/parlay-preflight` is the
   machine half, `./bin/parlay health` the running-instance half; step 0, step 4 and "when a
   step fails" all say so. The preflight is state-aware: with an instance already answering on
@@ -62,28 +57,35 @@ false failures). Scope is the newcomer path — `README.md`, `AGENTS.md`, `docs/
 `docs/traps.md`, `examples/README.md` — deliberately not all of `docs/`, which also holds
 dated snapshots (`ux-eval-*`, `dogfood/`) whose value is being what was true that day.
 Proved to fail, not just to pass. The run block was extracted from the workflow YAML (so the
-tested text is the shipped text) and run against a faithful copy of the tree with one note
-written and never placed and one link pointed at a file that does not exist:
+tested text is the shipped text) and run in a fresh copy of the tree for each case:
 ```
 $ bash /tmp/extracted-step.sh       # control, the real tree
 65 agent-notes are placed in docs/traps.md; 238 links across 5 documents resolve   (exit 0)
 
 $ bash /tmp/extracted-step.sh       # one unplaced note + one dangling link
-::error file=docs/agent-notes/an-orphan-note.md::docs/agent-notes/an-orphan-note.md is not placed in docs/traps.md — put it at the stage where a newcomer meets it
+::error file=docs/agent-notes/an-orphan-note.md::… is not placed in docs/traps.md — put it at the stage where a newcomer meets it
 ::error::these links in the newcomer path do not resolve:
 README.md -> docs/traps.md.bak      (×5; the link that was broken)
 exit=1
+
+$ bash /tmp/gate-proof.sh           # the shipped block against five broken shapes
+  ok   — A_pass (exit 0)               ok   — C refuses a prose-only mention
+  ok   — B names the unplaced note     ok   — D names the missing document
+  ok   — E names the broken link       ok   — F refuses a vacuous scan
+12 passed, 0 failed.                # and the unmodified copy still prints its counts
 ```
+Cases C and D are the two findings CodeRabbit raised against the first version of this gate:
+a filename mentioned in prose counted as placed, and a missing path document was skipped
+silently because its `grep` failed inside a process substitution. Both are now named and fatal.
 
 ## Harness scratch was committed once, and now cannot be
 
-Nothing under `.pi/`, `.gnhf/` or any other harness scratch directory may be committed, and
-it was already broken on this branch: the auto-commit that landed `docs/traps.md` captured
-eight `.pi/tasks/<session>/*.json` + `*.output` files, because `.pi/` was not ignored. Fixed
-earlier by untracking them (`git rm --cached`, files kept on disk) and adding `.pi/` to
-`.gitignore` with the incident recorded next to the entry. `.gnhf/` needs no entry: the
-harness already excludes `.gnhf/runs/` through `.git/info/exclude`. Files added in one commit
-and removed in another do not appear in a PR's net diff, so the PR is clean without a rewrite.
+Nothing under `.pi/`, `.gnhf/` or any harness scratch directory may be committed, and this
+branch broke it once: the auto-commit that landed `docs/traps.md` captured eight
+`.pi/tasks/<session>/*.json` + `*.output` files because `.pi/` was not ignored. Fixed by
+untracking them (`git rm --cached`, files kept) and adding `.pi/` to `.gitignore` with the
+incident recorded there; `.gnhf/` needs no entry because `.git/info/exclude` already covers
+`runs/`. A file added in one commit and removed in another leaves no trace in a PR's net diff.
 ## What was deliberately left alone
 
 - `AGENTS.md`, `docs/agent-notes/*` and every existing incident record: no fact was changed;
@@ -91,9 +93,7 @@ and removed in another do not appear in a PR's net diff, so the PR is clean with
 - `examples/bootstrap-sandbox.sh`: reused as-is, not reimplemented — it already encodes the
   isolation recipe, including the hardcoded paths.
 - Deployment scripts, `internal/guard.GuardedPaths`, and every public endpoint shape.
-- `tools/monitor/parlay-monitor.sh`: its tolerance for a relay that cannot report its
-  upstream is deliberate and documented in the code; changing it is a product decision, not an
-  onboarding one, so it is documented and linked instead.
+- `tools/monitor/parlay-monitor.sh`: its tolerance for a relay that cannot report its upstream is deliberate and documented in the code — changing it is a product decision, not an onboarding one, so it is documented and linked instead.
 - `docs/ux-eval-2026-08-30.md`: a dated field report citing the README's old step numbers;
   rewriting a historical record to match today's numbering would falsify evidence.
 
@@ -223,28 +223,27 @@ parsed and run as extracted. The step 2/3/5 criteria were run too: a held port p
 `GET /` answers `503` with the `bun run build` body (`404` with an empty `-assets-dir`).
 ### Line budget
 
-The repo enforces a 250-line limit only for staged `*.ts` files (`tools/hooks/pre-commit`),
-so markdown has no enforced budget. Self-imposed anyway: every file added or touched on this
-branch is ≤ 250 lines (`bin/parlay-preflight` 249, its harness 250, `docs/traps.md` 250, the
-new note 38, `.gitignore` 74, this file). The new gate is a step inside
-`.github/workflows/ci.yml` rather than a new script, because the job it extends already has
-the checkout and needs no toolchain.
+The repo enforces 250 lines only for staged `*.ts` files (`tools/hooks/pre-commit`), so
+markdown has no enforced budget; self-imposed anyway — every file added here is ≤ 250
+(`bin/parlay-preflight` 249, its harness 250, `docs/traps.md` 250, the new note 38,
+`.gitignore` 74, this file). The gate is a step inside `ci.yml`, not a new script.
 
 ## Where this stands
 
 - **The PR is open, not merged**: <https://github.com/trillium/parlay/pull/314>,
-  `gnhf/objective-make-a-new-904428` → `main`; the branch is pushed to `c50a1fe` and the PR
-  body re-written from this file. Net diff: the ten files above, plus `notes.md`.
-- **The branch was brought level with `main`** (`git merge origin/main`), clearing
-  `parlay merge-gate 314`'s `behind-base` finding — a real blocker, since a behind branch's
-  checks ran against an older merge and GitHub does not re-run them when the base moves.
-  CodeRabbit review was requested, and re-requested after this push (`gh-axi pr comment 314
-  --body "@coderabbitai review"`); on this repo the bot never runs on its own, so that comment
-  is the only route to gate-visible review evidence. Its one finding — the sandbox coverage
-  claim overstated what `./examples/bootstrap-sandbox.sh` tests — is fixed here.
-- **The harness commits after the turn and never pushes**, so the tip a turn can push is
-  always one commit behind what it just wrote: the newest edits need one more push.
-  `parlay merge-gate 314` is otherwise clean and blocks only on that one review thread.
+  `gnhf/objective-make-a-new-904428` → `main`, head pushed to `66f4ea3`; the PR body is this
+  file. Net diff: the files above, plus `notes.md`.
+- **The branch is level with `main`**, so `parlay merge-gate 314`'s `behind-base` finding is
+  gone; its four CI checks pass on `66f4ea3`. CodeRabbit never runs on this repo by itself
+  (under 10 stars), so `gh-axi pr comment 314 --body "@coderabbitai review"` is the only route
+  to gate-visible review evidence. That review has now run on the head: it confirmed the
+  sandbox-coverage fix, raised the two gate findings above, and those are fixed here. The
+  first review thread is replied to and resolved; the two new threads want the same once this
+  fix is pushed.
+- **The reviewer is rate-limited to roughly one review per hour** (`Review rate limited`; the
+  window reopened ~65 min after the previous review). A push restarts the review, so the
+  sequence is: push → request → wait out the window → re-run `merge-gate`. The harness commits
+  after the turn and never pushes, so the fix written here reaches the PR on the next push.
 - **The README below the Quickstart is still reference material** (system map, layout, worked
   config, development, publishing): reachable and accurate, so left in place — the task was to
   add a path, not to prune the manual.
