@@ -133,7 +133,7 @@ line names exactly which. Three further shapes, each pinned by a test:
 relay           no answer at /…/rt2/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below
 relay enroll    unknown — the relay did not answer GET /agents
 queue           2 line(s) queued in /…/rt2/crew-1.chan, unconfirmed-consumed (nothing in the fleet acknowledges a read); resume cursor m-2; no relay is answering, so these lines have no writer
-delivery        no ledger on disk at /…/rt2/delivery.log and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
+delivery        because the relay did not answer — no ledger on disk at /…/rt2/delivery.log: this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
 ```
 
 **Relay down, ledger on disk** — the trail the relay already wrote is still the
@@ -153,6 +153,13 @@ last error      relay could not spool message m-9 — it never reached the agent
 
 Four properties of that path, each pinned by a test:
 
+- the reason names what actually happened: `because the relay did not answer` is
+  printed only when no relay answered **anything**. A running relay that
+  answered `/health` but did not serve `/delivery` gets `because the relay did
+  not serve GET /delivery (it answered /health, so it was up; its build may
+  predate the ledger, or that one request failed)` — a screen that says the
+  relay is up in one row and did not answer in the next sends an operator
+  looking for a dead process that is running;
 - another agent's events are **not** this agent's story (the filter mirrors
   `GET /delivery?agent=`);
 - the rotated generation `delivery.log.1` is read too and printed oldest-first,
@@ -172,22 +179,41 @@ Four properties of that path, each pinned by a test:
 The disk path uses the ledger's own vocabulary unchanged — `spooled` is still
 never printed as "delivered".
 
-**Missing resume cursor** — a spool whose tail line is not a chat message, so a
-monitor restarting here would have no id to resume after and would replay the
-channel. Real output of the built CLI against a private runtime dir and agent
-home, with the server and relay both down (so this is also the spool-with-no-
-writer case at once):
+**Relay up, but this build has no delivery trail** — the relay answers
+`/health` and `/agents` and 404s `/delivery`, which is what a relay built before
+the ledger does. The trail on disk is still the answer, and the line says which
+half of the relay was read. Verbatim against a private fixture; note the relay
+line, which names the bindings this older `/health` does not carry rather than
+printing `polling , runtime `:
+
+```
+relay           up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+relay enroll    polling this agent
+queue           no spool file at /…/rt6/crew-1.chan — nothing is queued for this agent, or the relay is not running
+delivery        read from disk (/…/rt6/delivery.log) because the relay did not serve GET /delivery (it answered /health, so it was up; its build may predate the ledger, or that one request failed) — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown
+                  2026-10-07T08:07:09Z  spooled msg m-1 role=user from=captain
+                  2026-10-07T08:37:09Z  SPOOL FAILED for msg m-9 — it did not reach the agent
+                  2026-10-07T08:37:09Z  delivery ended — reason=channel-gone spoolLines=2
+last error      relay could not spool message m-9 — it never reached the agent (2026-10-07T08:37:09Z)
+```
+
+**Missing resume cursor** — a spool whose lines are all non-chat events (for
+example only `tts_event` rows), so a monitor restarting here would have no id to
+resume after and would replay the channel. Real output of the built CLI against
+a private runtime dir and agent home, with the server and relay both down (so
+this is also the spool-with-no-writer case at once):
 
 ```
 relay           no answer at /…/rt5/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below
 relay enroll    unknown — the relay did not answer GET /agents
 queue           2 line(s) queued in /…/rt5/crew-1.chan, unconfirmed-consumed (nothing in the fleet acknowledges a read); resume cursor NONE — a monitor resuming here replays this channel's backlog; no relay is answering, so these lines have no writer
-delivery        no ledger on disk at /…/rt5/delivery.log and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
+delivery        because the relay did not answer — no ledger on disk at /…/rt5/delivery.log: this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
 last error      unknown — no source that could report an error answered
 ```
 
 The cursor is derived from the spool's own tail by the relay's rules (an id is
-required, the role must be `user` or `agent`), so `NONE` is a real absence and
+required, the role must be `user` or `agent`, and the reader keeps looking back
+through the tail for the last usable line), so `NONE` is a real absence and
 never a zero.
 
 **Relay up but bound to another server** (the registered-but-deaf trap)

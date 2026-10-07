@@ -253,7 +253,7 @@ The section above is main's onboarding account (PR #314), which landed while thi
 
 # notes.md — making parlay's runtime observable without reading its source
 
-Status: **in progress** — iterations 1–8 (see "Left undone" for what is not
+Status: **in progress** — iterations 1–9 (see "Left undone" for what is not
 done and the PR's head state).
 
 ## What an operator can now answer that they could not before
@@ -684,6 +684,73 @@ Questions it answers that previously had a **wrong** answer:
   The claim intervals are *in the same timeline*, as `enrolled` / `retired`
   rows, so the release that explains the missing hand-over is visible next to it.
 
+### 9. An unmeasured value is no longer printed as a measured one (iteration 9)
+
+Both bugs here were found by running the three surfaces against the **live**
+fleet on this box, where a real running relay predates the ledger:
+
+```
+$ parlay liveness          # before
+  relay                  read — up — polling , runtime
+$ parlay timeline          # before
+  relay control socket (read) up — polling , runtime
+$ parlay explain eph-…     # before
+relay           up — polling unknown, runtime unknown
+registration    … the server did not answer …
+delivery        no ledger on disk at …/delivery.log and the relay did not answer — …
+```
+
+The same three commands on the same live box after the change (real output, not
+a fixture) — one running relay, one story:
+
+```
+$ parlay liveness
+  relay                  read — up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+
+$ parlay timeline --limit 2
+  relay control socket (read) up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+
+$ parlay explain eph-6ab41a36
+relay           up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+delivery        because the relay did not serve GET /delivery (it answered /health, so it was up; its build may predate the ledger, or that one request failed) — no ledger on disk at …/delivery.log: this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
+```
+
+Three surfaces, one running relay, three different stories. `liveness` and
+`timeline` printed two empty strings where a sentence expected values, which
+reads as a measurement (`polling <nothing>`); `explain` said `up` two rows above
+`the relay did not answer`. Both are the same failure this whole objective is
+about — a claim the fleet never made — so they are fixed together:
+
+- **A `/health` that reports no bindings is UNKNOWN.** All three surfaces now
+  render the relay's own answer through one helper (`relay_health_note.go`), so
+  one running relay is described identically by all three:
+  `up — polling unknown, runtime unknown — this relay's /health reported neither,
+  so which server it polls is UNKNOWN, not a mismatch`. The last clause matters:
+  an operator who reads "unknown" as "wrong server" will re-enroll a relay that
+  is polling correctly, and a mismatch warning is only ever raised when both
+  URLs are comparably parseable.
+- **A live relay that serves no `/delivery` is not a dead one.** `explain`'s
+disk fallback for the delivery ledger now chooses its reason from what was
+observed: `because the relay did not answer` only when no relay answered at all,
+and `because the relay did not serve GET /delivery (it answered /health, so it
+was up; its build may predate the ledger, or that one request failed)` when the
+relay is up. The trail on disk is read either way, and the relay row above it
+now agrees with the delivery row.
+
+Both fixes are pinned by tests that fail against the pre-change code (the
+mutation and its red output are recorded under "Tests" below), and both
+new outputs are captured verbatim in [`docs/explain.md`](docs/explain.md),
+[`docs/liveness.md`](docs/liveness.md) and [`docs/timeline.md`](docs/timeline.md).
+
+Questions it answers that previously had a **misleading** answer:
+
+- **"Is this relay polling my server?"** `up — polling unknown, runtime
+  unknown` says the question was not answered, and says it is *not* a mismatch.
+  Before, `polling , runtime ` invited exactly the wrong conclusion.
+- **"Is the relay dead?"** The delivery row and the relay row can no longer
+  disagree in the same screen: a run that says `relay up` says why the trail
+  came from disk instead.
+
 
 ## What each new surface degrades to, and how it says so
 
@@ -701,8 +768,10 @@ never touched).
 |---|---|
 | Relay not running (no control socket) | `relay  no answer at <sock> — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below`; `relay enroll  unknown — the relay did not answer GET /agents` — and the delivery section is **not** lost: see the four file-fallback rows below |
 | Relay down, ledger on disk | `delivery  read from disk (<path>) because the relay did not answer — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown`, then the rows in the ledger's own vocabulary. The disk rows feed `last error` too: `relay could not spool message m-9 — it never reached the agent (<ts>)` |
-| Relay down, no ledger on disk | `delivery  no ledger on disk at <path> and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'` |
-| Relay down, ledger present but unreadable | `delivery  the relay did not answer and its ledger at <path> exists but could not be read (<err>) — the file is there and what it holds is unknown, not empty` |
+| Relay down, no ledger on disk | `delivery  because the relay did not answer — no ledger on disk at <path>: this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'` |
+| Relay down, ledger present but unreadable | `delivery  because the relay did not answer — its ledger at <path> exists but could not be read (<err>): the file is there and what it holds is unknown, not empty` |
+| Live relay up, but its build serves no `/delivery` route (404) | the relay line says `up` and the trail on disk is still read, with the reason naming what happened instead of contradicting that line: `delivery  read from disk (<path>) because the relay did not serve GET /delivery (it answered /health, so it was up; its build may predate the ledger, or that one request failed) — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown` (iteration 9; before it the same run said `because the relay did not answer`, two rows under a `relay up` line) |
+| Running relay whose `/health` reports no bindings (an older build) | `relay  up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch` and the same tail on `timeline`'s `relay control socket (read)` row (iteration 9; before it both printed `up — polling , runtime ` — two empty strings where a measurement belongs) |
 | Relay down, ledger read but quiet for this agent | `delivery  read from disk (<path>) because the relay did not answer — ledger present, no events for this agent; whether recording is switched off right now is unknown` (this is an ANSWER, so exit stays 0 — it is not "nothing was observable") |
 | Relay down, ledger rotated / corrupt | `… oldest first · 1 of them from the generation before the last rotation (older history is in <path>.1) · 1 corrupt line(s) skipped`, plus the `rotated` marker row itself — `delivery.log.1` is read, so a shortened trail never reads as a quiet one |
 | Live relay answers while a stale ledger sits on disk | the socket answer wins: the disk wording never appears and the file is not consulted (`TestExplainSocketAnswerBeatsAStaleLedgerOnDisk`) |
@@ -712,7 +781,7 @@ never touched).
 | Ledger never written | `delivery  no ledger at <path> — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'` |
 | Ledger switched off | `delivery  recording is OFF in the running relay (PARLAY_RELAY_DELIVERY_LOG=0) — nothing is being written to <path>` |
 | Ledger rotated (history lossy) | `ledger rotated (size-cap) — history before this line lives in delivery.log.1` |
-| Old relay, no `/delivery` route (404) | the socket read fails (a 404 is "could not ask", never an empty trail) and the **file fallback takes over** — an old relay that never wrote a ledger prints `no ledger on disk at <path> and the relay did not answer`, and one that did write a ledger still shows its rows |
+| Old relay, no `/delivery` route (404) | the socket read fails (a 404 is "could not ask", never an empty trail) and the **file fallback takes over** — a live old relay prints `because the relay did not serve GET /delivery …`, a dead one `because the relay did not answer`, and either way a ledger that exists still shows its rows |
 | Heartbeat stale vs missing | `channel  last observed 2.0h ago (<stamp>)` **vs** `channel  row present, lastSeen absent — the server has never observed activity on this channel` **vs** `channel  no presence row in the server's snapshot — never observed on this channel (or not registered)` |
 | Server unreachable | `registration  unknown — the server did not answer <url>`; `channel  unknown — …`; `commands  unknown — the server did not answer /api/chat/commands`; `crew state  working · source: status-degraded · … (relay unreachable; status may be stale)`. Exit stays **0** because the relay and the local records still answered. |
 | Server unreachable, roster on disk | `registration  listed in the roster the server last persisted to disk (<path>) — name X, color Y — the server did not answer, so whether it is registered RIGHT NOW is unknown; that file holds no heartbeat either`; the `channel` line stays `unknown` (presence is never on disk) and `crew state` stays `status-degraded` (the live registry is its oracle). Exit 0. |
@@ -809,7 +878,27 @@ observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
   (enrollment unknown, with the `audit log (absent)` source row naming the file);
   and the two tests that assert `unhanded` still does fire now write the claim
   that licenses it.
-- **Tests that bite (iteration 8).** Three mutations each turn tests red:
+- **Tests that bite (iteration 9).** `tools/cli/internal/commands/relay_health_note_test.go`
+(four tests, eleven assertions) is the pin for the absence-as-value fix, and two
+mutations each turn it red — both mutations were applied to a copy of the tree,
+run, and reverted:
+
+- making `relayHealthNote` return the pre-change `"polling " + h.Server +
+  ", runtime " + h.Runtime` turns all four tests red (`output missing "polling
+  unknown, runtime unknown"`, `output must NOT contain "polling , runtime"`,
+  `output missing "up — polling unknown, runtime unknown"` — in the unit test,
+  `liveness` and `timeline`);
+- pinning `explain`'s disk-fallback reason back to `"because the relay did not
+  answer"` turns `TestExplainSaysWhenTheRelayAnsweredButServedNoDelivery` red
+  (`output missing "read from disk (<path>) because the relay did not serve GET
+  /delivery"`, `output missing "it answered /health, so it was up"`, `output must
+  NOT contain "because the relay did not answer"`).
+
+Both mutations also fail against the untouched pre-change tree: the quoted
+strings above are exactly what the three surfaces printed on the live fleet
+before this iteration.
+
+**Tests that bite (iteration 8).** Three mutations each turn tests red:
   dropping the `Enrollment.ClaimAt` guard from `classifyHistory` turns the five
   guard-table cases AND all three new end-to-end tests red (the pre-change
   behaviour is exactly the false accusation); making `ClaimAt` always answer
@@ -1124,6 +1213,102 @@ which is a **pre-existing environment gap on macOS**, not a red test: CI's
 ubuntu runner has the headers. Plain `CGO_ENABLED=0 go test` needs no flags and
 is what the chain above uses.
 
+**Re-run on iteration 9's tree (same per-module chain, `-count=1`, each step's
+true exit code captured in a subshell with no pipe swallowing it):**
+
+```
+=== root: go build ./... (expected to fail: 4 modules, no root go.work) ===
+pattern ./...: directory prefix . does not contain main module or its selected dependencies
+--- root build exit=1
+=== root: gofmt -l . (empty list = pass) ===
+(nothing listed)
+--- gofmt exit=0
+=== tools/cli go build ===
+--- tools/cli build exit=0
+=== tools/cli go vet ===
+--- tools/cli vet exit=0
+=== tools/cli go test ===
+ok  github.com/trillium/parlay/tools/cli  0.546s
+ok  github.com/trillium/parlay/tools/cli/internal/agentregistry  0.825s
+ok  github.com/trillium/parlay/tools/cli/internal/args  0.630s
+ok  github.com/trillium/parlay/tools/cli/internal/capability  1.010s
+ok  github.com/trillium/parlay/tools/cli/internal/chathistory  1.560s
+ok  github.com/trillium/parlay/tools/cli/internal/cityscaffold  1.393s
+ok  github.com/trillium/parlay/tools/cli/internal/commandreport  1.580s
+ok  github.com/trillium/parlay/tools/cli/internal/commands  53.852s
+ok  github.com/trillium/parlay/tools/cli/internal/config  1.763s
+ok  github.com/trillium/parlay/tools/cli/internal/crewevents  2.306s
+ok  github.com/trillium/parlay/tools/cli/internal/evalengine  14.034s
+ok  github.com/trillium/parlay/tools/cli/internal/format  2.233s
+ok  github.com/trillium/parlay/tools/cli/internal/gctemplate  2.237s
+ok  github.com/trillium/parlay/tools/cli/internal/help  2.227s
+ok  github.com/trillium/parlay/tools/cli/internal/httpc  2.188s
+ok  github.com/trillium/parlay/tools/cli/internal/identity  21.590s
+ok  github.com/trillium/parlay/tools/cli/internal/liveness  2.219s
+ok  github.com/trillium/parlay/tools/cli/internal/monitor  3.479s
+ok  github.com/trillium/parlay/tools/cli/internal/parlaybeads  2.048s
+ok  github.com/trillium/parlay/tools/cli/internal/procscan  1.964s
+ok  github.com/trillium/parlay/tools/cli/internal/relayctl  1.842s
+ok  github.com/trillium/parlay/tools/cli/internal/resolvehandoff  19.556s
+ok  github.com/trillium/parlay/tools/cli/internal/robotswatch  13.944s
+ok  github.com/trillium/parlay/tools/cli/internal/routing  1.833s
+ok  github.com/trillium/parlay/tools/cli/internal/sayguard  1.532s
+ok  github.com/trillium/parlay/tools/cli/internal/sourcecontract  1.398s
+ok  github.com/trillium/parlay/tools/cli/internal/spawn  23.862s
+ok  github.com/trillium/parlay/tools/cli/internal/staleness  1.451s
+ok  github.com/trillium/parlay/tools/cli/internal/supersession  1.538s
+ok  github.com/trillium/parlay/tools/cli/internal/timeline  1.398s
+ok  github.com/trillium/parlay/tools/cli/internal/wire  1.401s
+ok  github.com/trillium/parlay/tools/cli/internal/worktreeliveness  1.506s
+--- tools/cli test exit=0
+=== tools/relay go build ===
+--- tools/relay build exit=0
+=== tools/relay go vet ===
+--- tools/relay vet exit=0
+=== tools/relay go test ===
+ok  github.com/trillium/parlay/tools/relay  2.817s
+--- tools/relay test exit=0
+=== packages/spawn-profiles go build ===
+--- packages/spawn-profiles build exit=0
+=== packages/spawn-profiles go vet ===
+--- packages/spawn-profiles vet exit=0
+=== packages/spawn-profiles go test ===
+ok  parlay/spawn-profiles/cmd/validate  0.220s
+--- packages/spawn-profiles test exit=0
+=== packages/go-server go build ===
+--- packages/go-server build exit=0
+=== packages/go-server go vet ===
+--- packages/go-server vet exit=0
+=== packages/go-server go test ===
+ok  parlay/go-server/cmd/parlay-server  0.230s
+ok  parlay/go-server/internal/atomicfile  0.885s
+ok  parlay/go-server/internal/bus  7.150s
+ok  parlay/go-server/internal/capability  0.798s
+ok  parlay/go-server/internal/guard  1.043s
+ok  parlay/go-server/internal/handlers  16.181s
+ok  parlay/go-server/internal/linkrewrite  1.405s
+ok  parlay/go-server/internal/remoteinput  6.218s
+ok  parlay/go-server/internal/sourcecontracts  1.784s
+ok  parlay/go-server/internal/static  1.964s
+ok  parlay/go-server/internal/store  2.152s
+--- packages/go-server test exit=0
+=== make test-bdd ===
+--- PASS: TestFeatures (0.03s)      # evalengine: 17/17 scenarios
+--- PASS: TestFeatures (0.24s)      # spawn: 7/7 scenarios
+--- make test-bdd exit=0
+=== -race on the touched packages ===
+--- race exit=0                     # ./internal/commands/ ./internal/help/
+=== VERIFY DONE overall=0 ===
+```
+
+Every line above is the real output of one run of the chain inside each module
+(each step's own exit code captured in a subshell, no pipe swallowing it), with
+the `//` comments in the bdd block added by hand to say which feature set each
+`--- PASS: TestFeatures` belongs to — the runner prints both suites under the
+same test name. The exit=1 on the root build is the same repository-shape fact as
+before (four modules, no root `go.work`): the command named in the stop
+condition cannot exit zero here, and forcing it with a root `go.work` would
+break CI's own module-shape gate and drop >2 MiB binaries into the repo root.
 **Known-red baseline: none.** `make test-bdd` was green on this box before this
 iteration's work and after it; the literal root-command failure above is a
 repository-shape fact (four modules, no root `go.work`), not a red test, and it
@@ -1133,7 +1318,14 @@ was the same before iteration 1.
 
 This repository enforces no per-file line budget (only a 2 MiB tracked-blob
 ceiling and a docs-index gate) — the 250-line cap on every new **production**
-file is my choice. Iteration 7: `internal/agentregistry/agentregistry.go` (166,
+file is my choice. Iteration 9: `commands/relay_health_note.go` (39, the one
+rendering of a live relay's self-reported bindings, shared by `explain`,
+`liveness` and `timeline`) is a new production file far inside the cap, and the
+iteration's production change is three one-line call sites plus ~20 changed
+lines in `explain_render_detail.go` (282, an existing file already over the cap
+and left unsplit for the same reason as before).
+`commands/relay_health_note_test.go` (135) is a new test file in the range the
+package's other test files occupy. Iteration 7: `internal/agentregistry/agentregistry.go` (166,
 the reader and the locality gate) and `commands/registry_file.go` (85, the one
 read both verbs share) are new production files inside the cap; the change also
 added ~20 lines to `explain.go` (228 → 252, an existing file that was already
@@ -1257,15 +1449,16 @@ on `origin/main`, so nothing of the captain's is affected.
 ## Left undone (with the reason)
 
 - **The last commit's push.** The run's orchestrator owns commits, and a commit
-  only reaches the PR once the branch is pushed again afterwards. Iteration 8
-  pushed, so the remote head is now `8f1d320` (iterations 1–7: the ledger,
-  `explain` with its disk and roster fallbacks, `timeline` with server history,
-  `liveness`). Iteration 8's own change (the claim-trail guard) is uncommitted in
-  this worktree and reaches
+  only reaches the PR once the branch is pushed again afterwards. Iteration 9
+  pushed `4ef738b` at the start of its work, so the remote head was
+  `4ef738b` (iterations 1–8: the ledger, `explain` with its disk and roster
+  fallbacks, `timeline` with server history and the claim-trail guard,
+  `liveness`). Iteration 9's own change (absence never printed as a value) is
+  uncommitted in this worktree and reaches
   <https://github.com/trillium/parlay/pull/313> on the orchestrator's next commit
   and push (head `gnhf/objective-make-parla-ea8605`, base `main`, **not merged**).
-  A push was necessary because the previous iteration's own note claiming a push
-  was wrong once before: the remote head must be read, never trusted from notes.
+  A push is checked every iteration because the remote head was wrong once
+  before: read it, never trust a note.
 - **`explain` still does not read the chat server's own history** (the
   `recorded` / `unhanded` half iteration 5 added to `timeline`). It is
   deliberate: the per-agent screen already carries the relay's whole trail and

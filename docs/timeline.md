@@ -323,6 +323,14 @@ traffic, so the socket line names both URLs:
   relay control socket (read) up — polling http://somewhere-else:4242, runtime /tmp/… · WARNING this relay polls http://somewhere-else:4242, NOT the server this CLI targets (http://127.0.0.1:60533): nothing sent to http://127.0.0.1:60533 reaches this relay
 ```
 
+**The relay answers but reports no bindings.** An older relay build's `/health`
+carries only its `ok` flag. The source line names that absence as UNKNOWN and
+says it is not a mismatch — a warning here would be invented from silence:
+
+```
+  relay control socket (read) up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+```
+
 **The server is too old for a command registry.** A 404 is "there is no such
 record"; a refused connection is "unknown". They are different lines because
 only one of them is worth an operator's attention:

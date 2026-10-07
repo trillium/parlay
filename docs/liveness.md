@@ -175,6 +175,22 @@ declines and says why — and no agent from that file appears in the table:
   registry (disk)        not-this-host — not consulted — the CLI targets another machine, whose registry lives with it; /…/state/agents.json belongs to this host and is not that server's roster
 ```
 
+### C5. Relay running, but its `/health` reports no bindings
+
+An older relay build answers `/health` with its `ok` flag alone, and no amount
+of source-reading by the operator makes that say which server it polls. The
+line names the missing binding as UNKNOWN and says outright that this is **not**
+a mismatch — inventing a warning here would send an operator to re-enroll a
+relay that is polling correctly. Verbatim against a private fixture:
+
+```
+  relay                  read — up — polling unknown, runtime unknown — this relay's /health reported neither, so which server it polls is UNKNOWN, not a mismatch
+```
+
+Before this iteration the same running relay printed `up — polling , runtime `
+— two empty strings where a sentence expected values, which reads as a
+measurement rather than as a question the relay did not answer.
+
 ### D. Nothing observable at all
 
 ```

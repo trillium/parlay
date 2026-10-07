@@ -131,7 +131,7 @@ func gatherTimeline(agentFilter string) timelineGather {
 				Detail: "PARLAY_RELAY_DELIVERY_LOG=0 in the relay's environment — it is recording nothing now, so any events below predate the switch-off"})
 		}
 		relayNote = sourceNote{Name: "relay control socket", State: srcRead,
-			Detail: "up — polling " + h.Server + ", runtime " + h.Runtime}
+			Detail: "up — " + relayHealthNote(h)}
 		if equal, comparable := sameServerURL(h.Server, g.Server); comparable && !equal {
 			relayNote.Detail += fmt.Sprintf(" · WARNING this relay polls %s, NOT the server this CLI targets (%s): nothing sent to %s reaches this relay", h.Server, g.Server, g.Server)
 		}

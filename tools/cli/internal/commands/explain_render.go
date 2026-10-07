@@ -158,7 +158,7 @@ func relayLine(r explainReport) string {
 	if r.relayHealth == nil {
 		return fmt.Sprintf("no answer at %s — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below", relayctl.SockPath())
 	}
-	line := fmt.Sprintf("up — polling %s, runtime %s", orUnknown(r.relayHealth.Server), orUnknown(r.relayHealth.Runtime))
+	line := "up — " + relayHealthNote(*r.relayHealth)
 	if !r.relayHealth.OK {
 		line += " (its /health reported ok:false)"
 	}

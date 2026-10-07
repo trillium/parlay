@@ -380,7 +380,7 @@ func TestExplainRelayDownStillCoversTheServerHalf(t *testing.T) {
 	wantLine(t, out,
 		"relay           no answer at "+relayctl.SockPath(),
 		"relay enroll    unknown — the relay did not answer GET /agents",
-		"delivery        no ledger on disk at "+relayctl.LedgerPath()+" and the relay did not answer",
+		"delivery        because the relay did not answer — no ledger on disk at "+relayctl.LedgerPath(),
 		"that is NOT the same as 'nothing was delivered'",
 		"registration    registered — name Crew One",
 		"crew state      working · source: status · alive",

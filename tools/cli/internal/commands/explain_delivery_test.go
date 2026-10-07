@@ -147,7 +147,7 @@ func TestExplainDiskLedgerUnreadableIsUnknownNotEmpty(t *testing.T) {
 		t.Fatalf("exited %d; the server answered and the ledger is on disk (unreadably)", code)
 	}
 	wantLine(t, out,
-		"the relay did not answer and its ledger at "+relayctl.LedgerPath()+" exists but could not be read",
+		"because the relay did not answer — its ledger at "+relayctl.LedgerPath()+" exists but could not be read",
 		"what it holds is unknown, not empty",
 	)
 	notWantLine(t, out, "no ledger on disk", "no events for this agent", "msg m-1")

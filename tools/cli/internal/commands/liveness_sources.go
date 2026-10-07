@@ -85,7 +85,7 @@ func gatherLiveness(a livenessArgs) livenessGather {
 	relayAgentsKnown := false
 	if h, ok := relayctl.ReadHealth(); ok {
 		g.answered = true
-		relayDetail = "up — polling " + h.Server + ", runtime " + h.Runtime
+		relayDetail = "up — " + relayHealthNote(h)
 		if equal, comparable := sameServerURL(h.Server, g.Server); comparable && !equal {
 			relayDetail += fmt.Sprintf(" · WARNING this relay polls %s, NOT the server this CLI targets (%s)", h.Server, g.Server)
 		}

@@ -27,7 +27,7 @@ func renderDelivery(r explainReport) {
 		// a nil here must never print as a healthy line.
 		fmt.Println("delivery        unknown — the relay did not answer and its ledger path could not be resolved, so what was handed over is not observable from here")
 	case !d.Socket:
-		renderDeliveryOnDisk(*d)
+		renderDeliveryOnDisk(r)
 	case !d.Enabled:
 		fmt.Printf("delivery        recording is OFF in the running relay (PARLAY_RELAY_DELIVERY_LOG=0) — nothing is being written to %s\n", d.Path)
 	case !d.Exists:
@@ -43,22 +43,33 @@ func renderDelivery(r explainReport) {
 }
 
 // renderDeliveryOnDisk prints the trail read off disk because the relay itself
-// did not answer — the state an operator is usually in when they run this.
+// did not supply it — the state an operator is usually in when they run this.
 // Every line names that source, because two things are genuinely unknowable
 // from a file: whether recording is switched off RIGHT NOW, and which server
 // the dead relay was polling. Silently reusing the socket wording would let a
 // reader believe a live relay had vouched for these rows.
-func renderDeliveryOnDisk(d explainDelivery) {
+//
+// WHY the socket did not supply it is part of the answer, and there are two
+// shapes of that: no relay at all, and a relay that answered /health but not
+// GET /delivery. Printing "the relay did not answer" for the second contradicts
+// the "relay up — …" line directly above it and sends an operator looking for a
+// dead process that is running, so the reason is chosen from what was observed.
+func renderDeliveryOnDisk(r explainReport) {
+	d := *r.delivery
+	why := "because the relay did not answer"
+	if r.relayHealth != nil {
+		why = "because the relay did not serve GET /delivery (it answered /health, so it was up; its build may predate the ledger, or that one request failed)"
+	}
 	switch {
 	case !d.Exists:
-		fmt.Printf("delivery        no ledger on disk at %s and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'\n", d.Path)
+		fmt.Printf("delivery        %s — no ledger on disk at %s: this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'\n", why, d.Path)
 	case len(d.Entries) == 0 && d.unreadable() != nil:
-		fmt.Printf("delivery        the relay did not answer and its ledger at %s exists but could not be read (%v) — the file is there and what it holds is unknown, not empty\n", d.Path, d.unreadable())
+		fmt.Printf("delivery        %s — its ledger at %s exists but could not be read (%v): the file is there and what it holds is unknown, not empty\n", why, d.Path, d.unreadable())
 	case len(d.Entries) == 0:
-		fmt.Printf("delivery        read from disk (%s) because the relay did not answer — ledger present, no events for this agent; whether recording is switched off right now is unknown\n", d.Path)
+		fmt.Printf("delivery        read from disk (%s) %s — ledger present, no events for this agent; whether recording is switched off right now is unknown\n", d.Path, why)
 	default:
-		fmt.Printf("delivery        read from disk (%s) because the relay did not answer — %d of the last %d ledger event(s), oldest first%s; whether recording is switched off right now is unknown\n",
-			d.Path, len(d.Entries), explainEventTail, d.coverage())
+		fmt.Printf("delivery        read from disk (%s) %s — %d of the last %d ledger event(s), oldest first%s; whether recording is switched off right now is unknown\n",
+			d.Path, why, len(d.Entries), explainEventTail, d.coverage())
 		for _, e := range d.Entries {
 			fmt.Printf("                  %s  %s\n", orUnknown(e.Ts), deliveryEventText(e))
 		}
