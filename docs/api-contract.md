@@ -293,6 +293,7 @@ interface InputListener {
   channel: string
   lastPollTs?: string  // ISO 8601; when anything last ASKED this channel for messages
   activePollers: number // long-polls parked on it right now
+  lastPollCursored?: boolean // did that last ask carry a backlog cursor (`after=`)?
 }
 ```
 
@@ -317,6 +318,15 @@ Two shapes here are load-bearing:
   remains). `limit`, `inputId` and `afterSeq` narrow the ledger only: who is
   listening is a fact about the server right now, not about the window a
   reader asked for.
+- **`lastPollCursored` is a three-state field, not a boolean.** A server that
+  reports it always sets it, so `true` and `false` are real facts about the
+  last poll on that channel, while **absent** means the server does not report
+  it at all. It must not be read as `false`: that would brand every listener on
+  an older server as unable to replay anything. The fact exists because
+  `handlePoll` consults the retained store **only** for a request that carried
+  `after=`, so a cursorless poll can only ever see a message published while it
+  waited — which is what turns "a listener is attached and has not taken it"
+  into a named mechanism instead of a shrug.
 
 The listener facts come from the same in-memory presence tracker
 `/api/chat/subscribers` counts (`poll.channels[].count`), read here per

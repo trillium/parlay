@@ -115,7 +115,7 @@ func TestInputEventsReportsListenerActivity(t *testing.T) {
 // about the window the reader narrowed to.
 func TestInputEventsListenersSurviveNarrowing(t *testing.T) {
 	st := newTestStore(t)
-	st.Presence.TouchPoll("c9", time.Now().UTC().Format(time.RFC3339Nano))
+	st.Presence.TouchPoll("c9", time.Now().UTC().Format(time.RFC3339Nano), true)
 
 	for _, q := range []string{"?limit=1", "?inputId=nope", "?afterSeq=0"} {
 		resp := getInputEvents(t, st, q)

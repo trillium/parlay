@@ -172,9 +172,12 @@ func handlePoll(st *store.Store, b *broker, hub *Hub, timeout time.Duration) htt
 		// A listener asked for this channel's messages — recorded for every
 		// branch below, because a served backlog and a parked waiter are both
 		// a listener, and the input view's "is anything listening at all?"
-		// question cannot be answered from /poll's response. One in-memory map
-		// write, no I/O, no error: it adds no way for this delivery to fail.
-		st.Presence.TouchPoll(channel, time.Now().UTC().Format(time.RFC3339Nano))
+		// question cannot be answered from /poll's response. `after != ""` is
+		// the same condition the backlog branch below keys off, so the bit
+		// this records is exactly whether this listener could reach an
+		// already-queued message. One in-memory map write, no I/O, no error:
+		// it adds no way for this delivery to fail.
+		st.Presence.TouchPoll(channel, time.Now().UTC().Format(time.RFC3339Nano), after != "")
 
 		ch, cancel := b.subscribe(channel)
 		defer cancel()

@@ -392,6 +392,36 @@ cannot disagree):
 | never | The channel is absent from a report the server DID produce: nothing has polled it since the server started. |
 | unreadable | A poll timestamp this view cannot parse. Not a stale one, and not a fresh one. |
 
+The block and the rows also carry **which kind of poll was last seen**, because
+attached-and-not-taking-it is a shrug until you know whether that listener
+could have taken it:
+
+```
+  agent-b            parked pollers 0   last poll 4.0s ago  a listener is attached (but its last poll carried no backlog cursor)
+```
+
+`handlePoll` consults the retained store **only** for a request that carried
+`after=`; every other poll parks on the live broker and so can only ever see a
+message published while it waited. When the server reports that the last poll
+on the channel carried no cursor *and* the input was already queued by then,
+the listener in front of it was structurally unable to collect it — not slow,
+not ignoring it. That is a named mechanism for the failure class the ledger
+cannot hold, and it is stated only when it is provable:
+
+| Row state + fact | WHY says |
+|---|---|
+| attached, cursorless poll, input queued first | `a listener is attached (last poll 4.0s ago) and has not taken it — its last poll carried no backlog cursor, so it could not have returned this input` |
+| parked, cursorless poll, input queued first | the same clause after `a listener is parked on this channel and has not taken it` |
+| attached, cursored poll | the plain `a listener is attached …` clause — the listener could have replayed it, so the cursor is not the reason |
+| attached, cursorless poll, **input queued after the poll** | the plain clause: that poll came first, so it is not why this input is waiting |
+| a server that does not report the fact | byte-identical to before |
+
+The fact is a **three-state** field on the wire (`lastPollCursored`): a server
+that reports it always sets it, and **absent** means the server does not report
+it at all. Reading absent as `false` would brand every listener on an older
+server as unable to replay anything — the same trap as reading an absent
+`listeners` array as "nothing is listening".
+
 Six honesty rules, each a way this could lie:
 
 - **An absent `listeners` field is not an empty one.** The field is always

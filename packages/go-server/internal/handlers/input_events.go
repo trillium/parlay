@@ -43,6 +43,14 @@ type inputListener struct {
 	Channel       string `json:"channel"`
 	LastPollTs    string `json:"lastPollTs,omitempty"`
 	ActivePollers int    `json:"activePollers"`
+
+	// LastPollCursored is whether the most recent poll on this channel asked
+	// for the retained backlog (`after=`). It is a POINTER for the same reason
+	// `listeners` itself is a nil-vs-empty field: nil is "this server does not
+	// report it" (an older server), which must not be read as "no cursor" —
+	// that would brand every attached listener blind. A server that reports it
+	// always sets it, so true/false are real facts and null is an absence.
+	LastPollCursored *bool `json:"lastPollCursored,omitempty"`
 }
 
 // registerInputEvents wires the read surface. Split from registerCommands/
@@ -124,10 +132,12 @@ func inputListeners(st *store.Store) []inputListener {
 	activity := st.Presence.Snapshot().PollActivity
 	out := make([]inputListener, 0, len(activity))
 	for _, a := range activity {
+		cursored := a.CarriedCursor // fresh per entry, so the pointer is not shared
 		out = append(out, inputListener{
-			Channel:       a.Channel,
-			LastPollTs:    a.LastPoll,
-			ActivePollers: a.ActivePollers,
+			Channel:          a.Channel,
+			LastPollTs:       a.LastPoll,
+			ActivePollers:    a.ActivePollers,
+			LastPollCursored: &cursored,
 		})
 	}
 	return out

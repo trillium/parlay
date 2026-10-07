@@ -4,21 +4,22 @@
 // row, so "delivery queued but never picked up" has no cause inside the
 // ledger. The server has the cause — it sees every poll request — and reports
 // it beside the ledger: per channel, when anything last asked for messages,
-// and how many long-polls are parked right now. This file joins those facts
-// onto the rows, so a waiting input can say whether anything is listening.
+// how many long-polls are parked right now, and whether that last ask carried
+// a backlog cursor. This file joins those facts onto the rows, so a waiting
+// input can say whether anything is listening, and — when the answer is
+// "something is, and it still did not take it" — which mechanism made that
+// possible.
 //
 // One rule, two renderings. classifyListener is the only place the
-// classification is decided; the row's WHY and the block under the table both
-// read it, so they cannot disagree about who is listening. When the server
-// does not report listener activity at all, every row is left exactly as it
-// was and the block prints that absence: no report is never read as "nothing
-// is listening".
+// classification is decided, and listenerNote is the only place the clause is
+// phrased; the row's WHY and the block under the table both read them, so they
+// cannot disagree about who is listening. When the server does not report
+// listener activity at all, every row is left exactly as it was and the block
+// prints that absence: no report is never read as "nothing is listening".
 package commands
 
 import (
 	"fmt"
-	"io"
-	"sort"
 	"time"
 )
 
@@ -27,6 +28,12 @@ type channelListener struct {
 	Channel       string `json:"channel"`
 	LastPollTs    string `json:"lastPollTs,omitempty"`
 	ActivePollers int    `json:"activePollers"`
+
+	// LastPollCursored is whether that last poll asked for the retained
+	// backlog. Nil means the server does not report it (it predates the
+	// field), which is a different fact from "that poll carried no cursor" —
+	// reading them alike would call every listener on an older server blind.
+	LastPollCursored *bool `json:"lastPollCursored"`
 }
 
 // The two derived states that mean "durably held, waiting for a listener".
@@ -49,16 +56,15 @@ func (r inputRow) waitingOnListener() bool {
 // next request arrives when the previous one returns.
 const defaultPollHold = 25 * time.Second
 
-// maxListenerRows bounds the block. A fleet can have many channels; the rows
-// are sorted and the count omitted is printed rather than dropped silently.
-const maxListenerRows = 8
-
 // listenerState is the classification both surfaces print. Kind is one of
-// never, parked, quiet, attached, unreadable.
+// never, parked, quiet, attached, unreadable; At is the poll's own timestamp
+// when it parsed, which is what lets a row say whether the input was already
+// waiting when the listener asked.
 type listenerState struct {
 	Kind   string
 	Age    time.Duration
 	HasAge bool
+	At     time.Time
 }
 
 // classifyListener decides what the server's report means for one channel.
@@ -74,7 +80,7 @@ func classifyListener(fact channelListener, known bool, hold time.Duration, now 
 			if age < 0 {
 				age = 0
 			}
-			st.Age, st.HasAge = age, true
+			st.Age, st.HasAge, st.At = age, true, t
 		} else if fact.LastPollTs != "" {
 			st.Kind = "unreadable"
 		}
@@ -120,6 +126,27 @@ func (p inputPage) listenerFor(channel string) (channelListener, bool) {
 	return channelListener{}, false
 }
 
+// missedTheBacklog answers the one question that turns "attached and not
+// taking it" into a named mechanism: could the listener's last ask have
+// returned this input at all?
+//
+// No. handlePoll consults the retained store ONLY for a request that carried
+// `after=`; every other poll parks on the live broker and so can only ever see
+// a message published while it waited. So when the server reports that the
+// last poll carried no cursor AND the input was already queued by then, this
+// listener was structurally unable to collect it — not slow, not ignoring it.
+//
+// It returns false when the answer is not provable, never when it is merely
+// inconvenient: an unreporting server (nil), a cursored poll, a poll whose
+// timestamp did not parse, and an input newer than the poll all fall through,
+// because for those the honest answer is "this is not the reason".
+func missedTheBacklog(fact channelListener, row inputRow, st listenerState) bool {
+	if fact.LastPollCursored == nil || *fact.LastPollCursored {
+		return false
+	}
+	return st.HasAge && !row.At.IsZero() && !row.At.After(st.At)
+}
+
 // listenerNote is the clause appended to a waiting row's WHY. It returns ""
 // whenever the question does not apply — the row was delivered, it has no
 // channel, or the server does not report listeners at all.
@@ -128,8 +155,12 @@ func (p inputPage) listenerNote(row inputRow, now time.Time) string {
 		return ""
 	}
 	fact, known := p.listenerFor(row.Channel)
-	switch st := classifyListener(fact, known, p.pollHold(), now); st.Kind {
+	st := classifyListener(fact, known, p.pollHold(), now)
+	switch st.Kind {
 	case "parked":
+		if missedTheBacklog(fact, row, st) {
+			return "a listener is parked on this channel and has not taken it — its last poll carried no backlog cursor, so it could not have returned this input"
+		}
 		return "a listener is parked on this channel and has not taken it"
 	case "never":
 		return "no listener has asked for this channel since the server started"
@@ -138,7 +169,11 @@ func (p inputPage) listenerNote(row inputRow, now time.Time) string {
 	case "quiet":
 		return fmt.Sprintf("nothing is polling this channel (last poll %s ago)", humanAge(st.Age))
 	default:
-		return fmt.Sprintf("a listener is attached (last poll %s ago) and has not taken it", humanAge(st.Age))
+		base := fmt.Sprintf("a listener is attached (last poll %s ago) and has not taken it", humanAge(st.Age))
+		if missedTheBacklog(fact, row, st) {
+			base += " — its last poll carried no backlog cursor, so it could not have returned this input"
+		}
+		return base
 	}
 }
 
@@ -155,69 +190,4 @@ func withListenerFacts(rows []inputRow, p inputPage, now time.Time) []inputRow {
 		}
 	}
 	return rows
-}
-
-// renderInputListeners prints who has been asking each channel for messages.
-// Drill-down beside the table: the rows answer "why is THIS input stuck", the
-// block answers "is my fleet listening at all", and neither can be inferred
-// from the other.
-func renderInputListeners(w io.Writer, p inputPage, now time.Time) {
-	fmt.Fprintln(w)
-	if p.Listeners == nil {
-		fmt.Fprintln(w, "LISTENERS — this server does not report listener activity, so a waiting row")
-		fmt.Fprintln(w, "cannot say whether anything is listening to it.")
-		return
-	}
-	fmt.Fprintln(w, "LISTENERS — per channel, from the server's own poll activity (runtime facts: a")
-	fmt.Fprintln(w, "restart resets them, and a channel absent here has never been polled)")
-	if len(p.Listeners) == 0 {
-		fmt.Fprintln(w, "  nothing has polled any channel since the server started — a waiting input is")
-		fmt.Fprintln(w, "  not being ignored; there is nothing there to take it.")
-		printListenerHold(w, p.pollHold())
-		return
-	}
-	sorted := append([]channelListener(nil), p.Listeners...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Channel < sorted[j].Channel })
-	shown := sorted
-	if len(shown) > maxListenerRows {
-		shown = shown[:maxListenerRows]
-	}
-	for _, f := range shown {
-		st := classifyListener(f, true, p.pollHold(), now)
-		age := "—"
-		if st.HasAge {
-			age = humanAge(st.Age) + " ago"
-		}
-		fmt.Fprintf(w, "  %-18s parked pollers %-3d last poll %-10s %s\n",
-			cell(f.Channel, 18), f.ActivePollers, age, listenerVerdict(st))
-	}
-	if n := len(sorted) - len(shown); n > 0 {
-		fmt.Fprintf(w, "  (+%d more channel(s) not shown)\n", n)
-	}
-	printListenerHold(w, p.pollHold())
-}
-
-// listenerVerdict phrases one classification for the block.
-func listenerVerdict(st listenerState) string {
-	switch st.Kind {
-	case "parked":
-		return "a listener is waiting on it right now"
-	case "never":
-		return "never polled since the server started"
-	case "unreadable":
-		return "last poll time unreadable"
-	case "quiet":
-		return "nothing is polling it"
-	default:
-		return "a listener is attached"
-	}
-}
-
-// printListenerHold states the window behind the classification, so "nothing
-// is polling it" is a claim with its number beside it rather than a hunch.
-func printListenerHold(w io.Writer, hold time.Duration) {
-	fmt.Fprintf(w, "  a listener that is attached asks at least once per %s (the server holds a\n",
-		humanAge(hold))
-	fmt.Fprintf(w, "  parked poll that long), so a channel quiet for more than %s has nothing polling it.\n",
-		humanAge(2*hold))
 }

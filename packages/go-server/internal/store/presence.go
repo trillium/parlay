@@ -18,13 +18,15 @@ type PresenceTracker struct {
 	pollers      map[string]int    // channel -> active long-poll count
 	lastSeen     map[string]string // channel -> ISO timestamp of last message activity
 	lastPoll     map[string]string // channel -> ISO timestamp of the last POLL REQUEST
+	lastPollCur  map[string]bool   // channel -> did that poll ask for the retained backlog?
 }
 
 func newPresenceTracker() *PresenceTracker {
 	return &PresenceTracker{
-		pollers:  make(map[string]int),
-		lastSeen: make(map[string]string),
-		lastPoll: make(map[string]string),
+		pollers:     make(map[string]int),
+		lastSeen:    make(map[string]string),
+		lastPoll:    make(map[string]string),
+		lastPollCur: make(map[string]bool),
 	}
 }
 
@@ -70,7 +72,8 @@ func (p *PresenceTracker) Touch(channel, ts string) {
 	p.lastSeen[channel] = ts
 }
 
-// TouchPoll records that something ASKED this channel for messages at ts.
+// TouchPoll records that something ASKED this channel for messages at ts, and
+// whether that request carried a backlog cursor (`after=`).
 //
 // It is deliberately not Touch: lastSeen answers "when did this channel last
 // have something in it", which is a fact about messages, while this answers
@@ -80,14 +83,23 @@ func (p *PresenceTracker) Touch(channel, ts string) {
 // waiter, and a waiter that has just been served, or has just timed out, is
 // momentarily absent, so a live listener can look exactly like no listener.
 //
+// carriedCursor is the second half of that: handlePoll reads the retained
+// backlog ONLY for a cursored request, so a listener whose last poll carried
+// no cursor can never be handed a message that was already queued when it
+// arrived — it can only see a publish that happens while it waits. Without
+// this bit, "a listener is attached and has not taken it" has no named
+// mechanism; with it, an input can say why the listener attached in front of
+// it could not have taken it.
+//
 // Called on every poll request, whatever branch answers it (a served backlog
-// and a parked long-poll are both a listener asking), so it is one map write
+// and a parked long-poll are both a listener asking), so it is two map writes
 // under the same lock the poller counters already take: no I/O, no error, no
 // new way for a delivery to fail.
-func (p *PresenceTracker) TouchPoll(channel, ts string) {
+func (p *PresenceTracker) TouchPoll(channel, ts string, carriedCursor bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.lastPoll[channel] = ts
+	p.lastPollCur[channel] = carriedCursor
 }
 
 // PollChannel is one entry of Snapshot.PollChannels.
@@ -110,6 +122,7 @@ type PresenceEntry struct {
 type PollActivityEntry struct {
 	Channel       string
 	LastPoll      string
+	CarriedCursor bool
 	ActivePollers int
 }
 
@@ -143,7 +156,9 @@ func (p *PresenceTracker) Snapshot() Snapshot {
 	// would make both of them unstable for no reason.
 	activity := make([]PollActivityEntry, 0, len(p.lastPoll))
 	for ch, ts := range p.lastPoll {
-		activity = append(activity, PollActivityEntry{Channel: ch, LastPoll: ts, ActivePollers: p.pollers[ch]})
+		activity = append(activity, PollActivityEntry{
+			Channel: ch, LastPoll: ts, CarriedCursor: p.lastPollCur[ch], ActivePollers: p.pollers[ch],
+		})
 	}
 	sort.Slice(activity, func(i, j int) bool { return activity[i].Channel < activity[j].Channel })
 

@@ -1701,6 +1701,16 @@ components:
         activePollers:
           type: integer
           description: Long-polls parked on this channel right now (0 between polls of a live listener, which is why lastPollTs exists).
+        lastPollCursored:
+          type: boolean
+          description: >-
+            Whether the most recent poll on this channel asked for the
+            retained backlog (`after=`). handlePoll reads the retained store
+            only for a cursored request, so a cursorless poll can only ever see
+            a message published while it waited. A server that reports this
+            always sets it; an ABSENT field means the server does not report it
+            and must not be read as false, since that would call every listener
+            on an older server unable to replay anything.
 
     AgentInfo:
       type: object
