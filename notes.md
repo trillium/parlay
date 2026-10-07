@@ -1887,9 +1887,10 @@ The sections above are main's onboarding account (PR #314) and runtime-observabi
 Status: both doors are instrumented end to end, the confidence hold is real,
 all six named failure classes have a real producer, the live view can no longer
 show a gap without naming it, the eval door's outcomes have been audited
-against the real compiled engine rather than a stub, and the snapshot now
+against the real compiled engine rather than a stub, the snapshot now
 attributes the seam's delay to the hop that spent it instead of to the input as
-a whole. This file records what the tooling can and cannot tell the operator
+a whole, and a waiting input now says whether anything is listening to it at
+all. This file records what the tooling can and cannot tell the operator
 **right now**.
 
 ## What the operator can now tell apart
@@ -1913,7 +1914,7 @@ identical:
 |---|---|---|
 | `delivered` | A listener was handed a chat message; or the dictation reached its target. `LATENCY` is first hop → delivery. | A delivered and a queued message are byte-identical in `messages.jsonl`. |
 | `queued` | Durably held, waiting for a listener. | Same bytes as delivered. |
-| `queued (unpicked)` | Queued and nothing picked it up within the stale window. | Indistinguishable from an intentional queue. |
+| `queued (unpicked)` | Queued and nothing picked it up within the stale window. `WHY` also names **who is (not) listening**: parked on it right now / attached and took nothing / nothing is polling this channel / no listener has asked since the server started. | Indistinguishable from an intentional queue — and, until iteration 9, indistinguishable from a channel with no listener at all. |
 | `refused` | An intake declined it, the target refused delivery, or the interpreter never answered. `WHY` names the reason (`empty-input`, `missing-device`, `interpreter-unreachable`, …). | `/send` refusals never reached disk at all; dictation refusals reached nothing; an eval against a dead engine was a 502 and no record anywhere. |
 | `recogniser error` | The dictation sent an empty transcript. Nothing was said, or nothing was transcribed. | A bare `400` the phone logged and dropped. |
 | `no match` | The input parsed as a command but named no destination that matched: a dictation whose focus target did not become the active app/window, or a spoken channel/contact name in the composer's picker that matched none of the offered entries (`WHY` says `channel-not-matched` or `sender-not-matched`). | The submission settled `focus_failed` in an in-memory map nothing read; the picker's miss flashed as a hint for a second and left no durable record at all. |
@@ -1931,6 +1932,130 @@ Two rules are enforced rather than intended:
   defect in the tooling, not a quiet night.
 - **`confidence_unknown` is its own state**, never folded into `ok`. `/send` and
   `/alert` have nothing to report, so that is what they honestly are.
+
+## Who is listening: the cause the ledger cannot hold (iteration 9)
+
+A `queued` hop and a `queued` hop nobody will ever collect are **the same
+row**, so "delivery queued but never picked up" had no cause anywhere in the
+view: the operator could see that a message was stuck and not whether anything
+was attached to take it. The server knows — it sees every poll request — so the
+same read surface now reports, per channel, when anything last **asked** for
+messages and how many long-polls are parked right now, and the view joins that
+onto the waiting rows. Four states, one rule (`classifyListener`, read by both
+surfaces so they cannot disagree):
+
+| State | What it means | Why the ledger could not say it |
+|---|---|---|
+| **parked** | A long-poll is on this channel right now and the input is still queued. | A parked poller and a dead one leave the same `queued` row. |
+| **attached** | Something polled inside the hold window and left it queued — attached, and still not taking it. | Same row again; the differ­ence is in the server, not the ledger. |
+| **quiet** | Nothing has polled for longer than two hold windows: nothing is listening. This is the "nobody will ever collect it" state. | Same row again. |
+| **never** | The channel is absent from a report the server DID produce: nothing has polled it since the server started. | Absence from the report is the only evidence, and an old server reports nothing at all. |
+
+`unreadable` is the fifth: a poll timestamp this view cannot parse, which is
+neither stale nor fresh. Six honesty rules, each a way this could lie:
+
+- **An absent `listeners` field is not an empty one.** The field is always
+  emitted (`[]` at minimum), so an older server leaves every waiting row exactly
+  as it was and the block prints that absence. Reading the two the same way
+  would turn an old server into a silently deaf fleet.
+- **The window behind "nothing is polling it" is the server's own.**
+  `pollHoldMs` (25000) travels on the wire and is printed; a listener that is
+  attached cannot be quieter than the hold, because its next request arrives
+  when the previous one returns.
+- **A parked poller outranks every timestamp.**
+- **An unreadable or future timestamp is neither stale nor fresh** — a server
+  whose clock runs ahead must not read as silent for hours.
+- **The facts are runtime, and the block says so.** They are in memory and a
+  restart resets them, so "never polled" means "not since this server
+  started".
+- **A delivered row gets no clause.** The question does not apply, and a note
+  on every row would hide the rows where it matters.
+
+### Demonstration (isolated server, real CLI, real long-polls)
+
+Three inputs queued on three channels, then a parked real long-poll on
+`agent-b` and a real bare poll on `agent-c` that times out and goes away. This
+is one table showing all four states at once, then the replay, then the same
+ledger 52 seconds later:
+
+```
+=== 1. three inputs queued ==============================================
+{"ok":true,"id":"m0"}      agent-a   "deploy the thing"
+{"ok":true,"id":"m1"}      agent-b   "restart the watcher"
+{"ok":true,"id":"m2"}      agent-c   "bump the version"
+
+=== 2. nothing has polled any channel ===================================
+STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  WHY
+queued           m2                          send         agent-c    572ms     —        no listener has asked for this channel since the server started
+queued           m1                          send         agent-b    581ms     —        no listener has asked for this channel since the server started
+queued           m0                          send         agent-a    595ms     —        no listener has asked for this channel since the server started
+
+LISTENERS — per channel, from the server's own poll activity (runtime facts: a
+restart resets them, and a channel absent here has never been polled)
+  nothing has polled any channel since the server started — a waiting input is
+  not being ignored; there is nothing there to take it.
+  a listener that is attached asks at least once per 25.0s (the server holds a
+  parked poll that long), so a channel quiet for more than 50.0s has nothing polling it.
+
+=== 3. a listener parks on agent-b (real long-poll) =====================
+STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  WHY
+queued (unpicked) m2                          send         agent-c    1.6s      —        no listener picked it up in 1.6s — no listener has asked for this channel since the server started
+queued (unpicked) m1                          send         agent-b    1.6s      —        no listener picked it up in 1.6s — a listener is parked on this channel and has not taken it
+queued (unpicked) m0                          send         agent-a    1.6s      —        no listener picked it up in 1.6s — no listener has asked for this channel since the server started
+
+LISTENERS — per channel, from the server's own poll activity (runtime facts: a
+restart resets them, and a channel absent here has never been polled)
+  agent-b            parked pollers 1   last poll 1.0s ago   a listener is waiting on it right now
+  a listener that is attached asks at least once per 25.0s (the server holds a
+  parked poll that long), so a channel quiet for more than 50.0s has nothing polling it.
+
+=== 4. replay of the parked input, end to end ===========================
+REPLAY m1 — 1 hop(s)
+  #1 —       2026-10-07T04:19:18.943  queued      ok      source=send  channel=agent-b
+Outcome: QUEUED (UNPICKED) — no listener picked it up in 1.7s — a listener is parked on this channel and has not taken it
+
+=== 5. a listener polls agent-c once, takes nothing, and goes away ======
+STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  WHY
+queued (unpicked) m2                          send         agent-c    2.7s      —        no listener picked it up in 2.7s — a listener is attached (last poll 1.0s ago) and has not taken it
+queued (unpicked) m1                          send         agent-b    2.7s      —        no listener picked it up in 2.7s — a listener is parked on this channel and has not taken it
+queued (unpicked) m0                          send         agent-a    2.7s      —        no listener picked it up in 2.7s — no listener has asked for this channel since the server started
+
+LISTENERS — per channel, from the server's own poll activity (runtime facts: a
+restart resets them, and a channel absent here has never been polled)
+  agent-b            parked pollers 1   last poll 2.1s ago   a listener is waiting on it right now
+  agent-c            parked pollers 0   last poll 1.0s ago   a listener is attached
+  a listener that is attached asks at least once per 25.0s (the server holds a
+  parked poll that long), so a channel quiet for more than 50.0s has nothing polling it.
+
+=== 6. the --json shape a script reads ==================================
+{ "pollHoldMs": 25000,
+  "listeners": [ { "channel": "agent-b", "lastPollTs": "2026-10-07T11:19:19.009505Z", "activePollers": 1 },
+                 { "channel": "agent-c", "lastPollTs": "2026-10-07T11:19:20.081714Z", "activePollers": 0 } ],
+  "keys": ["events", "listeners", "pollHoldMs", "stats"] }
+
+=== 7. 52s later: quiet (more than two hold windows) ====================
+STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  WHY
+queued (unpicked) m2                          send         agent-c    58.7s     —        no listener picked it up in 58.7s — nothing is polling this channel (last poll 57.0s ago)
+queued (unpicked) m1                          send         agent-b    58.7s     —        no listener picked it up in 58.7s — nothing is polling this channel (last poll 58.1s ago)
+queued (unpicked) m0                          send         agent-a    58.7s     —        no listener picked it up in 58.7s — no listener has asked for this channel since the server started
+
+LISTENERS — per channel, from the server's own poll activity (runtime facts: a
+restart resets them, and a channel absent here has never been polled)
+  agent-b            parked pollers 0   last poll 58.1s ago  nothing is polling it
+  agent-c            parked pollers 0   last poll 57.0s ago  nothing is polling it
+  a listener that is attached asks at least once per 25.0s (the server holds a
+  parked poll that long), so a channel quiet for more than 50.0s has nothing polling it.
+```
+
+The paste is one script against an isolated server
+(`-state-dir` + `-pai-dir` in `/tmp`, `PARLAY_SERVER` pointed at it); nothing
+on this machine was typed or focused. Step 3's poll is a real `curl` long-poll
+on `/api/chat/poll?channel=agent-b` still parked when the view read it; step
+5's is a real bare poll that skipped the backlog, parked, and was abandoned by
+its client after a second — which is exactly the "attached and still not
+taking it" case. Step 7 is the same ledger 52 seconds later, past two hold
+windows. The three released server processes were killed at the end of the
+run.
 
 ## Latency per stage: which hop spent the time (iteration 8)
 
@@ -2546,7 +2671,7 @@ it is kept because it is where the six-class paste lives.
 
 ## What running it caught
 
-### The real-engine audit (this iteration)
+### The real-engine audit (iteration 7)
 
 Every previous demonstration drove the eval door through a **hand-written stub
 engine**. This iteration ran the same injections against the **real compiled
@@ -2587,6 +2712,27 @@ stub's convenience turned out to be hiding a production bug:
   from a real `stale-request-version` verdict, and nothing at all for the
   picker that resolved.
 
+### The listener demo (iteration 9)
+
+- **The poll SHAPE decides whether an already-queued message can ever be taken.**
+  Found because the first demo attempt *delivered* a message it was supposed to
+  leave queued. `handlePoll` reads the retained backlog **only** when the
+  request carried a cursor (`after != ""`); a cursor it cannot resolve against
+  the channel's history is treated by `HistorySinceCursor` as unresolvable and
+  replays the whole capped channel window instead. A **bare** poll therefore
+  subscribes and waits for the *next* publish: an input queued before that poll
+  arrived is invisible to it and stays queued for ever unless something later
+  resolves a cursor past it. That is a real mechanism behind "delivery queued
+  but never picked up" — and the relay path takes its first poll exactly this
+  way whenever its spool is empty (`lastID == ""`). The listener clause added
+  this iteration names the *state* (parked/attached and not taking it) and
+  deliberately does not yet name this *cause*; see "Left undone".
+- **A live view can be built from a fact the server already had and never
+  used.** The presence tracker already knew which channel had a parked poll
+  (`pollers`); what it never kept was *when* anything asked. One timestamp on
+  the poll path turned "queued" into "queued and nothing is listening", with no
+  new state ownership and no disk traffic.
+
 ### Earlier iterations
 
 - **A truncated id made two classes unreplayable** (iteration 3). Refusals and
@@ -2618,11 +2764,11 @@ stub's convenience turned out to be hiding a production bug:
   pinning it and `TestDeriveInputRowOnAnOlderLedgerDoesNotInventACommand`
   pinning that an older ledger still reads as it did before.
 - **A map literal with a duplicate key is a compile error, not a silent
-  overwrite** (this iteration): two identical `"command="` cases in one test
+  overwrite** (iteration 6): two identical `"command="` cases in one test
   table stopped `tools/cli` from building, which is the good outcome — it is
   worth remembering that Go's compiler is the gate for that mistake, not a
   linter.
-- **`gofmt -l` exits 0 while listing unformatted files** (this iteration): a
+- **`gofmt -l` exits 0 while listing unformatted files** (iteration 6): a
   script that prints `gofmt-exit=$?` after `gofmt -l .` reports success while
   the configured gate (`gofmt -l . | (! grep .)`) would fail. Only the pipeline
   form is a gate; the bare exit status is not.
@@ -2652,6 +2798,10 @@ pattern ./...: directory prefix . does not contain main module or its selected d
 literal-stop-condition-exit=1
 ```
 
+(Re-run verbatim this iteration; unchanged at exit 1. The stop condition is
+reported as **not met**, with the reason above — it is structurally impossible
+in this repository layout and was already so at baseline.)
+
 Verified in iteration 5 that no workspace arrangement fixes it: with a root
 `go.work` listing all four modules, `go build ./...` **still** fails —
 `pattern ./...: directory prefix . does not contain modules listed in go.work or
@@ -2662,8 +2812,8 @@ was removed; nothing about it is in the diff.)
 
 The equivalent per-module sweep, matching CI's `GO_MODULES`
 (`tools/cli tools/relay packages/go-server packages/spawn-profiles`), run fresh
-this iteration (`-count=1`) after every edit — including the inputlog
-producer-stamp change and the new CLI tests:
+this iteration (`-count=1`) after every edit — including the listener facts on
+the poll path, the read-route extension and the new CLI tests:
 
 ```
 ########## 0. the literal stop condition, at the repo root ##########
@@ -2671,24 +2821,22 @@ pattern ./...: directory prefix . does not contain main module or its selected d
 literal-stop-condition-exit=1
 
 ########## 1. gofmt -l . (the GATE form: `gofmt -l . | (! grep .)`) ##########
-gofmt-exit=0
+gofmt-gate-exit=0
 
 ########## 2. per-module build / vet / test (CI's GO_MODULES) ##########
 ---- tools/cli ----
 tools/cli exit=0 ok-packages=27 fail-lines=0
-ok  	github.com/trillium/parlay/tools/cli/internal/commands	50.793s
 ---- tools/relay ----
 tools/relay exit=0 ok-packages=1 fail-lines=0
 ---- packages/go-server ----
 packages/go-server exit=0 ok-packages=12 fail-lines=0
-ok  	parlay/go-server/internal/handlers	16.956s
-ok  	parlay/go-server/internal/inputlog	4.927s
 ---- packages/spawn-profiles ----
 packages/spawn-profiles exit=0 ok-packages=1 fail-lines=0
 
 ########## 3. -race on the packages this work touches (go-server) ##########
-ok  	parlay/go-server/internal/inputlog	4.497s
-ok  	parlay/go-server/internal/handlers	16.896s
+ok  	parlay/go-server/internal/inputlog	4.451s
+ok  	parlay/go-server/internal/handlers	17.176s
+ok  	parlay/go-server/internal/store	1.804s
 race-exit=0
 
 ########## 4. make test-bdd ##########
@@ -2710,7 +2858,16 @@ go-server only.
 ## Hard constraints, and how each is met
 
 - **Observability never sits in the delivery path.**
-  **New this iteration:** the per-stage latency block is computed in the CLI,
+  **New this iteration:** the listener facts are one in-memory map write at the
+  top of the poll handler (`Presence.TouchPoll`: no I/O, no error, no
+  allocation beyond one timestamp string, the same shape as the
+  `AddPoller`/`RemovePoller` counters that were already there), and reading them
+  goes through a snapshot under the same lock — never the disk, never the
+  ledger. `TestPollDeliveryIsNotBlockedByInputEventsReaders` proves the
+  constraint for the new read surface directly: eight goroutines hammer the
+  read route while a parked long-poll is woken by a real `/send`, and the
+  delivery still lands with its delivered hop recorded.
+  **Iteration 8:** the per-stage latency block is computed in the CLI,
   from a page the server has already returned — after the delivery hop was
   recorded and answered — so it cannot touch a delivery at all; the one
   server-side line it added (`Record` stamping the hop's time with a single
@@ -2737,7 +2894,10 @@ go-server only.
   **never message text**. Backend error strings are not copied in either: a
   Talon or bead error can echo the text being typed, and the eval rows carry a
   command id, a stream id and a version — never the buffer, and never the
-  picker hint's own text (which contains what the operator said).
+  picker hint's own text (which contains what the operator said). The listener
+  half stores a channel name and a timestamp of a poll request: it names the
+  channel, never the caller, and it is in memory only (a restart resets it, and
+  the block says so).
 - **`internal/guard.GuardedPaths` untouched; no guard check reimplemented.**
   No route was added: `POST /api/chat/eval` keeps the guarded classification it
   already had, and the read surface `/api/chat/input-events` is unchanged and
@@ -2763,7 +2923,14 @@ go-server only.
   `confidence` on the submit body is optional and additive, and `held` is a new
   terminal status downstream readers already handle (Parlay clears input state
   only on `injected` and preserves the text on anything else, which is what a
-  hold wants).
+  hold wants). Iteration 9 adds two additive fields to this branch's own read
+  route (`listeners`, `pollHoldMs`) and none to `/api/chat/subscribers`, whose
+  documented shape is untouched (`PollChannel` is unchanged; the new
+  `PollActivity` list is internal and read only here). A reader of the old
+  shape sees exactly what it saw before; the CLI pins that with
+  `TestInputSnapshotJSONKeepsThePageAndAddsLatencies` plus the listener tests,
+  and the "absent field = not reported" half is pinned by
+  `TestInputEventsListenersAreAlwaysAnArrayOnTheWire`.
 - **No harness scratch committed.** `.pi/` is in `.gitignore`.
 
 ## Deliberately not built (and why)
@@ -2793,6 +2960,20 @@ go-server only.
   the view says so rather than implying trust.
 - **A provenance threshold.** No surface reports provenance strength, so a
   provenance hold would compare against a value nothing produces.
+- **A LISTENERS column in the table.** The fact belongs on the row whose
+  question it answers (a waiting row's WHY), not in a column every delivered
+  row would leave empty. The per-channel block is the fleet-wide half.
+- **Listener facts in the live tail.** `--watch` prints hops, not rows, and a
+  listener fact is not a hop: attaching it to a hop would invent an event that
+  did not happen. The tail prints hops; the snapshot prints who is listening.
+- **A listener liveness line for `delivered` rows.** A delivered input already
+  had something listening, and saying so on every row would bury the rows where
+  the answer is not obvious.
+- **The historical cause behind "attached and not taking it".** The server knows
+  whether the last poll carried a cursor, and a bare poll can only see messages
+  sent after it arrived (see "What running it caught") — recording that would
+  turn the state into a named mechanism. Deliberately deferred rather than
+  overlooked; it is the first item in "Left undone" below.
 - **A push stream for the ledger.** `--watch` polls and its header states the
   cadence; an SSE event would imply a delivery latency the ledger does not have.
   The cursor makes the poll *lossless within the retained window*, not instant.
@@ -2802,15 +2983,29 @@ go-server only.
 
 ## Left undone
 
+- **The listener clause names the state, not the mechanism.** The server knows
+  whether the last poll on a channel carried a cursor, and a bare poll can only
+  see messages sent after it arrived (see "What running it caught") — so
+  "a listener is attached and has not taken it" could become "…and it could
+  not have seen this input: its poll carried no cursor". That is one boolean on
+  the poll path and one clause in `listenerNote`, and it is the single most
+  useful next step for this seam, because it turns the remaining cause into a
+  named one.
 - **The branch lags the working tree by one commit.** PR
   [#312](https://github.com/trillium/parlay/pull/312) is open against `main`.
-  This iteration pushed `gnhf/objective-give-the-o-ad0a88` as far as iteration 7's
-  head (`6b217a4`), so this iteration's changes (the per-stage latency block, the
-  producer-clock fix, their tests, the docs) reach the PR on **the next push of
-  that branch**; nothing blocks that. The PR has still never had a real
-  CodeRabbit review — the repository is under 10 stars, so the bot posts a
-  "skip review" summary unless a comment asks it with `@coderabbitai review`,
-  which is worth spending.
+  This iteration pushed `gnhf/objective-give-the-o-ad0a88` as far as iteration 8's
+  head (`9420fb4`), so this iteration's changes (the listener facts on the poll
+  path, the read-route extension, the view's listener clause and block, their
+  tests, the docs and the contract) reach the PR on **the next push of that
+  branch**; nothing blocks that. The PR has still never had a real CodeRabbit
+  review — the repository is under 10 stars, so the bot posts a "skip review"
+  summary unless a comment asks it with `@coderabbitai review`, which is worth
+  spending.
+- **The listener facts are process-local.** They live in memory and a restart
+  resets them, so after a restart the first poll is what makes a channel appear;
+  a channel that has not been polled since then reads `never` rather than
+  "quiet since Tuesday". The block says the facts are runtime facts rather than
+  implying history, but a durable form would need its own retention decision.
 - **The latency window is whatever `--limit` returned.** The block summarises the
   hops in the page (default 40, max on the paging path), not a time range; there
   is no `--since`. Sizing it in hops was deliberate — the ledger's own unit — but
@@ -2850,7 +3045,11 @@ go-server only.
 This repository enforces no per-file line budget (CI gates are conflict markers,
 a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and docs-index completeness —
 `.github/workflows/ci.yml`). Following the objective, every **new** file this
-branch adds is under 250 lines. This iteration's are `input_latency.go` (232),
+branch adds is under 250 lines. This iteration's are `input_listeners.go` (223),
+`input_listeners_test.go` (187),
+`packages/go-server/internal/store/presence_poll_test.go` (78) and
+`packages/go-server/internal/handlers/input_events_listeners_test.go` (203);
+the previous iteration's are `input_latency.go` (232),
 `input_latency_test.go` (230), `input_snapshot_test.go` (75, split out so the
 derivation tests stayed under the ceiling) and `inputlog/timestamp_test.go`
 (95); earlier ones are `eval_interpret_precedence_test.go` (126),
@@ -2868,7 +3067,11 @@ derivation tests, which moved their wiring half into `input_snapshot_test.go`).
 
 The edited files above 250 lines are pre-existing ones this branch only adds to:
 `handlers/eval.go` (380, the eval door itself) and `inputlog/log.go` (**242 at
-branch start**, 260 now: it owns the `Stats` struct that gained `newestSeq` and
+the branch start**, 260 now: it owns the `Stats` struct that gained `newestSeq` and
 `Record`, which gained the two lines that stamp a hop when the producer observes
-it); `tools/cli/internal/commands/input_model.go` is 235. Splitting any of them
-for a handful of lines would hurt more than help.
+it). Three files this branch created grew with the listener half and were split
+back under the ceiling rather than left over it: `input_model.go` shed the state
+constants and the listener predicate to `input_listeners.go` (243 and 223),
+`handlers/input_events.go` is 147 and `store/presence.go` is 157 — all three
+were already over the ceiling only after this iteration's fields, which is the
+ceiling doing its job rather than a formality.

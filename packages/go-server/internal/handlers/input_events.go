@@ -22,6 +22,27 @@ const inputEventsPath = "/api/chat/input-events"
 type inputEventsResponse struct {
 	Events []inputlog.Event `json:"events"`
 	Stats  inputlog.Stats   `json:"stats"`
+
+	// Listeners is who has been asking each channel for messages — the one
+	// fact the ledger cannot carry, because a queued hop and a queued hop
+	// nobody will ever collect are the same row. It is never omitted: `[]`
+	// means nothing has polled any channel since the server started, while an
+	// ABSENT field (an older server) means listener activity is not reported
+	// at all. A reader must not read those two as the same thing — the whole
+	// point of the field is that "nothing is listening" is sayable.
+	Listeners []inputListener `json:"listeners"`
+
+	// PollHoldMs is how long this server holds a parked long-poll. A listener
+	// that is attached cannot be quiet for longer than that, so it is the
+	// window below which quiet is normal and above which nothing is there.
+	PollHoldMs int64 `json:"pollHoldMs"`
+}
+
+// inputListener is one channel's poll activity on the wire.
+type inputListener struct {
+	Channel       string `json:"channel"`
+	LastPollTs    string `json:"lastPollTs,omitempty"`
+	ActivePollers int    `json:"activePollers"`
 }
 
 // registerInputEvents wires the read surface. Split from registerCommands/
@@ -34,14 +55,17 @@ func registerInputEvents(mux *http.ServeMux, st *store.Store) {
 // handleInputEvents implements GET /api/chat/input-events.
 //
 // Read-only and identifier-free beyond what /api/chat/history already hands
-// out — message ids and channel names — so it stays outside the guard for the
-// same reason history does. It never writes: an unknown inputId is an empty
-// list, not a created record.
+// out — message ids, channel names, and (since the listener half was added)
+// per-channel poll counts and timestamps, which name no caller — so it stays
+// outside the guard for the same reason history does. It never writes: an
+// unknown inputId is an empty list, not a created record.
 //
 // `afterSeq` is the cursor a live tail reads forward with. It is the one
 // place this route's shape is not the obvious one: `limit` gives the NEWEST N
 // of a set, but with a cursor it gives the OLDEST N, because a reader that is
 // paging forward must never have a page silently omitted out from under it.
+// `limit` narrows the ledger, never the listener list: who is listening is a
+// fact about the server right now, not about the window the reader asked for.
 func handleInputEvents(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -49,7 +73,7 @@ func handleInputEvents(st *store.Store) http.HandlerFunc {
 			return
 		}
 		if st == nil {
-			writeJSON(w, inputEventsResponse{})
+			writeJSON(w, inputEventsResponse{Listeners: []inputListener{}})
 			return
 		}
 
@@ -84,8 +108,29 @@ func handleInputEvents(st *store.Store) http.HandlerFunc {
 		if events == nil {
 			events = []inputlog.Event{}
 		}
-		writeJSON(w, inputEventsResponse{Events: events, Stats: st.Input.Stats()})
+		writeJSON(w, inputEventsResponse{
+			Events:     events,
+			Stats:      st.Input.Stats(),
+			Listeners:  inputListeners(st),
+			PollHoldMs: defaultPollTimeout.Milliseconds(),
+		})
 	}
+}
+
+// inputListeners maps the presence tracker's poll activity onto the wire
+// shape. Always non-nil, so the route never accidentally reports "nothing is
+// listening" where it means "not reported".
+func inputListeners(st *store.Store) []inputListener {
+	activity := st.Presence.Snapshot().PollActivity
+	out := make([]inputListener, 0, len(activity))
+	for _, a := range activity {
+		out = append(out, inputListener{
+			Channel:       a.Channel,
+			LastPollTs:    a.LastPoll,
+			ActivePollers: a.ActivePollers,
+		})
+	}
+	return out
 }
 
 // parseLimit reads a `limit` query value, returning 0 for absent or

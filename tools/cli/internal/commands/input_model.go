@@ -44,6 +44,14 @@ type inputStats struct {
 type inputPage struct {
 	Events []inputEvent `json:"events"`
 	Stats  inputStats   `json:"stats"`
+
+	// Listeners and PollHoldMs are the server's own facts about who is asking
+	// each channel for messages and how long it holds a parked poll. Nil
+	// Listeners means this server reports no listener activity at all (it
+	// predates the field) — never the same fact as an empty list.
+	// input_listeners.go owns that distinction and every rule built on it.
+	Listeners  []channelListener `json:"listeners"`
+	PollHoldMs int64             `json:"pollHoldMs"`
 }
 
 // defaultStaleAfter is how long a queued input may sit before this view calls
@@ -141,7 +149,7 @@ func deriveInputRow(id string, hops []inputEvent, now time.Time, stale time.Dura
 		case "superseded":
 			row.State, row.Why = "superseded", e.Reason
 		case "unpicked":
-			row.State, row.Why = "queued (unpicked)", e.Reason
+			row.State, row.Why = stateQueuedUnpicked, e.Reason
 		}
 	}
 	if row.State != "" {
@@ -167,14 +175,14 @@ func deriveInputRow(id string, hops []inputEvent, now time.Time, stale time.Dura
 			}
 		}
 	case "queued":
-		row.State = "queued"
+		row.State = stateQueued
 		for _, e := range hops {
 			if e.Stage == "queued" {
 				setLatency(e)
 			}
 		}
 		if age := now.Sub(row.At); stale > 0 && age > stale {
-			row.State, row.Why = "queued (unpicked)", "no listener picked it up in "+humanAge(age)
+			row.State, row.Why = stateQueuedUnpicked, "no listener picked it up in "+humanAge(age)
 		}
 	case "received", "interpreted", "routed":
 		row.State = lastStage(hops)

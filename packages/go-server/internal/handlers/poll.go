@@ -169,6 +169,13 @@ func handlePoll(st *store.Store, b *broker, hub *Hub, timeout time.Duration) htt
 		channel := r.URL.Query().Get("channel")
 		after := r.URL.Query().Get("after")
 
+		// A listener asked for this channel's messages — recorded for every
+		// branch below, because a served backlog and a parked waiter are both
+		// a listener, and the input view's "is anything listening at all?"
+		// question cannot be answered from /poll's response. One in-memory map
+		// write, no I/O, no error: it adds no way for this delivery to fail.
+		st.Presence.TouchPoll(channel, time.Now().UTC().Format(time.RFC3339Nano))
+
 		ch, cancel := b.subscribe(channel)
 		defer cancel()
 

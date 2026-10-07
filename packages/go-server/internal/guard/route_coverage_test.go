@@ -43,9 +43,11 @@ var TestUnguardedRoutes = map[string]string{
 	"/api/chat/agents":  "read: registered agent ids. Deliberately asymmetric with the /api/chat/agents/ prefix below — see that entry",
 	// The input-seam ledger hands out message ids and channel names — the same
 	// pair /api/chat/history already returns unguarded — plus short typed
-	// reason tokens. No device uuid, no message text (the ledger never stores
-	// any), and nothing writable: an unknown ?inputId= is an empty list.
-	"/api/chat/input-events": "read: the input-seam ledger; message ids and channel names are already unguarded at /api/chat/history",
+	// reason tokens and, since the listener half was added, per-channel poll
+	// counts and timestamps. No device uuid, no message text (the ledger never
+	// stores any), no caller identity (a poll timestamp names a channel, not
+	// who asked), and nothing writable: an unknown ?inputId= is an empty list.
+	"/api/chat/input-events": "read: the input-seam ledger; message ids, channel names and per-channel poll timestamps are already unguarded at /api/chat/history",
 	"/api/chat/commands":     "read: the live-command snapshot. Same class as /api/chat/agents; its three POST siblings ARE guarded",
 	"/api/chat/version":      "read: bundle version string, polled by every SSE client",
 	"/api/chat/pages":        "read: the page manifest the panel's page picker renders",

@@ -48,7 +48,7 @@ func Input(argv []string) {
 			printJSON(page)
 			return
 		}
-		renderInputReplay(os.Stdout, id, page.Events, time.Now(), stale)
+		renderInputReplay(os.Stdout, id, page, time.Now(), stale)
 		return
 	}
 	if r.Bool("--watch") {
@@ -71,7 +71,10 @@ func Input(argv []string) {
 		printJSON(inputLatencyPage{inputPage: page, StageLatency: wire, Excluded: skipped})
 		return
 	}
-	renderInputRows(os.Stdout, inputRows(page.Events, time.Now(), stale), page.Stats, limit)
+	now := time.Now()
+	rows := withListenerFacts(inputRows(page.Events, now, stale), page, now)
+	renderInputRows(os.Stdout, rows, page.Stats, limit)
+	renderInputListeners(os.Stdout, page, now)
 	renderInputLatency(os.Stdout, page.Events)
 }
 
@@ -162,8 +165,13 @@ func latencyCell(r inputRow) string {
 }
 
 // renderInputReplay shows every hop one input made, in order, with the gap
-// between hops and where it stopped: one id, end to end, off the ledger.
-func renderInputReplay(w io.Writer, id string, events []inputEvent, now time.Time, stale time.Duration) {
+// between hops and where it stopped: one id, end to end, off the ledger. It
+// takes the whole page rather than just the events because the outcome line
+// needs the listener facts too — a replay that said "queued" while the table
+// said "queued — nothing is polling this channel" would be two answers to one
+// question.
+func renderInputReplay(w io.Writer, id string, page inputPage, now time.Time, stale time.Duration) {
+	events := page.Events
 	hops := make([]inputEvent, 0, len(events))
 	for _, e := range events {
 		if e.InputID == id {
@@ -200,7 +208,8 @@ func renderInputReplay(w io.Writer, id string, events []inputEvent, now time.Tim
 			i+1, delta, inputStamp(e.Ts), e.Stage, e.Class, cell(e.Source, 16), cell(e.Channel, 12), extra)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Outcome: %s\n", replayOutcome(inputRowFor(hops, now, stale), last, now))
+	row := withListenerFacts([]inputRow{inputRowFor(hops, now, stale)}, page, now)[0]
+	fmt.Fprintf(w, "Outcome: %s\n", replayOutcome(row, last, now))
 }
 
 // watchInputs, watchHeader and watchRowLine live in input_watch.go.

@@ -93,7 +93,7 @@ func TestRenderInputReplayOfAPickerMiss(t *testing.T) {
 		Detail: "stream=eval-dev-1-picker v=1 mode=channel-select candidates=3",
 	}}
 	var buf bytes.Buffer
-	renderInputReplay(&buf, "in-eval-1", events, now, defaultStaleAfter)
+	renderInputReplay(&buf, "in-eval-1", inputPage{Events: events}, now, defaultStaleAfter)
 	out := buf.String()
 	for _, want := range []string{"no_match", "channel-not-matched", "candidates=3", "Outcome: NO MATCH"} {
 		if !strings.Contains(out, want) {
@@ -113,7 +113,7 @@ func TestRenderInputReplayOfAFiredCommand(t *testing.T) {
 		Detail: "command=switch-tab stream=eval-dev-1-main v=4",
 	}}
 	var buf bytes.Buffer
-	renderInputReplay(&buf, "in-eval-2", events, now, defaultStaleAfter)
+	renderInputReplay(&buf, "in-eval-2", inputPage{Events: events}, now, defaultStaleAfter)
 	out := buf.String()
 	if !strings.Contains(out, "Outcome: COMMAND — switch-tab") {
 		t.Errorf("replay does not name the command this input became:\n%s", out)

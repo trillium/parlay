@@ -210,10 +210,10 @@ paths:
         the answer to one input's hops — the material a replay renders. The
         response always carries the ledger's own counters, so an empty event
         list and a ledger that is silently shedding records cannot look alike.
-        Unguarded deliberately: it hands out only message ids and channel names,
-        which `/api/chat/history` already returns unguarded, and it never
-        stores anything (an unknown `inputId` is an empty list). The ledger
-        holds no message text.
+        Unguarded deliberately: it hands out only message ids, channel names
+        (which `/api/chat/history` already returns unguarded) and per-channel
+        poll counts and timestamps, and it never stores anything (an unknown
+        `inputId` is an empty list). The ledger holds no message text.
       parameters:
         - name: inputId
           in: query
@@ -1667,6 +1667,40 @@ components:
       properties:
         events: { type: array, items: { $ref: "#/components/schemas/InputEvent" } }
         stats: { $ref: "#/components/schemas/InputEventStats" }
+        listeners:
+          type: array
+          description: >-
+            Who has been asking each channel for messages — the half of the
+            seam the ledger cannot carry, because a queued hop and a queued hop
+            nothing will ever collect are the same row. Never omitted: an empty
+            array means nothing has polled any channel since the server
+            started, while an ABSENT field means this server does not report
+            listener activity at all. A channel that was never polled is absent
+            from the array. `limit`, `inputId` and `afterSeq` narrow the ledger
+            only, never this list.
+          items: { $ref: "#/components/schemas/InputListener" }
+        pollHoldMs:
+          type: integer
+          description: >-
+            How long this server holds a parked long-poll, in milliseconds
+            (25000). A listener that is attached cannot be quieter than the
+            hold, so this is the window below which quiet is normal and above
+            which nothing is polling the channel.
+
+    InputListener:
+      type: object
+      required: [channel, activePollers]
+      properties:
+        channel: { type: string }
+        lastPollTs:
+          type: string
+          description: >-
+            ISO 8601; when anything last ASKED this channel for messages
+            (a served backlog and a parked long-poll both count). It is not
+            the time of the last message: this is a fact about listeners.
+        activePollers:
+          type: integer
+          description: Long-polls parked on this channel right now (0 between polls of a live listener, which is why lastPollTs exists).
 
     AgentInfo:
       type: object

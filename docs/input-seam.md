@@ -353,6 +353,75 @@ neither reads as "no time passed". The live tail prints no rolling aggregate:
 a percentile running under a live tail is a number the operator cannot tie to
 any one input.
 
+### Who is listening: the fact the ledger cannot carry
+
+A `queued` hop records that a message is durably held. It cannot record
+whether anything will ever collect it, because a queued message a listener is
+about to take and a queued message nobody is listening for are **the same
+row** — so "delivery queued but never picked up" had no cause in the view at
+all. The server has the cause: it sees every poll request. The same read
+surface therefore reports, per channel, when anything last asked for messages
+and how many long-polls are parked right now, and the view joins those facts
+onto the waiting rows:
+
+```
+LISTENERS — per channel, from the server's own poll activity (runtime facts: a
+restart resets them, and a channel absent here has never been polled)
+  agent-a            parked pollers 1   last poll 3.0s ago  a listener is waiting on it right now
+  agent-b            parked pollers 0   last poll 20m00s ago nothing is polling it
+  a listener that is attached asks at least once per 25.0s (the server holds a
+  parked poll that long), so a channel quiet for more than 50.0s has nothing polling it.
+```
+
+and every waiting row's WHY carries the same classification, so the answer is
+where the operator is already looking:
+
+```
+queued             m4   send     agent-a     2m00s     —     no listener picked it up in 2m00s — nothing is polling this channel (last poll 20m00s ago)
+queued (unpicked)  m5   send     agent-b     5m00s     —     no listener picked it up in 5m00s — no listener has asked for this channel since the server started
+```
+
+Five states, one rule (`classifyListener`, which both surfaces read so they
+cannot disagree):
+
+| State | What it means |
+|---|---|
+| parked | A long-poll is on this channel **right now** and the input is still queued. |
+| attached | Something polled inside the hold window and left it queued. It is attached — but it is not taking this input. |
+| quiet | Nothing has polled for longer than two hold windows, so nothing is listening. This is the "nobody will ever collect it" state. |
+| never | The channel is absent from a report the server DID produce: nothing has polled it since the server started. |
+| unreadable | A poll timestamp this view cannot parse. Not a stale one, and not a fresh one. |
+
+Six honesty rules, each a way this could lie:
+
+- **An absent `listeners` field is not an empty one.** The field is always
+  emitted (`[]` at minimum) so an older server — which reports no listener
+  activity at all — leaves every row exactly as it was and prints that
+  absence. Reading the two the same way would turn an old server into a
+  silently deaf fleet.
+- **The window behind "nothing is polling it" is the server's own.**
+  `pollHoldMs` (25s) comes over the wire and is printed; a listener that is
+  attached cannot be quieter than the hold, because its next request arrives
+  when the previous one returns. A hard-coded 50s in the view would be a
+  guess, and would be wrong the day the hold changes.
+- **A parked poller outranks every timestamp.** Something is attached right
+  now, whatever the clock says.
+- **An unreadable or future timestamp is neither stale nor fresh.** A server
+  whose clock runs ahead must not read as "silent for hours".
+- **These are runtime facts, and the block says so.** They live in memory and
+  reset when the server restarts; a channel that is absent may simply have
+  been quiet since that restart. The block prints that sentence rather than
+  letting an operator infer history it does not have.
+- **A delivered row gets no clause.** The question does not apply, and a note
+  on every row would be noise that hides the rows where it matters.
+
+The facts cost one in-memory map write on the poll path (no I/O, no error, so
+no new way for a delivery to fail), and reading them never touches the
+ledger's disk. `TestPollDeliveryIsNotBlockedByInputEventsReaders` proves the
+constraint directly: eight goroutines hammer the read route while a parked
+poll is woken by a real send, and the delivery still lands with its delivered
+hop recorded.
+
 ### The live tail, and the three ways it can be incomplete
 
 `--watch` reads **forward from a cursor** (`?afterSeq=<seq>`) rather than

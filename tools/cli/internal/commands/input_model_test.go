@@ -159,7 +159,7 @@ func TestRenderInputReplayShowsEveryHopAndWhereItStopped(t *testing.T) {
 		{Seq: 2, Ts: base.Add(4 * time.Second).Format(time.RFC3339Nano), InputID: "m1", Stage: "delivered", Class: "ok", Source: "poll-backlog", Channel: "c0"},
 	}
 	var buf bytes.Buffer
-	renderInputReplay(&buf, "m1", events, now, defaultStaleAfter)
+	renderInputReplay(&buf, "m1", inputPage{Events: events}, now, defaultStaleAfter)
 	out := buf.String()
 	for _, want := range []string{"REPLAY m1", "queued", "delivered", "poll-backlog", "+4.0s", "Outcome: DELIVERED in 4.0s"} {
 		if !strings.Contains(out, want) {
@@ -170,7 +170,7 @@ func TestRenderInputReplayShowsEveryHopAndWhereItStopped(t *testing.T) {
 
 func TestRenderInputReplayOnAnUnknownIDDoesNotClaimItNeverExisted(t *testing.T) {
 	var buf bytes.Buffer
-	renderInputReplay(&buf, "m-ghost", nil, time.Now(), defaultStaleAfter)
+	renderInputReplay(&buf, "m-ghost", inputPage{}, time.Now(), defaultStaleAfter)
 	out := buf.String()
 	if strings.Contains(out, "DELIVERED") || strings.Contains(out, "Outcome: OK") {
 		t.Errorf("an unknown id reported a healthy outcome:\n%s", out)
