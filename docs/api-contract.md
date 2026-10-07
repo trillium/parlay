@@ -711,6 +711,69 @@ includes a full `commands` snapshot.
 
 ---
 
+## Command log and the off switch
+
+The **command log** — one row per *evaluated string* (not per process, which is
+the live-command registry above) — and the **off switch** that turns a
+connection or an action off from wherever those rows are read. Full contract:
+[`docs/action-log.md`](./action-log.md) (which owns it — summary here). Like the
+registry, the log stores **no evaluated text**: identifiers, verb names, an
+outcome token and timings only.
+
+Both routes are in the origin guard's `GuardedPaths`. `/api/chat/off-switch` is
+mutating on POST, which by the method-independent rule puts the GET on the same
+path inside the boundary too; `/api/chat/action-log` is guarded because it hands
+out device and command ids, and it is in `noGuardedCORSReads` so guarding it does
+not newly reflect an `Access-Control-Allow-Origin` on a read that has never sent
+one.
+
+### `GET /api/chat/action-log`
+Query (all optional): `source`, `inputAction`, `outputAction`, `outcome`,
+`reason`, `device`, `since`, `until`, `limit`. `since`/`until` accept an RFC3339
+timestamp **or** a duration (`15m`, `2h`, `-15m`) measured back from now.
+```jsonc
+{ "ok": true, "now": "iso", "total": N, "limit": N,
+  "records": [ {
+    "id": "act-N", "at": "iso", "source": "test-site"|"panel",
+    "device"?: "…", "streamId"?: "…", "inputAction"?: "…",
+    "outputActions": ["…"],
+    "outcome": "delivered"|"queued"|"dropped"|"refused",
+    "reason"?: "…", "relayMs"?: N, "engineEvalNs"?: N } ],
+  "facets": { "sources": [], "inputActions": [], "outputActions": [],
+              "outcomes": [], "reasons": [], "devices": [] },
+  "targets": [ { "kind", "id", "by"?, "surface"?, "at" } ],
+  "outcomeVocabulary": ["delivered","queued","dropped","refused"],
+  "filterVocabulary": { "fields": [], "times": [] } }
+```
+The three companion fields are what make one fetch enough to render a working
+filter bar: `facets` is every distinct value actually present, `targets` is what
+is currently off, and `outcomeVocabulary` is the closed four including values
+with no rows yet.
+
+### `GET /api/chat/off-switch`
+```jsonc
+{ "ok": true, "now": "iso", "targets": [ …as in `targets` above… ],
+  "kinds": ["connection","action"], "surfaces": ["website","cli","api"],
+  "connections": N, "actions": N }
+```
+
+### `POST /api/chat/off-switch`
+Request: `{ "kind": "connection"|"action", "id", "off": true|false,
+"by"?, "surface": "website"|"cli"|"api" }` → 200
+`{ "ok": true, "kind", "id", "off", "changed", "entry"?, "targets": [ … ] }`.
+An unknown `kind` or an empty `id` is **400** and mutates nothing; a missing
+`off` is **400** rather than a silent "turn it on".
+
+`off:true` on a **connection** refuses that device's `/api/chat/eval` before the
+relay reaches the engine, and refuses its pending server-owned fires on
+`/api/chat/eval-push`; `off:true` on an **action** suppresses that command's
+emitted actions after evaluation and refuses its already-armed submit timer.
+Both are recorded in the log as `refused` with reason `off-connection` /
+`off-action`. State is in-memory by design (the same reasoning as
+`PresenceTracker` and the command registry, which have no on-disk form either).
+
+---
+
 ## Debug / diagnostics
 
 ### `POST /api/chat/debug-log`
