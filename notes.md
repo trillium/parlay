@@ -61,8 +61,11 @@ $ make test-bdd ; echo exit=$?
 exit=0
 ```
 
-Baseline recorded before any change on this branch: identical — all four modules exit 0,
-`gofmt -l .` empty, `make test-bdd` exit 0. There is no known-red on this box.
+Baseline before any change: identical — all four modules exit 0, `gofmt -l .` empty,
+`make test-bdd` exit 0. No known-red on this box.
+
+Re-run after merging `main` (two docs-only commits): identical, plus
+`bin/parlay-preflight.test.sh` 20 passed / 0 failed and 223 local links / 0 broken.
 
 ### The newcomer path, executed end to end
 
@@ -215,17 +218,27 @@ this branch is ≤ 250 lines (`bin/parlay-preflight` 249, `bin/parlay-preflight.
 
 ## Left undone, with reasons
 
-- **The branch is not pushed and the PR is not open yet.** This harness commits locally
-  at the end of the turn and does not push, so pushing now would publish the very
-  `.pi/tasks/` scratch files this iteration just untracked. The next iteration's first
-  two commands are the fix — `git push -u origin gnhf/objective-make-a-new-904428`, then
-  `gh-axi pr create --base main --head gnhf/objective-make-a-new-904428 --title ...
-  --body-file .pi/pr-body.md` (body already written). `gh` is authenticated as
-  `trillium` with `repo` scope, and `origin` is `trillium/parlay`, so no `--repo` is
-  needed. The PR then contains the clean diff and nothing else: the `.pi/` files were
-  added in one commit and removed in another, so they do not appear in the net diff.
-- **CodeRabbit review is not requested yet**, for the same reason: the repo's gate needs
-  the final commit, and its review pool is three per account (`AGENTS.md`).
+- **The branch is pushed and the PR is open, not merged**: <https://github.com/trillium/parlay/pull/314>,
+  `gnhf/objective-make-a-new-904428` → `main`, created with
+  `gh-axi pr create --base main --head gnhf/objective-make-a-new-904428 --body-file .pi/pr-body.md`.
+  Its diff is exactly the nine files listed at the top of this write-up; the `.pi/`
+  scratch files were added in one commit and removed in another, so they do not appear
+  in the pull request's net diff at all (verified with `gh pr diff 314 --name-only`).
+- **The branch was brought level with `main`** (`git merge origin/main`, two docs-only
+  commits: the `jsonExemptPaths` identifier correction in `AGENTS.md` and the round-2/3
+  vision answers). This cleared `parlay merge-gate 314`'s `behind-base` finding, which
+  is otherwise a real blocker — a behind branch's checks ran against an older merge and
+  GitHub does not re-run them when the base moves. The merge was clean and both intents
+  survive in `AGENTS.md` (the preflight paragraph at line 7, `jsonExemptPaths` at 44).
+- **CodeRabbit review was requested** (`gh-axi pr comment 314 --body "@coderabbitai
+  review"`) — on this repo the bot never runs on its own, so that comment is the only
+  route to gate-visible review evidence. All four CI checks then reported `pass`;
+  `parlay merge-gate 314` was `BLOCKED (1)`, its only item the review still running,
+  and the gate advises not to push while a review is in flight (a push restarts it).
+- **One more push is needed to carry this revision of `notes.md`.** The harness commits
+  the working tree after the turn ends, so the pushed tip (`7d65d2d`) does not yet
+  contain the edits written above it; the next iteration pushes them and re-reads the
+  gate.
 - **`docs/traps.md` completeness is not gated.** The CI docs-index gate covers `docs/*.md`
   only, so a future `docs/agent-notes/*.md` that no document links is invisible to every
   gate. `traps.md` is currently the only thing that makes all 64 reachable; a gate for
