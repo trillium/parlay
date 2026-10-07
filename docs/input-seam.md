@@ -60,7 +60,7 @@ answer to "where did it stop".
 | Stage | Means |
 |---|---|
 | `received` | An intake surface accepted the input. Recorded at the phone/CLI/hook boundary. |
-| `interpreted` | The intake decided what the input *is* — free text, a parsed command, or unusable speech. A recogniser error and a low-confidence transcript land here. |
+| `interpreted` | The intake decided what the input *is* — free text, a parsed command, or unusable speech. A recogniser error and a low-confidence transcript land here, and so does an eval the engine read as a phrase command (below). |
 | `routed` | A destination was chosen, or routing failed to choose one (`no_match`, `refused`). |
 | `queued` | The input is durably held, awaiting pickup. Not a failure. |
 | `delivered` | A listener was handed the input. |
@@ -75,10 +75,9 @@ answer to "where did it stop".
 | `recogniser_error` | The recogniser reported it could not transcribe the input. There is no transcript to be unsure about. Produced today by a dictation submit that arrives with empty text. |
 | `low_confidence` | A transcript exists and was reported below the threshold. Requires **both** `confidence` and `threshold`, so a hold is never unexplained. |
 | `confidence_unknown` | **No confidence was reported.** Not success, not failure — "we cannot tell". Every chat `/send` and `/alert` lands here, because no intake surface on those doors reports a recogniser confidence; a view that showed it as `ok` would be inventing evidence. |
-| `no_match` | The input parsed as a command but named no destination that matched — today, a dictation submit whose focus target did not become the active app or window, or a bead submit whose store has no wrapper. |
+| `no_match` | The input parsed as a command but named no destination that matched — a dictation submit whose focus target did not become the active app or window, a bead submit whose store has no wrapper, or an eval in `channel-select`/`sender-select` mode whose spoken name matched none of the offered channels/contacts. |
 | `refused` | The destination exists but delivery was refused — validation failure, stale-target refusal, unwritable store. |
 | `unpicked` | The input was queued and no listener picked it up. Recorded only once something has actually waited long enough to say so. |
-| `superseded` | A later input for the same destination replaced this one before it was acted on. |
 | `held` | Held rather than routed, by policy. |
 | `superseded` | A later input for the same destination replaced this one before it was acted on. Produced today by the eval door, from the engine's own `stale-request-version` verdict. |
 
@@ -97,7 +96,7 @@ parked long-poll resolved by the new message) or `poll-backlog` (the retained
 store answered a cursor) — keeping those distinct is what makes "delivered
 hot" tell apart from "drained after a reconnect".
 
-## The eval door, and the superseded snapshot
+## The eval door: what became a command, and what matched nothing
 
 The composer posts every text change — typed or dictated — as a versioned
 buffer snapshot to `POST /api/chat/eval`, and the compiled engine answers with
@@ -131,6 +130,54 @@ Because the engine has already dropped the snapshot, this class needs no
 guard of its own: it is the one failure the product refuses to act on *before*
 this ledger existed. What was missing was the operator being able to see that
 it happened.
+
+### What the input became
+
+The same answer carries `fired`: the id of the command the engine decided this
+buffer was, or `""` when nothing matched. That is the one question the panel
+could not answer — **a phrase that matched a command and a phrase that matched
+nothing leave the same visible trace** (the box keeps its text) and used to
+leave the same silence in every durable record. The relay records one hop when
+the field is non-empty:
+
+| Field | Value |
+|---|---|
+| `stage` / `class` | `interpreted` / `ok` — the buffer *was* interpreted |
+| `source` | `eval` |
+| `detail` | `command=<command id> stream=<streamId> v=<version>`, both ids bounded (48 / 64 runes) because the command set can be overridden per request |
+| `inputId` | a ledger-local `in-…` id |
+
+`fired` is the engine's own verdict, quoted and never recomputed. Ordinary
+evals — the ones that matched nothing and produced no hint — still record
+nothing at all: a row per keystroke would drown the seam it exists to make
+legible. The view calls these rows **`command`** and names the command in WHY,
+and a row that stopped there must not read as an input that went nowhere, so
+the derivation names it before it falls through to "stopped after
+interpreted".
+
+### A destination that matched nothing
+
+`channel-select` and `sender-select` modes bypass command matching and resolve
+spoken text against the channels/contacts the panel offered
+(`evalengine/commands.go`, rules 1–5). Rule 5 is a miss, and the engine answers
+with `pickerHint` (channels) or `senderPickerHint` (contacts) so the modal can
+say "try again". The hint flashes for a second and nothing durable recorded
+that it had happened: the operator said a destination, and from every record it
+looked exactly like an input that was never sent. The relay records it:
+
+| Field | Value |
+|---|---|
+| `stage` / `class` | `routed` / `no_match` |
+| `source` | `eval` |
+| `reason` | `channel-not-matched` or `sender-not-matched` — the two pickers are different failures |
+| `detail` | `stream=<streamId> v=<version> mode=<mode>` plus `candidates=<n>` for `channel-select` only; the sender list is the engine's own, so claiming a count for it would be inventing evidence |
+
+The verb is read and the hint's `args.text` is deliberately **not**: that
+string contains what the operator said.
+
+One verdict per eval is recorded, with explicit precedence: a superseded
+snapshot (the engine never interpreted it) beats a fired command, which beats a
+picker miss, which beats nothing.
 
 ## The dictation door, and the hold
 
@@ -183,9 +230,10 @@ row without the number behind it.
 Recorded: the full hop set of the dictation intake (above); the `queued` hop of
 every operator (`role: "user"`) message accepted by `/send` or `/alert`; the
 `delivered` hop at both poll delivery points; a `refused` hop for a `/send` or
-remote-input submit the intake rejected before storing anything; and a
-`superseded` hop for every eval the engine dropped because a newer snapshot of
-the same buffer had already replaced it.
+remote-input submit the intake rejected before storing anything; and, from the
+eval door, a `superseded` hop for every snapshot the engine dropped, an
+`interpreted` hop naming the command a phrase fired, and a `no_match` hop for a
+picker whose spoken destination matched nothing.
 
 **Not yet recorded, deliberately:**
 
@@ -193,9 +241,9 @@ the same buffer had already replaced it.
   `queued` row already carries the id, stage and source, and a `received` row
   would duplicate the same facts until those doors have something extra to say
   at that moment (a reported confidence, a source device).
-- Successful evals. The eval door records only the superseded verdict: a row
-  per keystroke would swamp the retained window, and an eval that produced
-  actions is not a failure to name.
+- Successful evals that fired no command and produced no picker hint. The eval
+  door records the outcomes above, not a row per keystroke: an eval that matched
+  nothing carries no fact the ledger does not already hold.
 - The `unpicked` class as a producer. It is a read-time judgement over a queued
   hop — nothing has to fire for "no listener picked it up in 60s" to become
   true, and the view derives it from the queued hop's age.
@@ -216,6 +264,16 @@ hops as they arrive. All three are pure readers of
 replay of the same id cannot disagree. `--watch` polls (default every 2s) and
 says so in its header: the ledger has no push stream yet, and implying instant
 delivery would be a lie about its own cadence.
+
+The derived states are `delivered`, `queued`, `queued (unpicked)`, `refused`,
+`no match`, `command` (the engine read this input as that phrase command — WHY
+names which), `held`, `low confidence`, `recogniser error` and `superseded`,
+plus the stage an input stopped at when no later hop was recorded. A fired
+command is named *before* that last fallback, because it stopped there by
+design rather than by failing to move on. The view never prints
+`confidence_unknown` as a row of its own: a hop with no reported confidence is
+reported by the view's confidence line ("not reported by any surface in this
+window"), and folding it into the row would imply the measurement happened.
 
 ### The live tail, and the three ways it can be incomplete
 

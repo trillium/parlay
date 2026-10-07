@@ -12,10 +12,11 @@ import "fmt"
 // inputLegend is the one-line key to the state column.
 const inputLegend = "Legend: delivered = handed a listener or typed at the target; queued = waiting;\n" +
 	"refused = an intake or the target declined it; no match = it named a destination that\n" +
-	"did not match; low confidence = measured below the threshold; held = actually stopped\n" +
-	"by it; superseded = a later input replaced it before it was acted on. WHY names the\n" +
-	"reason in every case. Every INPUT id is printed whole, and pasting one into\n" +
-	"`parlay input --input <id>` replays its hops. See docs/input-seam.md."
+	"did not match; command = the engine read it as that phrase command (WHY names which),\n" +
+	"so it was acted on rather than left as text; low confidence = measured below the\n" +
+	"threshold; held = actually stopped by it; superseded = a later input replaced it before\n" +
+	"it was acted on. WHY names the reason in every case. Every INPUT id is printed whole,\n" +
+	"and pasting one into `parlay input --input <id>` replays its hops. See docs/input-seam.md."
 
 // thresholdLine states the hold threshold in force, so a hold is never
 // inferred from a row: the operator can see the number the server compares

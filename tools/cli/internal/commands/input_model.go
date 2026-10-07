@@ -8,6 +8,7 @@ package commands
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -146,6 +147,17 @@ func deriveInputRow(id string, hops []inputEvent, now time.Time, stale time.Dura
 	if row.State != "" {
 		return row
 	}
+	// "What became a command": the eval door records the engine's own verdict
+	// when it read the buffer as a phrase command. Such an input stops there by
+	// design — the composer submits the text as a message separately, under its
+	// own id — so it must not fall through to the stopped-after-interpreted
+	// branch below and read as an input that went nowhere.
+	if last := hops[len(hops)-1]; last.Stage == "interpreted" {
+		if cmd := commandFromDetail(last.Detail); cmd != "" {
+			row.State, row.Why = "command", cmd
+			return row
+		}
+	}
 	switch lastStage(hops) {
 	case "delivered":
 		row.State = "delivered"
@@ -174,6 +186,19 @@ func deriveInputRow(id string, hops []inputEvent, now time.Time, stale time.Dura
 		row.State, row.Why = "unknown", "no recognised stage"
 	}
 	return row
+}
+
+// commandFromDetail pulls the command id the eval door recorded out of a
+// hop's detail. It returns "" for every hop that did not record one, which is
+// also every hop written before the eval door recorded commands — an older
+// ledger renders as it did before rather than inventing a command.
+func commandFromDetail(detail string) string {
+	for _, tok := range strings.Fields(detail) {
+		if cmd, ok := strings.CutPrefix(tok, "command="); ok {
+			return cmd
+		}
+	}
+	return ""
 }
 
 func lastStage(hops []inputEvent) string {
