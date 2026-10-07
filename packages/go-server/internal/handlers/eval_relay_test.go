@@ -38,7 +38,7 @@ func postEval(t *testing.T, hub *Hub, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/eval", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	handleEval(hub)(rec, req)
+	handleEval(newTestStore(t), hub)(rec, req)
 	return rec
 }
 

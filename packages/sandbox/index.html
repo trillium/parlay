@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Parlay sandbox</title>
+  </head>
+  <body>
+    <!--
+      The sandbox test site. It talks to the parlay server on the SAME origin:
+      either this page is served by the go-server's static mount, or `vite dev`
+      proxies /api to the server. That is what keeps it inside the origin guard
+      — there is no new allowed origin and no sandbox-only endpoint.
+
+      Optional: put a `sandbox.configs.json` beside this file to test your own
+      configurations instead of the built-in examples.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
