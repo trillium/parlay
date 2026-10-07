@@ -358,8 +358,10 @@ func TestExplainWarningWhenRelayPollsAnotherServer(t *testing.T) {
 }
 
 // TestExplainRelayDownStillCoversTheServerHalf is degraded mode 1: the relay
-// is not running, and every relay-derived answer says unknown while the
-// server-side and local answers still print.
+// is not running. Every relay-derived answer says unknown, EXCEPT the delivery
+// trail — a ledger on disk is still read, and this fixture has none, so the
+// line must say the file is absent rather than pretend the trail was
+// unobservable (or, worse, quiet).
 func TestExplainRelayDownStillCoversTheServerHalf(t *testing.T) {
 	noSleep(t)
 	f := newExplainFixture(t, "crew-1")
@@ -378,13 +380,15 @@ func TestExplainRelayDownStillCoversTheServerHalf(t *testing.T) {
 	wantLine(t, out,
 		"relay           no answer at "+relayctl.SockPath(),
 		"relay enroll    unknown — the relay did not answer GET /agents",
-		"delivery        unknown — the relay did not answer",
+		"delivery        no ledger on disk at "+relayctl.LedgerPath()+" and the relay did not answer",
+		"that is NOT the same as 'nothing was delivered'",
 		"registration    registered — name Crew One",
 		"crew state      working · source: status · alive",
 		"1 line(s) queued",
 		"; resume cursor m-1",
 		"no relay is answering, so these lines have no writer",
 	)
+	notWantLine(t, out, "ledger present")
 }
 
 // TestExplainServerUnreachableNamesEveryUnknown is degraded mode 2. The point

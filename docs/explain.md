@@ -1,7 +1,8 @@
 # `parlay explain` — one agent's whole story
 
-**Code:** `tools/cli/internal/commands/explain.go` (gather), `explain_render.go`
-(one line per fact), `tools/cli/internal/relayctl` (the read-only relay client).
+**Code:** `tools/cli/internal/commands/explain.go` (gather), `explain_delivery.go`
+(the trail, from the socket or from disk), `explain_render.go` (one line per
+fact), `tools/cli/internal/relayctl` (the read-only relay client).
 
 ```
 parlay explain <agent-id>
@@ -30,12 +31,15 @@ mistake.
 | `relay` | relay control socket `/health` | is the relay up, and **which server is it bound to** |
 | `relay enroll` | relay control socket `/agents` | does this relay hold a poll loop for *this* agent |
 | `queue` | `<runtime>/<agent>.chan` | queued lines (unconfirmed-consumed) and the cursor a monitor restarting here would resume after |
-| `delivery` | relay control socket `/delivery` | the relay's durable data-plane trail: `spooled`, `spool-failed`, `delivery-ended`, `rotated` |
+| `delivery` | relay control socket `/delivery`, falling back to the ledger **file** | the relay's durable data-plane trail: `spooled`, `spool-failed`, `delivery-ended`, `rotated`. The socket is asked first because only a live relay can say whether recording is switched off *right now*; when it does not answer the file is read instead, and the line says so |
 | `commands` | `GET /api/chat/commands` | recent invocations with state, timing, exit code, outcome |
 | `last error` | whichever of the above answered | the newest failure, or an explicit "none observed (looked at: …)" |
 
 `GET /delivery`, the ledger's four events, and their three honest limits are
-[`relay.md`](relay.md)'s; `explain` adds a reader, not a truth.
+[`relay.md`](relay.md)'s; `explain` adds a reader, not a truth. The on-disk
+fallback reads the same two generations `parlay timeline` reads, so both verbs
+see the same trail with the clock stopped; the file-then-socket resolution
+lives in `explain_delivery.go`.
 
 ## The rule that governs every line
 
@@ -51,7 +55,13 @@ answer says what it saw — including "there is nothing". Concretely:
   and an unreadable one says so;
 - a ledger that was never written (`exists:false`), one switched off
   (`enabled:false`), and one with no events for this agent are three different
-  sentences.
+  sentences;
+- when the relay does **not** answer, the delivery trail is read off disk
+  rather than declared unknowable — the ledger is a file, and its writer being
+  dead does not erase it. Two things are genuinely unknowable from a file
+  (whether recording is switched off now, and which server the dead relay was
+  polling), and the line states that instead of implying a live relay vouched
+  for the rows.
 
 ## Degraded modes, verbatim
 
@@ -77,14 +87,68 @@ commands        2 record(s) for this agent, newest first:
 last error      `parlay send` ended failed exit 1 outcome error (2m ago)
 ```
 
-**Relay down, spool exists with no writer** — exit 0
+**Relay down, spool exists with no writer, no ledger on disk** — exit 0
 
 ```
-relay           no answer at /…/rt2/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment and the delivery trail are unknown
+relay           no answer at /…/rt2/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below
 relay enroll    unknown — the relay did not answer GET /agents
 queue           2 line(s) queued in /…/rt2/crew-1.chan, unconfirmed-consumed (nothing in the fleet acknowledges a read); resume cursor m-2; no relay is answering, so these lines have no writer
-delivery        unknown — the relay did not answer, so what was handed over is not observable from here
+delivery        no ledger on disk at /…/rt2/delivery.log and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
 ```
+
+**Relay down, ledger on disk** — the trail the relay already wrote is still the
+answer, and the substitution is named on the line. Identical run against a
+private fixture, verbatim:
+
+```
+relay           no answer at /…/rt1/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below
+relay enroll    unknown — the relay did not answer GET /agents
+queue           no spool file at /…/rt1/crew-1.chan — nothing is queued for this agent, or the relay is not running
+delivery        read from disk (/…/rt1/delivery.log) because the relay did not answer — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown
+                  2026-10-07T08:07:09Z  spooled msg m-1 role=user from=captain
+                  2026-10-07T08:37:09Z  SPOOL FAILED for msg m-9 — it did not reach the agent
+                  2026-10-07T08:37:09Z  delivery ended — reason=channel-gone spoolLines=2
+last error      relay could not spool message m-9 — it never reached the agent (2026-10-07T08:37:09Z)
+```
+
+Four properties of that path, each pinned by a test:
+
+- another agent's events are **not** this agent's story (the filter mirrors
+  `GET /delivery?agent=`);
+- the rotated generation `delivery.log.1` is read too and printed oldest-first,
+  with `· N of them from the generation before the last rotation (older history
+  is in <path>.1)` and the `rotated` marker row, so a shortened trail never
+  reads as a quiet one;
+- a ledger that exists but **cannot be opened** prints `exists but could not be
+  read (…) — the file is there and what it holds is unknown, not empty` — but
+  only when *nothing* was readable: if one generation refuses while the other
+  answers, the rows that were read are shown and the failing generation is named
+  in the coverage note (`the active ledger could not be read in full (…) so this
+  may be short` / `the previous generation (…) could not be read (…), so older
+  history is unknown`);
+- a live relay wins: with a socket answering, the stale file is ignored and the
+  disk wording never appears.
+
+The disk path uses the ledger's own vocabulary unchanged — `spooled` is still
+never printed as "delivered".
+
+**Missing resume cursor** — a spool whose tail line is not a chat message, so a
+monitor restarting here would have no id to resume after and would replay the
+channel. Real output of the built CLI against a private runtime dir and agent
+home, with the server and relay both down (so this is also the spool-with-no-
+writer case at once):
+
+```
+relay           no answer at /…/rt5/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below
+relay enroll    unknown — the relay did not answer GET /agents
+queue           2 line(s) queued in /…/rt5/crew-1.chan, unconfirmed-consumed (nothing in the fleet acknowledges a read); resume cursor NONE — a monitor resuming here replays this channel's backlog; no relay is answering, so these lines have no writer
+delivery        no ledger on disk at /…/rt5/delivery.log and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'
+last error      unknown — no source that could report an error answered
+```
+
+The cursor is derived from the spool's own tail by the relay's rules (an id is
+required, the role must be `user` or `agent`), so `NONE` is a real absence and
+never a zero.
 
 **Relay up but bound to another server** (the registered-but-deaf trap)
 

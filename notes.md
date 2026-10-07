@@ -253,7 +253,7 @@ The section above is main's onboarding account (PR #314), which landed while thi
 
 # notes.md — making parlay's runtime observable without reading its source
 
-Status: **in progress** — iterations 1–5 (see "Left undone" for what is not
+Status: **in progress** — iterations 1–6 (see "Left undone" for what is not
 done and the PR's head state).
 
 ## What an operator can now answer that they could not before
@@ -503,6 +503,70 @@ has been able to distinguish "lost" from "recent".
   remote target says which host's state dir was read and which server the CLI
   is pointed at.
 
+### 6. `parlay explain` works when the relay is dead (iteration 6)
+
+The single 2am command had one source that only worked while the thing it was
+reporting on was still alive: the delivery trail was read over the relay's
+control socket, so a dead relay printed
+
+```
+delivery        unknown — the relay did not answer, so what was handed over is not observable from here
+```
+
+for a ledger that was sitting on disk the whole time. The relay being dead is
+the most common reason someone runs `parlay explain` at all, and a *dead
+process* does not un-write a file it already appended to — `parlay timeline`
+had been reading both generations of that ledger off disk for exactly this
+reason. `explain` now does too:
+
+```
+relay           no answer at /…/rt1/relay.sock — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below
+relay enroll    unknown — the relay did not answer GET /agents
+queue           no spool file at /…/rt1/crew-1.chan — nothing is queued for this agent, or the relay is not running
+delivery        read from disk (/…/rt1/delivery.log) because the relay did not answer — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown
+                  2026-10-07T08:07:09Z  spooled msg m-1 role=user from=captain
+                  2026-10-07T08:37:09Z  SPOOL FAILED for msg m-9 — it did not reach the agent
+                  2026-10-07T08:37:09Z  delivery ended — reason=channel-gone spoolLines=2
+last error      relay could not spool message m-9 — it never reached the agent (2026-10-07T08:37:09Z)
+```
+
+What the change is careful about, each pinned by a test:
+
+- **The socket is still asked first.** It is the only source that can answer two
+  things a file cannot — whether recording is switched off *right now*
+  (`PARLAY_RELAY_DELIVERY_LOG=0`) and, through `/health`, which server the relay
+  was polling. When the answer comes from disk the line says so and says the
+  recording state is unknown, instead of inheriting the socket's wording and
+  implying a live relay vouched for the rows. A live relay answering also beats
+  a stale ledger in the same runtime dir: the file is not consulted and the disk
+  wording never appears.
+- **Same filter, same vocabulary.** The agent filter mirrors the relay's own
+  `GET /delivery?agent=` (filter, then keep the newest 20), so both sources pick
+  the same rows for the same trail; another agent's traffic is not this agent's
+  story; `spooled` is still never printed as "delivered". The disk rows are real
+  evidence and feed `last error` — the `spool-failed` line above is why the run
+  reports the message that never arrived.
+- **A short trail is never printed as a quiet one.** `delivery.log.1` is read
+  too and printed oldest-first, with `· 1 of them from the generation before the
+  last rotation (older history is in <path>.1) · 1 corrupt line(s) skipped` and
+  the `rotated` marker row (kept even though it names no agent, because it is
+  the only evidence that everything older is gone). If ONE generation cannot be
+  opened while the other answers, the rows that were read are still shown and
+  the failing generation is named in the coverage note (`the active ledger could
+  not be read in full (…) so this may be short` / `the previous generation (…)`
+  `could not be read (…), so older history is unknown`) — masking readable rows
+  behind "contents unknown" would be its own dishonesty. The `exists but could
+  not be read` line is now reserved for a trail where *nothing* was readable.
+- **Absence is still not health.** No ledger on disk is `no ledger on disk at
+  <path> and the relay did not answer`, never "nothing was delivered"; a ledger
+  that exists but cannot be opened is `exists but could not be read (…) — the
+  file is there and what it holds is unknown, not empty`; and a ledger read but
+  quiet for this agent is an ANSWER (exit 0), not "nothing was observable".
+  Because the file fallback can always return a view, the exit-1 predicate now
+  asks whether the ledger actually EXISTED rather than whether the reader ran.
+- **The `relay` line stopped overclaiming.** It used to say the delivery trail
+  was unknown when the relay did not answer, which this change makes false.
+
 ## What each new surface degrades to, and how it says so
 
 Doc-level contracts, all indexed in [`docs/README.md`](docs/README.md):
@@ -517,13 +581,20 @@ never touched).
 
 | Degraded mode | What it prints |
 |---|---|
-| Relay not running (no control socket) | `relay  no answer at <sock> — the relay is not running (or is using another runtime dir), so relay enrollment and the delivery trail are unknown`; `relay enroll  unknown — the relay did not answer GET /agents`; `delivery  unknown — the relay did not answer, so what was handed over is not observable from here` |
+| Relay not running (no control socket) | `relay  no answer at <sock> — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below`; `relay enroll  unknown — the relay did not answer GET /agents` — and the delivery section is **not** lost: see the four file-fallback rows below |
+| Relay down, ledger on disk | `delivery  read from disk (<path>) because the relay did not answer — 3 of the last 20 ledger event(s), oldest first; whether recording is switched off right now is unknown`, then the rows in the ledger's own vocabulary. The disk rows feed `last error` too: `relay could not spool message m-9 — it never reached the agent (<ts>)` |
+| Relay down, no ledger on disk | `delivery  no ledger on disk at <path> and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'` |
+| Relay down, ledger present but unreadable | `delivery  the relay did not answer and its ledger at <path> exists but could not be read (<err>) — the file is there and what it holds is unknown, not empty` |
+| Relay down, ledger read but quiet for this agent | `delivery  read from disk (<path>) because the relay did not answer — ledger present, no events for this agent; whether recording is switched off right now is unknown` (this is an ANSWER, so exit stays 0 — it is not "nothing was observable") |
+| Relay down, ledger rotated / corrupt | `… oldest first · 1 of them from the generation before the last rotation (older history is in <path>.1) · 1 corrupt line(s) skipped`, plus the `rotated` marker row itself — `delivery.log.1` is read, so a shortened trail never reads as a quiet one |
+| Live relay answers while a stale ledger sits on disk | the socket answer wins: the disk wording never appears and the file is not consulted (`TestExplainSocketAnswerBeatsAStaleLedgerOnDisk`) |
 | Spool exists, no writer | `queue  2 line(s) queued in <spool>, unconfirmed-consumed (…); resume cursor m-2; no relay is answering, so these lines have no writer` |
+| Missing resume cursor | `queue  2 line(s) queued in <spool>, unconfirmed-consumed (…); resume cursor NONE — a monitor resuming here replays this channel's backlog; no relay is answering, so these lines have no writer` (the cursor comes from the spool's own tail by the relay's rules — an id is required and the role must be `user`/`agent` — so `NONE` is a real absence, never a zero). Captured from the built CLI against a private runtime dir; also in [`docs/explain.md`](docs/explain.md) |
 | Relay up, bound to another server | `WARNING: this relay polls http://somewhere-else:4242, NOT the server this CLI targets (http://127.0.0.1:60533) — anything sent to http://127.0.0.1:60533 does not reach this relay` |
 | Ledger never written | `delivery  no ledger at <path> — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'` |
 | Ledger switched off | `delivery  recording is OFF in the running relay (PARLAY_RELAY_DELIVERY_LOG=0) — nothing is being written to <path>` |
 | Ledger rotated (history lossy) | `ledger rotated (size-cap) — history before this line lives in delivery.log.1` |
-| Old relay, no `/delivery` route (404) | `delivery  unknown — the relay did not answer …` (a 404 is "could not ask", never an empty trail) |
+| Old relay, no `/delivery` route (404) | the socket read fails (a 404 is "could not ask", never an empty trail) and the **file fallback takes over** — an old relay that never wrote a ledger prints `no ledger on disk at <path> and the relay did not answer`, and one that did write a ledger still shows its rows |
 | Heartbeat stale vs missing | `channel  last observed 2.0h ago (<stamp>)` **vs** `channel  row present, lastSeen absent — the server has never observed activity on this channel` **vs** `channel  no presence row in the server's snapshot — never observed on this channel (or not registered)` |
 | Server unreachable | `registration  unknown — the server did not answer <url>`; `channel  unknown — …`; `commands  unknown — the server did not answer /api/chat/commands`; `crew state  working · source: status-degraded · … (relay unreachable; status may be stale)`. Exit stays **0** because the relay and the local records still answered. |
 | Status file absent / unreadable / unparseable | `status file  nothing recorded` / the reader's own `unreadable`/`unparseable` detail (the frozen crew-state contract) |
@@ -579,6 +650,27 @@ Exit codes: `0` at least one source answered (including bad news), `1` nothing
 observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
 
 ## Tests
+
+- `tools/cli/internal/commands/explain_delivery_test.go` (iteration 6) — the
+  trail read off disk when the relay does not answer, end-to-end against a
+  private runtime dir: the full three-row story in the ledger's own vocabulary
+  with the substitution named and the `spool-failed` row promoted into
+  `last error`; another agent's events excluded; rotation (both generations,
+  oldest-first, with the coverage note and the `rotated` marker) and a corrupt
+  line counted rather than fatal; an unreadable ledger as "unknown, not empty";
+  a ledger read but quiet for this agent as an ANSWER (exit 0, not "nothing was
+  observable"); a live relay beating a stale ledger in the same runtime dir
+  (with the GET-only assertion); `spooled` never relabelled; half-unreadable
+  trails in both directions (active unreadable / rotated unreadable) keeping the
+  rows that WERE read and naming the generation that failed; and the coverage
+  caveats a synthetic trail cannot produce without a 16 MiB file.
+- **Tests that bite (iteration 6).** Removing the disk fallback (leaving the
+  socket-only read) turns SIX tests red — four in
+  `explain_delivery_test.go`, the never-relabel test, and the updated
+  `TestExplainRelayDownStillCoversTheServerHalf` — with the failure text being
+  exactly the old lie: `output must NOT contain "delivery        unknown"`,
+  `output must NOT contain "is not observable from here"`, and
+  `exited 1; the ledger on disk was read, so something was observable`.
 
 - `tools/cli/internal/chathistory/chathistory_test.go` — the server-history
   reader: the record type has no body field (an assertion on the STRUCT, so a
@@ -714,51 +806,72 @@ I deliberately did NOT add a root `go.work` to make that string exit zero: it
 would also make `go build ./...` drop `relay` and `cli` executables (~9 MB) into
 the repo root, and a committed one would trip CI's 2 MiB tracked-blob hygiene
 gate. The honest equivalent is the same chain inside each module, which is the
-form the stop condition names, and it is green:
+form the stop condition names. Re-run end-to-end on iteration 6's frozen tree
+(each step's **true** exit code — no pipe swallowing it — with
+`go test -count=1`, and `make test-bdd` at the end), pasted verbatim:
 
 ```
-$ for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do
-    (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... &&
-             gofmt -l . | (! grep .) && CGO_ENABLED=0 go test ./...)
-  done && make test-bdd
-=== tools/cli ===            34 packages: 31 ok, 3 "no test files", 0 FAIL
-      ok  github.com/trillium/parlay/tools/cli                       0.556s
-      ok  github.com/trillium/parlay/tools/cli/internal/chathistory  0.8s
-      ok  github.com/trillium/parlay/tools/cli/internal/commands     50.248s
-      ok  github.com/trillium/parlay/tools/cli/internal/help          1.192s
-      ok  github.com/trillium/parlay/tools/cli/internal/liveness     0.271s
-      ok  github.com/trillium/parlay/tools/cli/internal/timeline     1.952s
-      ok  github.com/trillium/parlay/tools/cli/internal/relayctl     …
-      … and 24 more, every one ok
-=== tools/relay ===          ok  github.com/trillium/parlay/tools/relay  2.888s
-=== packages/go-server ===   ok  parlay/go-server/internal/{atomicfile,bus,capability,guard,
-                                 handlers,linkrewrite,remoteinput,sourcecontracts,static,store}
-                                 + cmd/parlay-server  (11 packages, 0 FAIL)
-=== packages/spawn-profiles === ok  parlay/spawn-profiles/cmd/validate  0.276s
-$ make test-bdd; echo $?
-17 scenarios (17 passed) / 55 steps (55 passed)   ok internal/evalengine
- 7 scenarios ( 7 passed) / 21 steps (21 passed)   ok internal/spawn
-0                    (no MODULE-FAIL line, zero build/vet/gofmt failures)
+=== root: go build ./... (expected to fail: 4 modules, no root go.work) ===
+pattern ./...: directory prefix . does not contain main module or its selected dependencies
+--- root build exit=1
+=== root: gofmt -l . ===
+--- gofmt exit=0 (empty list above = pass)
+=== tools/cli build ===
+--- tools/cli build exit=0
+=== tools/cli vet ===
+--- tools/cli vet exit=0
+=== tools/cli test ===
+ok   github.com/trillium/parlay/tools/cli                       0.785s
+ok   github.com/trillium/parlay/tools/cli/internal/args         0.270s
+ok   github.com/trillium/parlay/tools/cli/internal/chathistory  1.578s
+ok   github.com/trillium/parlay/tools/cli/internal/commands     64.993s
+ok   github.com/trillium/parlay/tools/cli/internal/liveness     1.724s
+ok   github.com/trillium/parlay/tools/cli/internal/relayctl     1.612s
+ok   github.com/trillium/parlay/tools/cli/internal/spawn        36.178s
+ok   github.com/trillium/parlay/tools/cli/internal/timeline     1.586s
+ok   github.com/trillium/parlay/tools/cli/internal/wire         1.770s
+… 22 more packages, every one ok — 31 ok + 2 "no test files" = 33 packages, 0 FAIL
+--- tools/cli test exit=0
+=== tools/relay build ===            --- tools/relay build exit=0
+=== tools/relay vet ===              --- tools/relay vet exit=0
+=== tools/relay test ===
+ok   github.com/trillium/parlay/tools/relay  2.876s
+--- tools/relay test exit=0
+=== packages/spawn-profiles build === --- packages/spawn-profiles build exit=0
+=== packages/spawn-profiles vet ===   --- packages/spawn-profiles vet exit=0
+=== packages/spawn-profiles test ===
+ok   parlay/spawn-profiles/cmd/validate  0.267s
+--- packages/spawn-profiles test exit=0
+=== packages/go-server build ===     --- packages/go-server build exit=0
+=== packages/go-server vet ===       --- packages/go-server vet exit=0
+=== packages/go-server test ===
+ok   parlay/go-server/cmd/parlay-server + 10 internal packages   0 FAIL
+--- packages/go-server test exit=0
+=== make test-bdd ===
+17 scenarios (17 passed) / 55 steps (55 passed)    ok internal/evalengine
+ 7 scenarios ( 7 passed) / 21 steps (21 passed)    ok internal/spawn
+--- make test-bdd exit=0
+=== VERIFY DONE ===
+script_exit=0
 ```
 
 `-race` on the packages this iteration touched is green as well — CI's Go job
 runs `-race` by default, and the exit-path test helper owns its pipes so an
 exiting verb leaves no goroutine behind. On this box that needs the ICU cgo
-flags the beads dependency's embedded-Dolt tree wants:
+flags the beads dependency's embedded-Dolt tree wants (run separately so the
+exit code is the test's, not a pipe's):
 
 ```
 $ cd tools/cli && CGO_ENABLED=1 \
     CGO_CFLAGS=-I/opt/homebrew/opt/icu4c/include \
     CGO_CXXFLAGS=-I/opt/homebrew/opt/icu4c/include \
     CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c/lib \
-    go test -race ./internal/chathistory/... ./internal/timeline/... ./internal/commands/...
-ok  github.com/trillium/parlay/tools/cli/internal/chathistory   2.303s
-ok  github.com/trillium/parlay/tools/cli/internal/timeline       1.476s
-ok  github.com/trillium/parlay/tools/cli/internal/commands      40.291s
+    go test -race -count=1 ./internal/commands/ ./internal/relayctl/
+ok  github.com/trillium/parlay/tools/cli/internal/commands   36.292s
+ok  github.com/trillium/parlay/tools/cli/internal/relayctl    2.664s
+$ echo $?
+0
 ```
-
-`-race` on the two touched packages (`internal/liveness`, `internal/commands`) is
-green as well — see the iteration-5 block above for the exact command shape.
 
 Without those flags `-race` on `tools/cli` dies at compile time in
 `github.com/dolthub/go-icu-regex/internal/icu` (`unicode/regex.h` not found),
@@ -775,7 +888,13 @@ was the same before iteration 1.
 
 This repository enforces no per-file line budget (only a 2 MiB tracked-blob
 ceiling and a docs-index gate) — the 250-line cap on every new **production**
-file is my choice. Iteration 5: `internal/chathistory/chathistory.go` (184, the
+file is my choice. Iteration 6: `commands/explain_delivery.go` (151, the two
+sources and the coverage note) is a new production file inside the cap, and the
+change it belongs to touched ~60 lines (additions and deletions) across the
+existing `explain.go`, `explain_render.go` and `explain_render_detail.go`
+(271 lines, the largest of them) rather than splitting them further; the new
+`commands/explain_delivery_test.go` (323) sits in the range the package's other
+test files already occupy. Iteration 5: `internal/chathistory/chathistory.go` (184, the
 reader and the record shape) is a new package deliberately kept small enough to
 read in one screen, because what it does NOT decode is as load-bearing as what
 it does; the timeline's classifier grew to `internal/timeline/build.go` (229)
@@ -863,10 +982,19 @@ on `origin/main`, so nothing of the captain's is affected.
   and the PR opened from the commits already made —
   <https://github.com/trillium/parlay/pull/313> (head
   `gnhf/objective-make-parla-ea8605`, base `main`, **not merged**). Because each
-  iteration's work is committed after that iteration, the branch has to be
-  pushed again at the end of any later iteration for the PR head to include it;
-  the PR body says which surfaces its current head contains.
-- **A `delivered` outcome, and therefore a read receipt.** Not built because it
+  iteration's work is committed (and pushed) after that iteration, iteration 6's
+  change reaches the PR only on the orchestrator's next commit; at the end of
+  iteration 5 the remote head was `489e4c8` and CI on it was fully green (Go,
+  Hygiene, Shell harnesses and GitGuardian pass; CodeRabbit is skipped for this
+  OSS repo), so the surfaces through iteration 5 are verified on the PR itself.
+- **`explain` still does not read the chat server's own history** (the
+  `recorded` / `unhanded` half iteration 5 added to `timeline`). It is
+  deliberate: the per-agent screen already carries the relay's whole trail and
+  the spool, and "did the server ever have a message the relay never took" is a
+  windowed question with eight coverage guards — duplicating that verdict on a
+  second surface is a second thing to keep in sync. `parlay timeline --agent
+  <id> --outcome unhanded` is the query.
+- **No `delivered` outcome, and therefore no read receipt.** Not built because it
   cannot be built honestly without a change to the delivery path itself: the
   monitor would have to acknowledge what it consumed (a new wire field, a new
   round trip, and a delivery path that now depends on an observability hop).

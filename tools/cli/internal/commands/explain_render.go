@@ -122,7 +122,7 @@ func paneLine(r explainReport) string {
 // looks live from the server's side and receives nothing.
 func relayLine(r explainReport) string {
 	if r.relayHealth == nil {
-		return fmt.Sprintf("no answer at %s — the relay is not running (or is using another runtime dir), so relay enrollment and the delivery trail are unknown", relayctl.SockPath())
+		return fmt.Sprintf("no answer at %s — the relay is not running (or is using another runtime dir), so relay enrollment is unknown; the delivery ledger is a FILE and is read from disk below", relayctl.SockPath())
 	}
 	line := fmt.Sprintf("up — polling %s, runtime %s", orUnknown(r.relayHealth.Server), orUnknown(r.relayHealth.Runtime))
 	if !r.relayHealth.OK {

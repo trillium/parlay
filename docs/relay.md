@@ -123,7 +123,10 @@ Both trails are local reads on the control socket, they are read-only, and the
 chat API's guard is untouched by them. `parlay explain <agent-id>` is the
 operator-facing reader of all of the above — relay health, relay enrollment,
 this agent's ledger entries and its spool — rendered next to the server-side
-facts in [`explain.md`](explain.md). `parlay timeline` reads the two trails as
+facts in [`explain.md`](explain.md). It asks the socket first (the only source
+that can say whether recording is switched off right now) and falls back to the
+ledger FILE when the relay does not answer, naming the substitution on the line.
+`parlay timeline` reads the two trails as
 FILES rather than over the socket, which is what lets it answer while the relay
 is down; see [`timeline.md`](timeline.md). See `tools/relay/NOTES.md` for the
 route table and `tools/relay/relay_delivery.go` for the writer.

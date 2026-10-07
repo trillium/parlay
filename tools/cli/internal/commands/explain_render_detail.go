@@ -16,20 +16,50 @@ import (
 
 // renderDelivery prints the relay's data-plane trail. The three expressible
 // states — no relay, ledger switched off, ledger never written — are printed
-// as themselves, never as an empty list.
+// as themselves, never as an empty list. When the relay does not answer, the
+// trail is read off disk instead of being declared unknowable: the ledger is a
+// file, and its writer being dead does not erase what it already recorded.
 func renderDelivery(r explainReport) {
+	d := r.delivery
 	switch {
-	case r.delivery == nil:
-		fmt.Println("delivery        unknown — the relay did not answer, so what was handed over is not observable from here")
-	case !r.delivery.Enabled:
-		fmt.Printf("delivery        recording is OFF in the running relay (PARLAY_RELAY_DELIVERY_LOG=0) — nothing is being written to %s\n", r.delivery.Ledger)
-	case !r.delivery.Exists:
-		fmt.Printf("delivery        no ledger at %s — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'\n", r.delivery.Ledger)
-	case len(r.delivery.Entries) == 0:
-		fmt.Printf("delivery        ledger present (%s), no events for this agent\n", r.delivery.Ledger)
+	case d == nil:
+		// Unreachable in practice (the file fallback always returns a view), but
+		// a nil here must never print as a healthy line.
+		fmt.Println("delivery        unknown — the relay did not answer and its ledger path could not be resolved, so what was handed over is not observable from here")
+	case !d.Socket:
+		renderDeliveryOnDisk(*d)
+	case !d.Enabled:
+		fmt.Printf("delivery        recording is OFF in the running relay (PARLAY_RELAY_DELIVERY_LOG=0) — nothing is being written to %s\n", d.Path)
+	case !d.Exists:
+		fmt.Printf("delivery        no ledger at %s — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'\n", d.Path)
+	case len(d.Entries) == 0:
+		fmt.Printf("delivery        ledger present (%s), no events for this agent\n", d.Path)
 	default:
-		fmt.Printf("delivery        %d of the last %d ledger event(s), oldest first:\n", len(r.delivery.Entries), explainEventTail)
-		for _, e := range r.delivery.Entries {
+		fmt.Printf("delivery        %d of the last %d ledger event(s), oldest first:\n", len(d.Entries), explainEventTail)
+		for _, e := range d.Entries {
+			fmt.Printf("                  %s  %s\n", orUnknown(e.Ts), deliveryEventText(e))
+		}
+	}
+}
+
+// renderDeliveryOnDisk prints the trail read off disk because the relay itself
+// did not answer — the state an operator is usually in when they run this.
+// Every line names that source, because two things are genuinely unknowable
+// from a file: whether recording is switched off RIGHT NOW, and which server
+// the dead relay was polling. Silently reusing the socket wording would let a
+// reader believe a live relay had vouched for these rows.
+func renderDeliveryOnDisk(d explainDelivery) {
+	switch {
+	case !d.Exists:
+		fmt.Printf("delivery        no ledger on disk at %s and the relay did not answer — this relay has never recorded a delivery event; that is NOT the same as 'nothing was delivered'\n", d.Path)
+	case len(d.Entries) == 0 && d.unreadable() != nil:
+		fmt.Printf("delivery        the relay did not answer and its ledger at %s exists but could not be read (%v) — the file is there and what it holds is unknown, not empty\n", d.Path, d.unreadable())
+	case len(d.Entries) == 0:
+		fmt.Printf("delivery        read from disk (%s) because the relay did not answer — ledger present, no events for this agent; whether recording is switched off right now is unknown\n", d.Path)
+	default:
+		fmt.Printf("delivery        read from disk (%s) because the relay did not answer — %d of the last %d ledger event(s), oldest first%s; whether recording is switched off right now is unknown\n",
+			d.Path, len(d.Entries), explainEventTail, d.coverage())
+		for _, e := range d.Entries {
 			fmt.Printf("                  %s  %s\n", orUnknown(e.Ts), deliveryEventText(e))
 		}
 	}
@@ -140,7 +170,10 @@ func lastErrorLine(r explainReport) string {
 			cands = append(cands, explainErr{at: at, have: ok, text: txt})
 		}
 	}
-	if r.delivery != nil {
+	// Only a trail that is actually there is a source that was LOOKED AT. A
+	// ledger that does not exist (no relay, never written) contributes no
+	// candidate and must not make the "none observed" line claim it was read.
+	if r.delivery != nil && r.delivery.Exists {
 		looked = append(looked, "relay delivery ledger")
 		for _, e := range r.delivery.Entries {
 			if e.Event != "spool-failed" {

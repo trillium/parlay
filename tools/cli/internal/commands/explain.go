@@ -13,7 +13,10 @@
 //   - the agent's spool file: what is queued but not yet consumed, and the
 //     cursor a monitor resuming here would start from
 //   - the delivery ledger: what the relay actually handed over, and how each
-//     channel's delivery ended
+//     channel's delivery ended — asked of the live relay first, and read off
+//     DISK when it does not answer, because at 2am the relay is very often the
+//     dead thing and the trail it already wrote is still there (see
+//     explain_delivery.go)
 //   - GET /api/chat/commands: recent commands with exit codes and timing
 //
 // So the operator ran four commands and then read source to interpret them.
@@ -82,7 +85,7 @@ type explainReport struct {
 	relayHealth   *relayctl.Health // nil = control socket did not answer
 	relayAgentsOK bool             // GET /agents answered
 	relayEnrolled bool             // ...and lists this agent
-	delivery      *relayctl.Delivery
+	delivery      *explainDelivery
 	spool         relayctl.SpoolInfo
 	cursor        string
 
@@ -125,8 +128,9 @@ func Explain(argv []string) {
 // answered, or at least one local record exists. A "source answered with bad
 // news" counts; only total silence does not.
 func (r explainReport) sawAnything() bool {
+	deliveryAnswered := r.delivery != nil && r.delivery.Exists
 	return r.subsRead || r.cmdsRead || r.relayHealth != nil || r.relayAgentsOK ||
-		r.delivery != nil || r.crew.Source != "none" || r.statusOK ||
+		deliveryAnswered || r.crew.Source != "none" || r.statusOK ||
 		r.spool.Exists || r.sessionOK
 }
 
@@ -197,7 +201,11 @@ func gatherExplain(agentID string) explainReport {
 		}
 	}
 	if d, ok := relayctl.ReadDelivery(explainEventTail, agentID); ok {
-		rep.delivery = &d
+		rep.delivery = deliverySocket(d)
+	} else {
+		// The relay did not answer. That is the state this command exists for,
+		// and the ledger is a file whose writer being dead does not erase it.
+		rep.delivery = deliveryOnDisk(agentID)
 	}
 	rep.spool = relayctl.Spool(agentID)
 	rep.cursor = relayctl.SpoolCursor(rep.spool.Path)
