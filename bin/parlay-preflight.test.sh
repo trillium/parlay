@@ -1,32 +1,22 @@
 #!/usr/bin/env bash
-# Regression harness for bin/parlay-preflight.
+# Regression harness for bin/parlay-preflight. A check that cannot fail is not a
+# check, so this builds deliberately BROKEN environments and asserts what the command
+# is for: it exits 1 when anything is blocking; it names EVERY broken prerequisite in
+# ONE run (not the first, not one per invocation); every FAIL carries its exact `fix:`
+# command; and the summary's own count equals the FAIL lines printed, so the report
+# cannot claim a number it did not produce.
 #
-# A check that cannot fail is not a check. So this does not merely run the
-# preflight on a healthy machine and watch it print "ok" — it builds deliberately
-# BROKEN environments and asserts the three things that are the whole point of
-# the command:
-#
-#   1. it exits 1 when anything is actually blocking,
-#   2. it names EVERY broken prerequisite in ONE run — not the first, not one per
-#      invocation (the failure mode that sends a newcomer round the loop),
-#   3. every FAIL carries the exact `fix:` command for it,
-#
-# plus that the summary's own count equals the number of FAIL lines printed, so
-# the report cannot claim a number it did not produce.
-#
-# No production state is touched: every case runs against a synthetic checkout
-# under a mktemp root, with HOME / PARLAY_* redirected into it, and the one real
-# port it occupies is a kernel-chosen free port bound by a process it kills on
-# exit. Usage: bin/parlay-preflight.test.sh [-v]
+# No production state is touched: every case runs against a synthetic checkout under a
+# mktemp root, with HOME / PARLAY_* redirected into it, and the one real port it
+# occupies is a kernel-chosen free port bound by a process it kills on exit.
+# Usage: bin/parlay-preflight.test.sh [-v]
 set -uo pipefail
 
 # ── Self-isolation: run under a scrubbed, allowlisted environment ────────────
-# Same preamble as tools/monitor/parlay-monitor.test.sh. A developer's PATH can
-# shadow real system binaries with interactive shims, and those shims leak into
-# every subprocess the harness spawns; PATH lookup is order-sensitive, so the
-# system dirs go FIRST regardless of whether they also appear later on the
-# inherited PATH. The shell-startup hook carriers are cleared so a subprocess
-# cannot inherit an injected function.
+# Same preamble as tools/monitor/parlay-monitor.test.sh. A developer's PATH can shadow
+# real system binaries with shims that leak into every subprocess; PATH lookup is
+# order-sensitive, so the system dirs go FIRST. Shell-startup hook carriers are
+# cleared so a subprocess cannot inherit an injected function.
 __pre_sys="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="${__pre_sys}:${PATH}"
 unset __pre_sys BASH_ENV ENV PROMPT_COMMAND 2>/dev/null || true
@@ -116,10 +106,9 @@ echo "  preflight: $SCRIPT"
 echo "  scratch:   $ROOT"
 
 # ── Case A: a healthy machine says so, and exits 0 ───────────────────────────
-# The toolchain stubs are deliberate: the CI shell harness job has no Go
-# installed, and a case that only passes on a machine with Go would be red for
-# the wrong reason there. Case C and the operator's own run cover the real
-# tools; these cases are about the preflight's own behaviour.
+# The toolchain stubs are deliberate: the CI shell job has no Go, and a case that
+# only passes with Go installed would be red for the wrong reason there. Case C and
+# the operator's own run cover the real tools.
 REPO="$ROOT/repo"
 mkdir -p "$REPO/bin" "$REPO/tools/cli" "$REPO/tools/relay" \
          "$REPO/packages/go-server" "$REPO/packages/spawn-profiles"
@@ -153,9 +142,8 @@ names_all "$out" "A" "Ready. Start the server" && ok "A: states what to do next"
   || bad "A: states what to do next"
 
 # ── Case A2: the version floor is a real comparison, not a label ─────────────
-# GOTOOLCHAIN is the difference between a blocker and a warning, so both halves
-# are asserted: local cannot fetch the newer toolchain (FAIL), the default auto
-# can (WARN, and the run is not blocking).
+# GOTOOLCHAIN decides blocker vs warning, so both halves are asserted: local cannot
+# fetch the newer toolchain (FAIL), auto can (WARN, and it does not block).
 STUB_OLD="$ROOT/stub-old"
 make_tool "$STUB_OLD" go "go version go1.19.4 darwin/arm64"
 old_env() {
@@ -175,10 +163,25 @@ case "$out" in
 esac
 [ "$rc" = 0 ] && ok "A2: and it does not block" || bad "A2: and it does not block" "exit was $rc"
 
+# ── Case A3: a live parlay instance is reported up, and the guidance follows ─
+# The health surface has two states and must tell the truth in both: a port that only accepts a connection is case B's FAIL; this one ANSWERS /health the way parlay does.
+A3_PORT="$(free_port)"; mkdir -p "$ROOT/docroot"; printf '{"ok":true}' > "$ROOT/docroot/health"
+( cd "$ROOT/docroot" && exec "$PY" -m http.server "$A3_PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+LISTENER_PID=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$A3_PORT") 2>/dev/null && break; /bin/sleep 0.1; done
+out="$(env PATH="$STUB_OK:$PATH" HOME="$ROOT/home" PARLAY_STATE_HOME="$ROOT/state" \
+        PARLAY_RELAY_RUNTIME="$ROOT/relay" PARLAY_SERVER="http://127.0.0.1:$A3_PORT" \
+        PARLAY_EVAL_ENGINE_URL="http://127.0.0.1:$A_ENGINE" "$BASH_BIN" "$REPO/bin/parlay-preflight" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ok "A3: a parlay instance answering /health exits 0" || bad "A3: a parlay instance answering /health exits 0" "exit was $rc"
+names_all "$out" "A3" "already answers parlay's /health" "answers on 127.0.0.1:$A3_PORT" "nothing to start" \
+  && ok "A3: reports it up, and does not tell you to start one" \
+  || bad "A3: reports it up, and does not tell you to start one"
+kill "$LISTENER_PID" 2>/dev/null; LISTENER_PID=""
+
 # ── Case B: many things broken at once, all named in ONE run ─────────────────
-# go and git are PRESENT BUT UNUSABLE (stubs that exit non-zero) rather than
-# absent, because that is the harder case: `command -v` finds them, so a
-# preflight that only checks for existence would call this machine healthy.
+# go and git are PRESENT BUT UNUSABLE (stubs that exit non-zero) rather than absent:
+# `command -v` finds them, so a preflight that only checks existence would call this
+# machine healthy.
 STUB="$ROOT/stub"; mkdir -p "$STUB"
 printf '#!/bin/sh\necho "go: broken installation" >&2\nexit 1\n' > "$STUB/go"
 printf '#!/bin/sh\necho "git: broken installation" >&2\nexit 1\n' > "$STUB/git"
@@ -226,9 +229,8 @@ every_fail_has_a_fix "$out" && ok "B: every FAIL carries its exact fix" \
   || bad "B: every FAIL carries its exact fix"
 
 # ── Case C: the worst case — nothing on PATH at all, on the real checkout ────
-# A newcomer on a bare machine. env -i with no HOME either: the preflight must
-# still complete (it uses no external binary to do its own work) and must still
-# name everything, rather than dying on its own first line.
+# A newcomer on a bare machine. env -i with no HOME either: the preflight must still
+# complete (it uses no external binary to do its own work) and still name everything.
 REAL="$(cd "$HERE/.." && pwd)"
 if [ -f "$REAL/bin/parlay-preflight" ]; then
   out="$(env -i PATH=/nonexistent "$BASH_BIN" "$REAL/bin/parlay-preflight" 2>&1)"; rc=$?

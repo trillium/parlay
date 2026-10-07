@@ -1,31 +1,28 @@
 #!/bin/bash
 # parlay-preflight — can this machine and checkout run parlay at all?
 #
-# Run this FIRST, before any other command in the README. It reports EVERY
-# problem it finds in one run, each with the exact command that fixes it, and
-# exits 1 if any of them is a hard blocker. Things that limit only an optional
-# feature (the chat panel, the sandbox example) are WARN, not FAIL: the
-# README's Quickstart works without them.
+# Run this FIRST, before any other command in the README. It reports EVERY problem
+# it finds in one run, each with the exact command that fixes it, and exits 1 if any
+# is a hard blocker. Things that limit only an optional feature are WARN, not FAIL.
+# It is the machine half of the health surface: `parlay health` is the running-
+# instance half and `parlay doctor` is one agent's self-diagnosis.
 #
 #   ./bin/parlay-preflight
 #
-# It needs nothing but a bash, deliberately: every tool it checks for is a thing
-# that may be missing, so it cannot depend on any of them. No grep/sed/dirname/
-# awk, and port probes use bash's own /dev/tcp — which is what lets it still
-# print a full report under a deliberately broken environment, the case
-# bin/parlay-preflight.test.sh runs. `#!/bin/bash`, not `env bash`, for the same
-# reason: a broken PATH cannot find env either. It is NOT `parlay health` (is a
-# RUNNING instance healthy?) or `parlay doctor` (is THIS agent enrolled?) —
-# those answer questions that only exist after a server is up.
+# It needs nothing but a bash, deliberately: every tool it checks for is a thing that
+# may be missing, so it cannot depend on any of them. No grep/sed/dirname/awk, and
+# port probes use bash's own /dev/tcp — which is what lets it still print a full
+# report under a deliberately broken environment (bin/parlay-preflight.test.sh).
+# `#!/bin/bash`, not `env bash`, for the same reason: a broken PATH cannot find env.
 #
-# Reads, all optional: HOME, TMPDIR, GOTOOLCHAIN, PARLAY_STATE_HOME,
-# PARLAY_SERVER, PARLAY_EVAL_ENGINE_URL, PARLAY_RELAY_RUNTIME.
+# Reads, all optional: HOME, TMPDIR, GOTOOLCHAIN, PARLAY_STATE_HOME, PARLAY_SERVER,
+# PARLAY_EVAL_ENGINE_URL, PARLAY_RELAY_RUNTIME.
 
 SELF="${BASH_SOURCE[0]}"
 case "$SELF" in */*) SELFDIR="${SELF%/*}" ;; *) SELFDIR="." ;; esac
 ROOT="$(cd -- "$SELFDIR/.." 2>/dev/null && pwd -P)" || ROOT=""
 
-FAILS=0; WARNS=0; OKS=0
+FAILS=0; WARNS=0; OKS=0; SERVER_UP=0; SERVER_ADDR=""
 ok()   { OKS=$((OKS + 1));  printf '  ok    %-13s %s\n' "$1" "$2"; }
 warn() { WARNS=$((WARNS + 1)); printf '  warn  %-13s %s\n' "$1" "$2"
          if [ -n "$3" ]; then printf '        fix: %s\n' "$3"; fi; return 0; }
@@ -105,7 +102,7 @@ port_reachable() { (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null; }
 http_health() {
   ( exec 3<>"/dev/tcp/$1/$2" || exit 1
     printf 'GET /health HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n' "$1" >&3 || exit 1
-    while IFS= read -r -t 3 line; do printf '%s\n' "$line"; done <&3
+    while IFS= read -r -t 3 line || [ -n "$line" ]; do printf '%s\n' "$line"; done <&3
   ) 2>/dev/null
 }
 
@@ -174,7 +171,7 @@ else
 fi
 # ── 3. git and curl (needed), bun (optional panel) ────────────────────────────
 tool git  fail "parlay spawn/guard/teardown all shell out to git" "macOS: xcode-select --install · Debian/Ubuntu: apt-get install git"
-tool curl warn "examples/bootstrap-sandbox.sh needs it (the Quickstart does not)" "macOS: preinstalled at /usr/bin/curl · Debian/Ubuntu: apt-get install curl"
+tool curl warn "the Quickstart's step 1 sandbox (examples/bootstrap-sandbox.sh) needs it; the server-and-CLI path does not" "macOS: preinstalled at /usr/bin/curl · Debian/Ubuntu: apt-get install curl"
 tool bun  warn "only the optional chat panel (packages/client) needs it" "curl -fsSL https://bun.sh/install | bash  (skip this unless you want the panel)"
 # ── 4. state paths, build dir, permissions ────────────────────────────────────
 if [ -z "${HOME:-}" ]; then
@@ -205,7 +202,7 @@ split_hostport "$(server_url "$STATE_HOME/config.json")"
 PORT="${PORT:-4242}"
 if port_reachable "$HOST" "$PORT"; then
   case "$(http_health "$HOST" "$PORT")" in
-    *'"ok":true'*) ok "server port" "$HOST:$PORT already answers parlay's /health — an instance is up there" ;;
+    *'"ok":true'*) SERVER_UP=1; SERVER_ADDR="$HOST:$PORT"; ok "server port" "$HOST:$PORT already answers parlay's /health — an instance is up there" ;;
     *) fail "server port" "$HOST:$PORT is taken by something that is not parlay" \
             "start on another port: cd packages/go-server && go run ./cmd/parlay-server -addr 127.0.0.1:4243 , then point the CLI at it: ./bin/parlay remote set http://127.0.0.1:4243" ;;
   esac
@@ -244,7 +241,9 @@ fi
 if [ "$WARNS" -gt 0 ]; then
   printf 'Nothing is blocking. Every warning above is a limit or a caution, not a broken install.\n'
 fi
-printf '\nReady. Start the server (this blocks; it is the one long-running command):\n  cd packages/go-server && go run ./cmd/parlay-server\n'
-printf 'Then, in a second shell at the repo root, prove the round-trip:\n  ./bin/parlay send --demo --force "hello" && ./bin/parlay history 5\n'
+READY='Ready. Start the server (this blocks; it is the one long-running command):\n  cd packages/go-server && go run ./cmd/parlay-server'
+[ "$SERVER_UP" = 1 ] && READY="Ready. A parlay instance already answers on $SERVER_ADDR — nothing to start."
+printf '\n%b\n' "$READY"
+printf 'Then, in a second shell at the repo root, prove the round-trip:\n  ./bin/parlay send --demo --force "hello" && ./bin/parlay history 5\nOr prove the whole stack first, in a throwaway sandbox (README step 1):\n  ./examples/bootstrap-sandbox.sh\n'
 printf 'And the one health surface for a running instance:\n  ./bin/parlay health\n'
 exit 0

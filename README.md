@@ -43,7 +43,7 @@ needed if you also want the chat panel or the git hooks.)
 bundle, and the Go server *is* its host: it serves the bundle same-origin from the
 same `:4242` it serves `/api/chat/*` on, so there is no reverse proxy to wire and
 no second service to run. Build the bundle (`cd packages/client && bun run build`)
-and open `http://localhost:4242/` — Quickstart step 4. The author's own install
+and open `http://localhost:4242/` — Quickstart step 5. The author's own install
 hosts the panel behind a private page host called Pulse, which is **not open
 source and not available here**, but nothing in this repo requires it; it is a
 distribution choice, not a dependency. A second, separate bundle — the fleet
@@ -78,14 +78,16 @@ limits (the chat panel, the sandbox example).
 It is also the command to reach for when something that *used to* work stops
 working, or when a later step in this file fails: it is the single prerequisite
 surface, so the newcomer's step 0 and the operator's "what is wrong with this
-machine" are one command and not two.
+machine" are one command and not two. Its counterpart for a *running* instance is
+`./bin/parlay health`, named where you first have one in step 4 — the same two
+commands in both roles, deliberately, and not a second checklist to find.
 
-Steps 1–4 below are the path. When one of them bites — and a few of them will, in
+Steps 1–5 below are the path. When one of them bites — and a few of them will, in
 ways no prerequisite check can see — [`docs/traps.md`](docs/traps.md) is the same
 knowledge ordered by **when you will meet it** rather than by when the incident
 happened, so you can read the stage you are in instead of the whole record.
 
-### The four steps (step 0 has just checked everything they need)
+### The five steps (step 0 has just checked everything they need)
 
 Prereqs: [Go](https://go.dev) **1.26.5+** — the CLI and server are both Go, and
 `bin/parlay` builds the CLI for you on first run. (1.26.5, not 1.26, because
@@ -111,15 +113,52 @@ git clone https://github.com/trillium/parlay && cd parlay
 bun install                                   # optional: also wires the git hooks (core.hooksPath tools/hooks)
 ```
 
-**1. Start the server.** It's `packages/go-server`, a single Go binary that listens on
+**1. Prove the whole thing works first, in a sandbox.** One command that builds the CLI
+and the server, starts that server on a free port with `HOME` redirected and every path
+it can write pinned inside a throwaway temp directory (`-state-dir` for history and
+registry, `-pai-dir` for the TTS cache, `-assets-dir` for the panel), seeds two agents
+from [`examples/parlay-state`](examples/parlay-state) and a little history from
+[`examples/data-dir`](examples/data-dir), and then exercises the round-trip against it —
+send, history, the agent-role reply path, `identity`, `launch` and `doctor`:
+
+```sh
+./examples/bootstrap-sandbox.sh
+```
+
+**Success looks like** `all checks passed`, exit 0, and ten `PASS` lines covering the
+seeded registry, a message round-tripped *and* persisted into the state dir, the reply
+routed onto the right agent's channel, the server URL resolved from the sandbox's own
+`config.json`, and `doctor` passing identity, registry membership and reachability. It
+then prints a `LIMITS` block saying exactly what it did **not** prove — read it, because
+"all checks passed" is not "everything works". **If it fails**, it prints the failing
+check — and the server's log, if the server was the thing that did not come up: re-run
+step 0 first, since the failures it can have are usually prerequisite failures, and if
+step 0 is clean the failing check names the layer that is broken. It needs `go` and
+`curl`, and it removes its sandbox on exit (`--keep` leaves it on disk).
+
+This is how you run a *fleet* in isolation, and step 2's note below is why it matters:
+the server's store is only the first of the hardcoded paths, and the listener layer is
+one nothing redirects at all. [`examples/README.md`](examples/README.md) is the
+file-by-file recipe, and [`docs/traps.md`](docs/traps.md) stage 4 lists the couplings a
+single environment variable does not cover. It never touches your own files or a server
+you already have running.
+
+**2. Start the server.** It's `packages/go-server`, a single Go binary that listens on
 `:4242` (default `PARLAY_SERVER_ADDR=127.0.0.1:4242`) and owns `/api/chat/*`:
 
 ```sh
 cd packages/go-server && go run ./cmd/parlay-server
 ```
 
+**Success looks like** the line it prints on boot — `parlay-server: listening on
+http://127.0.0.1:4242 (state dir: …, assets: …)` — and the process staying in the
+foreground. **If it fails**, a port somebody already holds exits immediately with
+`listen failed: listen tcp 127.0.0.1:4242: bind: address already in use`: run step 0,
+which says whether something is already there and whether it is parlay.
+
 It persists state under `$PARLAY_STATE_HOME` (default `~/.parlay`) — messages/agents/
-drafts/settings/uploads live there. To keep a dev run fully isolated from live state:
+drafts/settings/uploads live there. To keep a dev run's *server store* out of a live
+install:
 
 ```sh
 cd packages/go-server && go run ./cmd/parlay-server -state-dir ~/.parlay/dev-data
@@ -131,7 +170,14 @@ cd packages/go-server && go run ./cmd/parlay-server -state-dir ~/.parlay/dev-dat
 > existing state. The chat history, agent registry, drafts, settings and uploads all
 > live there.
 
-**2. Point the CLI at it**, in another shell. Every command from here on is written
+`-state-dir` moves that one store and nothing else. `HOME`, the agent store the CLI
+enumerates (`PARLAY_AGENT_HOME`), the TTS cache and the host-wide listener layer are
+untouched, so a second server started this way still shares the machine's agent ids,
+its relay and its hooks. Step 1's sandbox is the version that isolates a whole fleet;
+[`docs/traps.md`](docs/traps.md) stage 4 names each coupling and the variable that
+covers it.
+
+**3. Point the CLI at it**, in another shell. Every command from here on is written
 relative to the **root of the clone**:
 
 ```sh
@@ -139,23 +185,39 @@ cd /path/to/parlay                         # the directory you cloned into above
 ```
 
 No `PARLAY_SERVER` export is needed: the CLI's coded default is
-`http://localhost:4242` — exactly where step 1 put the server — and the
+`http://localhost:4242` — exactly where step 2 put the server — and the
 `bin/parlay` wrapper adds no environment of its own. If your server lives
 somewhere else, either export `PARLAY_SERVER` (the environment always wins) or
 run `parlay remote set <url>` (persists to `~/.parlay/config.json`, which beats
 the coded default but loses to the env var).
 
-**3. Talk to it:**
+**Success looks like** nothing visible yet — this step only fixes the address step 4
+uses. **If a later command cannot reach the server**, `./bin/parlay remote` prints the
+URL it resolved and where that came from (`source: env`, `config` or `default`), and
+step 0 reports whether anything is answering there.
+
+**4. Talk to it, then confirm it is healthy:**
 
 ```sh
 ./bin/parlay                               # live snapshot: subscribers, agents, last messages
 ./bin/parlay send --demo --force "hello"   # message the 'demo' channel
 ./bin/parlay history 5                     # read it back
-./bin/parlay health                        # host vitals: is the server up, how much memory (see note below)
-./bin/parlay doctor                        # self-diagnosis: server reachable? identity set?
+./bin/parlay health                        # the running instance's vitals: up? memory? history size?
+./bin/parlay doctor                        # an AGENT's self-check — from this shell it exits 1 (see below)
 ./bin/parlay doctor --json                 # same checks as one JSON document (schema parlay.doctor/v1), for scripts/LLMs
 ./bin/parlay doctor deploy                 # deployment-level sweep: launchd, ports, logs, pins
 ```
+
+**Success looks like** `sent to demo — id …`, your text in `history`, and `health`
+printing your server as up. `health` still exits 1 here — its second line is the
+*optional* voice engine, which you have not installed; that red line and the exit code
+are the engine's, not your install's (the note under this block says it at length).
+
+The check to run is the same one as step 0: `./bin/parlay-preflight` is the *machine*
+half of the health surface and `./bin/parlay health` is the *running instance* half — the
+first now reports the port as a parlay instance answering `/health`, the second reports
+what is inside it. Those two commands, in both roles, are the whole surface: there is no
+separate newcomer checklist and no separate operator one.
 
 `doctor deploy` is for a machine running the launchd services
 (`packages/go-server/deploy/install.sh`); on a fresh clone it has nothing to
@@ -227,7 +289,7 @@ server it polls is let through — the check cannot guess). Three ways out — u
 plus a relay started with `-server $PARLAY_SERVER`), or point `PARLAY_SERVER` at
 whatever the existing relay is already polling.
 
-**4. Open the panel (optional — this is the only step that needs Bun):**
+**5. Open the panel (optional — this is the only step that needs Bun):**
 
 ```sh
 cd packages/client && bun run build      # writes dist/index.html + dist/parlay-agent.js
@@ -235,13 +297,17 @@ cd packages/client && bun run build      # writes dist/index.html + dist/parlay-
 
 Then open <http://localhost:4242/>. The server found the bundle by itself: it
 resolves `packages/client/dist` from its own install location first and from the
-directory you started it in second, so the command in step 1 works unchanged. If
+directory you started it in second, so the command in step 2 works unchanged. If
 your bundle lives somewhere else, pass `-assets-dir <path>` or export
 `PARLAY_ASSETS_DIR`.
 
 Until you build it, `GET /` answers `503` with those instructions on its body —
-every `/api/chat/*` route works regardless, and none of the CLI in step 3 ever
+every `/api/chat/*` route works regardless, and none of the CLI in step 4 ever
 needed the panel. The bundle is gitignored, so this is a once-per-clone build.
+**Success looks like** the panel loading with the `demo` tab from step 4. **If it
+fails**, `curl -sS -i http://localhost:4242/` says which half is missing: `503` with
+the `bun run build` line means the bundle is not built, `404` means the assets
+directory the server was pointed at has no `index.html`.
 
 `/fleet/` is a *different* app (`packages/webview`, React) served from
 `<assets-dir>/fleet`; `packages/go-server/deploy/install.sh --build` builds and
@@ -327,7 +393,9 @@ present and new enough, whether the state directories and the CLI build director
 are writable, whether the port the CLI talks to is free, and — if something is
 already listening there — whether it is parlay (`GET /health` answers with
 `"ok":true`) or a stranger holding the port. Each `FAIL` prints the exact command
-that fixes it.
+that fixes it. If the machine checks out and you still cannot tell which layer is
+broken, step 1's `./examples/bootstrap-sandbox.sh` exercises the whole stack against a
+throwaway instance and names the layer that fails.
 
 Two other verbs answer questions this one deliberately does not, both only once a
 server exists:
