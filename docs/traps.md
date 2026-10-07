@@ -39,8 +39,8 @@ whole stack work without touching your own state.
 
 ## 3. An agent that actually receives what you sent
 
-`parlay listen --agent demo --name Demo --legacy-poll` needs nothing else; without
-`--legacy-poll` it needs `tools/relay/build.sh` to have run first.
+`parlay listen --agent demo --name Demo --legacy-poll` needs nothing else; without it you need
+`tools/relay/build.sh` first, and an already-running host relay is used instead (stage 4).
 
 - **A registration is not a listener, and a spool is not delivery.** Liveness is the registry intersected with the
   host's process table, so a tab can look live and be deaf. →
@@ -65,8 +65,11 @@ the couplings no single environment variable covers.
   server or state-dir discrimination: two instances reusing an id evict each other, and the loser is registered but
   deaf. → [listener takeover](agent-notes/arming-a-listener-is-a-takeover-robots-fgyz.md)
 - **The relay is a per-user singleton bound to one upstream server for life**, so a second instance's enroll looks
-  live and delivers nothing; every enrolling verb refuses that first. →
-  [the relay singleton](agent-notes/the-relay-is-a-per-runtime-robots-buu8.md)
+  live and delivers nothing. The probe that refuses that is conclusive only when the relay can report its upstream: a
+  relay predating that field answers `{"ok":true}` alone, is let through, and the enroll goes to the relay's own
+  server — so on a host that already runs one, prefer `--legacy-poll` or your own `PARLAY_RELAY_RUNTIME`. →
+  [the relay singleton](agent-notes/the-relay-is-a-per-runtime-robots-buu8.md) ·
+  [a relay that cannot name its server](agent-notes/a-relay-that-cannot-name-its-server-passes.md)
 - **The canonical runtime dir is reserved** — a relay belonging to another server parked in it is a fleet outage.
   Give a second instance its own `PARLAY_RELAY_RUNTIME`. →
   [the runtime dir](agent-notes/the-canonical-runtime-dir-is-reserved-robots-93xu.md)

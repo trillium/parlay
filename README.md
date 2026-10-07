@@ -221,7 +221,9 @@ separate newcomer checklist and no separate operator one.
 
 `doctor deploy` is for a machine running the launchd services
 (`packages/go-server/deploy/install.sh`); on a fresh clone it has nothing to
-inventory and says so. Its health probes follow the same server/engine
+inventory and says so — and it still exits 1 there, for the same optional voice
+engine that makes `health` red: that FAIL is the engine you have not installed,
+not a deployment finding. Its health probes follow the same server/engine
 resolution as every other verb, so it reports on the server your CLI is
 actually pointed at — never on a hardcoded `:4242`.
 
@@ -328,13 +330,25 @@ one-call self-enrolment: register, announce, then stream — accepts the same fl
 takes the same native path, so `listen --agent demo --name Demo --legacy-poll` gives
 you a live enrolled agent on a fresh clone too.
 
-*Without* that flag, both verbs go through a relay binary that is gitignored and that
-neither `bun install` nor `bin/parlay` builds; run `tools/relay/build.sh` first or they
-exit 1 with `relay is not up and could not be started`. That is a clean failure, not a
-trap: every enrolling entry point — `listen`, `monitor`, and `claim` — preflights the
-relay *before* it registers, so a failed preflight exits with **nothing enrolled**
-(`NOT registered, so nothing is deaf`) rather than leaving a tab that looks live in the
-panel and can never receive anything.
+*Without* that flag, both verbs go through the relay binary — gitignored, built by
+neither `bun install` nor `bin/parlay` — and what happens depends on whether a relay is
+already running on this host:
+
+- **No relay up** (a machine with no parlay install): a clean exit 1, `relay is not up
+  and could not be started`, and **nothing enrolled** (`NOT registered, so nothing is
+  deaf`) — every enrolling entry point, `listen`, `monitor` and `claim` alike, probes the
+  relay *before* it registers, so a missing relay never leaves a tab that looks live in
+  the panel. Run `tools/relay/build.sh` first to take the relay path.
+- **A relay already up** (any machine that has parlay installed): the enroll succeeds
+  through that host-wide relay, and your spool then carries whatever server *that* relay
+  was started with — not necessarily yours. The preflight line is the whole check, so
+  read it: `preflight OK … and polling <url>` naming your server means it verified its
+  upstream; a `preflight OK` with **no** `and polling` is a relay too old to report one,
+  and that is deliberately let through, because the check cannot guess. If you point an
+  instance anywhere but that relay's server — every second instance — use
+  `--legacy-poll`, or give the instance its own `PARLAY_RELAY_RUNTIME` plus a relay
+  started with `-server $PARLAY_SERVER` (step 1's note; [`docs/traps.md`](docs/traps.md)
+  stage 4).
 
 Launch a background agent that shows up as a live tab (needs a
 [Claude Code](https://claude.com/claude-code) install and the
@@ -407,7 +421,8 @@ server exists:
   output says so.
 - `./bin/parlay doctor deploy` — the machine-level sweep for a host running the
   launchd services: service inventory, binary-path sanity, log freshness, pin-vs-doc
-  consistency. On a fresh clone it has nothing to inventory and says so.
+  consistency. On a fresh clone it has nothing to inventory and says so, and it exits 1
+  on the same not-installed voice engine `health` reports.
 
 (`./bin/parlay doctor` with no subcommand is a *different* thing: it is one agent's
 self-diagnosis — is `PARLAY_AGENT_ID` set, is that agent registered and listening,
