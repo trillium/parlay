@@ -51,13 +51,12 @@ The docs-index gate scans `docs/*.md` only, so a note under `docs/agent-notes/` 
 document links is invisible to every gate — one existed (`bun-test-ts-gate-is-repo-wide.md`)
 until `traps.md` was written — and a broken relative link is equally invisible, since GitHub
 renders it as ordinary text. One new hygiene step closes both, deriving each side from the
-filesystem rather than a list that goes stale, and resolving each link against the directory
-of the file that contains it (done by hand once, resolving against the repo root reported 117
-false failures). Scope is the newcomer path — `README.md`, `AGENTS.md`, `docs/README.md`,
-`docs/traps.md`, `examples/README.md` — deliberately not all of `docs/`, which also holds
-dated snapshots (`ux-eval-*`, `dogfood/`) whose value is being what was true that day.
-Proved to fail, not just to pass. The run block was extracted from the workflow YAML (so the
-tested text is the shipped text) and run in a fresh copy of the tree for each case:
+filesystem and resolving each link against the directory of the file that contains it (against
+the repo root it reported 117 false failures). Scope is the newcomer path — `README.md`,
+`AGENTS.md`, `docs/README.md`, `docs/traps.md`, `examples/README.md` — deliberately not all of
+`docs/`, which also holds dated snapshots whose value is being what was true that day. Proved
+to fail, not just to pass: the run block was extracted from the workflow YAML (so the tested
+text is the shipped text) and run in a fresh copy of the tree for each case:
 ```
 $ bash /tmp/extracted-step.sh       # control, the real tree
 65 agent-notes are placed in docs/traps.md; 238 links across 5 documents resolve   (exit 0)
@@ -80,11 +79,10 @@ silently because its `grep` failed inside a process substitution. Both are now n
 
 ## Harness scratch was committed once, and now cannot be
 
-Nothing under `.pi/`, `.gnhf/` or any harness scratch directory may be committed, and this
-branch broke it once: the auto-commit that landed `docs/traps.md` captured eight
-`.pi/tasks/<session>/*.json` + `*.output` files because `.pi/` was not ignored. Fixed by
-untracking them (`git rm --cached`, files kept) and adding `.pi/` to `.gitignore` with the
-incident recorded there; `.gnhf/` needs no entry because `.git/info/exclude` already covers
+Nothing under `.pi/`, `.gnhf/` or any harness scratch directory may be committed, and this branch
+broke it once: the auto-commit that landed `docs/traps.md` captured eight `.pi/tasks/<session>/*.json`
++ `*.output` files because `.pi/` was not ignored. Fixed by untracking them (`git rm --cached`,
+files kept) and adding `.pi/` to `.gitignore`; `.gnhf/` needs none, as `.git/info/exclude` covers
 `runs/`. A file added in one commit and removed in another leaves no trace in a PR's net diff.
 ## What was deliberately left alone
 
@@ -108,7 +106,7 @@ exit=1
 $ for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do   # same chain, per module
   (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...); done
 tools/cli exit=0 · tools/relay exit=0 · packages/go-server exit=0 · packages/spawn-profiles exit=0
-$ gofmt -l .            → (no output, exit 0)      $ make test-bdd → exit 0, 7+7 scenarios passed
+$ gofmt -l .            → (no output, exit 0)      $ make test-bdd → exit 0, 17+7 scenarios passed
 $ bash bin/parlay-preflight.test.sh → 20 passed, 0 failed, exit 0
 ```
 
@@ -217,10 +215,10 @@ body; `tools/cli/go.mod`'s `go 1.26.5` floor; the launchd label in
 `packages/go-server/deploy/lib.sh` (`com.parlay.go-server`, not the retired
 `com.parlay.chat-server` that `AGENTS.md` still named — corrected earlier on this branch);
 `parlay-monitor.sh`'s upstream comparison and `monitor.go`'s `PARLAY_SERVER=config.ServerURL()`;
-`relay_control.go`'s `/health` handler with its pinned test; and the new hygiene step's YAML,
-parsed and run as extracted. The step 2/3/5 criteria were run too: a held port prints
-`listen failed: … address already in use`, `parlay remote` prints `source: default`, and
-`GET /` answers `503` with the `bun run build` body (`404` with an empty `-assets-dir`).
+`relay_control.go`'s `/health` handler with its pinned test; and the new gate's YAML, run as
+extracted. The step 2/3/5 criteria were run too: a held port prints `listen failed: … address
+already in use`, `parlay remote` prints `source: default`, and `GET /` answers `503` with the
+`bun run build` body (`404` with an empty `-assets-dir`).
 ### Line budget
 
 The repo enforces 250 lines only for staged `*.ts` files (`tools/hooks/pre-commit`), so
@@ -231,19 +229,22 @@ markdown has no enforced budget; self-imposed anyway — every file added here i
 ## Where this stands
 
 - **The PR is open, not merged**: <https://github.com/trillium/parlay/pull/314>,
-  `gnhf/objective-make-a-new-904428` → `main`, head pushed to `66f4ea3`; the PR body is this
-  file. Net diff: the files above, plus `notes.md`.
-- **The branch is level with `main`**, so `parlay merge-gate 314`'s `behind-base` finding is
-  gone; its four CI checks pass on `66f4ea3`. CodeRabbit never runs on this repo by itself
-  (under 10 stars), so `gh-axi pr comment 314 --body "@coderabbitai review"` is the only route
-  to gate-visible review evidence. That review has now run on the head: it confirmed the
-  sandbox-coverage fix, raised the two gate findings above, and those are fixed here. The
-  first review thread is replied to and resolved; the two new threads want the same once this
-  fix is pushed.
-- **The reviewer is rate-limited to roughly one review per hour** (`Review rate limited`; the
-  window reopened ~65 min after the previous review). A push restarts the review, so the
-  sequence is: push → request → wait out the window → re-run `merge-gate`. The harness commits
-  after the turn and never pushes, so the fix written here reaches the PR on the next push.
+  `gnhf/objective-make-a-new-904428` → `main`, remote head `35ec81b4`, and **`parlay merge-gate
+  314` → READY**: checks green against the current base, a real review covering `35ec81b4`, no
+  unresolved threads. The PR body is this file; **nothing below is on the branch, deliberately
+  — pushing again re-pins the review to a commit that is no longer the head (`stale-review`)
+  and costs another window, so this revision lives only in the PR description.**
+- **The reviewed head carries everything above.** Iteration 8's gate hardening was pushed to
+  `35ec81b4`, and CI run 37616868360 re-ran all four checks green *including the hardened step
+  itself*: the Hygiene job printed `65 agent-notes are placed in docs/traps.md; 238 links across
+  5 documents resolve`. The gate is proven by CI now, not only by the local extraction.
+- **Review evidence cost one rated window.** CodeRabbit never runs here by itself (under 10
+  stars), so `gh-axi pr comment 314 --body "@coderabbitai review"` is the only route: 11:55Z →
+  `Review rate limited` (that reply does *not* state the wait; the window is ~65 min after the
+  previous accepted review), 12:31Z → accepted 12:32Z → `Review completed` 12:40Z on
+  `35ec81b4`, no findings. Before it, `merge-gate` was NEEDS-DECISION — `vacuous-pass` plus
+  `stale-review`, both the reviewer being unavailable, no code finding. All four review threads
+  from the two rounds are resolved, each with an in-thread reply naming its fix and commit.
 - **The README below the Quickstart is still reference material** (system map, layout, worked
   config, development, publishing): reachable and accurate, so left in place — the task was to
   add a path, not to prune the manual.
