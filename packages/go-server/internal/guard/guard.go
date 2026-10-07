@@ -1,7 +1,7 @@
 // Package guard is the Go port of packages/server/src/guard/ — the one
 // security boundary for the unauthenticated chat API (task-6ai1, defect D7 of
-// the end-to-end verification). Over there the policy lives in
-// guard/origin.ts + guard/index.ts and the route set in guard/paths.ts; this
+// the end-to-end verification). In the deleted TypeScript server the policy lived
+// in guard/origin.ts + guard/index.ts and the route set in guard/paths.ts; this
 // package holds both.
 //
 // Before this package, packages/go-server had no origin boundary of any kind.
@@ -119,12 +119,18 @@ import (
 // GuardedPaths" in the package comment for the classification test, which is
 // method-independent, and for the residue that test does not cover — TS carries
 // two accepted-residue read routes, and this server's exposure differs because
-// divergence 1 means its unguarded routes send no ACAO at all. Mirrors
-// GUARDED_CHAT_PATHS in packages/server/src/guard/paths.ts for the routes the
-// two servers share.
+// divergence 1 means its unguarded routes send no ACAO at all. Mirrored
+// GUARDED_CHAT_PATHS in packages/server/src/guard/paths.ts (deleted with the
+// TS server in the Bun→Go cutover) for the routes the two servers shared.
 //
 // A new mutating route is UNGUARDED until it is added here. If its callers do
 // not send a JSON content type, it also belongs in jsonExemptPaths.
+//
+// That rule is ENFORCED, not just documented: TestEveryRegisteredRouteIsGuardedOrExplained
+// parses internal/handlers for every path it puts on the mux and fails the
+// build on one that is neither guarded here nor listed, with a written reason,
+// in TestUnguardedRoutes. The live-command registry's three report routes
+// shipped outside the boundary before that test existed; see their entries.
 var GuardedPaths = map[string]bool{
 	// D7, the routes the verifier drove cross-origin.
 	"/api/chat/send":           true,
@@ -192,6 +198,42 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/tts/validate-splits":   true, // origin check only, see jsonExemptPaths
 	"/api/chat/tts-event":             true, // broadcasts a tts_event frame carrying a device uuid
 	"/api/chat/debug-log":             true, // appends client console errors to a log file on disk
+
+	// Remote-input intake (task-57ltl; targets + no-target rule task-46ys9):
+	// POST enqueues accepted text for injection as real keystrokes on the
+	// target Mac via Talon; GET polls the per-submission outcome; GET
+	// targets lists Talon's apps in Talon's ordering (read-only).
+	// Mutating/identifier-aiming by the file's own rule — what the handler
+	// DOES, regardless of method — so all three land here. JSON bodies,
+	// so no jsonExemptPaths entry.
+	"/api/chat/remote-input/submit":  true,
+	"/api/chat/remote-input/status":  true,
+	"/api/chat/remote-input/targets": true,
+
+	// Live-command registry (#91): three POST report routes the CLI calls to
+	// announce a running verb. Mutating by the file's own rule — each writes
+	// a registry row that GET /api/chat/commands and the panel's live-commands
+	// view then report — so all three land here.
+	//
+	// They were added OUTSIDE this map when the feature shipped, carrying a
+	// hand-rolled copy of this guard's content-type gate in the handler
+	// (handlers.requireCommandReport) on the belief, stated in that function's
+	// comment, that "this server has no equivalent guard". That was true when
+	// the guard landed (task-6ai1) and false by the time the registry did, and
+	// the consequence was a route that accepted a forged cross-origin POST
+	// with Content-Type: application/json — a shape the handler's own gate
+	// cannot refuse, because requiring JSON is exactly what forces the
+	// preflight the handler assumed nothing would ever answer. Two
+	// implementations of one boundary is the defect class this file exists to
+	// prevent, so the routes come inside it and requireCommandReport stays as
+	// defense in depth.
+	//
+	// GET /api/chat/commands is the read half and deliberately stays OUT, on
+	// the /api/chat/agents precedent: a foreign page's read executes but its
+	// body is unreadable, because unguarded routes here send no ACAO at all.
+	"/api/chat/command-start":     true,
+	"/api/chat/command-heartbeat": true,
+	"/api/chat/command-end":       true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to

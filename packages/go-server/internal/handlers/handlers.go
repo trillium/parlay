@@ -96,6 +96,9 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	mux.HandleFunc("/api/chat/eval", handleEval(hub))
 	mux.HandleFunc("/api/chat/eval-push", handleEvalPush(hub))
 
+	// Remote-input intake (task-57ltl): accepted text → Talon injection.
+	registerRemoteInput(mux, hub)
+
 	registerCommands(mux, st, hub)
 	registerPanel(mux, st, b, hub)
 

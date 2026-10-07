@@ -4,6 +4,14 @@
      file small enough to load every session. AGENTS.md carries the one-line
      rule; the full rationale lives here. -->
 
+> **Historical (corrected 2026-10-05).** The guard-registration and
+> `PARLAY_DATA_DIR` sections below describe `packages/server`, the
+> TypeScript/Bun server, which was **deleted in the Bun→Go cutover**. The live
+> server is `packages/go-server`, and its guard is
+> `packages/go-server/internal/guard` — a single Go-side plane; there is no
+> `GUARDED_CHAT_PATHS`. References to `guard/paths.ts`, `GUARDED_CHAT_PATHS`,
+> `JSON_EXEMPT_PATHS`, and `PARLAY_DATA_DIR` are historical.
+
 
 `packages/server/src/*` are real files: a self-contained `bun serve()`
 application that owns `/api/chat/*`. Entrypoint `src/index.ts` binds
@@ -24,7 +32,12 @@ symlinks replaced with real files. The Pulse side must stop importing
 standalone server; that rewire and removing the `~/.claude` loop symlink are
 production changes made outside this repo (never edit `~/.claude` from here).
 
-### Adding a mutating `/api/chat` route? Add it to `GUARDED_CHAT_PATHS`
+### The deleted TS server: a mutating route went in `GUARDED_CHAT_PATHS`
+
+> **Live rule:** on the current Go-only server, add a mutating or
+> identifier-aiming `/api/chat` route to `packages/go-server/internal/guard.GuardedPaths`
+> (see AGENTS.md). Everything in this section describes the deleted TS
+> server's mechanism.
 
 `packages/server/src/guard/` is the one security boundary for the chat API
 (which still has **no authentication**) — `guard/paths.ts` is the route set,

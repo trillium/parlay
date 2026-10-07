@@ -21,6 +21,9 @@ export type BridgeMarker = {
 export const STATE_TYPE = "parlay-pi-inbox-bridge";
 
 let workerPromptTemplate: string | undefined;
+let mailPromptTemplate: string | undefined;
+
+export const MAIL_POKE_PREFIX = "MAIL_POKE";
 
 /**
  * Render the canonical worker poke from src/worker-prompt.md — the one
@@ -33,6 +36,30 @@ export function renderWorkerPrompt(store: string, channel: string): string {
 		workerPromptTemplate = readFileSync(new URL("./worker-prompt.md", import.meta.url), "utf8");
 	}
 	return workerPromptTemplate.split("{{store}}").join(store).split("{{channel}}").join(channel);
+}
+
+/**
+ * Render the agent-mail wake prompt from src/mail-prompt.md — MCP verbs
+ * (fetch_inbox/reply/acknowledge), never the bd-store worker verbs.
+ * Seat/project fill the template; unparseable pokes get generic wording.
+ */
+export function renderMailPrompt(seat = "your seat", project = "your project"): string {
+	if (mailPromptTemplate === undefined) {
+		mailPromptTemplate = readFileSync(new URL("./mail-prompt.md", import.meta.url), "utf8");
+	}
+	return mailPromptTemplate.split("{{seat}}").join(seat).split("{{project}}").join(project);
+}
+
+/** A MAIL_POKE v1: wire line — the agent-mail wake, distinct from store pokes. */
+export function isMailPoke(message: ChatLine): boolean {
+	return message.role === "user" && message.text.trim().startsWith(`${MAIL_POKE_PREFIX} v1:`);
+}
+
+/** Pull seat/project from the notify bridge's wire line; undefined when absent. */
+export function parseMailPoke(text: string): { seat: string; project: string } | undefined {
+	const match = /for (.+) \(project ([^)]+)\)/.exec(text.trim());
+	if (!match) return undefined;
+	return { seat: match[1].trim(), project: match[2].trim() };
 }
 
 /** Parse the monitor's stable CHAT_MSG wire line without splitting message text on `|`. */

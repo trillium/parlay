@@ -7,6 +7,7 @@ packages/client/plugins/
 # Build/runtime junk that kept leaking into git status (tree-hygiene, decision-u6v).
 *.log
 *.bak-*
+__pycache__/
 tools/relay/relay
 interceptor-screenshot-*.png
 .claude-file-plan.json
@@ -37,3 +38,29 @@ packages/go-server/parlay-server
 # in place writes a .gc/ state dir — that is a bug (see city/README.md), but
 # committing that live state would be worse, so it is ignored as a backstop.
 city/.gc/
+
+# .fm-hooks/ is firstmate behavioral-hook telemetry, historically written into
+# $CWD. Fixed upstream in fm-hooks 2e34642 ("Keep observer state out of the
+# working directory"): state now resolves from homedir to
+# ~/.local/state/fm-hooks, with per-repo namespacing by resolved real path and
+# 5 MB x 3 rotation. Verified 2026-10-05 — a post-fix process leaves no
+# .fm-hooks directory in its repo at all, so task-vejyd is resolved.
+#
+# KEEP THIS ENTRY until every long-lived harness process predating that commit
+# has restarted. A pi session that loaded the extension before the fix keeps the
+# old code in memory and keeps writing to $CWD/.fm-hooks/queue/events.jsonl for
+# its whole lifetime. Removing this line while such a session is live re-dirties
+# `git status --porcelain` and blocks every gnhf run (ensureCleanWorkingTree).
+# Safe to drop once no pre-fix process remains.
+.fm-hooks/
+
+# packages/server/ is a two-file leftover of the completed Bun→Go cutover
+# (1e05e859, #277), restored locally and never re-tracked. server.js is a Bun
+# bundle artifact — it opens with `// @bun` and carries __defProp/__export
+# runtime shims, so it is compiled output, not source. src/parlay-ui.js is the
+# retired `GET /parlay-ui.js` panel route; go-server/internal/static serves
+# packages/client/dist instead. Nothing tracked imports either file. Committing
+# them would resurrect a deleted component and contradict the cutover, but
+# deleting them is not recoverable and they are not worth the risk, so they are
+# ignored as a backstop — the same call as city/.gc/ above.
+packages/server/

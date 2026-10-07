@@ -414,3 +414,38 @@ func TestEnsureRegisteredIsBestEffortOnFailure(t *testing.T) {
 	// exactly like the auto-register-on-poll side effect it replaces.
 	ensureRegistered("test-agent")
 }
+
+// The listen→monitor handoff must not re-register: `parlay listen`
+// registers, then hands off in-process to CmdMonitor, whose own
+// ensureRegistered would otherwise POST register-agent a second time for the
+// same agent seconds later. The claim is single-use so a later DIRECT
+// `parlay monitor` for the same id still registers.
+func TestClaimHandoffRegistrationConsumesOnce(t *testing.T) {
+	orig := handoffRegisteredAgent
+	t.Cleanup(func() { handoffRegisteredAgent = orig })
+
+	handoffRegisteredAgent = "brain-dev"
+	if !claimHandoffRegistration("brain-dev") {
+		t.Error("claimHandoffRegistration(brain-dev) = false, want true on first claim")
+	}
+	if claimHandoffRegistration("brain-dev") {
+		t.Error("claimHandoffRegistration(brain-dev) = true twice, want single-use")
+	}
+}
+
+func TestClaimHandoffRegistrationRejectsOtherAgentsAndEmpty(t *testing.T) {
+	orig := handoffRegisteredAgent
+	t.Cleanup(func() { handoffRegisteredAgent = orig })
+
+	handoffRegisteredAgent = "brain-dev"
+	if claimHandoffRegistration("mayor") {
+		t.Error("claimHandoffRegistration(mayor) = true, want false for a different agent")
+	}
+	if claimHandoffRegistration("") {
+		t.Error("claimHandoffRegistration(\"\") = true, want false for an empty agent")
+	}
+	// A rejected claim must not consume the pending one.
+	if !claimHandoffRegistration("brain-dev") {
+		t.Error("a rejected claim consumed the pending handoff for brain-dev")
+	}
+}

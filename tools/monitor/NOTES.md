@@ -40,7 +40,10 @@ Monitor({ command: "parlay monitor --agent <id>", persistent: true })
 1. **Enroll** — `POST /register {"agent":"<id>"}` to the relay's Unix control
    socket. Idempotent; the relay creates the spool and starts (or reuses) the
    upstream poll loop for this channel. This is the one-call enroll: the single
-   startup action both registers the agent and begins streaming.
+   startup action both registers the agent and begins streaming. Each attempt
+   is capped at `PARLAY_ENROLL_MAX_TIME` (default 5s) with one retry, so a
+   relay that accepts the request and never answers fails fast instead of
+   hanging startup.
 2. **Stream** — `tail -n0 -F <spool>`, supervised (not `exec`ed).
    - `-n0` starts at end-of-file — no replay of already-consumed lines.
    - `-F` follows by name and **re-opens on truncate/rotate/recreate**. This is
@@ -61,6 +64,10 @@ There is one relay runtime per user: `$TMPDIR/parlay` (or the explicit
 server before starting a monitor, and all monitors enroll through this single
 relay. The relay is supervised by `com.parlay.relay`; `ensure-up.sh` waits for
 that relay or starts the same binary when developing from a checkout.
+Every successful ensure-up stamps the runtime dir (`.ensure-up.ok`); a monitor
+that finds a fresh stamp (`PARLAY_ENSURE_UP_STAMP_TTL`, default 120s) plus a
+live socket skips re-verifying, so `parlay listen`'s back-to-back preflight
+and stream runs verify only once.
 
 Regression coverage: `parlay-monitor.test.sh` uses a unix-socket stub to prove
 canonical enrollment and verify-only preflight without touching live state.
@@ -128,6 +135,8 @@ its runtime dir. Go-side: `internal/monitor/monitor_test.go`.
 | `PARLAY_NOTIFY_BUDGET` | `400` | `--notify-safe` per-line char budget before truncating |
 | `PARLAY_MONITOR_WATCH_INTERVAL` | `15` | seconds between orphan checks (shared by the script's watchdog and the CLI's) |
 | `PARLAY_MONITOR_NO_ORPHAN_EXIT` | unset | `1` = keep streaming after the launcher dies (deliberate daemonization) |
+| `PARLAY_ENROLL_MAX_TIME` | `5` | seconds capping each enroll attempt (one retry); a wedged relay fails fast instead of hanging startup |
+| `PARLAY_ENSURE_UP_STAMP_TTL` | `120` | seconds a successful ensure-up stamp stays fresh; a fresh stamp + live socket skips re-verification |
 
 ## Failure modes
 
@@ -138,6 +147,9 @@ its runtime dir. Go-side: `internal/monitor/monitor_test.go`.
   argument`.
 - Relay rejects the enroll (bad id, shutting down) → exits 1 with the relay's
   error echoed.
+- Relay accepts the enroll and never answers (wedged) → exits 1 after two
+  capped attempts, naming the relay as wedged or unreachable and stating the
+  agent was never enrolled, so nothing is left deaf.
 - Bad `--agent` (not a kebab-slug) → exits 2.
 - Launcher dies → the reader is stopped within `PARLAY_MONITOR_WATCH_INTERVAL`
   and the monitor exits, instead of tailing the channel forever as an init child.

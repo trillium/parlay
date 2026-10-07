@@ -149,6 +149,10 @@ func CmdListen(argv []string) {
 		httpc.Die(fmt.Sprintf("parlay listen: register-agent failed: %s", reg.Error), config.ExitRuntime)
 		return
 	}
+	// Mark the in-process handoff so CmdMonitor skips its own redundant
+	// ensureRegistered for this agent (handoffRegisteredAgent). Set only on
+	// success: a failed registration must still let the monitor try.
+	handoffRegisteredAgent = agent
 
 	// 4. Announce presence on the agent's own channel.
 	reply := httpc.PostJSON[listenReplyResponse]("/api/chat/reply", map[string]string{

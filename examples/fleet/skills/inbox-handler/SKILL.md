@@ -57,7 +57,7 @@ queueing. (Proven on `sandbox-inbox`: first dispatch refused, enrollment via
 `SANDBOX_POKE`.)
 
 This registers the store channel, announces, and blocks in the poll loop. The Pi
-bridge turns only that store's `<STORE>_POKE v1` messages into worker wakes; ordinary chat and
+bridge turns only poke messages into wakes — that store's `<STORE>_POKE v1` selects the store worker prompt, while `MAIL_POKE v1:` mail wakes select the separate agent-mail prompt (see `examples/fleet/agent-mail-runbook.md`); ordinary chat and
 close notifications are not work assignments.
 
 Relay/server scoping matters: the relay is bound to one server URL, and
@@ -90,7 +90,9 @@ drift apart; correct the file, not a copy:
 3. Read its complete description and propagate the finding into the named
    durable project/record as a dated, source-linked learning note. Append; do
    not overwrite stale context. Do not invent adoption, productivity, or
-   completion claims.
+   completion claims. If the item is actionable, launch it immediately. If it
+   cannot be launched, note why in the bead and create the appropriate record
+   in the other stores.
 4. Close it only after the knowledge record exists:
    `<store> close <id> --reason "knowledge: <destination>; source: <id>; ..."`.
 5. Recheck the store immediately and repeat until no eligible item remains.

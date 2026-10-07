@@ -325,13 +325,39 @@ fi
 # canonical relay already answers /health, otherwise it starts the supervised
 # or development relay and waits for /health. It respects
 # PARLAY_RELAY_RUNTIME/SOCK via the same lib resolution.
+#
+# Second-run skip: `parlay listen` runs this script twice seconds apart — once
+# inside --preflight, once for the real stream — and every successful ensure-up
+# stamps $RUNTIME/.ensure-up.ok. A fresh stamp (PARLAY_ENSURE_UP_STAMP_TTL,
+# default 120s) plus a live socket means the relay was verified moments ago,
+# so the stream run skips re-verifying instead of repeating the health check
+# and risking lock contention with concurrent starters. A direct `parlay
+# monitor` with no recent stamp still runs ensure-up exactly as before.
+ENSURE_STAMP="$RUNTIME/.ensure-up.ok"
+ENSURE_STAMP_TTL="${PARLAY_ENSURE_UP_STAMP_TTL:-120}"
+ensure_stamp_fresh() {
+  [ -f "$ENSURE_STAMP" ] || return 1
+  local m now age
+  case "$(uname -s)" in
+    Darwin) m="$(stat -f %m "$ENSURE_STAMP" 2>/dev/null || true)" ;;
+    *)      m="$(stat -c %Y "$ENSURE_STAMP" 2>/dev/null || true)" ;;
+  esac
+  [ -n "$m" ] || return 1
+  now="$(date +%s)"
+  age=$(( now - m ))
+  [ "$age" -lt "$ENSURE_STAMP_TTL" ]
+}
 if [ -x "$ENSURE_UP" ]; then
-  ENSURE_RC=0
-  "$ENSURE_UP" || ENSURE_RC=$?
-  if [ "$ENSURE_RC" != 0 ]; then
-    echo "parlay-monitor: relay is not up and could not be started" >&2
-    echo "parlay-monitor: install the relay (tools/relay/deploy/install.sh) or start it manually" >&2
-    exit 1
+  if ensure_stamp_fresh && [ -S "$SOCK" ]; then
+    echo "parlay-monitor: relay verified moments ago — skipping ensure-up" >&2
+  else
+    ENSURE_RC=0
+    "$ENSURE_UP" || ENSURE_RC=$?
+    if [ "$ENSURE_RC" != 0 ]; then
+      echo "parlay-monitor: relay is not up and could not be started" >&2
+      echo "parlay-monitor: install the relay (tools/relay/deploy/install.sh) or start it manually" >&2
+      exit 1
+    fi
   fi
 elif [ ! -S "$SOCK" ]; then
   # ensure-up missing (older checkout): fall back to the original hard requirement.
@@ -368,29 +394,53 @@ fi
 #    <runtime>/<agent>.token (0600) and replayed as an Authorization header on
 #    every enroll, so a stranger's enroll can never take over this channel
 #    (the relay answers 409 + an audit line instead).
+#
+#    Bounded: this used to be a bare `curl -s` with NO timeout — a wedged relay
+#    hung startup forever, the only unbounded network call in the listen path.
+#    Each attempt is capped at PARLAY_ENROLL_MAX_TIME (default 5s) with one
+#    retry for a transient transport failure, so enrollment fails fast and loud
+#    instead of hanging. A relay that ANSWERS with a rejection is not retried:
+#    it is up, so retrying only spams.
+PARLAY_ENROLL_MAX_TIME="${PARLAY_ENROLL_MAX_TIME:-5}"
 TOKEN_FILE="$RUNTIME/$AGENT.token"
 SAVED_TOKEN=""
 if [ -f "$TOKEN_FILE" ]; then
   SAVED_TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
 fi
 echo "parlay-monitor: enrolling '$AGENT' via $SOCK" >&2
-if [ -n "$SAVED_TOKEN" ]; then
-  REG=$(curl -s --unix-socket "$SOCK" \
-    -X POST "http://relay/register" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $SAVED_TOKEN" \
-    --data "{\"agent\":\"$AGENT\"}") || {
-      echo "parlay-monitor: enroll request failed (is the relay running?)" >&2
-      exit 1
-    }
-else
-  REG=$(curl -s --unix-socket "$SOCK" \
-    -X POST "http://relay/register" \
-    -H "Content-Type: application/json" \
-    --data "{\"agent\":\"$AGENT\"}") || {
-      echo "parlay-monitor: enroll request failed (is the relay running?)" >&2
-      exit 1
-    }
+REG=""
+ENROLL_OK=0
+ENROLL_ATTEMPT=0
+while [ "$ENROLL_ATTEMPT" -lt 2 ]; do
+  ENROLL_ATTEMPT=$((ENROLL_ATTEMPT + 1))
+  if [ -n "$SAVED_TOKEN" ]; then
+    if REG=$(curl -s --max-time "$PARLAY_ENROLL_MAX_TIME" --unix-socket "$SOCK" \
+      -X POST "http://relay/register" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $SAVED_TOKEN" \
+      --data "{\"agent\":\"$AGENT\"}"); then
+      ENROLL_OK=1
+      break
+    fi
+  else
+    if REG=$(curl -s --max-time "$PARLAY_ENROLL_MAX_TIME" --unix-socket "$SOCK" \
+      -X POST "http://relay/register" \
+      -H "Content-Type: application/json" \
+      --data "{\"agent\":\"$AGENT\"}"); then
+      ENROLL_OK=1
+      break
+    fi
+  fi
+  REG=""
+  if [ "$ENROLL_ATTEMPT" -lt 2 ]; then
+    echo "parlay-monitor: enroll attempt $ENROLL_ATTEMPT failed (relay not answering?) — retrying once" >&2
+    /bin/sleep 1
+  fi
+done
+if [ "$ENROLL_OK" != 1 ]; then
+  echo "parlay-monitor: enroll request failed after 2 attempts (each capped at ${PARLAY_ENROLL_MAX_TIME}s) — the relay is wedged or unreachable at $SOCK" >&2
+  echo "parlay-monitor:   NOT streaming: '$AGENT' was never enrolled, so nothing is left deaf. Check the relay and re-run." >&2
+  exit 1
 fi
 
 # Confirm the relay accepted us. The response is {"ok":true,...} or {"error":...}.
@@ -424,7 +474,7 @@ RELAY_SPOOL=$(printf '%s' "$REG" | sed -n 's/.*"spool":"\([^"]*\)".*/\1/p')
 # -F will pick the file up once it appears.
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   [ -e "$SPOOL" ] && break
-  /bin/sleep 0.1
+  /bin/sleep 0.05
 done
 
 echo "parlay-monitor: streaming '$AGENT' from $SPOOL" >&2
@@ -444,7 +494,7 @@ if [ -n "$(printf '%s' "$STALE_READERS" | tr -d '[:space:]')" ]; then
   echo "parlay-monitor:   evicting them — a channel gets exactly one reader, or a" >&2
   echo "parlay-monitor:   stale session is woken by messages meant for this one." >&2
   for _p in $STALE_READERS; do kill "$_p" 2>/dev/null || true; done
-  /bin/sleep 0.3
+  /bin/sleep 0.1
   for _p in $(readers_of "$SPOOL"); do kill -9 "$_p" 2>/dev/null || true; done
 fi
 
@@ -494,7 +544,7 @@ READER_PID=""
 for _ in 1 2 3 4 5; do
   READER_PID="$(readers_of "$SPOOL" "$$" | head -1 || true)"
   if [ -n "$READER_PID" ]; then break; fi
-  /bin/sleep 0.2
+  /bin/sleep 0.1
 done
 if [ -z "$READER_PID" ]; then
   echo "parlay-monitor: could not identify the reader process for '$AGENT' — it will" >&2

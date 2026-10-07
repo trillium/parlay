@@ -283,3 +283,54 @@ func TestHandleEventsEmitsKeepaliveWhenIdle(t *testing.T) {
 		t.Errorf("idle stream body has no keep-alive comment; got:\n%s", body)
 	}
 }
+
+// TestHandleEventsHoldsIdleStreamPastKillBudget holds a real idle stream at
+// the PRODUCTION keepalive interval, well past the observed ~11s transit
+// idle-drop budget (herdr-web.log sse-open/sse-drop cycle, task-0ulrd), and
+// asserts the server side never terminates it: the handler goroutine is still
+// serving at the end and keepalives kept arriving. The shrunk-interval test
+// above proves the wiring; this one proves wall-clock survival — a future
+// change that stops emitting keepalives, or that ends idle streams
+// server-side (a response timeout, an idle-context cancel), must fail here.
+// Loopback has no transit killer, so any early end is the server's own
+// doing. Skipped under -short: 13s of wall clock is the point of the test.
+func TestHandleEventsHoldsIdleStreamPastKillBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wall-clock stream hold; run without -short")
+	}
+	st := newTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/chat/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handleEvents(st, newHub(newBroker()))(rec, req)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	// Past the ~11s budget with margin: production 5s keepalives land at
+	// ~5s and ~10s, so 13s demands two of them plus survival headroom.
+	time.Sleep(13 * time.Second)
+
+	select {
+	case <-done:
+		t.Fatal("idle stream handler returned before 13s: the server ended an idle stream itself")
+	default:
+	}
+	// Nothing on the recorder is safe to touch until the handler has
+	// returned: httptest.ResponseRecorder is not synchronized, and even
+	// the t=0 header writes have no happens-before edge to this goroutine
+	// until done closes (CI runs -race).
+	cancel()
+	<-done
+	if got := rec.Header().Get("X-Accel-Buffering"); got != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want %q (buffering proxies would hold keepalives)", got, "no")
+	}
+	if n := strings.Count(rec.Body.String(), ": keep-alive"); n < 2 {
+		t.Errorf("idle stream got %d keep-alive comments in 13s at the 5s interval, want >= 2", n)
+	}
+}
