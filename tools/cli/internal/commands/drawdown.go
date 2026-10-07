@@ -20,6 +20,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/format"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/resolvehandoff"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
@@ -81,7 +82,20 @@ func Drawdown(argv []string) {
 		body = strings.Join(lines, "\n")
 	}
 
-	fmt.Printf("## Handoff — %s\n\n### What I was doing\n%s\n\n### Recent context (last %d message(s))\n```\n%s\n```\n\n### Next steps\n[fill in before submitting — what should the next session pick up?]\n\n---\nTo submit this handoff:\n  handoff create \"%s context handoff %s\" --description \"<paste body above>\"\n  identity --submit\n",
-		now, summary, len(msgs), body, agentID, now)
+	// The closing recipe names `handoff create`, which only exists where the
+	// author's federation store wrappers are installed. On a plain clone
+	// (store absent) print the paste-anywhere alternative instead: the
+	// handoff body is the portable artifact, and `identity --submit <id>`
+	// works with any id once one exists.
+	tail := fmt.Sprintf("---\nTo submit this handoff:\n  handoff create \"%s context handoff %s\" --description \"<paste body above>\"\n  identity --submit\n",
+		agentID, now)
+	if !resolvehandoff.StoreAvailable("") {
+		tail = fmt.Sprintf("---\nNo `handoff` store is installed here (it ships with the author's federation, not with parlay),\n" +
+			"so this body has no automatic submit step. Keep it wherever you keep notes, and when a\n" +
+			"handoff id does exist, submit it with:  identity --submit <handoff-id>\n")
+	}
+
+	fmt.Printf("## Handoff — %s\n\n### What I was doing\n%s\n\n### Recent context (last %d message(s))\n```\n%s\n```\n\n### Next steps\n[fill in before submitting — what should the next session pick up?]\n\n%s",
+		now, summary, len(msgs), body, tail)
 	format.NextStep("identity --submit")
 }

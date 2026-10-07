@@ -116,9 +116,10 @@ func TestHealRefusesNonWhitelistedCheck(t *testing.T) {
 }
 
 // healAgentFixture wires the fully-enrolled agent environment (identity,
-// scratchpad, fake ccjuggler, fake gc, reachable engine) with a STATE-hooked
+// scratchpad, fake gc, reachable engine) with a STATE-hooked
 // /api/chat/agents handler so a test can flip registration between the two
-// passes of the re-verify loop.
+// passes of the re-verify loop. No accounts.json, so the spawn-credentials
+// check is the opt-in WARN it is on a machine that never used --account.
 func healAgentFixture(t *testing.T, agents func() []map[string]any) {
 	t.Helper()
 	home := t.TempDir()
@@ -152,9 +153,6 @@ func healAgentFixture(t *testing.T, agents func() []map[string]any) {
 	fakeHome := t.TempDir()
 	fakeBin := filepath.Join(fakeHome, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(fakeBin, "ccjuggler-resolve"), []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

@@ -34,3 +34,12 @@ grows with the fleet (>2s at 269 agents). The probe bound is
 `tools/monitor/parlay-monitor.test.sh`, whose stub relay can stall `/agents` on
 demand — and which also pins that tolerating an *unknown* answer never softened
 the robots-buu8 refusal into a no-op.
+
+**STATUS (2026-09-03).** The exit-status half of this lesson still stands and
+is still enforced by the trap above. The *ordering* half — "listen registers
+with Pulse before shelling out" — no longer describes the code: every enrolling
+entry point (`listen`, `monitor`, `claim`) now preflights the relay before it
+POSTs `register-agent` (issue #173), so a setup failure exits with nothing
+enrolled. `parlay monitor` was the last entry point still missing the preflight
+and was fixed separately. Cite this note for the `set -e` rule and the silence
+rule; do NOT cite it for the register-before-shell-out ordering.

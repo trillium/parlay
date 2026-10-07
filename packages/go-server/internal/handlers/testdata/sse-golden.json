@@ -1,6 +1,6 @@
 {
-  "capturedFrom": "packages/server (TS)",
-  "regenerate": "packages/go-server/parity/refresh-sse-golden.sh",
+  "capturedFrom": "packages/server (TS) — FROZEN. That server was deleted in the Bun→Go cutover; this file is the last record of its wire behavior. Do not regenerate it from the Go server: that would make TestSSEGolden compare the server against itself. See packages/go-server/parity/capture-sse-golden.sh.",
+  "normalizedBy": "packages/go-server/parity/capture-to-golden.ts",
   "steps": [
     "connect-burst",
     "register-agent",

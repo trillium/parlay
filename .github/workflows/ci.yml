@@ -413,3 +413,116 @@ jobs:
             exit 1
           fi
           echo "no tracked file exceeds $limit bytes ($scanned scanned)"
+
+      # docs/README.md is the index for the whole corpus, and an unindexed doc is
+      # one nobody finds — the failure mode this catches is silent in every other
+      # check: nothing breaks, the doc is simply unreachable from the entry point.
+      # It was not hypothetical. The index listed 19 of the 29 top-level docs, so
+      # source-contracts, routing, staleness-model, supersession,
+      # interface-capabilities, gc-prerequisite, remote-input and the rest were
+      # silently dropped from the only "which doc do I want" page.
+      #
+      # Matched on the exact link target "](<basename>)" rather than the bare
+      # filename, so a doc counts as indexed only by being LINKED from the index,
+      # not by having its name appear in passing prose. Subdirectories
+      # (docs/agent-notes/, docs/upstream/, …) are out of scope on purpose:
+      # agent-notes is a one-lesson-per-file directory with 60+ entries that is
+      # indexed by AGENTS.md instead, and forcing each into a table would be
+      # noise. Scope this to docs/*.md only.
+      - name: Every top-level docs/ doc is indexed in docs/README.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          index=docs/README.md
+          if [ ! -f "$index" ]; then
+            echo "::error::$index is missing: docs/ has no index at all"
+            exit 1
+          fi
+          fail=0
+          scanned=0
+          for doc in docs/*.md; do
+            base=$(basename "$doc")
+            if [ "$base" = "README.md" ]; then
+              continue
+            fi
+            scanned=$((scanned + 1))
+            if ! grep -qF "]($base)" "$index"; then
+              echo "::error file=$doc::$doc is not linked from $index — add a row for it under the section it belongs in"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          # A listing of zero means the glob matched nothing (renamed directory,
+          # wrong cwd) and the loop above passed vacuously.
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no docs were scanned: the index-completeness check proved nothing"
+            exit 1
+          fi
+          echo "all $scanned top-level docs are indexed in $index"
+
+      # A committed shell script that reaches for a deleted artifact is a dead
+      # instruction: nothing runs them, so it rots silently until somebody
+      # follows it. It is not hypothetical. examples/bootstrap-sandbox.sh —
+      # the single most-recommended onboarding script in the repo, linked from
+      # the root README and from AGENTS.md — ran `cd packages/server` and died on
+      # its first server start from the moment the Bun→Go cutover deleted that
+      # directory. The SSE golden tool (packages/go-server/parity/capture-sse-golden.sh,
+# then named refresh-sse-golden.sh) sat on the same line for the same reason.
+# Both were excluded from the shell job
+      # above by design (they stand up a real server fixture), so no gate
+      # executed them; that is exactly why this check exists.
+      #
+      # Scope is *.sh on purpose, and the patterns are narrow on purpose. Docs
+      # legitimately narrate the cutover (docs/agent-notes/, docs/scope-go-*,
+      # VISION.md) and the bare sentence-form "the Go rewrite of packages/server"
+      # is history, not a path — only a path INTO the deleted tree is a usage.
+      # The retired env var and the retired state
+      # file names have no such benign form: nothing in this repository reads
+      # them, so any mention in a script is a bug.
+      #
+      # Like the marker scan above, git grep's three exit statuses are kept
+      # distinct — a scan that did not run must never read as a scan that found
+      # nothing.
+      - name: No committed shell script reaches for a deleted artifact
+        run: |
+          scripts="$(mktemp)"
+          git ls-files '*.sh' > "$scripts"
+          scanned=$(wc -l < "$scripts" | tr -d ' ')
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no tracked .sh files: the retired-artifact scan proved nothing"
+            exit 1
+          fi
+          hits="$(mktemp)"
+          set +e
+          # Pattern 1 is a path INTO the deleted tree: `packages/server`
+          # followed by a slash, a quote, or end of line — which is what a
+          # `cd "$REPO/packages/server"` looks like. Patterns 2-4 are the
+          # retired env var, the retired history filename, and the retired
+          # ~/exchange state directory, none of which has a benign form.
+          git grep -nE \
+            -e '(^|[^[:alnum:]_.-])packages/server(/|"|'"'"'|$)' \
+            -e 'PARLAY_DATA_DIR' \
+            -e 'chat-history' \
+            -e '(~|\$HOME)/exchange' \
+            -- '*.sh' > "$hits"
+          status=$?
+          set -e
+          case "$status" in
+            0)
+              echo "::error::committed shell scripts reference artifacts that no longer exist:"
+              cat "$hits"
+              echo "Fix the script, or — if the whole script is dead — delete it. Do not leave"
+              echo "a script in the tree that cannot run: nothing executes these files in CI."
+              exit 1
+              ;;
+            1)
+              echo "no retired artifacts in $scanned tracked shell scripts"
+              ;;
+            *)
+              echo "::error::git grep exited $status: the retired-artifact scan did not run"
+              cat "$hits"
+              exit 1
+              ;;
+          esac

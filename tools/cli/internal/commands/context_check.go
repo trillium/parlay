@@ -10,6 +10,11 @@
 //	at/above         → "ROTATE: create handoff now, then identity --submit …" exit 3
 //	unparseable pct  → usage error                                          exit 2
 //
+// The ROTATE line's next step is store-aware: `handoff create` is a
+// beads-store wrapper from the author's federation, not a command this repo
+// installs, so on a plain clone the verdict names the portable substitute
+// instead (same treatment as identity --submit and `parlay drawdown`).
+//
 // Ported from packages/cli/src/commands-context-check.ts.
 package commands
 
@@ -22,6 +27,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/args"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
+	"github.com/trillium/parlay/tools/cli/internal/resolvehandoff"
 )
 
 // ExitRotate is deliberately distinct from 0 (ok) / 1 (runtime) / 2 (usage)
@@ -66,14 +72,30 @@ func formatPercent(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
+// rotateNextStep is the clause the ROTATE line tells the reader to do next.
+// Two stores' worth of truth, chosen by whether the `handoff` store wrapper is
+// resolvable — a PATH fact the caller supplies so this stays a pure decision
+// function (unit-testable without a subprocess).
+func rotateNextStep(storeAvailable bool) string {
+	if storeAvailable {
+		return "create handoff now, then identity --submit"
+	}
+	// No store: `handoff create` would be a command that does not exist. The
+	// portable rotation is still two steps — write the handoff body (drawdown
+	// drafts it from history) and pin it — so name both.
+	return "write the handoff body (parlay drawdown drafts one), then pin any id: parlay identity --submit <handoff-id>"
+}
+
 // ComputeRotateVerdict decides ROTATE vs OK for pct (rounded to one decimal)
-// against threshold.
-func ComputeRotateVerdict(pct, threshold float64) RotateVerdict {
+// against threshold. storeAvailable reports whether the `handoff` store CLI is
+// on PATH; it only changes the ROTATE line's next-step wording, never the
+// verdict itself.
+func ComputeRotateVerdict(pct, threshold float64, storeAvailable bool) RotateVerdict {
 	p := math.Round(pct*10) / 10
 	if p >= threshold {
 		return RotateVerdict{
 			Rotate:   true,
-			Line:     fmt.Sprintf("ROTATE: create handoff now, then identity --submit (context %s%% ≥ %s%%)", formatPercent(p), formatPercent(threshold)),
+			Line:     fmt.Sprintf("ROTATE: %s (context %s%% ≥ %s%%)", rotateNextStep(storeAvailable), formatPercent(p), formatPercent(threshold)),
 			ExitCode: ExitRotate,
 		}
 	}
@@ -115,7 +137,7 @@ func ContextCheck(argv []string) {
 		threshold = t
 	}
 
-	verdict := ComputeRotateVerdict(pct, threshold)
+	verdict := ComputeRotateVerdict(pct, threshold, resolvehandoff.StoreAvailable(""))
 	fmt.Println(verdict.Line)
 	if verdict.ExitCode != config.ExitOK {
 		httpc.Exit(verdict.ExitCode)

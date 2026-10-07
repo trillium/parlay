@@ -230,22 +230,50 @@ func defaultStateHome() string {
 	return ".parlay"
 }
 
-// defaultAssetsDir resolves the packages/client/dist directory relative to
-// the executable's own location so the server can be run from any cwd.
-// Falls back to a bare "dist" (relative to cwd) if resolution fails.
+// defaultAssetsDir locates the built packages/client/dist bundle so the
+// server can serve the panel same-origin without any extra host.
+//
+// Two starting points, in order:
+//
+//  1. the executable's own directory — an installed binary at
+//     <repo>/packages/go-server/bin/parlay-server walks up to the repo root;
+//  2. the working directory — this is what makes the README's Quickstart
+//     (`cd packages/go-server && go run ./cmd/parlay-server`) serve the
+//     panel, because `go run` executes a temporary binary under the build
+//     cache, so start (1) finds nothing.
+//
+// Falls back to a bare "dist" (relative to cwd) when neither finds a bundle;
+// static.Handler then answers 503 with a message naming the build command.
 func defaultAssetsDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return "dist"
+	if exe, err := os.Executable(); err == nil {
+		if p := repoAssetsDir(filepath.Dir(exe)); p != "" {
+			return p
+		}
 	}
-	// Walk up from <repo>/packages/go-server/bin/parlay-server to repo root,
-	// then descend into packages/client/dist.
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(exe)))
-	candidate := filepath.Join(repoRoot, "packages", "client", "dist")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
+	if wd, err := os.Getwd(); err == nil {
+		if p := repoAssetsDir(wd); p != "" {
+			return p
+		}
 	}
 	return "dist"
+}
+
+// repoAssetsDir walks up from start looking for a repo checkout's
+// packages/client/dist, returning "" when there is none. Read-only: it stats
+// candidates and never creates anything.
+func repoAssetsDir(start string) string {
+	dir := start
+	for {
+		candidate := filepath.Join(dir, "packages", "client", "dist")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // defaultPAIDir returns the default PAI directory for TTS cache and substitutions.

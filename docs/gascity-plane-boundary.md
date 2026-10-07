@@ -103,15 +103,16 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 
 - **Owner:** Gas City's `internal/events` recorder, rotation, and `Seq`.
 - **Why:** Gas City serialises every writer in a city through one append-only event log with
-  gzip rotation (§8.3). parlay's `~/exchange/chat-history.jsonl` is live history and is
-  explicitly **not** equivalent (§10). The bus itself belongs to Gas City under HYBRID
+  gzip rotation (§8.3). parlay's `messages.jsonl` — the single history file under
+  `$PARLAY_STATE_HOME`, default `~/.parlay/` — is live chat history and is explicitly **not**
+  equivalent (§10). The bus itself belongs to Gas City under HYBRID
   (§5: liveness/event streams → typed `/v0` HTTP + SSE).
 - **parlay seam obligation:** the **loud-skip cursor semantic** the events scope surfaced —
   `HistorySinceCursor`'s reset/skipped behaviour, which Gas City hooks silently floor — is a
   parlay-side contract (Q3a HYBRID CURSOR resolution). The `tail -F` CHAT_MSG chat relay stays
   parlay (see §3.4).
 - **Evidence anchor:** §5; §8.3 (events seam owns the 250 ms shared write budget); §10
-  `event Seq → cursor`, `.gc/events.jsonl → ~/exchange/chat-history.jsonl`.
+  `event Seq → cursor`, `.gc/events.jsonl → messages.jsonl`.
 
 ### 1.5 Dispatch (order send / steering)
 

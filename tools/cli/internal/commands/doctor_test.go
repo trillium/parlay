@@ -53,7 +53,7 @@ func TestHealthAllOK(t *testing.T) {
 		t.Errorf("Health() exited unexpectedly on an all-ok server: %q", out)
 	}
 	for _, want := range []string{
-		"ok    relay " + srv.URL + " — 2 client(s), 1 poller(s), 3 agent(s)",
+		"ok    server " + srv.URL + " — 2 client(s), 1 poller(s), 3 agent(s)",
 		"ok    memory — rss 45MB, heap 20MB; history 100 msgs (12KB)",
 		"ok    eval-engine " + engineSrv.URL + " — protocol v3",
 	} {
@@ -61,9 +61,42 @@ func TestHealthAllOK(t *testing.T) {
 			t.Errorf("Health() output missing %q, got:\n%s", want, out)
 		}
 	}
+	// The chat server is NOT parlay's relay. tools/relay is a separate daemon
+	// this probe never touches, so a green "relay" line told a newcomer their
+	// relay was up when only the server was being measured.
+	if strings.Contains(out, "relay ") {
+		t.Errorf("Health() output labels the chat server as the relay: %q", out)
+	}
 }
 
-func TestHealthSickWhenRelayUnreachable(t *testing.T) {
+// A dead eval-engine must not read as a broken install: the engine is the
+// optional voice layer, and the Quickstart's CLI + server path needs nothing
+// else. Exit 1 is deliberate (ux-eval-2026-08-30.md), so the FAIL line has to
+// carry the reason it is red.
+func TestHealthSickWhenEngineUnreachableSaysTheEngineIsOptional(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat/subscribers", jsonHandler(t, map[string]any{}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+
+	out := captureStdout(t, func() {
+		code, exited := withExitTrap(t, func() { Health(nil) })
+		if !exited || code != config.ExitRuntime {
+			t.Errorf("Health() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
+		}
+	})
+	if !strings.Contains(out, "the voice engine is OPTIONAL for the CLI + server") {
+		t.Errorf("Health() eval-engine FAIL does not mark the engine optional, got:\n%s", out)
+	}
+	if !strings.Contains(out, "This line is about the engine, not about your install.") {
+		t.Errorf("Health() eval-engine FAIL does not scope the FAIL to the engine, got:\n%s", out)
+	}
+}
+
+func TestHealthSickWhenServerUnreachable(t *testing.T) {
 	engineMux := http.NewServeMux()
 	engineMux.HandleFunc("/health", jsonHandler(t, map[string]any{"ok": true, "protocol": 1}))
 	engineSrv := httptest.NewServer(engineMux)
@@ -80,8 +113,8 @@ func TestHealthSickWhenRelayUnreachable(t *testing.T) {
 	if !exited || code != config.ExitRuntime {
 		t.Errorf("Health() exit = (%d, %v), want (%d, true)", code, exited, config.ExitRuntime)
 	}
-	if !strings.Contains(out, "FAIL  relay http://127.0.0.1:1") {
-		t.Errorf("Health() output = %q, want a FAIL relay line", out)
+	if !strings.Contains(out, "FAIL  server http://127.0.0.1:1") {
+		t.Errorf("Health() output = %q, want a FAIL server line", out)
 	}
 }
 
@@ -114,7 +147,106 @@ func TestHealthHelpDoesNotPanic(t *testing.T) {
 	}
 }
 
+// The engine's identity IS its address: it has no state dir and no persisted
+// config key, so 127.0.0.1:4343 is a host-wide slot. A dev/isolated instance
+// (parlay-dev, -state-dir, `parlay remote set`) that leaves the default in
+// place is probing the DEFAULT instance's engine, and an unqualified green
+// line is a claim the probe cannot support.
+func TestEngineScopeNoteOnlyFiresCrossInstance(t *testing.T) {
+	t.Run("explicit engine url is already unambiguous", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:9999")
+		t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1234")
+		if got := engineScopeNote(); got != "" {
+			t.Errorf("engineScopeNote() = %q, want empty when PARLAY_EVAL_ENGINE_URL is set", got)
+		}
+	})
+	t.Run("default instance owns the default engine", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "")
+		t.Setenv("PARLAY_SERVER", "")
+		t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+		if got := engineScopeNote(); got != "" {
+			t.Errorf("engineScopeNote() = %q, want empty on the default instance", got)
+		}
+	})
+	t.Run("non-default server on the default engine is flagged", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "")
+		t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1234")
+		t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+		got := engineScopeNote()
+		if got == "" {
+			t.Fatal("engineScopeNote() = \"\", want a cross-instance note")
+		}
+		for _, want := range []string{"host-wide default", "PARLAY_EVAL_ENGINE_URL"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("engineScopeNote() = %q, want it to mention %q", got, want)
+			}
+		}
+	})
+}
+
+// The note is worthless if a call site forgets to apply it, and a call site
+// that hardcodes the URL string instead of engineTarget() is the same bug
+// iteration 12 found in doctor deploy. Read the file: a green eval-engine
+// line must name the endpoint the probe actually used.
+func TestEngineTargetAndItsTwoCallSitesStayInSync(t *testing.T) {
+	src, err := os.ReadFile("doctor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if strings.Contains(text, `return "http://127.0.0.1:4343"`) {
+		t.Error("doctor.go still hardcodes the engine URL inline; it must come from engineTarget/defaultEngineURL")
+	}
+	if n := strings.Count(text, "engineScopeNote()"); n < 3 {
+		t.Errorf("engineScopeNote() is applied at %d sites (want the helper + both renderers), "+
+			"so a green eval-engine line can print without the cross-instance note", n)
+	}
+}
+
 // ── doctor ───────────────────────────────────────────────────────────────
+
+// The eval-engine repair line is the FIRST fix a newcomer sees: it is the
+// only expected red line in the Quickstart, and `health` prints it verbatim on
+// FAIL while `doctor` prints it on WARN. Both defects this pins were found by
+// running the Quickstart on a real fresh clone, where neither repair could
+// work:
+//
+//   - the fallback said `cd tools/cli && go build .`, a default-cgo build of
+//     the CLI module, which dies on macOS on the missing ICU headers that
+//     bin/parlay pins CGO_ENABLED=0 against (robots-wgij);
+//   - and that same command writes a binary named `cli`, not `parlay`, so it
+//     could not have been the `parlay eval serve` it was a parenthetical for.
+//
+// The repo-relative paths are checked against the tree, so the line cannot
+// drift back into naming a checkout that does not exist.
+func TestEvalEngineFixNamesRepairsThatActuallyRun(t *testing.T) {
+	if strings.Contains(evalEngineFix, "go build .") {
+		t.Error("evalEngineFix still suggests a bare `go build .` of the CLI module: " +
+			"it is a default-cgo build (dies on missing ICU headers, robots-wgij) and it " +
+			"writes a binary named `cli`, not `parlay`")
+	}
+	for _, want := range []string{"tools/eval-engine/deploy/install.sh", "./bin/parlay eval serve"} {
+		if !strings.Contains(evalEngineFix, want) {
+			t.Errorf("evalEngineFix no longer offers %q; a fresh clone has no other working repair", want)
+		}
+	}
+
+	// The repo-relative half must exist in the tree. Walk up from
+	// internal/commands to the repository root.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(wd, "..", "..", "..", "..")
+	for _, rel := range []string{
+		"tools/eval-engine/deploy/install.sh",
+		"bin/parlay",
+	} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("evalEngineFix points at %s, which is not in the tree: %v", rel, err)
+		}
+	}
+}
 
 func TestDoctorFailsWithNoAgentID(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_ID", "")
@@ -160,22 +292,24 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 	engineSrv := httptest.NewServer(engineMux)
 	t.Cleanup(engineSrv.Close)
 
-	// Fake HOME with accounts.json and a fake ccjuggler-resolve on PATH so the
-	// spawn-credentials check (check #7) passes deterministically.
+	// Fake HOME with accounts.json plus a fake `security` on PATH, so the
+	// spawn-credentials check (check #7) resolves a token deterministically.
+	// It probes internal/juggle's keychain lookup in-process — the same call
+	// `parlay spawn --account` makes — so `security`, not a ccjuggler-resolve
+	// bin, is what the fixture has to fake.
 	fakeHome := t.TempDir()
 	juggleDir := filepath.Join(fakeHome, "code", "juggle")
 	if err := os.MkdirAll(juggleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary"},{"name":"acc2"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary","keychain_service":"ccjuggler-primary"},{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fakeBin := filepath.Join(fakeHome, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fakeResolve := filepath.Join(fakeBin, "ccjuggler-resolve")
-	if err := os.WriteFile(fakeResolve, []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(fakeBin, "security"), []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,14 +335,14 @@ func TestDoctorAllPassWhenFullyEnrolled(t *testing.T) {
 	for _, want := range []string{
 		"PASS  PARLAY_AGENT_ID = doc-agent",
 		"PASS  server reachable at " + srv.URL,
-		`PASS  registered as "doc-agent" on the relay`,
+		`PASS  registered as "doc-agent" with the server`,
 		"PASS  monitor listening (last poll 2026-08-03T00:00:00Z)",
 		"PASS  identity.md ok",
 		"PASS  scratchpad.md ok",
 		"PASS  eval-engine healthy at " + engineSrv.URL,
-		"PASS  ccjuggler-resolve found",
-		"PASS  ccjuggler-resolve primary — token found",
-		"PASS  ccjuggler-resolve acc2 — token found",
+		"--    spawn creds resolve in-process via internal/juggle (no external token-resolver bin needed)",
+		`PASS  spawn account "primary" — token resolves (keychain service ccjuggler-primary)`,
+		`PASS  spawn account "acc2" — token resolves (keychain service ccjuggler-acc2)`,
 		"PASS  gc ok",
 		"all clear (0 warn)",
 	} {
@@ -318,6 +452,7 @@ func TestDoctorHandoffPointerNoted(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_HOME", home)
 	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
 	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+	pinHandoffStore(t, true)
 
 	out := captureStdout(t, func() {
 		withExitTrap(t, func() { Doctor(nil) })
@@ -325,6 +460,69 @@ func TestDoctorHandoffPointerNoted(t *testing.T) {
 	if !strings.Contains(out, "note: handoff pointer → handoff-abc123 (run: handoff show handoff-abc123)") {
 		t.Errorf("Doctor() output = %q, want the handoff pointer note", out)
 	}
+}
+
+// Fresh-clone case: `handoff` is a federation store wrapper this repo does not
+// install, so doctor must report the pointer WITHOUT telling the reader to run
+// a command they do not have. The pointer itself is still surfaced.
+func TestDoctorHandoffPointerOmitsCommandWhenNoStore(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, "doc-agent-4")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\nid: doc-agent-4\n---\n📎 Handoff: handoff-abc123\n"), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "scratchpad.md"), []byte("notes\n"), 0o644)
+
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-4")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+	pinHandoffStore(t, false)
+
+	out := captureStdout(t, func() {
+		withExitTrap(t, func() { Doctor(nil) })
+	})
+	if !strings.Contains(out, "note: handoff pointer → handoff-abc123") {
+		t.Errorf("Doctor() must still report the pointer, got: %q", out)
+	}
+	if strings.Contains(out, "handoff show handoff-abc123") {
+		t.Errorf("with no store installed, doctor must not prescribe `handoff show`, got: %q", out)
+	}
+}
+
+// The context-rotation advisory is printed on every doctor run, including on
+// a fresh clone, and its next-step clause used to name the uninstallable
+// `handoff` wrapper. Same rule as the pointer note above: the verdict and the
+// percentages are fixed; only the wording tracks store availability.
+func TestDoctorContextLineIsStoreAware(t *testing.T) {
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-5")
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+
+	t.Run("with store", func(t *testing.T) {
+		pinHandoffStore(t, true)
+		cr, ran := checkContextRotation(&doctorState{})
+		if !ran {
+			t.Fatal("checkContextRotation did not run")
+		}
+		if !strings.Contains(cr.Summary, "on ROTATE, handoff + identity --submit") {
+			t.Errorf("summary = %q, want the historical clause when the store is installed", cr.Summary)
+		}
+		if !strings.Contains(cr.Summary, "parlay context-check <pct>") {
+			t.Errorf("summary = %q, want it to still name context-check", cr.Summary)
+		}
+	})
+
+	t.Run("without store", func(t *testing.T) {
+		pinHandoffStore(t, false)
+		cr, _ := checkContextRotation(&doctorState{})
+		if strings.Contains(cr.Summary, "on ROTATE, handoff + identity --submit") {
+			t.Errorf("summary = %q, want the store-installed clause dropped with no store", cr.Summary)
+		}
+		for _, want := range []string{"parlay context-check <pct>", "parlay drawdown", "identity --submit <handoff-id>"} {
+			if !strings.Contains(cr.Summary, want) {
+				t.Errorf("summary = %q, want it to name %q", cr.Summary, want)
+			}
+		}
+	})
 }
 
 func TestDoctorHelpDoesNotPanic(t *testing.T) {
@@ -371,15 +569,14 @@ func doctorJSONFixture(t *testing.T) {
 	if err := os.MkdirAll(juggleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(juggleDir, "accounts.json"), []byte(`{"accounts":[{"name":"primary","keychain_service":"ccjuggler-primary"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fakeBin := filepath.Join(fakeHome, "bin")
 	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fakeResolve := filepath.Join(fakeBin, "ccjuggler-resolve")
-	if err := os.WriteFile(fakeResolve, []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(fakeBin, "security"), []byte("#!/bin/sh\necho token\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -545,5 +742,133 @@ func TestDoctorJSONRejectsExtraPositional(t *testing.T) {
 	})
 	if !exited || code != config.ExitUsage {
 		t.Errorf("Doctor(extra) exit = (%d, %v), want (%d, true)", code, exited, config.ExitUsage)
+	}
+}
+
+// ── spawn-creds: the check a fresh clone runs ──────────────────────────────
+//
+// checkSpawnCreds used to probe a ccjuggler-resolve bun bin (which itself
+// shells out to python3 ~/code/juggle/ccjuggler.py) — a resolver
+// `parlay spawn --account` never runs, since spawn/account.go resolves
+// tokens in-process through internal/juggle. The result was a FAIL, exit 1,
+// and a fix line hardcoded to the author's ~/code/parlay checkout, on a
+// machine that spawns fine. These tests lock in the replacement: the real
+// resolver, no author-home paths, and WARN (not FAIL) for the opt-in state.
+
+// spawnCredsFixture points HOME at a temp dir and CCJUGGLER_ACCOUNTS_FILE at
+// the given JSON, with a fake `security` on PATH whose body is the stub —
+// internal/juggle's GetToken shells out to `security find-generic-password -s
+// <service> -w` exactly as spawn does.
+func spawnCredsFixture(t *testing.T, accountsJSON, securityStub string) {
+	t.Helper()
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	if accountsJSON != "" {
+		accounts := filepath.Join(fakeHome, "accounts.json")
+		if err := os.WriteFile(accounts, []byte(accountsJSON), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CCJUGGLER_ACCOUNTS_FILE", accounts)
+	}
+	bin := filepath.Join(fakeHome, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "security"), []byte(securityStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+}
+
+// assertNoAuthorHomePaths is the onboarding guard: no branch of this check may
+// tell a user to touch a path that only exists in one developer's checkout.
+func assertNoAuthorHomePaths(t *testing.T, cr CheckResult) {
+	t.Helper()
+	blob := cr.Summary
+	for _, l := range cr.Lines {
+		blob += "\n" + l.text + "\n" + l.fix
+	}
+	for _, f := range cr.Fixes {
+		blob += "\n" + f.Summary + "\n" + strings.Join(f.Argv, " ")
+	}
+	for _, bad := range []string{"~/code/parlay", "/Users/trillium", "ccjuggler-resolve"} {
+		if strings.Contains(blob, bad) {
+			t.Errorf("spawn-creds output names %q, which only exists on the author's machine:\n%s", bad, blob)
+		}
+	}
+}
+
+func TestSpawnCredsWarnsWhenNoAccountsConfigured(t *testing.T) {
+	spawnCredsFixture(t, "", "#!/bin/sh\nexit 1\n")
+
+	cr, ran := checkSpawnCreds(&doctorState{})
+	if !ran {
+		t.Fatal("checkSpawnCreds did not run")
+	}
+	if cr.Verdict != vWarn {
+		t.Errorf("verdict = %s, want WARN — accounts are opt-in (`parlay spawn --account`), so a machine that never configured one must not FAIL doctor", cr.Verdict)
+	}
+	if !strings.Contains(cr.Summary, "plain spawn is unaffected") {
+		t.Errorf("summary = %q, want it to say plain spawn is unaffected", cr.Summary)
+	}
+	if !strings.Contains(cr.Evidence["resolver"].(string), "in-process") {
+		t.Errorf("evidence resolver = %v, want it to name the in-process resolver", cr.Evidence["resolver"])
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+func TestSpawnCredsPassesWhenKeychainResolves(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\necho token\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if cr.Verdict != vPass {
+		t.Errorf("verdict = %s (%s), want PASS", cr.Verdict, cr.Summary)
+	}
+	if !strings.Contains(cr.Summary, "keychain service ccjuggler-acc2") {
+		t.Errorf("summary = %q, want it to name the keychain service it resolved", cr.Summary)
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+func TestSpawnCredsFailsWhenKeychainLookupFails(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\nexit 1\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if cr.Verdict != vFail {
+		t.Fatalf("verdict = %s (%s), want FAIL", cr.Verdict, cr.Summary)
+	}
+	fix := cr.Fixes[0].Summary
+	if !strings.Contains(fix, "ccjuggler-acc2") || !strings.Contains(fix, "security add-generic-password") {
+		t.Errorf("fix = %q, want the keychain service named with the command that stores the token", fix)
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+// An account whose keychain entry exists but yields an empty token is what a
+// logged-out or half-written credential looks like: the lookup SUCCEEDS, so
+// only an explicit emptiness check catches it — resolveAccountToken
+// (spawn/account.go) has the same second failure mode.
+func TestSpawnCredsFailsOnEmptyToken(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\nexit 0\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if cr.Verdict != vFail {
+		t.Fatalf("verdict = %s (%s), want FAIL on an empty token", cr.Verdict, cr.Summary)
+	}
+	if !strings.Contains(cr.Summary, "empty") {
+		t.Errorf("summary = %q, want it to distinguish an empty token from a failed lookup", cr.Summary)
+	}
+	assertNoAuthorHomePaths(t, cr)
+}
+
+// The check must read the accounts file the way spawn does — through
+// internal/juggle's path resolution — so CCJUGGLER_ACCOUNTS_FILE and the Go
+// port can never disagree about which accounts exist.
+func TestSpawnCredsHonorsCanonicalAccountsPath(t *testing.T) {
+	spawnCredsFixture(t, `{"accounts":[{"name":"acc2","keychain_service":"ccjuggler-acc2"}]}`, "#!/bin/sh\necho token\n")
+
+	cr, _ := checkSpawnCreds(&doctorState{})
+	if got := cr.Evidence["accounts_file"]; got != os.Getenv("CCJUGGLER_ACCOUNTS_FILE") {
+		t.Errorf("evidence accounts_file = %v, want the CCJUGGLER_ACCOUNTS_FILE the canonical resolver used", got)
 	}
 }

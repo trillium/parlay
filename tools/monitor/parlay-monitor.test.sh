@@ -126,7 +126,11 @@ Bun.serve({
   async fetch(req) {
     const path = new URL(req.url).pathname
     appendFileSync(log, `${req.method} ${path} auth=${req.headers.get("authorization") ?? ""}\n`)
-    if (path === "/health") return Response.json({ ok: true })
+    if (path === "/health")
+      // The real relay names the server it is bound to here (tools/relay/
+      // relay_control.go): the monitor compares it against the server the CLI
+      // resolved so a second instance cannot enroll into somebody else's relay.
+      return Response.json({ ok: true, server: boundServer, runtime })
     if (path === "/agents") {
       if (agentsDelayMs > 0)
         await new Promise((r) => setTimeout(r, agentsDelayMs))
@@ -570,6 +574,81 @@ case "${ERR}" in
   *"parlay ensure-up:"*)
     ok "stale stamp re-arms ensure-up verification" ;;
   *) bad "stale stamp was trusted as a fresh verification" "${ERR}" ;;
+esac
+
+# ══ I. the relay must be polling THIS cli’s server ══════════════════════════
+# The relay is a per-user singleton on a host-wide runtime dir and binds ONE
+# -server for life. A second parlay instance on the same box shares it, so it
+# used to enroll fine and then stream a spool the relay never writes to: a
+# registered-but-deaf agent with no error anywhere. The preflight now refuses
+# that, before anything is registered.
+echo
+echo "I. relay bound to a different server is refused pre-enrollment"
+
+# I1. Matching server (two spellings of the same address) still enrolls.
+start_stub "${ROOT}/i-match" "http://localhost:45009" || exit 1
+run_monitor "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45009" "match-agent"
+[ "${CODE}" = "running" ] \
+  && ok "localhost vs 127.0.0.1 on one port is the same server, still streams" \
+  || bad "equivalent spellings of one server were refused as a mismatch" "exit=${CODE}: ${ERR}"
+case "${ERR}" in
+  *"different server"*)
+    bad "equivalent spellings produced a mismatch warning" "${ERR}" ;;
+  *) ok "no mismatch warning for the same server" ;;
+esac
+
+# I1b. The green line names WHICH server was verified. "relay is up" was never
+# the whole precondition, and a line that omits it reads as a weaker promise
+# than the one the check just made.
+run_preflight "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45009" "match-agent"
+case "${ERR}" in
+  *"polling http://localhost:45009"*)
+    ok "preflight OK names the server it verified" ;;
+  *) bad "the success line does not name the verified server" "${ERR}" ;;
+esac
+
+# I2. A genuinely different server: exit 1, name both, and — the point —
+#     /register is never reached, so nothing is enrolled. A FRESH stub, so the
+#     assertion about /register cannot be satisfied by I1's successful enroll.
+start_stub "${ROOT}/i-mismatch" "http://127.0.0.1:45009" || exit 1
+run_preflight "${STUB_RUNTIME}" "${STUB_SOCK}" "http://127.0.0.1:45010" "mismatch-agent"
+[ "${CODE}" = 1 ] \
+  && ok "preflight exits 1 when the relay polls a different server" \
+  || bad "preflight accepted a relay bound to another server" "exit=${CODE}: ${ERR}"
+case "${ERR}" in
+  *"bound to a DIFFERENT server"*) ok "mismatch is announced on stderr" ;;
+  *) bad "mismatch was silent" "${ERR}" ;;
+esac
+case "${ERR}" in
+  *"45009"*) ok "the diagnosis names the server the relay polls" ;;
+  *) bad "the relay's own server is not named" "${ERR}" ;;
+esac
+case "${ERR}" in
+  *"45010"*) ok "the diagnosis names the server this CLI is pointed at" ;;
+  *) bad "the CLI's own server is not named" "${ERR}" ;;
+esac
+case "${ERR}" in
+  *"--legacy-poll"*) ok "the diagnosis offers the no-relay way out" ;;
+  *) bad "no remedy offered" "${ERR}" ;;
+esac
+if grep -q "/register" "${STUB_LOG}"; then
+  bad "a mismatched relay still received /register (agent enrolled but deaf)"
+else
+  ok "a mismatched relay never received /register (nothing enrolled)"
+fi
+
+# I3. No PARLAY_SERVER at all (a caller that never resolved one) is UNKNOWN,
+#     not a mismatch: the check must not turn an unanswerable question into a
+#     refusal. Same for a relay that predates the `server` field — which is
+#     every already-installed relay until it is rebuilt, so a hard failure here
+#     would break working machines the moment the check landed.
+run_preflight "${STUB_RUNTIME}" "${STUB_SOCK}" "" "no-server-agent"
+[ "${CODE}" = 0 ] \
+  && ok "no PARLAY_SERVER is unknown, not a mismatch — still passes" \
+  || bad "an unknown server was refused as a mismatch" "exit=${CODE}: ${ERR}"
+case "${ERR}" in
+  *"polling "*) bad "the success line claims a server it never compared against" "${ERR}" ;;
+  *) ok "the success line omits a server it could not verify" ;;
 esac
 
 echo

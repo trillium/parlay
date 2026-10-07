@@ -34,6 +34,8 @@
 #                          (default: $TMPDIR/parlay)
 #   PARLAY_RELAY_SOCK      explicit control-socket path (default: <runtime>/relay.sock)
 #   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
+#   PARLAY_RELAY_PROBE_TIMEOUT  seconds allowed for the /health server-identity
+#                          probe (default 5)
 #   PARLAY_MONITOR_WATCH_INTERVAL  seconds between orphan checks (default 15)
 #   PARLAY_MONITOR_NO_ORPHAN_EXIT  set to 1 to keep streaming after the launcher
 #                          dies (deliberate daemonization; off by default)
@@ -55,7 +57,8 @@ to stdout via 'tail -F'. Intended to be run under a harness Monitor tool.
                   'parlay listen'/'parlay claim' run so a fresh-clone user (no
                   relay binary) fails BEFORE the agent is registered-but-deaf
                   (issue #173). Reuses the exact same setup guards as a real
-                  stream — ensure-up and the socket guard.
+                  stream — ensure-up, the socket guard, and the check that the
+                  relay polls THIS cli's server.
   --notify-safe   cap each emitted line to a notification-safe budget and append
                   a "fetch full text" pointer (harness Monitor tools truncate long
                   lines mid-word; this makes that recoverable). Default off.
@@ -70,6 +73,7 @@ Env:
   PARLAY_RELAY_RUNTIME   runtime dir (default: \$TMPDIR/parlay)
   PARLAY_RELAY_SOCK      control socket path (default <runtime>/relay.sock)
   PARLAY_NOTIFY_BUDGET   --notify-safe per-line char budget (default 400)
+  PARLAY_RELAY_PROBE_TIMEOUT  seconds for the /health server-identity probe (5)
   PARLAY_MONITOR_WATCH_INTERVAL  seconds between orphan checks (default 15)
   PARLAY_MONITOR_NO_ORPHAN_EXIT  1 = keep streaming after the launcher dies
 EOF
@@ -372,6 +376,64 @@ if [ ! -S "$SOCK" ]; then
   exit 1
 fi
 
+# ── The relay polls ONE server; make sure it is OURS (registered-but-deaf #2) ─
+# The relay is a per-user singleton on a host-wide runtime dir ($TMPDIR/parlay)
+# and it binds one -server for its whole life. `parlay listen`/`monitor` enroll
+# into whatever canonical relay answers on that socket — including a relay that
+# belongs to a DIFFERENT parlay instance on this box, polling a different chat
+# server. The enroll then succeeds, the spool is created, the monitor streams it
+# happily, and not one message sent to the server THIS cli resolved ever arrives:
+# a registered-but-deaf agent with no error anywhere. The preflight above closed
+# the same trap for "relay is down"; this closes it for "relay is up, for
+# somebody else".
+#
+# /health names the server the relay is bound to, so this is a plain comparison.
+# It is deliberately tolerant — an unreadable / unparseable / absent answer is
+# NOT a mismatch, because refusing on unknown would break every relay older than
+# this check and every case where the CLI resolved the server differently but
+# equivalently.
+PARLAY_RELAY_PROBE_TIMEOUT="${PARLAY_RELAY_PROBE_TIMEOUT:-5}"
+relay_endpoint() {
+  # relay_endpoint <url> -> "host[:port]" with localhost folded to 127.0.0.1 and
+  # the scheme's default port dropped, so two spellings of the SAME server
+  # (http://localhost:4242 vs http://127.0.0.1:4242) never read as a mismatch.
+  local u="${1:-}" host port
+  u="${u##*://}"          # drop the scheme (no-op when there is none)
+  u="${u%%/*}"            # drop any path
+  host="${u%%:*}"
+  port="${u##*:}"
+  if [ "$port" = "$u" ]; then port=""; fi
+  if [ "$host" = "localhost" ]; then host="127.0.0.1"; fi
+  case "$port" in ""|80|443) port="" ;; esac
+  printf '%s' "${host}${port:+:$port}"
+}
+if [ -n "${PARLAY_SERVER:-}" ]; then
+  RELAY_HEALTH="$(curl -s --max-time "$PARLAY_RELAY_PROBE_TIMEOUT" \
+    --unix-socket "$SOCK" http://relay/health 2>/dev/null || true)"
+  RELAY_SERVER_RAW="$(printf '%s' "${RELAY_HEALTH}" \
+    | sed -n 's/.*"server"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ -n "${RELAY_SERVER_RAW}" ]; then
+    MINE="$(relay_endpoint "$PARLAY_SERVER")"
+    THEIRS="$(relay_endpoint "$RELAY_SERVER_RAW")"
+    if [ -n "${MINE}" ] && [ -n "${THEIRS}" ] && [ "$MINE" != "$THEIRS" ]; then
+      echo "parlay-monitor: the canonical relay is bound to a DIFFERENT server." >&2
+      echo "parlay-monitor:   relay polls : $RELAY_SERVER_RAW" >&2
+      echo "parlay-monitor:   this CLI is pointed at: $PARLAY_SERVER" >&2
+      echo "parlay-monitor: the relay is a per-user singleton on $RUNTIME, so both" >&2
+      echo "parlay-monitor:   instances share it and only the relay's own -server" >&2
+      echo "parlay-monitor:   ever receives messages. Enrolling now gives '$AGENT'" >&2
+      echo "parlay-monitor:   a live-looking tab that can never hear anything." >&2
+      echo "parlay-monitor: pick one:" >&2
+      echo "parlay-monitor:   --legacy-poll          (no relay; this monitor polls its" >&2
+      echo "parlay-monitor:                            own server directly)" >&2
+      echo "parlay-monitor:   PARLAY_RELAY_RUNTIME=<dir> + your own relay for" >&2
+      echo "parlay-monitor:     $PARLAY_SERVER started with -server $PARLAY_SERVER" >&2
+      echo "parlay-monitor:   point PARLAY_SERVER at the relay's server instead." >&2
+      exit 1
+    fi
+  fi
+fi
+
 # ── Preflight: exit before enroll, the relay is verified ready (issue #173) ──
 # At this point the relay is up (or was started by ensure-up) and the socket
 # exists. `parlay listen`/`parlay claim` run this as a
@@ -381,7 +443,11 @@ fi
 # trap this closes. The stream path falls straight through to enroll below; only
 # --preflight stops here.
 if [ "$PREFLIGHT" = 1 ]; then
-  echo "parlay-monitor: preflight OK — canonical relay is up for '$AGENT'" >&2
+  # Name the server the check actually verified. "relay is up" was never the
+  # whole precondition — "up AND polling the server this CLI resolved" is, and
+  # a green line that omits which server it checked reads as a weaker promise
+  # than the one the code just made. Empty when the relay predates the field.
+  echo "parlay-monitor: preflight OK — canonical relay is up for '$AGENT'${RELAY_SERVER_RAW:+ and polling $RELAY_SERVER_RAW}" >&2
   exit 0
 fi
 

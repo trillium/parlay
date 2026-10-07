@@ -66,8 +66,26 @@ func CmdMonitor(argv []string) {
 			return
 		}
 		// Skipped when this monitor was armed by `parlay listen`, which
-		// registered the same agent seconds ago (see handoffRegisteredAgent).
+		// registered the same agent seconds ago (see handoffRegisteredAgent) —
+		// and it preflighted the relay in that same call, so re-probing here
+		// would only re-run the check listen already passed.
 		if !claimHandoffRegistration(agent) {
+			// Relay preflight (issue #173), the same pre-enrollment probe
+			// `parlay listen` and `parlay claim` run. Without it THIS entry
+			// point was the last way to reach the registered-but-deaf state:
+			// ensureRegistered below posts the tab first, then runRelayMonitor
+			// discovers there is no relay and exits, leaving an agent that
+			// looks live in the panel and can never receive anything. Verified
+			// on a fresh clone with no relay binary — the agent stayed in
+			// GET /api/chat/agents after the failure.
+			if code := preflightRelay(agent); code != 0 {
+				httpc.Die(fmt.Sprintf(
+					"parlay monitor: relay cannot stream '%s' (preflight exit %d) — NOT registered, so nothing is deaf. Fix the relay condition above and re-run.\n"+
+						"parlay monitor:   install the relay with tools/relay/deploy/install.sh, or start it manually.\n"+
+						"parlay monitor:   (or pass --legacy-poll, which needs no relay)",
+					agent, code), config.ExitRuntime)
+				return
+			}
 			ensureRegistered(agent)
 		}
 		runRelayMonitor(agent, notifySafe)

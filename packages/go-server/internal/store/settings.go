@@ -26,10 +26,23 @@ type ParlaySettings struct {
 	NoKeyboardMode     bool                `json:"noKeyboardMode"`
 }
 
-// DefaultSettings is served when no settings.json exists yet. Values mirror
-// what a fresh client renders before any settings have ever been saved
-// (packages/client/src/settings-modal), so first-run behavior is consistent
-// whether the client's own DEFAULTS or this server-side fallback wins.
+// DefaultSettings is served when no settings.json exists yet — i.e. on every
+// first run, since nothing writes the file until a client PUTs one. The client
+// spreads these over its own DEFAULTS (packages/client/src/settings-modal/io.ts),
+// so each value here OVERRIDES the client's default for a fresh install, which
+// makes the units load-bearing rather than cosmetic.
+//
+// textScale is the field that bites: the client divides it by 100
+// (`(s.textScale || 100) / 100` in settings-modal/apply.ts) and treats it as a
+// percent with 100 = default, and its save path clamps to [85, 160]. Serving 1
+// here rendered every reading surface at 0.1px on an install that had never
+// opened the settings modal. Keep it at 100 and keep the test in this package
+// that ties it to the client's clamp.
+//
+// Two fields deliberately differ from the client's own DEFAULTS and are not
+// drift: PanelSide ("right" here, "left" there) and VoiceEnabled (false here,
+// true there) — a server must not open dictation on a fresh install just
+// because the web client's fallback does.
 func DefaultSettings() ParlaySettings {
 	return ParlaySettings{
 		PanelSide:          "right",
@@ -42,7 +55,7 @@ func DefaultSettings() ParlaySettings {
 		CommandPhrases:     map[string][]string{},
 		HybridVoice:        false,
 		LocalOnlyVoice:     false,
-		TextScale:          1,
+		TextScale:          100,
 		VoiceSettleMs:      450,
 		NoKeyboardMode:     false,
 	}

@@ -1,90 +1,92 @@
 # `data-dir/` — the server's persisted state
 
-Copy this directory's contents to whatever you point **`PARLAY_DATA_DIR`** at, then
-start the server with that env var set. The files below all resolve through
-`packages/server/src/paths.ts`; setting `PARLAY_DATA_DIR` relocates every one of
-them, flat, into that one directory.
+Copy this directory's contents to whatever you point the server's **`-state-dir`**
+at (flag) or **`PARLAY_STATE_HOME`** at (env), then start it:
 
-With `PARLAY_DATA_DIR` **unset**, they scatter to their production locations
-instead — `~/exchange/` for most, `$PAI_DIR/MEMORY/STATE/` for the registry. That
-split is historical. Set `PARLAY_DATA_DIR`; it is one directory you can back up,
-inspect, and throw away.
+```sh
+cd packages/go-server && go run ./cmd/parlay-server -state-dir /path/to/data-dir
+```
 
-Set it *before* a server has state, though, or move that state in first. It
-relocates the read side as well: a server that has been running without it comes
-back with an empty panel, no tabs until every agent re-registers, and a second
-registry here diverging from the one still sitting in `~/exchange` and
-`$PAI_DIR/MEMORY/STATE`. Nothing is lost, but nothing is found either.
+Every file the server persists lives flat in that one directory. `-state-dir` is
+the whole story: there is no second write location to chase, no `$PAI_DIR`
+registry, and nothing that relocates when you move it. Relocating it does move
+the read side, though — see below.
 
-`PARLAY_DATA_DIR` is not quite the server's whole write surface: `$PAI_DIR` is
-read unconditionally by the hook and tool tailers and the boot-time
-session-channel backfill, and `src/tts.ts` writes
-`$PAI_DIR/MEMORY/OBSERVABILITY/tts-pronunciation-reports.jsonl` and
-`$PAI_DIR/MEMORY/STATE/tts-cache/` no matter what `PARLAY_DATA_DIR` says. Set
-`PAI_DIR` as well for a genuinely self-contained instance — to a real path, or
-not at all. It is resolved with `??`, so an empty value is not "unset": those
-`$PAI_DIR/…` paths turn relative and the tree lands wherever the server was
-started from.
+**Default: `~/.parlay`.** That is the same directory the CLI uses for its own
+state (`config.json`, `sweep-keep`, `agents/`). Both defaulting to one place is
+convenient until you are running a second instance: then give the server its own
+`-state-dir` and leave `PARLAY_STATE_HOME` alone.
 
 | File | What it is | Change it? |
 |---|---|---|
-| `parlay-agents.json` | The **agent registry** — every agent that gets a tab in the panel. | Yes: one entry per agent you run. |
-| `parlay-settings.json` | Panel/voice preferences, served over `/api/chat/parlay/settings`. | Optional. Every key has a default. |
-| `chat-history.jsonl` | The message log, one JSON object per line. Rotates at 5 MB. | No — the server appends here. The four seeded lines just give a new panel something to render. |
+| `agents.json` | The **agent registry** — every agent that gets a tab in the panel. A full snapshot, rewritten atomically on every change. | Yes: one entry per agent you run. |
+| `settings.json` | Panel/voice preferences, served over `/api/chat/parlay/settings`. A full snapshot, rewritten on every `PUT`. | Optional. Every key has a default. |
+| `messages.jsonl` | The message log, one `ChatMessage` per line, appended. | No — the server appends here. The four seeded lines just give a new panel something to render. |
 
-Files the server creates on demand, so they are not shipped here: `chat-draft.txt`
-(persisted composer draft), `parlay-agent-channels.json` and
-`parlay-session-channels.json` (session→channel maps), and `parlay-uploads/`
-(image attachments).
+Files the server creates on demand, so they are not shipped here: `draft.json`
+(the persisted composer draft), `channels.json` (channel records) and
+`uploads/` (one file per uploaded attachment).
 
-## `parlay-agents.json`
+**Move it before you start a server, not after.** Relocating the state directory
+is not a pure write-side change: a server that comes back up against the new path
+reads an empty history and an empty registry, so the panel has nothing to render
+and no tabs until every agent re-registers. Nothing is lost — it is all still in
+the old directory — but nothing is found either. Stop the server, move the
+files, start it again.
 
-A JSON **array** of `AgentInfo` (`packages/server/src/types.ts`, mirrored by
-`packages/go-server/internal/store/registry.go`):
+## `agents.json`
+
+A JSON **array** of `AgentInfo`
+(`packages/go-server/internal/store/registry.go`; the shape is specified in
+[`../../docs/api-contract.md`](../../docs/api-contract.md)):
 
 | Field | Required | Meaning |
 |---|---|---|
 | `id` | yes | Channel id. Must match the agent's directory under `agents/` and its `context.json`. |
 | `name` | yes | Display name on the tab. |
 | `color` | yes | Tab colour, CSS hex. |
-| `nicknames` | no | Voice/picker aliases. |
+| `nicknames` | no | Voice/picker aliases. An explicitly empty array clears them; omitting the key leaves them. |
 | `urls` | no | Pages this agent owns. |
 | `path` | no | Filesystem paths this agent is responsible for. |
-
-`packages/go-server` additionally persists a `caps` field (arbitrary JSON
-forwarded from `parlay listen --caps`, see `internal/store/registry.go`).
-`packages/server` does not: `AgentInfo` has no such field, its registry loader
-copies only the six keys above, and a hand-seeded `caps` is dropped the next time
-the file is written back. Do not rely on it against the TypeScript server.
+| `caps` | no | Arbitrary JSON forwarded from `parlay listen --caps`. |
 
 You do not have to seed this file at all — `parlay listen` / `parlay monitor`
 register an agent on first contact and the server writes it here. Seeding it means
 the tabs exist before any agent starts.
 
-**Some agent names are deleted on sight.** The server's autonomous cleanup sweep
-removes any channel whose id matches `TEST_NAME_PATTERNS` in
-`packages/server/src/prune/policy.ts`, at every sweep including startup, regardless
-of how active it is — those are the fingerprints of leaked test fixtures. The
-patterns, all case-insensitive:
+There is **no name-pattern cleanup sweep**. An earlier generation of this example
+documented a server-side sweep that deleted any channel whose id looked like a
+leaked test fixture (`-test`, `-probe`, `test-` prefixes, and so on) at every
+sweep including startup. That sweep lived in the retired TypeScript server; the
+Go server has no such pass, so nothing renames or removes an agent on a pattern
+match. Your ids are yours. (`parlay sweep` is a separate CLI verb with its own
+[`sweep-keep`](../parlay-state/sweep-keep) keep-list and explicit `--apply`; it
+never acts by guessing from a name.)
 
-| Shape | Matches |
-|---|---|
-| starts with `test-`, `bench-`, `forge-`, `meas-`, `profile-`, `busy-`, `nonexistent-`, `spawn-beads-` | `test-agent`, `forge-deploy-1` |
-| ends with `-test` | `api-test`, `parser-test` |
-| contains `-probe` | `db-probe`, `bench-probe-9` |
-| ends with `z<digits>`, optionally plus one letter | `reviewer-z1`, `worker-z12b`, `nobackendz3` |
-
-`-test` and `-probe` catch names nobody thinks of as fixtures — `api-test` and
-`db-probe` are both deleted. `helm` and `reviewer` are safe; `reviewer-z1` would
-be deleted out from under you.
-
-## `chat-history.jsonl`
+## `messages.jsonl`
 
 One `ChatMessage` per line. Required keys are `id`, `role` (`"user"` | `"agent"`),
-`ts` (ISO 8601), `text`; `channel` is the agent id and is what routes a message to a
-tab. `role: "user"` with no `from` means the human sent it. Optional keys —
-`type`, `action`, `source`, `meta`, `images`, `from` — are documented in
-`packages/server/src/types.ts`.
+`ts` (ISO 8601), `text`; `channel` is the agent id and is what routes a message to
+a tab. `role: "user"` with no `from` means the human sent it. Optional keys —
+`type`, `source`, `meta`, `images`, `from` — are documented in
+`docs/api-contract.md` and in the struct's own doc comment.
+
+The log is append-only, and it is bounded twice over: the server keeps the last
+5,000 messages in memory, and compacts the file down to that window once it
+passes 32 MiB (`DefaultMaxMessages` / `DefaultMaxHistoryBytes` in
+`internal/store/messages.go`). It does not rotate, and nothing else reads it.
 
 The seeded ids here are obviously fake (`00000000-…-0001`). Real ones are UUIDs the
 server mints.
+
+## `settings.json`
+
+A single `ParlaySettings` document. Every key has a server-side default
+(`DefaultSettings()` in `internal/store/settings.go`), so the file is optional —
+this one is here to show the shape and to seed a panel that is not blank.
+
+One thing to know before you copy this file over a real one: `textScale` is a
+**percentage**, where 100 is the default, and the client divides by 100 when it
+applies the value (and clamps anything it saves to 85–160). The server's
+built-in fallback for an unset document is the same 100, so this file is
+genuinely optional.

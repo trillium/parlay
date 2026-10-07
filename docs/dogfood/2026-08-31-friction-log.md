@@ -82,6 +82,11 @@ modes that pass could not reproduce) and re-verifies only what got in the way.
    a relay installed); redirecting `$HOME` reproduces the fresh-clone path
    100%. Fix direction (relay preflight before register+announce) is in the
    issue. → [#173](https://github.com/trillium/parlay/issues/173)
+   **→ RESOLVED since this pass (2026-09-03).** The preflight landed for
+   `listen` and `claim`; `parlay monitor` was the last enrolling entry point
+   without it and is now fixed too, so all three preflight before registering
+   and a fresh-clone relay failure exits with nothing enrolled. Kept as the
+   record; see [`../monitor.md`](../monitor.md) for current behavior.
 
 2. **An enrolled agent's own announcements land on the global thread.** The
    announce above — and the later `monitor DOWN … this channel is no longer

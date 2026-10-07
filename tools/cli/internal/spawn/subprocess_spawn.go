@@ -1,8 +1,10 @@
-// Subprocess-spawn / subprocess-stop / subprocess-ping give bin/parlay-spawn a
-// second, herdr-free way to launch a background claude session: a detached
+// Subprocess-spawn / subprocess-stop / subprocess-ping are parlay's second,
+// herdr-free way to launch a background claude session: a detached
 // subprocess instead of a herdr terminal tab. herdr has a known SIGKILL
 // failure mode in headless/no-WindowServer environments; this path exists
-// as the escape hatch.
+// as the escape hatch. (The bash bin/parlay-spawn that used to front these
+// verbs was deleted with the Go spawner fold-in, task-42qot; `parlay spawn
+// --subprocess` is now the only thing that reaches this file.)
 //
 // RENAMED 2026-08 (Gas City spawn lift, unit 1): this file was
 // gascity_spawn.go and its verbs were gascity-spawn/gascity-stop/gascity-ping,
@@ -34,9 +36,9 @@
 // The one thing that deliberately keeps its old spelling is the on-disk
 // state directory: the default keeps the literal "gascity" segment so a
 // session started under the pre-rename name can still be stopped after this
-// rename (see defaultSubprocessStateDir). The same path is what
-// bin/parlay-spawn passes as --state-dir, so both names operate on one
-// directory and `subprocess-stop` always finds its own child.
+// rename (see defaultSubprocessStateDir). The same path is what the
+// in-process spawn pipeline resolves by default, so both names operate on
+// one directory and `subprocess-stop` always finds its own child.
 //
 // docs/gascity-integration-contract.md is the authority on the wider Gas
 // City adoption (measured shell-out cost, the hybrid seam, the pinned ref);
@@ -77,9 +79,9 @@ const subprocessSpawnUsage = `Usage: parlay subprocess-spawn <agent-id> <command
 
   --state-dir DIR   where the pid/treehouse-path files live
                      (default: ~/.parlay/agents/<agent-id>/gascity, honoring
-                     PARLAY_AGENT_HOME — pass this explicitly from
-                     bin/parlay-spawn so it always agrees with that script's
-                     own $HOME-based AGENT_DIR)
+                     PARLAY_AGENT_HOME — pass it explicitly only when you
+                     spawn by hand; 'parlay spawn --subprocess' already
+                     resolves the same directory for you)
   --env KEY=VALUE   one or more environment overrides for the child
   --worktree-path P a treehouse-leased worktree path; subprocess-stop returns
                      it via 'treehouse return' before stopping the process
@@ -97,12 +99,57 @@ var stopGrace = 5 * time.Second
 // the pre-rename launcher name. Renaming the directory would orphan those
 // sessions — a post-rename subprocess-stop would no longer find its own
 // child's pid file. The old and new launcher names share this one path, as
-// does the --state-dir bin/parlay-spawn passes explicitly.
+// does the --state-dir the spawn pipeline passes explicitly.
 func defaultSubprocessStateDir(agentID string) string {
 	return filepath.Join(agentHomeDir(agentID), "gascity")
 }
 
+// subprocessHelpWanted prints the shared usage for any of the three
+// subprocess verbs and reports true, so `parlay subprocess-stop --help`
+// answers instead of doing something else.
+//
+// It has to be here rather than in help.Wanted because these three verbs own
+// their own usage text (one const covers spawn, stop and ping) — but the
+// problem it fixes is the general one: before this, `--help` was parsed as
+// the agent-id positional, so `subprocess-stop --help` silently exited 0
+// having "stopped" a session named --help, and `subprocess-ping --help`
+// exited 1 with no output at all. A flag that silently becomes a positional
+// is the same defect AGENTS.md names from the other side: the caller cannot
+// tell "this verb honoured my flag" from "this verb never saw it".
+//
+// Returns true when it has printed, so callers read as
+// `if subprocessHelpWanted(args) { return 0 }`.
+func subprocessHelpWanted(args []string) bool {
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			fmt.Fprint(os.Stdout, subprocessSpawnUsage)
+			return true
+		}
+	}
+	return false
+}
+
+// subprocessAgentIDArg returns the leading positional for stop/ping, or "" if
+// it is missing or looks like a flag. A missing value keeps the old
+// print-usage-and-exit-2 path; a FLAG value is a hard exit, because silently
+// treating an unrecognized flag as an agent id is what made `--help` (and
+// any typo'd `--stae-dir`) do the wrong thing without a word.
+func subprocessAgentIDArg(verb string, args []string) string {
+	if len(args) == 0 {
+		fmt.Fprint(os.Stderr, subprocessSpawnUsage)
+		return ""
+	}
+	if strings.HasPrefix(args[0], "-") {
+		fmt.Fprintf(os.Stderr, "subprocess-%s: %s looks like a flag, not an agent id — run with --help for usage\n", verb, args[0])
+		return ""
+	}
+	return args[0]
+}
+
 func runSubprocessSpawnCommand(args []string) int {
+	if subprocessHelpWanted(args) {
+		return 0
+	}
 	if len(args) < 3 {
 		fmt.Fprint(os.Stderr, subprocessSpawnUsage)
 		return 2
@@ -163,11 +210,13 @@ func runSubprocessSpawnCommand(args []string) int {
 }
 
 func runSubprocessStopCommand(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprint(os.Stderr, subprocessSpawnUsage)
+	if subprocessHelpWanted(args) {
+		return 0
+	}
+	agentID := subprocessAgentIDArg("stop", args)
+	if agentID == "" {
 		return 2
 	}
-	agentID := args[0]
 	stateDir := defaultSubprocessStateDir(agentID)
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
@@ -193,11 +242,13 @@ func runSubprocessStopCommand(args []string) int {
 }
 
 func runSubprocessPingCommand(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprint(os.Stderr, subprocessSpawnUsage)
+	if subprocessHelpWanted(args) {
+		return 0
+	}
+	agentID := subprocessAgentIDArg("ping", args)
+	if agentID == "" {
 		return 2
 	}
-	agentID := args[0]
 	stateDir := defaultSubprocessStateDir(agentID)
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
