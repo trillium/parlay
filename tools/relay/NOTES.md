@@ -39,6 +39,7 @@ domain **control socket** at `<runtime>/relay.sock`:
 | `/agents`     | GET  | — | `{"agents":[...],"server":"...","runtime":"..."}` |
 | `/health`     | GET  | — | `{"ok":true}` |
 | `/audit`      | GET  | `?limit=N` (default 100, max 1000) | `{"entries":[{"ts","actor","action","agent"}]}` |
+| `/delivery`   | GET  | `?limit=N` (default 100, max 1000), `?agent=<id>` | `{ok,enabled,exists,ledger,count,entries}` |
 
 `register` is **idempotent per caller**: a second register presenting the same
 owner token returns the existing spool and does not start a second loop.
@@ -72,8 +73,56 @@ TOKEN="<owner>"
 curl -s --unix-socket "$SOCK" -X POST http://relay/register   -d '{"agent":"main-agent"}' -H "Authorization: Bearer $TOKEN"
 curl -s --unix-socket "$SOCK"          http://relay/agents
 curl -s --unix-socket "$SOCK"          http://relay/audit?limit=5
+curl -s --unix-socket "$SOCK"          'http://relay/delivery?agent=main-agent&limit=20'
 curl -s --unix-socket "$SOCK" -X POST http://relay/unregister -d "{\"agent\":\"main-agent\",\"token\":\"$TOKEN\"}"
 ```
+
+## Delivery ledger
+
+The audit log answers enrollment; it says nothing about messages. The spool
+file is where messages land but carries no timestamp (`CHAT_MSG|<id>|<role>|`, a
+wire format `lastSpooledID` and the monitor's line reader both depend on), so
+before the ledger the relay — the one component that knows *when* a message
+reached an agent — recorded nothing about delivery. The ledger is that answer:
+`<runtime>/delivery.log`, one JSON line per event, identifiers only.
+
+```json
+{"ts":"...","event":"spooled","agent":"a","msg":"m-1","role":"user"}
+{"ts":"...","event":"spool-failed","agent":"a","msg":"m-2"}
+{"ts":"...","event":"delivery-ended","agent":"a","reason":"channel-gone","spoolLines":1}
+{"ts":"...","event":"rotated","reason":"size-cap"}
+{"ts":"...","event":"started"}
+{"ts":"...","event":"resumed","agent":"a"}
+```
+
+- `spooled` — appended to that agent's spool. This is the relay's delivery
+  boundary, **not** proof the agent read it: nothing in the fleet acknowledges
+  consumption, and a record that called this "delivered" would be the lie the
+  ledger exists to remove.
+- `spool-failed` — the append failed; the message did not reach the agent.
+- `delivery-ended` — the channel stopped being polled, with `reason`
+  (`channel-gone` | `unregister` | `shutdown`) and `spoolLines`, the count taken
+  *before* the spool is tombstoned.
+- `rotated` — the active file hit 8 MiB and the previous generation moved to
+  `delivery.log.1`. Rotation is lossy, so it is recorded rather than silent.
+- `started` — this relay process took its control socket and began serving. One
+  fleet-wide line per boot, written AFTER the bind (`TestABootThatCannotTakeTheSocketRecordsNoStart`
+  pins that a second boot refused the socket records none), and before the spool
+  replay, so read order stays write order. It is the event that makes a gap in
+  deliveries a RESTART instead of an unexplained quiet and makes a crash loop
+  visible as a burst.
+- `resumed` — this boot has a poll loop up for that agent, from the spool the
+  replay found on disk (`resumeFromSpools`). One per channel on purpose: a count
+  could not be diffed against the `delivery-ended reason=shutdown` lines to show
+  WHICH channel did not come back. It proves polling, never a read.
+
+Nothing free-form is stored — never a message body, path, or error string —
+the same posture as the audit log, which is why this cannot become a second copy
+of user data. Writes are best-effort like `audit()` and can never slow or fail a
+delivery (pinned by `TestDeliveryLedgerUnwritableDoesNotBlockDelivery`).
+`PARLAY_RELAY_DELIVERY_LOG=0` disables recording; `/delivery` then reports
+`enabled:false`, and `exists:false` distinguishes a ledger that was never
+written from one that is merely empty.
 
 ## Spool files
 

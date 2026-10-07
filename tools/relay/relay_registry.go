@@ -97,6 +97,7 @@ func (r *relay) unregister(agent string) bool {
 	}
 	loop.cancel()
 	<-loop.done
+	r.recordDeliveryEnded(agent, reasonUnregister, loop.spool)
 	tombstoneSpool(loop.spool)
 	log.Printf("agent %q unregistered", agent)
 	return true
@@ -141,6 +142,12 @@ func (r *relay) shutdown(srv *http.Server) {
 	}
 	for _, l := range loops {
 		<-l.done
+	}
+	// One terminal record per channel, so a window with no deliveries is
+	// explicable afterwards rather than merely empty. Bounded by fleet size and
+	// written after every loop has stopped, so it cannot delay a cancellation.
+	for _, l := range loops {
+		r.recordDeliveryEnded(l.id, reasonShutdown, l.spool)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

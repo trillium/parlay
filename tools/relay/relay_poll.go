@@ -55,6 +55,9 @@ func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 				// normal /register path untouched — see tombstoneSpool.
 				log.Printf("agent %q: server reports the channel is gone (410) — pruning from the watch list", loop.id)
 				r.dropLoop(loop.id)
+				// Recorded before the tombstone: the spool is renamed below, and a
+				// count taken afterwards would see a file that is no longer there.
+				r.recordDeliveryEnded(loop.id, reasonChannelGone, loop.spool)
 				tombstoneSpool(loop.spool)
 				loop.cancel()
 				return
@@ -85,6 +88,7 @@ func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 			// waiting for this request to time out first.
 			log.Printf("agent %q: server resolved poll as gone - pruning from the watch list", loop.id)
 			r.dropLoop(loop.id)
+			r.recordDeliveryEnded(loop.id, reasonChannelGone, loop.spool)
 			tombstoneSpool(loop.spool)
 			loop.cancel()
 			return
@@ -111,6 +115,9 @@ func (r *relay) pollLoop(ctx context.Context, loop *agentLoop) {
 			// A spool write failure is not fatal to the loop — log and keep polling
 			// so a transient disk issue does not silently kill the agent's channel.
 			log.Printf("agent %q: spool write failed: %v", loop.id, err)
+			r.recordSpoolFailed(loop.id, msg.ID)
+		} else {
+			r.recordSpooled(loop.id, msg)
 		}
 	}
 }

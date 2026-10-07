@@ -50,6 +50,9 @@ Linked from the root README's system map.
 | [`relay.md`](relay.md) | The per-runtime-dir fan-out daemon between the server and every enrolled agent's monitor. |
 | [`live-commands.md`](live-commands.md) | The live-command registry: how a running `parlay` verb reports itself, why the registry stores no free-form text (verb, agent id, pid, flag *names* only), and the 90s staleness reaper that keeps a crashed command from becoming a permanent zombie entry. |
 | [`action-log.md`](action-log.md) | The **command log** — one row per *evaluated string* (not per process), its four-value outcome vocabulary (`delivered`/`queued`/`dropped`/`refused`), the filter axes, and the off switch that turns a connection or an action off from the same place you read the rows. The sandbox test site's backing surfaces. |
+| [`explain.md`](explain.md) | `parlay explain <agent-id>` — one agent's whole story in one read, aggregating registration, channel presence, status, relay enrollment, the spool, the delivery ledger and the command registry, and naming every source that did not answer instead of guessing. |
+| [`liveness.md`](liveness.md) | `parlay liveness` — the fleet-wide answer to "which agents are silent, since when, and is the heartbeat absent or merely expired", keeping registration, the process-table probe, the presence stamp and local activity as four separate answers and naming what it could not measure. |
+| [`timeline.md`](timeline.md) | `parlay timeline` — one ordered answer to "what happened", merging the chat server's own history file, the relay's delivery ledger (both read straight off disk, so they answer while those processes are dead), its audit log and the live-command registry into one axis with an outcome vocabulary that never claims a message was read — including `unhanded`, the guarded verdict that the server persisted a message and nothing ever collected it. |
 
 ### Contracts — wire shapes other code is built against
 

@@ -51,6 +51,13 @@ this canonical socket.
 | `/unregister` | POST | `{"agent":"<id>"}` | `{"ok":true,"agent":"<id>"}` |
 | `/agents`     | GET  | — | `{"agents":[...],"server":"...","runtime":"..."}` |
 | `/health`     | GET  | — | `{"ok":true}` |
+| `/audit`      | GET  | `?limit=N` | `{"entries":[...]}` — control plane: who enrolled/retired, when |
+| `/delivery`   | GET  | `?limit=N&agent=<id>` | `{ok,enabled,exists,ledger,count,entries}` — data plane: what was spooled, when, and how each channel's delivery ended |
+
+`/audit` and `/delivery` are the two durable trails the relay keeps —
+enrollment and delivery respectively — and reading them together is how "what
+happened to this agent" is answered without reading the source. See
+`NOTES.md` "Delivery ledger".
 
 `register` is idempotent. Agent ids must be kebab-slugs.
 

@@ -78,3 +78,12 @@ city/.gc/
 # deleting them is not recoverable and they are not worth the risk, so they are
 # ignored as a backstop — the same call as city/.gc/ above.
 packages/server/
+
+# Harness scratch directories: pi's own task output and the gnhf run record.
+# Neither is product source, and neither was ignored until a run committed four
+# `.pi/tasks/**/*.output` files by accident — the run's own instructions say
+# nothing under `.pi/` or `.gnhf/` is ever committed, so an ignore rule is what
+# makes that structural instead of remembered. The four already-committed files
+# are deleted in the same change; gitignore alone would not have untracked them.
+.pi/
+.gnhf/

@@ -20,7 +20,11 @@ Two delivery paths exist, selected by `--legacy-poll`:
   natively, with no relay involved. This is what makes `listen --legacy-poll`
   usable on a fresh clone before anyone has built the relay binary
   (`tools/relay/build.sh` — gitignored, not built by `bun install` or
-  `bin/parlay`).
+  `bin/parlay`). Nothing records what a direct poll consumed: no spool line, no
+  ledger hand-over, no relay claim. That is why `parlay timeline` requires the
+  relay's own claim trail to show the relay was polling a channel before it will
+  report a recorded message as `unhanded` ([`timeline.md`](timeline.md) — a
+  channel the relay never claimed is never called lost).
 
 **The relay is preflighted before enrollment, so a missing relay is a clean
 refusal, not a deaf tab** (verified 2026-09-03 against

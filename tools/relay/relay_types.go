@@ -120,6 +120,11 @@ type relay struct {
 	loops  map[string]*agentLoop
 	closed bool // set once shutdown begins; blocks new registrations
 
+	// deliveryMaxBytes overrides maxDeliveryBytes when > 0 (relay_delivery.go).
+	// Injectable so a test can exercise rotation without writing megabytes, and
+	// per-relay so nothing on the delivery hot path reads a mutable global.
+	deliveryMaxBytes int64
+
 	// owners binds each registered agent id to its caller's owner-token
 	// hash (relay_identity.go). Nil until loadOwners/first claim fills it.
 	owners map[string]string

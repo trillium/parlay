@@ -13,12 +13,20 @@
 //	Spool line    : CHAT_MSG|<id>|<role>|<text>\n               (captain messages, no attribution)
 //	              : CHAT_MSG|<id>|<role>|<text>|from:<sender>\n (agent→agent messages, 5th field)
 //	Spool path    : {runtime-dir}/<agent>.chan       (runtime-dir defaults to $TMPDIR/parlay)
+//	Delivery trail: {runtime-dir}/delivery.log       (relay_delivery.go; PARLAY_RELAY_DELIVERY_LOG=0 disables)
 //	Control socket : Unix domain socket at {runtime-dir}/relay.sock
 //	  POST /register {"agent":"<id>"}     → {"ok":true,"agent":"<id>","spool":"<path>","token":"<owner>"}   (idempotent per caller)
 //	  POST /unregister {"agent":"<id>"}   → {"ok":true}
 //	  GET  /agents                        → {"agents":[...],"server":"...","runtime":"..."}
 //	  GET  /health                        → {"ok":true}
 //	  GET  /audit?limit=N                 → {"entries":[...]} (who/what/target/when JSONL tail)
+//	  GET  /delivery?limit=N&agent=<id>   → {ok,enabled,exists,ledger,count,entries} (data-plane
+//	                                        delivery trail: what was spooled for whom, when, and how
+//	                                        each channel's delivery ended — relay_delivery.go)
+//
+// Two trails, two planes: /audit is enrollment (control plane, one entry per
+// enroll), /delivery is delivery (data plane, one entry per message). Reading
+// them together is how "what happened at 2am" is answered without the source.
 //
 // Per-caller identity: the first /register for an id mints an owner token
 // (returned once — persist as {runtime-dir}/<agent>.token); re-registering
@@ -114,6 +122,14 @@ func main() {
 
 	log.Printf("up — server=%s runtime=%s socket=%s", server, runtimeDir, sockPath)
 
+	// The relay's own start goes on the durable trail (robots: a restart was the
+	// one event that explained a gap in deliveries and was recorded nowhere, so a
+	// restart looked exactly like a quiet fleet). Written HERE, after the bind:
+	// a process that failed to take the socket is not a relay that began serving,
+	// and a line claiming otherwise would be the kind of record this trail exists
+	// to avoid. Before the replay below, so read order is write order.
+	r.recordStarted()
+
 	// Resume agents from existing spools, now that /health already answers.
 	resumed := resumeFromSpools(r, runtimeDir)
 	log.Printf("spool resume complete — %d agent(s) resumed", resumed)
@@ -146,6 +162,13 @@ func main() {
 // re-registered at boot. register() is idempotent, so overlap with -agents (or
 // with a concurrent control-socket register) is harmless.
 //
+// Each channel this brings up is recorded on the delivery ledger as `resumed`
+// (see recordResumed): the durable answer to "did my agents come back?". It is
+// written for a channel registered by -agents too, because for an operator the
+// fact is the same one — this boot holds a poll loop for that channel — and a
+// row that covered only the spool path would make silence ambiguous between
+// "did not come back" and "came back by flag".
+//
 // Callers must have already bound the control socket — see the comment in
 // main(); this walk is O(agents on disk) and must not gate /health.
 func resumeFromSpools(r *relay, runtimeDir string) int {
@@ -164,9 +187,14 @@ func resumeFromSpools(r *relay, runtimeDir string) int {
 			continue
 		}
 		if _, err := r.register(id); err != nil {
+			// Deliberately NO ledger line: the failure detail (an OS error that
+			// embeds a path) belongs in this process's log, not in an
+			// identifier-only trail. The consequence is honest either way — the
+			// channel has no `resumed` line, and the relay's log says why.
 			log.Printf("spool-resume register %q: %v", id, err)
 			continue
 		}
+		r.recordResumed(id)
 		log.Printf("resumed agent %q from spool", id)
 		resumed++
 	}
