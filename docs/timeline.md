@@ -2,7 +2,8 @@
 
 **Code:** `tools/cli/internal/commands/timeline.go` (flags), `timeline_sources.go`
 (every read, and what each one answers), `timeline_render.go` (the human view and
-`--json`), `tools/cli/internal/timeline` (the pure merge/classify/select), and
+`--json`), `tools/cli/internal/timeline` (the pure merge/classify/select),
+`tools/cli/internal/chathistory` (the server's own history, read off disk) and
 `tools/cli/internal/relayctl/relayctl_trail.go` (the durable-file readers).
 
 ```
@@ -16,25 +17,32 @@ that question meant reading the relay's delivery ledger, the relay's audit log
 and `GET /api/chat/commands` by hand, interleaving them by eye, and reading
 source to know what each vocabulary meant.
 
-It is **read-only**. It opens two files, asks one local socket, and issues one
+It is **read-only**. It opens three files, asks one local socket, and issues one
 GET. There is no write path in it to reach by mistake — pinned by a test that
-asserts every control-socket request was a GET and that the trails are
-byte-identical afterwards.
+asserts every control-socket request was a GET and that the trails and the
+history file are byte-identical afterwards.
 
 ## Where each event comes from
 
 | Source | Record | Answers |
 |---|---|---|
+| `history` | `{PARLAY_STATE_HOME}/messages.jsonl`, read **off disk** | what the **server** persisted — the only record that exists when nothing ever collected a message |
 | `delivery` | `{runtime}/delivery.log` + `delivery.log.1`, read **off disk** | what the relay handed to a spool, and how each channel's delivery ended |
 | `audit` | `{runtime}/audit.log` | a channel claimed, released, or a takeover refused — who/what/when |
 | `command` | `GET /api/chat/commands` | an invocation's verb, state, exit code, outcome and timing |
 
-The trails are read as **files, not over the socket**, and that is the single
-most important design choice here: the operator is usually asking *because the
-relay is dead*, and `GET /delivery` cannot be asked of a dead process. The
-socket is still consulted separately, for the two facts only a live relay can
-give — whether recording is switched off right now (`PARLAY_RELAY_DELIVERY_LOG=0`)
-and which chat server this relay polls.
+Every record is read as a **file** except the command registry, and that is the
+single most important design choice here: the operator is usually asking
+*because the relay or the server is dead*, and `GET /delivery` or
+`GET /api/chat/history?limit=N` cannot be asked of a dead process. The socket is
+still consulted separately, for the two facts only a live relay can give —
+whether recording is switched off right now (`PARLAY_RELAY_DELIVERY_LOG=0`) and
+which chat server this relay polls.
+
+The history reader keeps **five identifiers** — id, ts, channel, role, from —
+and has no struct field for a message body, so a body cannot be carried into
+the timeline, a store, or a log by accident. `TestReadNeverHoldsABody` pins the
+field list itself, not just the current output.
 
 ## The outcome vocabulary, and its one hard rule
 
@@ -46,6 +54,8 @@ delivered` is a usage error, deliberately.
 
 | Outcome | Meaning |
 |---|---|
+| `recorded` | the chat server persisted this message on this channel. **Not a delivery**: the relay's hand-over line, if there is one, is a separate event |
+| `unhanded` | recorded, and the delivery trail (read in full, unrotated, and starting before this message) holds no hand-over for it: **nothing picked it up** |
 | `queued` | spooled **and** the line is still in the spool — verified against the spool file, not assumed |
 | `left-spool` | spooled, and the line is no longer in the spool — read or pruned, and nothing records which |
 | `dropped` | the spool append **failed**: the message never reached the agent |
@@ -60,6 +70,33 @@ Supersession is computed in **read order** (the rotated generation first, then
 the active file), because an append-only trail's read order *is* its write
 order. A stamp that fails to parse therefore cannot reorder which hand-over
 counts as live.
+
+## The half the relay cannot see
+
+The relay's trail only knows about messages the relay was handed, so before
+`history` existed a message the server accepted and nothing ever collected
+appeared **nowhere** — silence, where the truth was "the server has it and no
+one took it". The server's own file is the other half of that story, and it is
+the one record that survives the server dying.
+
+`unhanded` is the verdict made from the two halves together, and it is only
+reachable when every guard below says the absence of a hand-over **is**
+evidence. Each weaker case stays `recorded` and names the guard that stopped it:
+
+| Guard | Why the verdict cannot be made |
+|---|---|
+| no delivery trail at all | the ledger is a young record: a relay built before it exists has no ledger, so absence of a hand-over is absence of a *record* |
+| the ledger rotated | rotation is lossy — everything older than the marker is gone |
+| the ledger read was truncated | the reader's own cap means it holds a prefix, not the whole trail |
+| the message is younger than the hand-over window (90s ≈ two of the relay's 45s long-polls) | the relay may simply not have polled it yet |
+| the message predates the trail's own first line | the trail cannot be asked about a time it did not cover |
+| the trail holds no dated line | nothing to date the window from |
+| the stamp does not parse | the message cannot be placed in time at all |
+| the caller supplied no evidence object | a caller that forgets to declare coverage gets no verdict, not a false one |
+
+A hand-over that **failed** (`spool-failed`) also counts as handed: the relay
+did take the message, and the `dropped` line is its verdict. Two contradictory
+claims about one message id on one axis would be worse than either.
 
 An event whose stamp does not parse keeps its row with `?` in the time column
 and sorts after the dated ones. Dropping evidence because it cannot be dated
@@ -80,21 +117,95 @@ parlay timeline — oldest first; 6 matching event(s)
   asked: everything the records still hold
   runtime /tmp/ptlA.PzWpdi · server http://127.0.0.1:1
 
-2026-10-07T07:05:22Z  2h00m ago  superseded   crew-1            msg m-1 (user) from captain — an earlier hand-over of this message id — it was handed over 2 time(s) and only the newest one is the live delivery (a channel replay, not a second message)
-2026-10-07T07:05:22Z  2h00m ago  queued       crew-1            msg m-1 (user) from captain — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
-2026-10-07T07:05:22Z  2h00m ago  dropped      crew-1            msg m-9 — the append to the agent's spool FAILED — this message did not reach the agent (the failure detail is in the relay's own log, not in this identifier-only trail)
-2026-10-07T07:05:22Z  2h00m ago  enrolled     crew-1            channel claimed by actor a1b2c3d4
-2026-10-07T08:35:22Z  30m01s ago  ended        crew-1            the channel stopped being polled — reason=channel-gone; 2 line(s) were still in the spool at that moment, unproven-consumed
-2026-10-07T08:35:22Z  30m01s ago  refused      crew-1            register-denied by actor none — another caller held the channel; the attempt is recorded, never silent
+2026-10-07T06:54:59Z  3h00m ago  queued       crew-1            msg m-1 (user) from captain — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
+2026-10-07T06:54:59Z  3h00m ago  recorded     crew-1            msg m-1 (user) from captain — the chat server persisted this message on this channel; the relay's own hand-over line for this message is in this timeline — that line, not this one, says what happened next
+2026-10-07T07:54:59Z  2h00m ago  unhanded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it: NOTHING picked this message up. Either no relay is enrolled for this channel, the relay polls a different chat server, or the hand-over failed without leaving a line. The message is still in the agent's history, so it can be resent
 
-  shown: queued=1 · dropped=1 · superseded=1 · ended=1 · enrolled=1 · refused=1
+  shown: recorded=1 · unhanded=1 · queued=1
 
 sources
-  delivery ledger (read) 4 delivery event(s) read (oldest first); the relay's own rotation is recorded in the trail, so a shortened history says so · /tmp/ptlA.PzWpdi/delivery.log
-  audit log (read)       2 control-plane action(s) (register/unregister/denied) read · /tmp/ptlA.PzWpdi/audit.log
-  relay control socket (unreachable) no answer at /tmp/ptlA.PzWpdi/relay.sock — the relay is not running (or uses another runtime dir). The trails above are files and were still read; only the relay's live state is unknown
+  delivery ledger (read) 1 delivery event(s) read (oldest first); the relay's own rotation is recorded in the trail, so a shortened history says so · /tmp/obsdemo.Dp1MUz/rt/delivery.log
+  audit log (absent)     no audit log — no channel has ever been claimed or released through THIS relay's control socket, so enrollment has no local record here · /tmp/obsdemo.Dp1MUz/rt/audit.log
+  chat history (read)    2 message record(s) read, oldest first (id/ts/channel/role only — the reader has no field for a message body) · /tmp/obsdemo.Dp1MUz/state/messages.jsonl
+  relay control socket (unreachable) no answer at /tmp/obsdemo.Dp1MUz/rt/relay.sock — the relay is not running (or uses another runtime dir). The trails above are files and were still read; only the relay's live state is unknown
   command registry (unreachable) could not ask http://127.0.0.1:1/api/chat/commands — the server did not answer (Get "http://127.0.0.1:1/api/chat/commands": dial tcp 127.0.0.1:1: connect: connection refused); commands are unknown, not absent
+
+
+Nothing here is a claim that a message was READ: this fleet has no read receipt anywhere, so
+`queued` means the line is still in the spool and says nothing more. `recorded` is the chat server's
+own history, not a delivery; `unhanded` is the one verdict made from it, and only when the delivery
+trail can be shown to be a complete record covering that message.
 ```
+
+`--outcome unhanded` is the 2am query, and it is a first-class filter rather
+than something an operator computes by eye:
+
+```
+$ parlay timeline --outcome unhanded
+parlay timeline — oldest first; 1 matching event(s)
+  asked: outcome unhanded
+
+2026-10-07T07:54:59Z  2h00m ago  unhanded     crew-1            msg m-2 (user) from captain — … NOTHING picked this message up. …
+```
+
+**An old relay has no ledger at all — so nothing is accused.** This is the
+false-positive guard that matters most, and `--outcome unhanded` matches nothing
+on such a fleet:
+
+```
+2026-10-07T07:54:59Z  2h00m ago  recorded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel. No hand-over line for it is here and NO delivery trail could be read, so whether the relay ever took it is unknown — not absent
+  delivery ledger (absent) no ledger — this relay has never recorded a delivery event. That is NOT the same as 'nothing was delivered': an older relay build has no ledger at all · /tmp/obsdemo.Dp1MUz/rt/delivery.log
+
+$ parlay timeline --outcome unhanded
+parlay timeline — oldest first; 0 event(s) matched
+  no event matched. At least one record answered and held no event for this question, so the fleet really is quiet over it (see sources for what was read).
+```
+
+**The ledger rotated.** Rotation is lossy, so a missing hand-over proves nothing:
+
+```
+2026-10-07T07:54:59Z  2h00m ago  recorded     crew-1            msg m-2 (user) from captain — the chat server persisted this message on this channel. The delivery trail was read but it has rotated, so every event older than the rotation marker is gone — a missing hand-over line is not evidence
+```
+
+**The message is younger than the relay's next poll.** A five-second-old message
+is not evidence of anything, and the row says so rather than guessing:
+
+```
+2026-10-07T09:55:07Z  0s ago    recorded     crew-1            msg m-9 (user) — the chat server persisted this message on this channel. It was recorded 0s ago — younger than the hand-over window (1m30s) the relay is allowed before silence means something, so this is not counted as unhanded
+```
+
+**No history file.** Named, with the reason it is not the same as "no message
+was ever sent" — the server may simply run with a different `-state-dir`:
+
+```
+  chat history (absent)  no history file here — either the server has never persisted a message, or it runs with a -state-dir other than /tmp/obsdemo.Dp1MUz/state. Not the same as 'no message was ever sent' · /tmp/obsdemo.Dp1MUz/state/messages.jsonl
+```
+
+**An unreadable history file.** The file exists and what it holds is unknown:
+
+```
+  chat history (unreadable) could not read it (open /tmp/obsdemo.Dp1MUz/state/messages.jsonl: permission denied) — the file exists and what it holds is unknown · /tmp/obsdemo.Dp1MUz/state/messages.jsonl
+```
+
+**A history read that was truncated** (a 9.4 MiB file, tail-read at 8 MiB and
+capped at 2000 records). Older messages are absent, and it says so instead of
+looking complete:
+
+```
+  chat history (read)    2000 message record(s) read, oldest first (id/ts/channel/role only — the reader has no field for a message body) · TRUNCATED: only the newest records were read (the file is 9.4 MiB); older messages are not in this timeline · /tmp/obsdemo.Dp1MUz/state/messages.jsonl
+```
+
+**The CLI targets another host.** The history file is read off *this* host, so
+when the server is elsewhere those records may not be its at all. The caveat is
+only ever additive:
+
+```
+  chat history (read)    … · WARNING this is the state dir of THIS host (/tmp/obsdemo.Dp1MUz/state), and the CLI targets http://macbook:31337 — a server on another host keeps its own history there, so these records may be a different server's · /tmp/obsdemo.Dp1MUz/state/messages.jsonl
+```
+
+**A relay is not running, and the trail still answers (exit 0).** The footer
+names the socket, the server and the reason each was silent — and no row is
+lost:
 
 **The ledger was never written.** "Never recorded" must not read as "nothing was
 delivered", and an old relay build has no ledger at all:
@@ -128,7 +239,7 @@ sources
   command registry (unreachable) could not ask http://127.0.0.1:1/api/chat/commands — the server did not answer (…
 
 $ parlay timeline; echo $?
-parlay timeline: nothing was observable — no delivery ledger, no audit log, the relay at /tmp/ptlE.3G6kMw/relay.sock did not answer, and no command registry at http://127.0.0.1:1
+parlay timeline: nothing was observable — no delivery ledger, no audit log, no chat history, the relay at /tmp/ptlE.3G6kMw/relay.sock did not answer, and no command registry at http://127.0.0.1:1
 1
 ```
 
@@ -193,7 +304,9 @@ naming one twice and differently is a usage error rather than a silent pick.
 - **It is not a live view.** It reads what is recorded; `parlay commands
   --watch` and the panel are the live surfaces.
 - **It does not read message bodies.** Every record it reads is
-  identifier-only by design, and so is every line it prints.
+  identifier-only by design, and so is every line it prints: the history reader
+  has no field for a body, so there is nothing to leak and nothing new to
+  retain.
 - **It does not reconcile spools beyond 64 agents in one pass.** Past that the
   per-message answer is `unknown` with a reason naming `--agent` as the way to
   get a real one.

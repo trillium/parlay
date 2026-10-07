@@ -12,8 +12,11 @@ package commands
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
+	"time"
 
+	"github.com/trillium/parlay/tools/cli/internal/chathistory"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/relayctl"
 	"github.com/trillium/parlay/tools/cli/internal/timeline"
@@ -25,6 +28,14 @@ import (
 // nobody asked; past the cap the answer is unknown-with-a-reason instead of
 // slow.
 const timelineSpoolCap = 64
+
+// timelineHandoverGrace is how long the relay is allowed before a recorded
+// message with no hand-over line becomes "nothing picked it up". The relay
+// long-polls the server (tools/relay/relay_types.go: pollTimeout 45s), so a
+// spool append normally follows an append by a fraction of a second; this is
+// two poll timeouts, which is the difference between "the relay is not
+// handling this" and "the relay has not looked yet".
+const timelineHandoverGrace = 90 * time.Second
 
 // sourceNote is one line of the sources footer: which record, what state it
 // came back in, and the sentence that says it. State is a closed vocabulary so
@@ -97,6 +108,17 @@ func gatherTimeline(agentFilter string) timelineGather {
 		g.answered = true
 	}
 
+	// --- the SERVER's own history: a file, for the same reason the relay's
+	// trails are files. GET /api/chat/history is exactly the route that cannot
+	// answer when the server is the broken thing. ---
+	hist := chathistory.Read(filepath.Join(config.StateHome(), chathistory.FileName), chathistory.DefaultMaxRecords)
+	g.Records.History = hist.Records
+	g.Records.Handover = handoverEvidence(ledger)
+	g.Sources = append(g.Sources, historyNote(hist, config.ServerURL()))
+	if hist.State == chathistory.StateRead {
+		g.answered = true
+	}
+
 	// --- the relay control socket: the only thing that can say whether
 	// recording is switched off right now, and which server this relay polls ---
 	relayNote := sourceNote{Name: "relay control socket", State: srcUnreachable,
@@ -155,6 +177,51 @@ func gatherSpoolPresence(recs []timeline.DeliveryRecord) map[string]timeline.Pre
 		out[agent] = presenceFor(agent)
 	}
 	return out
+}
+
+// handoverEvidence turns the caller's two reads — the relay's ledger and the
+// server's history — into the one question Build may ask: is a MISSING
+// hand-over line for a recorded message evidence the relay never took it?
+//
+// Every guard here exists to keep that answer "no" unless it is safe. The
+// ledger is a young record: a relay built before iteration 1 has no ledger at
+// all, so on a healthy fleet with an old relay, absence of a hand-over is
+// absence of a RECORD, and saying otherwise would accuse a working relay.
+func handoverEvidence(l relayctl.Ledger) timeline.HandoverEvidence {
+	he := timeline.HandoverEvidence{Grace: timelineHandoverGrace, Now: time.Now()}
+	switch {
+	case l.State != relayctl.TrailRead:
+		he.Reason = "the relay's delivery ledger is absent or unreadable — an older relay build has no ledger at all, so it records no hand-over to compare against"
+		return he
+	case l.RotatedState == relayctl.TrailRead:
+		he.Read = true
+		he.Reason = "it has rotated, so every event older than the rotation marker is gone"
+		return he
+	case l.Truncated:
+		he.Read = true
+		he.Reason = "the file exceeded this reader's cap, so this is a prefix of it"
+		return he
+	}
+	he.Read, he.Complete = true, true
+	if len(l.Entries) > 0 {
+		if t, ok := parseLedgerStamp(l.Entries[0].Ts); ok {
+			he.HasCoveredFrom, he.CoveredFrom = true, t
+		}
+	}
+	return he
+}
+
+// parseLedgerStamp mirrors the timeline package's own stamp parser for the one
+// place the caller needs a time out of the trail. An unparseable first line
+// leaves the trail undated, which suppresses the unhanded verdict rather than
+// inventing a window.
+func parseLedgerStamp(raw string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 // presenceFor inspects one spool. A missing spool is NOT "the message left":

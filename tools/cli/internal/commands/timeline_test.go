@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trillium/parlay/tools/cli/internal/chathistory"
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/relayctl"
 	"github.com/trillium/parlay/tools/cli/internal/testsupport"
@@ -271,7 +272,7 @@ func TestTimelineHonestExitWhenNothingIsObservable(t *testing.T) {
 		t.Fatalf("code = %d exited=%v, want %d true\n%s", code, exited, ExitTimelineNothing, out)
 	}
 	wantLine(t, errOut, "nothing was observable", "no delivery ledger, no audit log")
-	wantLine(t, out, "delivery ledger (absent)", "audit log (absent)", "command registry (unreachable)")
+	wantLine(t, out, "delivery ledger (absent)", "audit log (absent)", "chat history (absent)", "command registry (unreachable)")
 }
 
 // TestTimelineDistinguishesAnOldServerFromADeadOne: a 404 means "this server
@@ -404,17 +405,23 @@ func TestTimelineIsReadOnly(t *testing.T) {
 	f.ledger(t, `{"ts":"`+f.at(-30*time.Minute)+`","event":"spooled","agent":"crew-1","msg":"m-1","role":"user"}`)
 	f.audit(t, `{"ts":"`+f.at(-31*time.Minute)+`","actor":"fp1","action":"register","agent":"crew-1"}`)
 	f.spool(t, "CHAT_MSG|m-1|user|x")
+	f.history(t, histLine("m-1", "crew-1", f.at(-30*time.Minute), "x"))
 	f.deadServer(t)
 	f.relay(t, relayctl.Health{OK: true, Server: f.server, Runtime: f.runtime}, []string{"crew-1"},
 		&relayctl.Delivery{OK: true, Enabled: true, Exists: true, Ledger: filepath.Join(f.runtime, "delivery.log")})
 
 	before := map[string][]byte{}
-	for _, name := range []string{"delivery.log", "audit.log", "crew-1.chan"} {
-		body, err := os.ReadFile(filepath.Join(f.runtime, name))
+	for _, path := range []string{
+		filepath.Join(f.runtime, "delivery.log"),
+		filepath.Join(f.runtime, "audit.log"),
+		filepath.Join(f.runtime, "crew-1.chan"),
+		filepath.Join(os.Getenv("PARLAY_STATE_HOME"), chathistory.FileName),
+	} {
+		body, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("read %s: %v", path, err)
 		}
-		before[name] = body
+		before[path] = body
 	}
 
 	_, _, _, exited := timelineRun(t, nil)
@@ -424,10 +431,10 @@ func TestTimelineIsReadOnly(t *testing.T) {
 	if !f.relaySawOnlyGets() {
 		t.Fatal("timeline sent a non-GET to the relay control socket — the relay also serves POST /register and POST /unregister, and a diagnostic must not be able to reach them")
 	}
-	for name, want := range before {
-		got, err := os.ReadFile(filepath.Join(f.runtime, name))
+	for path, want := range before {
+		got, err := os.ReadFile(path)
 		if err != nil || !bytes.Equal(got, want) {
-			t.Errorf("%s changed (err=%v)", name, err)
+			t.Errorf("%s changed (err=%v)", path, err)
 		}
 	}
 }

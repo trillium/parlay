@@ -52,7 +52,9 @@ func renderTimelineTo(w io.Writer, g timelineGather, ta timelineArgs, kept []tim
 		fmt.Fprintln(w, line)
 	}
 	fmt.Fprintln(w, "\nNothing here is a claim that a message was READ: this fleet has no read receipt anywhere, so\n"+
-		"`queued` means the line is still in the spool and says nothing more.")
+		"`queued` means the line is still in the spool and says nothing more. `recorded` is the chat server's\n"+
+		"own history, not a delivery; `unhanded` is the one verdict made from it, and only when the delivery\n"+
+		"trail can be shown to be a complete record covering that message.")
 }
 
 // shownOf phrases the count honestly: "12 shown of 340 matching" when a limit

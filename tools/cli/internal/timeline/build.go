@@ -15,9 +15,11 @@ import (
 )
 
 // Build classifies every record into an Event. Pure: same records, same
-// events, no clock and no I/O.
+// events, no clock of its own and no I/O (the one clock it uses is the caller's,
+// in Records.Handover.Now, so a verdict about "too recent to judge" is
+// reproducible in a test).
 func Build(recs Records, presence map[string]Presence) []Event {
-	events := make([]Event, 0, len(recs.Delivery)+len(recs.Audit)+len(recs.Commands))
+	events := make([]Event, 0, len(recs.Delivery)+len(recs.Audit)+len(recs.Commands)+len(recs.History))
 	live, handovers := supersessionIndex(recs.Delivery)
 
 	for i, r := range recs.Delivery {
@@ -91,8 +93,69 @@ func Build(recs Records, presence map[string]Presence) []Event {
 		events = append(events, ev)
 	}
 
+	// The server's own history: what was persisted, which is the only record
+	// that exists when the relay never touched a message. It is built last and
+	// classified against the delivery events gathered above, so a message that
+	// WAS handed over reads as Recorded pointing at the hand-over rather than
+	// as a second, competing claim.
+	handed := handedOver(recs.Delivery)
+	for _, h := range recs.History {
+		ev := Event{AtRaw: h.Ts, Source: SourceHistory, Agent: h.Channel, Msg: h.ID, Role: h.Role, From: h.From}
+		if t, ok := parseStamp(h.Ts); ok {
+			ev.At, ev.HasAt = t, true
+		}
+		ev.Outcome, ev.Detail = classifyHistory(ev, handed, recs.Handover)
+		events = append(events, ev)
+	}
+
 	orderEvents(events)
 	return events
+}
+
+// handedOver indexes every message id the delivery trail mentions, successful
+// or not: a spool-failed means the relay DID try, so the message was handed to
+// it and "nothing picked it up" would be the wrong story (that line is the
+// dropped outcome).
+func handedOver(recs []DeliveryRecord) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range recs {
+		if r.Entry.Msg != "" {
+			out[r.Entry.Agent+"\x00"+r.Entry.Msg] = true
+		}
+	}
+	return out
+}
+
+// classifyHistory decides what the server's own record can honestly claim about
+// delivery. The default is Recorded — the weak, true statement — and Unhanded
+// is only reachable when every guard in HandoverEvidence says the absence of a
+// hand-over is evidence. Each guard gets its own sentence, so an operator can
+// see WHY the fleet is not accusing the relay.
+func classifyHistory(ev Event, handed map[string]bool, he HandoverEvidence) (Outcome, string) {
+	const base = "the chat server persisted this message on this channel"
+	if handed[ev.Agent+"\x00"+ev.Msg] {
+		return OutcomeRecorded, base + "; the relay's own hand-over line for this message is in this timeline — that line, not this one, says what happened next"
+	}
+	switch {
+	case !he.Read:
+		return OutcomeRecorded, base + ". No hand-over line for it is here and NO delivery trail could be read, so whether the relay ever took it is unknown — not absent"
+	case !he.Complete:
+		return OutcomeRecorded, base + ". The delivery trail was read but " + reasonOr(he.Reason, "it is not a complete record of this window") + " — a missing hand-over line is not evidence"
+	case he.Now.IsZero():
+		return OutcomeRecorded, base + ". This reader was not told the time, so it cannot tell whether the relay has had a chance to poll it — absence is not evidence"
+	case !ev.HasAt:
+		return OutcomeRecorded, base + ". Its stamp does not parse, so it cannot be placed in time, and the relay may simply not have polled it yet — absence is not evidence"
+	case he.Grace > 0 && he.Now.Sub(ev.At) < he.Grace:
+		return OutcomeRecorded, fmt.Sprintf("%s %s ago — younger than the hand-over window (%s) the relay is allowed before silence means something, so this is not counted as unhanded",
+			base+". It was recorded", formatDuration(he.Now.Sub(ev.At)), formatDuration(he.Grace))
+	case !he.HasCoveredFrom:
+		return OutcomeRecorded, base + ". The delivery trail holds no dated line to date itself from, so it cannot be asked about this message"
+	case ev.At.Before(he.CoveredFrom):
+		return OutcomeRecorded, fmt.Sprintf("%s. The delivery trail begins at %s, AFTER this message, so it cannot say whether the relay handled it",
+			base, he.CoveredFrom.UTC().Format(time.RFC3339))
+	default:
+		return OutcomeUnhanded, base + " and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it: NOTHING picked this message up. Either no relay is enrolled for this channel, the relay polls a different chat server, or the hand-over failed without leaving a line. The message is still in the agent's history, so it can be resent"
+	}
 }
 
 // supersessionIndex finds, per (agent,msg), the index of the newest successful

@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
+	"github.com/trillium/parlay/tools/cli/internal/chathistory"
 	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/relayctl"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
@@ -54,6 +57,60 @@ func auditNote(a relayctl.Audit) sourceNote {
 	default:
 		return sourceNote{Name: "audit log", State: srcUnreadable, Path: a.Path,
 			Detail: fmt.Sprintf("could not read it (%v)", a.Err)}
+	}
+}
+
+// historyNote describes the SERVER's own history file. Three things it must never
+// let happen: an absent file reading as "no messages were ever sent", a read of
+// a DIFFERENT host's state dir reading as this server's history, and a truncated
+// tail reading as the whole file.
+func historyNote(h chathistory.Result, serverURL string) sourceNote {
+	switch h.State {
+	case chathistory.StateRead:
+		d := fmt.Sprintf("%d message record(s) read, oldest first (id/ts/channel/role only — the reader has no field for a message body)", len(h.Records))
+		if h.ChannelLess > 0 {
+			d += fmt.Sprintf(" · %d message(s) with no channel were not listed: they are not addressed to an agent", h.ChannelLess)
+		}
+		if h.Corrupt > 0 {
+			d += fmt.Sprintf(" · %d unreadable line(s) skipped", h.Corrupt)
+		}
+		if h.Truncated {
+			d += fmt.Sprintf(" · TRUNCATED: only the newest records were read (the file is %s); older messages are not in this timeline", humanBytes(h.Size))
+		}
+		if !isLocalServer(serverURL) {
+			d += fmt.Sprintf(" · WARNING this is the state dir of THIS host (%s), and the CLI targets %s — a server on another host keeps its own history there, so these records may be a different server's", config.StateHome(), serverURL)
+		}
+		return sourceNote{Name: "chat history", State: srcRead, Path: h.Path, Detail: d}
+	case chathistory.StateAbsent:
+		return sourceNote{Name: "chat history", State: srcAbsent, Path: h.Path,
+			Detail: "no history file here — either the server has never persisted a message, or it runs with a -state-dir other than " + config.StateHome() + ". Not the same as 'no message was ever sent'"}
+	default:
+		return sourceNote{Name: "chat history", State: srcUnreadable, Path: h.Path,
+			Detail: fmt.Sprintf("could not read it (%v) — the file exists and what it holds is unknown", h.Err)}
+	}
+}
+
+// isLocalServer reports whether the CLI's target is this host. Only the
+// loopback names can be decided without a resolver; anything else is treated as
+// another host, which is the safe direction (it only ever ADDS a caveat).
+func isLocalServer(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return true
+	}
+	return false
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	default:
+		return fmt.Sprintf("%d KiB", n/(1<<10))
 	}
 }
 

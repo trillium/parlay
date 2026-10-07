@@ -25,6 +25,15 @@
 //   - Absent evidence is Unknown with a reason, never a default. A spool that
 //     could not be read does not make a message "gone"; it makes its state
 //     unknowable, and that is what it says.
+//   - The server's own history is a SEPARATE source, because it answers a
+//     question the relay's trail cannot: whether the fleet ever had the
+//     message at all. A recorded message with a hand-over line is Recorded
+//     (the hand-over line, not this one, says what happened next); a recorded
+//     message with no hand-over anywhere is Unhanded — but only when the
+//     caller can prove the trail is a complete record covering that message's
+//     time. Every weaker case stays Recorded with the guard it failed, because
+//     "nothing picked it up" is an accusation and an incomplete trail cannot
+//     support it.
 //
 // # Superseded
 //
@@ -46,6 +55,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trillium/parlay/tools/cli/internal/chathistory"
 	"github.com/trillium/parlay/tools/cli/internal/relayctl"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
@@ -72,6 +82,15 @@ const (
 	OutcomeEnded Outcome = "ended"
 	// OutcomeRotated: the ledger rotated here. Everything older is gone.
 	OutcomeRotated Outcome = "rotated"
+	// OutcomeRecorded: the CHAT SERVER persisted this message on this channel.
+	// It is the server's own history, not a delivery: a recorded message can sit
+	// unhanded forever, and the relay's hand-over (if any) is a separate event.
+	OutcomeRecorded Outcome = "recorded"
+	// OutcomeUnhanded: the server recorded the message and the delivery trail —
+	// read in full, and starting before this message — holds no hand-over for
+	// it. Nothing picked it up. Only produced when absence IS evidence: see
+	// HandoverEvidence. Everything weaker stays Recorded with the reason.
+	OutcomeUnhanded Outcome = "unhanded"
 	// OutcomeUnknown: something was recorded and this reader cannot classify
 	// it (an unreadable spool, an event name from a newer relay). Always
 	// carries a reason; never invented into a healthier one.
@@ -90,8 +109,8 @@ const (
 // caller validating --outcome walks this rather than a second hand-written
 // list, so the two cannot drift.
 var Outcomes = []Outcome{
-	OutcomeQueued, OutcomeLeftSpool, OutcomeDropped, OutcomeSuperseded,
-	OutcomeEnded, OutcomeRotated, OutcomeEnrolled, OutcomeRetired,
+	OutcomeRecorded, OutcomeUnhanded, OutcomeQueued, OutcomeLeftSpool, OutcomeDropped,
+	OutcomeSuperseded, OutcomeEnded, OutcomeRotated, OutcomeEnrolled, OutcomeRetired,
 	OutcomeRefused, OutcomeCommand, OutcomeUnknown,
 }
 
@@ -113,6 +132,7 @@ const (
 	SourceDelivery Source = "delivery" // the relay's data-plane ledger
 	SourceAudit    Source = "audit"    // the relay's control-plane audit log
 	SourceCommand  Source = "command"  // the server's live-command registry
+	SourceHistory  Source = "history"  // the server's own persisted chat history
 )
 
 // Event is one thing that happened at one time.
@@ -156,4 +176,37 @@ type Records struct {
 	Delivery []DeliveryRecord
 	Audit    []relayctl.AuditEntry
 	Commands []wire.CommandInvocation
+	History  []chathistory.Record
+
+	// Handover is what the caller can prove about the DELIVERY TRAIL's coverage.
+	// It is the only thing that lets an absent hand-over for a recorded message
+	// be stated as fact rather than guessed; its zero value means "not usable",
+	// so a caller that forgets it gets no verdict instead of a false one.
+	Handover HandoverEvidence
+}
+
+// HandoverEvidence is the delivery trail's coverage, from the caller's own read.
+// Every field is a guard against a different false accusation:
+//
+//   - Read false: no trail at all (an older relay predates the ledger), so a
+//     missing hand-over says nothing.
+//   - Complete false: the trail was read but rotated or truncated, so older
+//     events are gone and a missing id is not evidence.
+//   - !HasCoveredFrom: the trail holds no timestamped line to date it from, so
+//     it cannot be asked about any particular message.
+//   - CoveredFrom: a message older than the trail's own first line predates
+//     the record — the ledger's absence of it is not evidence about it.
+//   - Grace: how long the relay is allowed before silence becomes a verdict.
+//     A message recorded two seconds ago is not "unhanded"; it has not been
+//     polled yet.
+//   - Now: the clock the caller read at. Zero disables the verdict entirely,
+//     because an age cannot be computed from a clock nobody supplied.
+type HandoverEvidence struct {
+	Read           bool
+	Complete       bool
+	Reason         string
+	HasCoveredFrom bool
+	CoveredFrom    time.Time
+	Grace          time.Duration
+	Now            time.Time
 }

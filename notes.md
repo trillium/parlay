@@ -253,7 +253,8 @@ The section above is main's onboarding account (PR #314), which landed while thi
 
 # notes.md — making parlay's runtime observable without reading its source
 
-Status: **in progress** (this file is maintained across the run; see "Left undone").
+Status: **in progress** — iterations 1–5 (see "Left undone" for what is not
+done and the PR's head state).
 
 ## What an operator can now answer that they could not before
 
@@ -450,6 +451,58 @@ belongs to the per-agent surface. Its four sources are the registry snapshot,
 the process table, the relay's control socket, and the two durable files (the
 delivery ledger, the status files).
 
+### 5. The server's half of the story (iteration 5)
+
+`parlay timeline` now also reads **the chat server's own history**
+(`$PARLAY_STATE_HOME/messages.jsonl`), off disk, so the timeline spans the whole
+life of a message: the server persisted it → the relay handed it to a spool →
+queued / left-spool / dropped. Before this, the timeline could only see what
+the relay was handed, so a message the server accepted and nothing ever
+collected appeared **nowhere at all** — silence, where the truth was "the
+server has it and nobody took it".
+
+```
+parlay timeline
+2026-10-07T06:54:59Z  3h00m ago  queued       crew-1   msg m-1 (user) from captain — still in the agent's spool — nothing in this fleet acknowledges a read, so this is queued, not delivered
+2026-10-07T06:54:59Z  3h00m ago  recorded     crew-1   msg m-1 (user) from captain — the chat server persisted this message on this channel; the relay's own hand-over line for this message is in this timeline — that line, not this one, says what happened next
+2026-10-07T07:54:59Z  2h00m ago  unhanded     crew-1   msg m-2 (user) from captain — the chat server persisted this message on this channel and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it: NOTHING picked this message up. Either no relay is enrolled for this channel, the relay polls a different chat server, or the hand-over failed without leaving a line. The message is still in the agent's history, so it can be resent
+
+  shown: recorded=1 · unhanded=1 · queued=1
+```
+
+`--outcome unhanded` is now the 2am query for "what did we lose", and it is a
+guarded claim rather than a guess. `unhanded` is only produced when a missing
+hand-over line is *evidence*, which needs all of: a delivery trail that was
+read, unrotated and untruncated; a message newer than the trail's own first
+line; a message older than the relay's poll window (90s ≈ two of its 45s
+long-polls); and a parseable stamp. Every weaker case stays `recorded` and names
+the guard that stopped it — because the ledger is a **young record**, and on a
+fleet whose relay predates it, absence of a hand-over is absence of a *record*.
+That false accusation is the one failure mode this design is built around; the
+old-relay, rotated and too-recent cases are all pinned by tests.
+
+The reader is a **file** reader for the same reason the relay's trails are: at
+2am the server is very often the thing that is dead, and `GET
+/api/chat/history` cannot be asked of a dead process. It decodes five
+identifiers — id, ts, channel, role, from — and has **no struct field for a
+message body**, so a body cannot be carried into the timeline, a log, or a new
+store by accident; a test pins the field list itself, not just this run's
+output. Truncation (an 8 MiB tail, or a 2000-record cap) is reported in the
+sources block, and a read of *this host's* state dir while the CLI targets
+another host carries the "these records may be a different server's" caveat.
+
+Questions it answers that previously required reading code or guessing:
+
+- **Was it ever picked up?** A recorded message with no hand-over line, on a
+trail that can legitimately say so, is `unhanded` — the first time this fleet
+has been able to distinguish "lost" from "recent".
+- **Is this a quiet fleet or a blind one?** `recorded` rows exist independently
+  of the relay, so a timeline with server history and no relay events is a
+  different answer from a timeline with neither.
+- **Does the file I just read even belong to this server?** The warning on a
+  remote target says which host's state dir was read and which server the CLI
+  is pointed at.
+
 ## What each new surface degrades to, and how it says so
 
 Doc-level contracts, all indexed in [`docs/README.md`](docs/README.md):
@@ -498,7 +551,13 @@ the relay is dead and the answer still has to exist:
 | List truncated by `--limit` | `newest 2 of 5 matching event(s) (--limit 0 shows all)` — the count is of MATCHES, before the limit |
 | Unrecognised event/action name (a newer relay) | outcome `unknown`: `unrecognised delivery event "throttled" — this reader predates it; the record exists and is not classified` (an audit action likewise) |
 | Spool reconciliation past the cap | outcome `unknown`: `this trail mentions <n> agents and one timeline read reconciles at most 64 spools; narrow with --agent to get a per-message answer` |
-| Nothing observable at all (`timeline`) | stderr `parlay timeline: nothing was observable — no delivery ledger, no audit log, the relay at <sock> did not answer, and no command registry at <url>`, exit **1**; the header says `no event matched. No record answered at all, so an empty timeline means nothing was observable — see sources.` instead of a bare empty list |
+| Nothing observable at all (`timeline`) | stderr `parlay timeline: nothing was observable — no delivery ledger, no audit log, no chat history, the relay at <sock> did not answer, and no command registry at <url>`, exit **1**; the header says `no event matched. No record answered at all, so an empty timeline means nothing was observable — see sources.` instead of a bare empty list |
+| Chat history absent (`timeline`) | `chat history (absent)  no history file here — either the server has never persisted a message, or it runs with a -state-dir other than <statehome>. Not the same as 'no message was ever sent'` |
+| Chat history unreadable (`timeline`) | `chat history (unreadable)  could not read it (<err>) — the file exists and what it holds is unknown` |
+| Chat history truncated (`timeline`) | `chat history (read)  … · TRUNCATED: only the newest records were read (the file is 9.4 MiB); older messages are not in this timeline` |
+| History read of another host's state dir (`timeline`) | `… · WARNING this is the state dir of THIS host (<statehome>), and the CLI targets http://macbook:31337 — a server on another host keeps its own history there, so these records may be a different server's` |
+| A recorded message with no hand-over, on a complete trail (`timeline`) | outcome `unhanded`: `the chat server persisted this message on this channel and the relay's delivery trail — read in full, with no rotation — holds no hand-over for it: NOTHING picked this message up. … The message is still in the agent's history, so it can be resent` |
+| …on a trail that cannot prove it | outcome `recorded` with the guard: `NO delivery trail could be read, so whether the relay ever took it is unknown — not absent` (old relay) / `The delivery trail was read but it has rotated, … — a missing hand-over line is not evidence` / `The delivery trail was read but the file exceeded this reader's cap, …` / `younger than the hand-over window (1m30s) the relay is allowed before silence means something, so this is not counted as unhanded` / `The delivery trail begins at <ts>, AFTER this message` / `no dated line to date itself from` / `Its stamp does not parse` |
 
 `parlay liveness` keeps the same rule with a different set of sources — two of
 its four degraded modes are about a record that is absent rather than stale:
@@ -521,6 +580,38 @@ observable, `2` usage. An unknown flag is a hard exit, never silently ignored.
 
 ## Tests
 
+- `tools/cli/internal/chathistory/chathistory_test.go` — the server-history
+  reader: the record type has no body field (an assertion on the STRUCT, so a
+  later field addition reddens it) and no body reaches a decoded record; order
+  is oldest-first; absent is not empty and unreadable is named; a channel-less
+  message is counted but never listed (it is not addressed to an agent); junk
+  lines are skipped and counted; the record cap keeps the NEWEST and says it
+  truncated; and a >8 MiB file is tail-read with the partial line at the seek
+  boundary discarded rather than counted as corrupt.
+- `tools/cli/internal/timeline/history_test.go` — the classification of the
+  server's records against the relay's trail: recorded-plus-hand-over points at
+  the hand-over; recorded-with-no-hand-over on a complete trail is `unhanded`;
+  a table of eight guards (no evidence object, no trail, rotated, truncated, no
+  clock, too recent, trail starts later, no dated line) each stays `recorded`
+  and names itself; an unparseable stamp is never judged; a FAILED hand-over
+  counts as handed (that is the `dropped` line's story, and two contradictory
+  verdicts on one message id would be worse than either); a hand-over for
+  another agent does not clear this one; and the two new outcomes are members
+  of the closed vocabulary (while `delivered` stays out of it).
+- `tools/cli/internal/commands/timeline_history_test.go` — the same rules
+  end-to-end against private fixtures: the full three-line story with message
+  bodies present in the file and absent from the output; `--outcome unhanded`
+  selecting exactly one row; a five-second-old message staying `recorded`; an
+  old relay with no ledger producing no accusation at all (and matching
+  nothing); a rotated ledger; history absent vs unreadable; the
+  another-host warning; and both new members travelling verbatim through
+  `--json`.
+- **Tests that bite (iteration 5).** Five separate mutations each turn tests
+  red: disabling the `unhanded` verdict (2 package-`timeline` tests + 2
+  end-to-end tests, including the `--json` one), deleting the "trail is not
+  complete" guard (2 tests), keying the hand-over index by message only
+  instead of agent+message (1 test), no longer counting channel-less messages
+  (1 test), and dropping the partial-line discard at the seek boundary (1 test).
 - `tools/cli/internal/liveness/liveness_test.go` — the pure classifier, with no
   clock, files or network: an unreadable registry is `unknown` and never
   `offline`; a failed process-table probe never becomes `ghost`; the four
@@ -630,39 +721,44 @@ $ for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do
     (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... &&
              gofmt -l . | (! grep .) && CGO_ENABLED=0 go test ./...)
   done && make test-bdd
-=== tools/cli ===            33 packages: 31 ok, 2 "no test files", 0 FAIL
-      ok  github.com/trillium/parlay/tools/cli                       0.750s
-      ok  github.com/trillium/parlay/tools/cli/internal/commands    33.601s
+=== tools/cli ===            34 packages: 31 ok, 3 "no test files", 0 FAIL
+      ok  github.com/trillium/parlay/tools/cli                       0.556s
+      ok  github.com/trillium/parlay/tools/cli/internal/chathistory  0.8s
+      ok  github.com/trillium/parlay/tools/cli/internal/commands     50.248s
+      ok  github.com/trillium/parlay/tools/cli/internal/help          1.192s
       ok  github.com/trillium/parlay/tools/cli/internal/liveness     0.271s
-      ok  github.com/trillium/parlay/tools/cli/internal/timeline     …
+      ok  github.com/trillium/parlay/tools/cli/internal/timeline     1.952s
       ok  github.com/trillium/parlay/tools/cli/internal/relayctl     …
-      ok  github.com/trillium/parlay/tools/cli/internal/help         …
-      … and 25 more, every one ok
+      … and 24 more, every one ok
 === tools/relay ===          ok  github.com/trillium/parlay/tools/relay  2.888s
 === packages/go-server ===   ok  parlay/go-server/internal/{atomicfile,bus,capability,guard,
                                  handlers,linkrewrite,remoteinput,sourcecontracts,static,store}
                                  + cmd/parlay-server  (11 packages, 0 FAIL)
 === packages/spawn-profiles === ok  parlay/spawn-profiles/cmd/validate  0.276s
-$ make test-bdd
+$ make test-bdd; echo $?
 17 scenarios (17 passed) / 55 steps (55 passed)   ok internal/evalengine
  7 scenarios ( 7 passed) / 21 steps (21 passed)   ok internal/spawn
-make test-bdd exit=0    (no MODULE-FAIL line, zero build/vet/gofmt failures)
+0                    (no MODULE-FAIL line, zero build/vet/gofmt failures)
 ```
 
-`-race` on the two touched packages (`internal/liveness`, `internal/commands`) is
-green as well — CI's Go job runs `-race` by default, and the exit-path test
-helper owns its pipes so an exiting verb leaves no goroutine behind. On this box
-that needs the ICU cgo flags the beads dependency's embedded-Dolt tree wants:
+`-race` on the packages this iteration touched is green as well — CI's Go job
+runs `-race` by default, and the exit-path test helper owns its pipes so an
+exiting verb leaves no goroutine behind. On this box that needs the ICU cgo
+flags the beads dependency's embedded-Dolt tree wants:
 
 ```
 $ cd tools/cli && CGO_ENABLED=1 \
     CGO_CFLAGS=-I/opt/homebrew/opt/icu4c/include \
     CGO_CXXFLAGS=-I/opt/homebrew/opt/icu4c/include \
     CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c/lib \
-    go test -race ./internal/liveness/... ./internal/commands/...
-ok  github.com/trillium/parlay/tools/cli/internal/liveness   1.257s
-ok  github.com/trillium/parlay/tools/cli/internal/commands  35.355s
+    go test -race ./internal/chathistory/... ./internal/timeline/... ./internal/commands/...
+ok  github.com/trillium/parlay/tools/cli/internal/chathistory   2.303s
+ok  github.com/trillium/parlay/tools/cli/internal/timeline       1.476s
+ok  github.com/trillium/parlay/tools/cli/internal/commands      40.291s
 ```
+
+`-race` on the two touched packages (`internal/liveness`, `internal/commands`) is
+green as well — see the iteration-5 block above for the exact command shape.
 
 Without those flags `-race` on `tools/cli` dies at compile time in
 `github.com/dolthub/go-icu-regex/internal/icu` (`unicode/regex.h` not found),
@@ -679,22 +775,29 @@ was the same before iteration 1.
 
 This repository enforces no per-file line budget (only a 2 MiB tracked-blob
 ceiling and a docs-index gate) — the 250-line cap on every new **production**
-file is my choice. `parlay liveness` is split to stay under it:
+file is my choice. Iteration 5: `internal/chathistory/chathistory.go` (184, the
+reader and the record shape) is a new package deliberately kept small enough to
+read in one screen, because what it does NOT decode is as load-bearing as what
+it does; the timeline's classifier grew to `internal/timeline/build.go` (229)
+and its reader/notes to `commands/timeline_sources.go` (244) +
+`commands/timeline_notes.go` (141), all still inside the cap. `parlay liveness`
+is split to stay under it:
 `internal/liveness/liveness.go` (238, the vocabulary and `Classify`) +
 `classify.go` (156, the three pure steps); the verb is `commands/liveness.go`
 (180, flags, entry and ranking) + `liveness_sources.go` (207, the reads) +
 `liveness_render.go` (177, the table and notes) + `liveness_json.go` (102, the
 envelope). Earlier iterations: `internal/timeline` is
-`timeline.go` (159, types and vocabulary) + `build.go` (166, classification) +
+`timeline.go` (212, types and vocabulary) + `build.go` (229, classification) +
 `select.go` (158, narrowing and ordering); the verb is `timeline.go` (188,
-flags) + `timeline_sources.go` (177, the reads) + `timeline_notes.go` (84, the
-sentences) + `timeline_when.go` (45) + `timeline_render.go` (233); the relay
+flags) + `timeline_sources.go` (244, the reads) + `timeline_notes.go` (141, the
+sentences) + `timeline_when.go` (45) + `timeline_render.go` (235); the relay
 readers are `relayctl_trail.go` (181) + `relayctl_spool.go` (89). New **test**
 files follow the package's own existing convention instead:
 `internal/commands` test files run 216–2055 lines and
 `internal/relayctl/relayctl_test.go` ends at 220, so
-`commands/timeline_test.go` (482) and `timeline/timeline_test.go` (329) are in
-line with their neighbours.
+`commands/timeline_test.go` (489), `commands/timeline_history_test.go` (195),
+`chathistory/chathistory_test.go` (154) and `timeline/history_test.go` (196)
+are in line with their neighbours.
 
 ## Harness scratch, and one accidental commit repaired
 
@@ -711,20 +814,42 @@ on `origin/main`, so nothing of the captain's is affected.
 
 - **No new HTTP route.** Every read `explain` and `timeline` perform already
   exists (`GET /api/chat/subscribers`, `GET /api/chat/commands`, the relay
-  socket's `GET /health|/agents|/delivery`, and the relay's two trail files),
-  so `internal/guard.GuardedPaths` is untouched and no guard
-  classification/test was needed. A `GET /api/chat/timeline` would have to
-  re-implement enrollment, presence, delivery and command filtering
+  socket's `GET /health|/agents|/delivery`), or is a file the fleet already
+  writes (`{runtime}/delivery.log`, `{runtime}/audit.log`,
+  `{STATE_HOME}/messages.jsonl`), so `internal/guard.GuardedPaths` is untouched
+  and no guard classification/test was needed. A `GET /api/chat/timeline` would
+  have to re-implement enrollment, presence, delivery and command filtering
   server-side for no added truth — and, worse, could only answer while the
-  server was up, which is the opposite of what a 2am read needs.
+  server was up, which is the opposite of what a 2am read needs. The same
+  argument is why the chat history is read off disk rather than through the
+  existing `GET /api/chat/history?limit=N`, which is a route that cannot be
+  asked of a dead server.
+- **No read receipts, so still no `delivered` outcome.** Building one means the
+  monitor acknowledging what it consumed — a new wire field, a new round trip,
+  and a delivery path that now depends on an observability hop. That is the
+  regression the objective forbids, so the vocabulary stops at `queued` and the
+  server-side half stops at `recorded`/`unhanded`.
+- **No new store for message bodies.** `messages.jsonl` is read as five
+  identifiers; nothing is copied anywhere, and the reader has no field that
+  could hold a body. Retention and privacy posture are exactly the server's.
+- **The final PR.** The run's orchestrator owns commits, so the branch is pushed
+  and the PR opened from the commits already made —
+  <https://github.com/trillium/parlay/pull/313> (head
+  `gnhf/objective-make-parla-ea8605`, base `main`, **not merged**). Because each
+  iteration's work is committed after that iteration, the branch has to be
+  pushed again at the end of any later iteration for the PR head to include it;
+  the PR body says which surfaces its current head contains. At the end of
+  iteration 5 the head carried iterations 1–4 (the ledger, `explain`, `timeline`,
+  `liveness`), with iteration 5's server-history work in the next commit on the
+  branch.
 - **No `--json` on `explain`.** The machine-readable halves already exist
   (`parlay commands --json`, the subscribers snapshot, the relay's `/delivery`);
   a third schema would be another thing to keep in sync for a surface an
   operator reads by eye at 2am.
 - **No message bodies anywhere new.** The ledger stores identifiers, a role, a
-  clock and a count — never text, a path, or an error string — and `explain`
-  prints what the ledger holds plus the agent's own status line (which is
-  already durable state, not new retention).
+  clock and a count — never text, a path, or an error string — `explain` prints
+  what the ledger holds plus the agent's own status line (already durable state),
+  and the history reader decodes five identifiers with no field for a body.
 - **No dashboard/panel surface, no query language, no new store.** The
   timeline that answers the 2am question is text, and the durable records it
   reads are the ones the relay and the server already keep.
@@ -747,11 +872,12 @@ on `origin/main`, so nothing of the captain's is affected.
   round trip, and a delivery path that now depends on an observability hop).
   That is exactly the regression the objective forbids, so the vocabulary stops
   at `queued` and says why in the footer of every run.
-- **Supersession beyond message hand-over.** `superseded` here means "an earlier
-  hand-over of a message id that was handed over again later", which is what
-  the delivery trail can prove. `internal/supersession` is
-  representation-plane (records, not chat) and is deliberately not entangled
-  with it.
+- **No supersession or staleness semantics beyond what the trails prove.**
+  `superseded` here means "an earlier hand-over of a message id that was handed
+  over again later"; `unhanded` means "the server persisted it and the relay's
+  complete trail holds no hand-over". `internal/supersession` and
+  `internal/staleness` are representation-plane (records, not chat) and are
+  deliberately not entangled with either.
 - **`parlay commands` does not read the relay.** It reports only the server's
   live-command registry, so a delivery that never reached an agent is invisible
   there. `explain` bridges that for one agent and `timeline` for a window;

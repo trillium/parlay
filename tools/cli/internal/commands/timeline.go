@@ -87,7 +87,7 @@ func Timeline(argv []string) {
 
 	if !g.answered {
 		fmt.Fprintf(os.Stderr,
-			"parlay timeline: nothing was observable — no delivery ledger, no audit log, the relay at %s did not answer, and no command registry at %s\n",
+			"parlay timeline: nothing was observable — no delivery ledger, no audit log, no chat history, the relay at %s did not answer, and no command registry at %s\n",
 			relayctl.SockPath(), g.Server)
 		httpc.Exit(ExitTimelineNothing)
 	}
