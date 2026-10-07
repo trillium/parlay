@@ -38,6 +38,35 @@ func TestEvalPickerNoMatchReadsOnlyTheVerb(t *testing.T) {
 	}
 }
 
+// evalFiredNamesACommand is the rule that keeps the engine's own overloaded
+// `fired` field from being read as a command: in a picker mode it carries the
+// MODE name, because the picker bypasses command matching.
+func TestEvalFiredNamesACommand(t *testing.T) {
+	cases := []struct {
+		mode, fired string
+		want        bool
+	}{
+		{"", "submit", true},
+		{"", "clear", true},
+		{"", "", false},
+		{modeChannelSelect, modeChannelSelect, false},
+		{modeSenderSelect, modeSenderSelect, false},
+		// An engine that (hypothetically) fired a real command id from a
+		// picker stream is still reported as a command: the rule keys off
+		// the mode NAME, not off the mode being a picker.
+		{modeChannelSelect, "clear", true},
+		{modeSenderSelect, "switch-tab", true},
+		// A picker mode name in a normal eval is a command id like any
+		// other; nothing here guesses.
+		{"", modeChannelSelect, true},
+	}
+	for _, tc := range cases {
+		if got := evalFiredNamesACommand(tc.mode, tc.fired); got != tc.want {
+			t.Errorf("evalFiredNamesACommand(%q, %q) = %v, want %v", tc.mode, tc.fired, got, tc.want)
+		}
+	}
+}
+
 func TestEvalInterpretDetailsAreBounded(t *testing.T) {
 	d := evalFiredCommandDetail(strings.Repeat("é", 400), 7, strings.Repeat("c", 400))
 	if !strings.Contains(d, "v=7") {

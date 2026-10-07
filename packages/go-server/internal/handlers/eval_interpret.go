@@ -53,6 +53,12 @@ const (
 	// its own token rather than being folded into the one above.
 	reasonInterpreterResponseInvalid = "interpreter-response-invalid"
 
+	// modeChannelSelect / modeSenderSelect are the engine's two destination
+	// pickers. They are named here because they change how `fired` must be read
+	// (see evalFiredNamesACommand), not to re-implement resolution.
+	modeChannelSelect = "channel-select"
+	modeSenderSelect  = "sender-select"
+
 	// evalDetailCommandCap bounds the command id copied into a Detail. The
 	// command set can be overridden per request (`commands` on the eval body),
 	// so the id is caller-supplied and an unbounded one would make a single
@@ -88,6 +94,31 @@ func evalPickerNoMatchDetail(streamID, mode string, candidates int, candidatesKn
 		d += fmt.Sprintf(" candidates=%d", candidates)
 	}
 	return d
+}
+
+// evalPickerMode reports whether an eval request is one of the engine's two
+// destination pickers, which bypass command matching entirely.
+func evalPickerMode(mode string) bool {
+	return mode == modeChannelSelect || mode == modeSenderSelect
+}
+
+// evalFiredNamesACommand reports whether the engine's `fired` field names a
+// command the buffer matched, as opposed to the picker MODE whose resolution
+// path ran.
+//
+// The engine overloads `fired` for its two picker modes: a channel-select or
+// sender-select request bypasses command matching (evalengine.Engine.Eval) and
+// answers with `fired` set to the mode name. Reading that as a command is not a
+// cosmetic mistake — it recorded a healthy `interpreted/ok command=channel-select`
+// hop for a picker miss and, because that branch ran first, the real `no_match`
+// hop with its reason was never written at all. The view then told the operator
+// their input came back as a command named after the picker: a healthy state
+// for the one failure the picker exists to name.
+func evalFiredNamesACommand(mode, fired string) bool {
+	if fired == "" {
+		return false
+	}
+	return !(evalPickerMode(mode) && fired == mode)
 }
 
 // evalPickerNoMatch reports whether the engine's action batch says a spoken
@@ -132,7 +163,7 @@ func recordEvalOutcome(st *store.Store, streamID, mode string, candidates, versi
 	case evalWasSuperseded(env.Actions):
 		recordSuperseded(st, inputlog.NewInputID(), inputSourceEval,
 			reasonSupersededByNewerVersion, evalSupersessionDetail(streamID, version))
-	case env.Fired != "":
+	case evalFiredNamesACommand(mode, env.Fired):
 		st.Input.Record(inputlog.Event{
 			InputID: inputlog.NewInputID(),
 			Stage:   inputlog.StageInterpreted,
@@ -151,7 +182,7 @@ func recordEvalOutcome(st *store.Store, streamID, mode string, candidates, versi
 			Class:   inputlog.ClassNoMatch,
 			Source:  inputSourceEval,
 			Reason:  reason,
-			Detail:  evalPickerNoMatchDetail(streamID, mode, candidates, mode == "channel-select", version),
+			Detail:  evalPickerNoMatchDetail(streamID, mode, candidates, mode == modeChannelSelect, version),
 		})
 	}
 }

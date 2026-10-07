@@ -1885,9 +1885,10 @@ The sections above are main's onboarding account (PR #314) and runtime-observabi
 # Input-seam observability — working notes
 
 Status: both doors are instrumented end to end, the confidence hold is real,
-all six named failure classes have a real producer, and the live view can no
-longer show a gap without naming it. This file records what the tooling can and
-cannot tell the operator **right now**.
+all six named failure classes have a real producer, the live view can no longer
+show a gap without naming it, and the eval door's outcomes have been audited
+against the real compiled engine rather than a stub. This file records what the
+tooling can and cannot tell the operator **right now**.
 
 ## What the operator can now tell apart
 
@@ -2358,7 +2359,139 @@ the diff. They pin `TALON_REPL_PATH` away from the live REPL, pin
 temp state dir; nothing is typed or focused on this machine and the live fleet
 state is never touched.
 
+## Demonstration against the REAL engine (this iteration)
+
+Sixteen injections against an isolated server whose eval door points at the
+**real compiled engine** (`parlay eval serve`, `PARLAY_EVAL_ENGINE_URL`), no
+stub anywhere: the recogniser error, the low-confidence hold, the dictation
+no-match, two refusals, a delivered message, an unpicked one, two real fired
+commands (`submit` from `send it`, `next-tab` from `next tab`), two picker
+misses, a picker that resolved, a real `stale-request-version` supersession, the
+door's own `missing-device` refusal, and the interpreter stopped dead. The
+isolated server ran with `HOME`, `PARLAY_STATE_HOME`, `PARLAY_AGENT_HOME`,
+`PAI_DIR` and `TALON_REPL_PATH` all redirected into a temp sandbox.
+
+The view over that ledger (`parlay input --limit 60 --stale-after 4`):
+
+```
+INPUT SEAM — 15 input(s) from the last 60 retained hop(s)
+ledger: 20 retained, 20 written, 0 dropped, 0 rejected, 0 queued, newest seq 20
+threshold: hold below confidence 0.80 (server PARLAY_INPUT_MIN_CONFIDENCE); a hold needs a reported confidence — unreported input is never held
+STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  WHY
+refused          in-1791369791104608000-15   eval         -          1.0s      —        interpreter-unreachable
+refused          in-1791369790070075000-14   eval         -          2.1s      —        missing-device
+superseded       in-1791369790063625000-13   eval         -          2.1s      —        superseded-by-newer-version
+command          in-1791369790054371000-12   eval         -          2.1s      —        next-tab
+no match         in-1791369790039934000-11   eval         -          2.1s      —        sender-not-matched
+no match         in-1791369790032291000-10   eval         -          2.1s      —        channel-not-matched
+command          in-1791369790024766000-09   eval         -          2.1s      —        next-tab
+command          in-1791369790016774000-08   eval         -          2.1s      —        submit
+delivered        m1                          poll-backlog c0         2.1s      +7ms     —
+queued           m0                          send         nobody     2.2s      —        —
+delivered        ri-3                        remote-input -          2.2s      +0ms     —
+refused          in-1791369789980246000-04   remote-input -          2.2s      —        missing-device
+no match         ri-2                        remote-input -          2.2s      —        target-not-matched
+held             ri-1                        remote-input -          2.2s      —        confidence 0.25 below threshold 0.80
+recogniser error in-1791369789958418000-01   remote-input -          2.2s      —        empty-transcript
+
+Confidence: reported for 1 of 15 input(s) in this window.
+```
+
+(The legend and confidence note follow the table exactly as always; sixteen
+injections produced fifteen inputs because the picker that resolved is
+deliberately not a failure and records nothing.)
+
+Both picker misses, replayed from the durable ledger — the two rows the real
+engine's overloaded `fired` field had been hiding:
+
+```
+==================== parlay input --input in-1791369790032291000-10 ====================
+REPLAY in-1791369790032291000-10 — 1 hop(s)
+
+  #1 —       2026-10-07T03:43:10.032  routed      no_match           source=eval          channel=- why=channel-not-matched detail=stream=eval-phone-1-picker v=1 mode=channel-select candidates=3
+
+Outcome: NO MATCH — channel-not-matched
+
+==================== parlay input --input in-1791369790039934000-11 ====================
+REPLAY in-1791369790039934000-11 — 1 hop(s)
+
+  #1 —       2026-10-07T03:43:10.039  routed      no_match           source=eval          channel=- why=sender-not-matched detail=stream=eval-phone-1-sender v=1 mode=sender-select
+
+Outcome: NO MATCH — sender-not-matched
+```
+
+And the message nobody picked up: in the view above it is still `queued` (it
+was two seconds old, inside the stale window), and once it ages past that
+window the same row states the failure and its age —
+
+```
+queued (unpicked) m0                          send         nobody     15.4s     —        no listener picked it up in 15.4s
+```
+
+— and the replay off the durable ledger answers "was it ever delivered?" with
+one hop and no listener:
+
+```
+==================== parlay input --input m0 ====================
+REPLAY m0 — 1 hop(s)
+
+  #1 —       2026-10-07T03:43:09.995  queued      ok                 source=send          channel=nobody
+
+Outcome: QUEUED (UNPICKED) — no listener picked it up in 20.3s
+```
+
+The live tail over the same ledger joined at the live edge and printed the next
+hop as it arrived (`JOINED at the live edge (seq 20)`, then a `m2  queued  ok
+send` row), and a replay of an id the ledger does not hold says so rather than
+printing an empty success.
+
+The stub-engine demonstration from the previous iteration is the section above;
+it is kept because it is where the six-class paste lives.
+
 ## What running it caught
+
+### The real-engine audit (this iteration)
+
+Every previous demonstration drove the eval door through a **hand-written stub
+engine**. This iteration ran the same injections against the **real compiled
+engine** (`parlay eval serve`, the same binary the deployment runs), and the
+stub's convenience turned out to be hiding a production bug:
+
+- **A picker miss rendered as a healthy command.** The engine overloads `fired`
+  in its two picker modes: a `channel-select` / `sender-select` request bypasses
+  command matching and answers with `fired` set to the **mode name** — the
+  resolution path that ran, not a command that matched (`evalengine/engine.go`).
+  The relay's precedence read any non-empty `fired` as "what the input became",
+  so **every spoken destination that matched nothing** was recorded as
+  `interpreted` / `ok` / `command=channel-select`, and because that branch ran
+  first the real `no_match` hop — with `channel-not-matched` /
+  `sender-not-matched` and the candidate count — was **never written at all**.
+  The view told the operator their input had come back as a command named after
+  the picker: a healthy state for the one failure the picker exists to name, and
+  a direct violation of "does not report a healthy state for any of them".
+  Fixed by `evalFiredNamesACommand(mode, fired)`, which refuses to read `fired`
+  as a command when it is the mode the request asked for; the picker's own
+  verdict then decides the miss. A picker that DID resolve still records
+  nothing, because the panel switches tab visibly.
+- **Why the tests could not see it.** The stub that stood in for the engine
+  answered picker misses with `fired` absent, because that is what a
+  hand-written answer naturally looks like — and the one test that did put a
+  `fired` value on a picker response asserted the *wrong* semantics
+  (`"clear"` on a `channel-select` request, a combination the engine cannot
+  produce). The regression is now pinned with the engine's real shape:
+  `TestEvalOutcomePrecedence`, `TestResolvedPickerRecordsNothing`,
+  `TestEvalFiredNamesACommand`, and the picker stubs in
+  `TestPickerNoMatchIsRecordedForEachPicker` all carry `fired` = the mode name.
+- **What the same audit confirmed good.** Against the real engine, all fifteen
+  other injections render as distinct, honest states: `recogniser error`,
+  `held` (with the threshold), `no match` (dictation target), `refused`
+  (`missing-device` and `interpreter-unreachable`), `delivered` (with its
+  measured hop latency), `queued (unpicked)` for the message nobody polled,
+  `command` for two different real commands (`submit`, `next-tab`), `superseded`
+  from a real `stale-request-version` verdict, and nothing at all for the
+  picker that resolved.
+
+### Earlier iterations
 
 - **A truncated id made two classes unreplayable** (iteration 3). Refusals and
   recogniser errors are keyed by a server-minted `in-…` id that appears on no
@@ -2437,32 +2570,38 @@ this iteration after every edit, is green:
 ```
 ########## 0. the literal stop condition, at the repo root ##########
 pattern ./...: directory prefix . does not contain main module or its selected dependencies
-literal-stop-condition-exit=1
+go-build-exit=1     <- pre-existing and structural: no root go.mod, so the chain stops here
 
-########## 1. gofmt -l . ##########
-gofmt-exit=0                       <- and nothing listed above it; the GATE form is `gofmt -l . | (! grep .)`
+########## 1. gofmt -l . (the GATE form: `gofmt -l . | (! grep .)`) ##########
+gofmt: clean (exit 0)
 
 ########## 2. per-module build / vet / test (CI's GO_MODULES) ##########
----- tools/cli ----
-tools/cli exit=0 ok-packages=27 fail-lines=0
----- tools/relay ----
-tools/relay exit=0 ok-packages=1 fail-lines=0
----- packages/go-server ----
-packages/go-server exit=0 ok-packages=12 fail-lines=0
----- packages/spawn-profiles ----
-packages/spawn-profiles exit=0 ok-packages=1 fail-lines=0
+----- tools/cli -----
+?   	github.com/trillium/parlay/tools/cli/internal/testsupport	[no test files]
+ok  	github.com/trillium/parlay/tools/cli/internal/wire	(cached)
+ok  	github.com/trillium/parlay/tools/cli/internal/worktreeliveness	(cached)
+mod-exit=0
+----- tools/relay -----
+ok  	github.com/trillium/parlay/tools/relay	(cached)
+mod-exit=0
+----- packages/go-server -----
+ok  	parlay/go-server/internal/sourcecontracts	(cached)
+ok  	parlay/go-server/internal/static	(cached)
+ok  	parlay/go-server/internal/store	1.198s
+mod-exit=0
+----- packages/spawn-profiles -----
+ok  	parlay/spawn-profiles/cmd/validate	(cached)
+mod-exit=0
 
-########## 3. -race on the packages this work touches (go-server) ##########
-ok  parlay/go-server/internal/inputlog   4.364s
-ok  parlay/go-server/internal/handlers   16.827s
-race-exit=0
+########## 3. -race on the packages this change touches (go-server) ##########
+ok  	parlay/go-server/internal/handlers	16.885s
+ok  	parlay/go-server/internal/inputlog	4.374s
 
 ########## 4. make test-bdd ##########
-PASS
-7 scenarios (7 passed)
 21 steps (21 passed)
+PASS
+ok  	github.com/trillium/parlay/tools/cli/internal/spawn	(cached)
 make-test-bdd-exit=0
-verify-outer-exit=0
 ```
 
 There is no known-red BDD baseline on this box: `make test-bdd` is green at
@@ -2557,14 +2696,13 @@ go-server only.
 ## Left undone
 
 - **The branch lags the working tree by one commit.** PR
-  [#312](https://github.com/trillium/parlay/pull/312) is open against `main`;
-  `gnhf/objective-give-the-o-ad0a88` was pushed as far as iteration 5's head this
-  iteration, so this iteration's changes (the eval door's fired-command and
-  picker-miss producers, the `command` state, the docs) reach it on **the next
-  push of that branch**. Nothing blocks that: re-push before anything else next
-  iteration. The PR has never had a real CodeRabbit review — the repository is
-  under 10 stars, so the bot posts a "skip review" summary unless a comment
-  asks it with `@coderabbitai review`, which the next iteration should spend.
+  [#312](https://github.com/trillium/parlay/pull/312) is open against `main`.
+  This iteration pushed `gnhf/objective-give-the-o-ad0a88` as far as iteration 6's
+  head, so this iteration's changes (the picker-mode `fired` fix, its
+  regression tests, the docs) reach the PR on **the next push of that branch**;
+  nothing blocks that. The PR has still never had a real CodeRabbit review — the
+  repository is under 10 stars, so the bot posts a "skip review" summary unless
+  a comment asks it with `@coderabbitai review`, which is worth spending.
 - **No upstream surface reports a recogniser confidence**, so the hold is
   enforced and visible but nothing in this repo can trigger it end to end except
   a test or a caller that sends `confidence`. The view says `not reported`
@@ -2582,6 +2720,11 @@ go-server only.
   cannot join "what I said" to "the message it became" without a heuristic on
   text and time — which would be a guess dressed as a record. Naming that gap is
   the honest thing to do with it.
+- **The eval door's stubs still stand in for the engine in most tests.** This
+  iteration's defect existed precisely because a hand-written engine answer is
+  not the engine's answer; the new-format picker stubs carry the real `fired`
+  value now, but any future producer read out of the engine's envelope is worth
+  one injection against `parlay eval serve` before it is trusted.
 - The stop condition literally configured for this run cannot exit zero here:
   there is no root `go.mod`, and (now verified) no workspace arrangement fixes
   that. The per-module equivalent above is green.
@@ -2591,17 +2734,21 @@ go-server only.
 This repository enforces no per-file line budget (CI gates are conflict markers,
 a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and docs-index completeness —
 `.github/workflows/ci.yml`). Following the objective, every **new** file this
-branch adds is under 250 lines — this iteration's `eval_interpret.go` (157),
-`eval_interpret_test.go` (219), `eval_interpret_unit_test.go` (56),
-`eval_door_failure_test.go` (76) and `input_command_test.go` (121), plus earlier
+branch adds is under 250 lines — this iteration's
+`eval_interpret_precedence_test.go` (126), and the previous ones
+`eval_interpret.go` (157 → 188 with the picker-mode rule and its comment),
+`eval_interpret_test.go` (219 → 184 after the precedence tests moved out),
+`eval_interpret_unit_test.go` (56 → 85), `eval_door_failure_test.go` (76) and
+`input_command_test.go` (121), plus earlier
 `input_watch.go` (234), `read_after_test.go` (144), `input_watch_test.go` (135),
 `input_events_cursor_test.go` (80), `eval_supersede.go` (82),
 `eval_supersede_test.go` (222), `inputlog/vocabulary.go` (105) and
 `input_threshold.go` (45) — and the ceiling was chosen by this branch, not by the
 repository: 250 lines is small enough that a file has one subject and large
 enough that a real subject fits. The largest file this iteration was split when
-it crossed the line (`eval_interpret_test.go` was 286 before the door-failure
-tests moved out), which is the ceiling doing its job.
+it crossed the line (`eval_interpret_test.go` reached 252 with the new
+regression tests, so the precedence and resolved-picker tests moved into
+`eval_interpret_precedence_test.go`), which is the ceiling doing its job.
 
 The edited files above 250 lines are pre-existing ones this branch only adds to:
 `handlers/eval.go` (380, the eval door itself) and `inputlog/log.go`

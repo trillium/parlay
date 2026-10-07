@@ -155,6 +155,18 @@ and a row that stopped there must not read as an input that went nowhere, so
 the derivation names it before it falls through to "stopped after
 interpreted".
 
+**`fired` is overloaded, and that overload is a trap.** In the two picker modes
+the engine bypasses command matching entirely and answers with `fired` set to
+the *mode name* — the resolution path that ran, not a command that matched
+(`evalengine/engine.go`, the `channel-select` / `sender-select` returns). Read
+as a command, that produced a healthy-looking `interpreted` / `ok` row
+(`command=channel-select`) for every picker miss and, because that branch ran
+first, meant the real `no_match` hop and its reason were never written at all:
+the view told the operator their input had come back as a command named after
+the picker. So the relay names a command only when `fired` is not the mode the
+request asked for (`evalFiredNamesACommand`), and the picker's own branch below
+decides the miss.
+
 ### A destination that matched nothing
 
 `channel-select` and `sender-select` modes bypass command matching and resolve
@@ -177,7 +189,10 @@ string contains what the operator said.
 
 One verdict per eval is recorded, with explicit precedence: a superseded
 snapshot (the engine never interpreted it) beats a fired command, which beats a
-picker miss, which beats nothing.
+picker miss, which beats nothing. A picker mode never reaches the command
+branch, because there `fired` is the mode rather than a command (above); a
+picker that DID resolve records nothing, because the panel switches tab
+visibly, so it is not a silent failure.
 
 ## The dictation door, and the hold
 

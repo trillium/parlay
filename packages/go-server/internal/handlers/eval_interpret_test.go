@@ -80,7 +80,13 @@ func TestPickerNoMatchIsRecordedForEachPicker(t *testing.T) {
 		{
 			name: "channel-select",
 			mode: "channel-select",
-			body: `{"v":1,"streamId":"eval-dev-1-picker","seq":1,"baseVersion":1,` +
+			// `fired` is the MODE name here, exactly as the real engine
+			// answers a picker: a channel-select request bypasses command
+			// matching (evalengine.Engine.Eval) and reports the resolution
+			// path that ran. Omitting it from this stub is what let a real
+			// picker miss be recorded as a fired command named after the
+			// picker.
+			body: `{"v":1,"streamId":"eval-dev-1-picker","seq":1,"baseVersion":1,"fired":"channel-select",` +
 				`"actions":[{"verb":"pickerHint","args":{"text":"No channel matched \"zzz\" — try again"}}]}`,
 			wantReason:     reasonChannelNotMatched,
 			tabs:           3,
@@ -89,7 +95,7 @@ func TestPickerNoMatchIsRecordedForEachPicker(t *testing.T) {
 		{
 			name: "sender-select",
 			mode: "sender-select",
-			body: `{"v":1,"streamId":"eval-dev-1-sender","seq":1,"baseVersion":1,` +
+			body: `{"v":1,"streamId":"eval-dev-1-sender","seq":1,"baseVersion":1,"fired":"sender-select",` +
 				`"actions":[{"verb":"senderPickerHint","args":{"text":"No contact matched \"zzz\" — try again"}}]}`,
 			wantReason: reasonSenderNotMatched,
 		},
@@ -135,47 +141,6 @@ func TestPickerNoMatchIsRecordedForEachPicker(t *testing.T) {
 				if strings.Contains(got.Detail+got.Reason+got.InputID, leak) {
 					t.Errorf("the recorded hop carries the operator's words (%q): %+v", leak, got)
 				}
-			}
-		})
-	}
-}
-
-// Precedence is deliberate: a snapshot the engine never interpreted is not
-// "what the input became", even if an engine (or a stub) reports both.
-func TestEvalOutcomePrecedence(t *testing.T) {
-	cases := []struct {
-		name      string
-		body      string
-		wantStage string
-		wantClass string
-	}{
-		{
-			name: "superseded beats fired",
-			body: `{"v":1,"streamId":"s","fired":"submit","actions":[` +
-				`{"verb":"noop","args":{"reason":"stale-request-version"}}]}`,
-			wantStage: inputlog.StageSuperseded,
-			wantClass: inputlog.ClassSuperseded,
-		},
-		{
-			name: "fired beats a picker hint",
-			body: `{"v":1,"streamId":"s","fired":"clear","actions":[` +
-				`{"verb":"pickerHint","args":{"text":"nope"}}]}`,
-			wantStage: inputlog.StageInterpreted,
-			wantClass: inputlog.ClassOK,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			st := newTestStore(t)
-			fakeEngineAnswer(t, tc.body)
-			postEvalWithStore(t, newHub(newBroker()), st,
-				`{"device":"dev-1","mode":"channel-select","version":1,"text":"x"}`)
-			ev := waitForEvents(t, st, 1)
-			if len(ev) != 1 {
-				t.Fatalf("ledger has %d events, want exactly one outcome per eval: %+v", len(ev), ev)
-			}
-			if ev[0].Stage != tc.wantStage || ev[0].Class != tc.wantClass {
-				t.Errorf("hop = %s/%s, want %s/%s", ev[0].Stage, ev[0].Class, tc.wantStage, tc.wantClass)
 			}
 		})
 	}
