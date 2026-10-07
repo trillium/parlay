@@ -156,6 +156,14 @@ foreground. **If it fails**, a port somebody already holds exits immediately wit
 `listen failed: listen tcp 127.0.0.1:4242: bind: address already in use`: run step 0,
 which says whether something is already there and whether it is parlay.
 
+The `assets:` value on that boot line is decided **once, when the server starts**: with
+no `-assets-dir` it walks up from its own directory and then from the directory you
+started it in looking for a checkout's `packages/client/dist`, and falls back to a bare
+`dist` when there is none. On a fresh clone there is none — the bundle is gitignored —
+so this process serves `503` on `/` for the rest of its life *even after* step 5 builds
+the bundle, and step 5 tells you to restart it. Start the server again after building,
+or build the panel first, and it finds the bundle itself.
+
 It persists state under `$PARLAY_STATE_HOME` (default `~/.parlay`) — messages/agents/
 drafts/settings/uploads live there. To keep a dev run's *server store* out of a live
 install:
@@ -297,19 +305,24 @@ whatever the existing relay is already polling.
 cd packages/client && bun run build      # writes dist/index.html + dist/parlay-agent.js
 ```
 
-Then open <http://localhost:4242/>. The server found the bundle by itself: it
-resolves `packages/client/dist` from its own install location first and from the
-directory you started it in second, so the command in step 2 works unchanged. If
-your bundle lives somewhere else, pass `-assets-dir <path>` or export
-`PARLAY_ASSETS_DIR`.
+Then open <http://localhost:4242/>. **The server from step 2 cannot see this build**
+until it restarts: it resolved its assets directory at startup, when there was nothing
+to find, so it is still serving the `dist` fallback and answers `503`. Ctrl-C that
+server and run step 2 again — it walks up from the directory you started it in, finds
+`packages/client/dist` on its own, and needs no flag. (Building before step 2 works too,
+and so does `-assets-dir <path>`, which is resolved from the directory you start the
+server in — give it an absolute path if you are the `cd packages/go-server` shell.)
 
-Until you build it, `GET /` answers `503` with those instructions on its body —
-every `/api/chat/*` route works regardless, and none of the CLI in step 4 ever
+Until a server can see a bundle, `GET /` answers `503` with those instructions on its
+body — every `/api/chat/*` route works regardless, and none of the CLI in step 4 ever
 needed the panel. The bundle is gitignored, so this is a once-per-clone build.
-**Success looks like** the panel loading with the `demo` tab from step 4. **If it
-fails**, `curl -sS -i http://localhost:4242/` says which half is missing: `503` with
-the `bun run build` line means the bundle is not built, `404` means the assets
-directory the server was pointed at has no `index.html`.
+**Success looks like** the panel loading with the `demo` tab from step 4 — no browser
+needed to check the half that was just broken:
+`curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:4242/` prints `200`. **If it
+fails**, `curl -sS -i http://localhost:4242/` says which half is missing: `503` with the
+`bun run build` line means the server cannot see a bundle — it was never built, or it was
+built *after* that server started, so restart it; `404` means the assets directory the
+server was pointed at has no `index.html`.
 
 `/fleet/` is a *different* app (`packages/webview`, React) served from
 `<assets-dir>/fleet`; `packages/go-server/deploy/install.sh --build` builds and

@@ -1,15 +1,8 @@
 # Traps, in the order they will bite you
 
-[`AGENTS.md`](../AGENTS.md) records this repository's incidents in the order they
-happened — right to maintain, wrong to meet. This file is the same knowledge in the order
-you will meet it. **Nothing here is new:** each trap is one line — what it is, and when it
-bites — linking the note under [`agent-notes/`](agent-notes/) that owns the rationale (the
-link says so where that rationale lives in a longer document instead).
+[`AGENTS.md`](../AGENTS.md) records this repository's incidents in the order they happened — right to maintain, wrong to meet. This file is the same knowledge in the order you will meet it. **Nothing here is new:** each trap is one line — what it is, and when it bites — linking the note under [`agent-notes/`](agent-notes/) that owns the rationale (the link says so where that rationale lives in a longer document instead).
 
-Read the stage you are in. [`../README.md`](../README.md) is the command-by-command path
-this ordering hangs off, `./bin/parlay-preflight` is its step 0 and the command to re-run
-when a machine misbehaves, and [`../VISION.md`](../VISION.md) with
-[`../VISION-answers.md`](../VISION-answers.md) say what parlay *is*.
+Read the stage you are in. [`../README.md`](../README.md) is the command-by-command path this ordering hangs off, `./bin/parlay-preflight` is its step 0 and the command to re-run when a machine misbehaves, and [`../VISION.md`](../VISION.md) with [`../VISION-answers.md`](../VISION-answers.md) say what parlay *is*.
 
 ## 1. Before you have run anything
 
@@ -36,6 +29,9 @@ history and reply path work without touching your own state; its `LIMITS` line n
   port or pid. And it reads and writes `~/.parlay` by default
   (history, registry, drafts, settings, uploads), so a second server without `-state-dir`/`PARLAY_STATE_HOME`
   collides with a live install. → [the server process](agent-notes/packages-server-is-a-standalone-bun.md)
+- **The panel bundle is resolved once, at server start.** A server started before `packages/client/dist` exists
+  keeps the bare `dist` fallback and answers `503` on `/` for the rest of its life — after the build, restart it. →
+  [assets resolve once](agent-notes/assets-resolve-once-at-server-start.md)
 
 ## 3. An agent that actually receives what you sent
 
