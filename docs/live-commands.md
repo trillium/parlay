@@ -255,15 +255,26 @@ mitigation below is about bounding damage rather than establishing identity.
 
 - **Nothing existing was modified.** Every route above is new, and no existing
   response shape changed.
-- **The three mutating routes require `POST` + `Content-Type:
-  application/json`** (415 otherwise). A cross-origin CORS *simple* request can
-  only send `text/plain`, `form-urlencoded`, or `multipart`; anything else must
-  preflight, and this server answers no preflight. That is the same mechanism
-  `packages/go-server/internal/guard/guard.go` uses for the Go server's
-  mutating chat
-  routes. It is CSRF-shaped, not authentication: a local process can still
-  report whatever it likes, which bounds forgery to "something already running
-  on this machine" — the thing the view claims to describe anyway.
+- **The three mutating routes are inside the origin guard**
+  (`/api/chat/command-start`, `-heartbeat`, `-end` are in
+  `internal/guard.GuardedPaths`), so a request carrying a foreign `Origin` is
+  **403** before the handler runs, and a guarded `POST` must carry
+  `Content-Type: application/json` or it is **415**. Requiring JSON is what
+  forces a CORS preflight, since a cross-origin *simple* request can only send
+  `text/plain`, `form-urlencoded`, or `multipart`.
+
+  **Corrected 2026-10-05 (gnhf):** these routes originally shipped *outside*
+  the guard, carrying a hand-rolled copy of the content-type gate in the
+  handler on a comment asserting this server had no guard at all. The gate is
+  real but it is not a boundary — a forged cross-origin POST with a JSON
+  content type was accepted and wrote a registry row (reproduced against a
+  running server before the fix; 403 after). They are now guarded, and
+  `TestEveryRegisteredRouteIsGuardedOrExplained` parses `internal/handlers`
+  for every registered path and fails the build on one that is neither guarded
+  nor explained in `TestUnguardedRoutes`. It is CSRF-shaped, not
+  authentication: a local process can still report whatever it likes, which
+  bounds forgery to "something already running on this machine" — the thing the
+  view claims to describe anyway.
 - **The read endpoint stays world-readable**, matching `/api/chat/agents`. What
   it exposes is verbs, agent ids, and pids — no argv, no paths, no message
   text.
