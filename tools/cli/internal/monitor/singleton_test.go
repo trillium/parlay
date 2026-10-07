@@ -5,6 +5,9 @@ package monitor
 
 import (
 	"errors"
+	"io"
+	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -69,6 +72,96 @@ func TestListensForAgentIgnoresNonParlayProcesses(t *testing.T) {
 	for _, args := range cases {
 		if listensForAgent(args, "mayor") {
 			t.Errorf("%q must NOT be treated as a listener process", args)
+		}
+	}
+}
+
+// Verified 2026-10-05 by reproduction: `parlay listen` reaped the shell that
+// launched it. The guard used to accept a line when the subcommand token was
+// merely PRECEDED by a parlay binary name, which every wrapper satisfies —
+// and selectDuplicateListeners' ancestor walk cannot save it, because once an
+// intermediate ancestor has exited (the `( ... & )` subshell below) the
+// process is reparented and its real ancestors are gone from the ppid map.
+//
+// The rule that excludes them is argv[0]: only a process that IS a parlay
+// binary can be a listener.
+func TestListensForAgentNeverMatchesAShellWrapperContainingTheInvocation(t *testing.T) {
+	cases := []struct {
+		name string
+		args string
+	}{
+		{
+			// The exact shape that reproduced the kill: the outer shell's argv
+			// is this whole string, and the token before "listen" is the real
+			// binary path, so the old preceded-by rule matched it.
+			"bash -c with the invocation inline",
+			"/bin/bash -c 'cd /tmp && export X=1 && ( /path/to/parlay-cli listen --agent demo --legacy-poll > /tmp/l.log 2>&1 & )'",
+		},
+		{
+			"sh -c wrapping the invocation",
+			"/bin/sh -c /path/to/bin/parlay listen --agent mayor",
+		},
+		{
+			"a shell running a script that arms it",
+			"/bin/bash /Users/dev/scripts/arm-the-mayor.sh listen --agent mayor",
+		},
+		{
+			"herdr / tmux, which hand a full command string to the pane shell",
+			"/opt/homebrew/bin/tmux send-keys -t 3 'parlay-cli listen --agent mayor' Enter",
+		},
+		{
+			"an unrelated binary invoked with those words as arguments",
+			"/usr/bin/env parlay-cli listen --agent mayor",
+		},
+	}
+	for _, tc := range cases {
+		if got := listenerAgent(tc.args); got != "" {
+			t.Errorf("%s: listenerAgent(%q) = %q, want \"\" — a wrapper is not a listener and\nkilling it takes the caller's own shell down with it", tc.name, tc.args, got)
+		}
+		if listensForAgent(tc.args, "mayor") || listensForAgent(tc.args, "demo") {
+			t.Errorf("%s: %q must not be reaped as a duplicate listener", tc.name, tc.args)
+		}
+	}
+}
+
+// The end-to-end consequence at the process boundary: a wrapper sitting in the
+// table alongside one real duplicate must produce a signal for the duplicate
+// ONLY. Before the argv[0] rule this test fails with the wrapper signalled
+// alongside it.
+func TestReapDuplicateListenersNeverSignalsTheShellThatLaunchedIt(t *testing.T) {
+	launcher := 700 // the `bash -c '... parlay-cli listen --agent mayor ...'` that ran us
+	stubProcessTable(t, []procEntry{
+		{pid: 1, ppid: 0, args: "/sbin/launchd"},
+		{pid: launcher, ppid: 1, args: "/bin/bash -c ( /usr/local/bin/parlay-cli listen --agent mayor )"},
+		{pid: 601, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent mayor"},
+	}, nil)
+	rec := recordSignals(t, map[int]bool{601: true})
+
+	reapDuplicateListeners("mayor")
+
+	if len(rec.sigsTo(launcher)) != 0 {
+		t.Errorf("the launching shell (pid %d) was signalled; a `parlay listen` must never\ntake down the shell that started it", launcher)
+	}
+	if len(rec.sigsTo(601)) == 0 {
+		t.Error("the real duplicate listener (pid 601) was not reaped")
+	}
+}
+
+// argv[0] is the whole rule; a later relaxation that lets a wrapper through
+// is exactly the regression above. Asserted against a live process table so
+// the guard cannot be quietly widened back.
+func TestListenerDetectionIsAnchoredOnArgvZero(t *testing.T) {
+	if listenerAgent("parlay-cli listen --agent mayor") != "mayor" {
+		t.Error("a bare parlay binary name as argv[0] must still be recognised")
+	}
+	for _, args := range []string{
+		"",
+		"parlay --agent mayor",
+		"listen --agent mayor",
+		"  ",
+	} {
+		if got := listenerAgent(args); got != "" {
+			t.Errorf("listenerAgent(%q) = %q, want \"\"", args, got)
 		}
 	}
 }
@@ -513,5 +606,44 @@ func TestListenerAgentReturnsTheIdItIsPolling(t *testing.T) {
 		if got := listenerAgent(tc.args); got != tc.want {
 			t.Errorf("listenerAgent(%q) = %q, want %q", tc.args, got, tc.want)
 		}
+	}
+}
+
+// The takeover announcement is the only thing an operator sees at the moment a
+// listener dies, and the match is host-wide by agent ID: verified 2026-10-05
+// that two instances on different servers evict each other's listener for a
+// colliding id. The message therefore has to carry that scope and the opt-out
+// itself — "this channel keeps exactly one" reads as per-instance and is the
+// wording that let the cross-instance case look impossible.
+func TestReapAnnouncementNamesTheHostWideScopeAndTheOptOut(t *testing.T) {
+	stubProcessTable(t, []procEntry{
+		{pid: 601, ppid: 1, args: "/usr/local/bin/parlay-cli listen --agent mayor"},
+	}, nil)
+	recordSignals(t, map[int]bool{601: true})
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	reapDuplicateListeners("mayor")
+	os.Stderr = orig
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := string(got)
+
+	for _, want := range []string{"HOST-WIDE", "any server", "PARLAY_LISTEN_NO_SINGLETON=1"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("reap announcement does not mention %q; an operator whose OTHER instance just lost its\nlistener reads only this line, and needs to learn the scope and the escape hatch there:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "keeps exactly one\n") {
+		t.Errorf("reap announcement still scopes the takeover to a channel: %q", msg)
 	}
 }

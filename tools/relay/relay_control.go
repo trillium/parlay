@@ -17,8 +17,24 @@ import (
 func (r *relay) controlMux() http.Handler {
 	mux := http.NewServeMux()
 
+	// /health answers liveness, and the answer stays additive: ensure-up greps
+	// it for '"ok":true' (tools/relay/deploy/lib.sh), so `ok` must keep being
+	// emitted — Go's encoder sorts map keys, so it stays first.
+	//
+	// It also names WHICH server this relay polls, because the relay is a
+	// per-user singleton on a host-wide runtime dir ($TMPDIR/parlay) bound to
+	// exactly one -server for its whole life. A second parlay instance pointed
+	// at a different chat server shares that same relay, so it enrolls fine and
+	// then streams a spool the relay never writes to — a registered-but-deaf
+	// agent with no error anywhere. Reporting `server` lets the monitor compare
+	// it against the server the CLI resolved and refuse the mismatch
+	// pre-enrollment instead of producing a silently deaf agent.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      true,
+			"server":  r.server,
+			"runtime": r.runtimeDir,
+		})
 	})
 
 	mux.HandleFunc("/agents", func(w http.ResponseWriter, req *http.Request) {

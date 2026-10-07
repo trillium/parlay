@@ -10,9 +10,10 @@ typed wire — *"parlay adds the subscriber capability-declaration
 semantics"*, `09_ARCHITECTURE-GRILL.md`). Epic child task-4cfpv.16.
 
 Engine: `tools/cli/internal/capability` (pure, mirrors
-`internal/routing`). Live path: the chat server's SSE delivery layer
-(`packages/go-server/internal/handlers/sse.go` choke points). This document is the
-normative contract; both implementations follow it.
+`internal/routing`). Live path: the chat server's SSE delivery layer — the
+`Hub` in `packages/go-server/internal/handlers/events.go`, which owns the
+`/api/chat/events` stream and holds the per-connection registry. This document
+is the normative contract; both implementations follow it.
 
 **Scope disambiguation:** this is the OUTPUT direction — what an enrolled
 surface can *render*. The INPUT direction — how a source enrolls to *send*
@@ -140,8 +141,11 @@ Every SSE event name falls in exactly one class:
 | State reports — the server reporting its own persisted/derived state | `history`, `message`, `message_received`, `agents`, `agent_register`, `agent_unregister`, `agent_presence`, `presence`, `presence_map`, `tool_event`, `lavish_session`, `pages_patch`, `commands`, `command_update` | never gated in v1 — rendering a report it does not care about is a surface's own no-op |
 | **Presentation commands** — the server aiming an action at a surface | `navigate`, `reload`, `device_cmd`, `input_action`, `draft` | **gated** |
 
-The gate, applied at the two broadcast choke points
-(`broadcastToClients` / `broadcastToDevice`) per client:
+The gate, applied per client at the three broadcast choke points in
+`events.go` — `broadcast` (every connected client), `broadcastToDevice` (one
+device), and `BroadcastFromBus` (the Gas City bus dual-write, which applies the
+same decision for uniformity at every choke point; that one is currently vacuous,
+because `busEmitEvents` holds no presentation command, and the code says so):
 
 | Client | Presentation command | Everything else |
 |---|---|---|
@@ -210,9 +214,12 @@ declaration decides who *receives*, never who may *send*.
    a reasoned decision, the connection registry, the recognition split
    for the `connected` echo. No I/O, no clock, no transport.
 2. **Live path: the Go chat server** (`packages/go-server`), which owns the
-   panel's SSE connection today: parse+validate `?caps=`, registry entry
-   on the `SSEClient`, gate at the broadcast choke points, suppression
-   counters + declarations on `/api/chat/subscribers`.
+   panel's SSE connection today: parse+validate `?caps=` (an invalid
+   declaration refuses the connect with HTTP 400 and no stream), registry entry
+   keyed by the connection id minted in `subscribeDeclared`, gate at the three
+   broadcast choke points, suppression counters + declarations on
+   `/api/chat/subscribers` as `capability_suppressed` /
+   `capability_declarations`.
 3. **First declared surface: the web panel** (`packages/client`) —
    declares `accepts: navigate, reload, device_cmd, input_action, draft`
    (exactly what its handlers execute today), proving the path end to end

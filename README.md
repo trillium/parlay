@@ -146,6 +146,54 @@ so that line is red and `health` exits 1; that is the engine, not your install.
 Start one with `nohup ./bin/parlay eval serve &` only if you want spoken or typed
 phrase commands — the CLI, the API and the panel's text chat do not need it.
 
+The engine is the one component with no per-instance identity: it has no state
+directory and no `config.json` key, so its *address* is its identity, and
+`127.0.0.1:4343` is a host-wide slot shared by every parlay instance on the
+machine. That is fine for the single-instance Quickstart above. If you run a
+second instance — `parlay-dev`, a `-state-dir` server, or `parlay remote set` —
+the engine needs two knobs moved together, because it both *answers* probes and
+*pushes* actions:
+
+- `PARLAY_EVAL_ENGINE_URL` — where `parlay health` / `parlay doctor` probe it.
+  Leave it at the default with a non-default server and those two annotate the
+  line as the host's engine rather than let a green tick describe another
+  instance's.
+- `parlay eval serve --push-url` (or `PARLAY_EVAL_PUSH_URL`) — where the engine
+  delivers computed panel actions. Its default is the **default** server's
+  `http://127.0.0.1:4242/api/chat/eval-push`, so an engine started for a second
+  instance without this would drive the *first* instance's panel.
+
+There is a third, quieter cross-instance coupling, in the CLI rather than the
+engine: **`parlay listen --agent <id>` is a host-wide takeover.** It finds any
+other live `listen`/`monitor` on the same agent *id* in this host's process
+table and ends it — it does not distinguish instances, servers or state dirs. So
+a second instance's `listen --agent demo` kills the first instance's `demo`
+listener and leaves that instance registered but deaf. Give each instance its own
+agent ids (`demo` vs `demo-dev`); `--name`/`--color` do not scope it. If you
+deliberately want two instances sharing one channel name, set
+`PARLAY_LISTEN_NO_SINGLETON=1` in the one that must not evict (duplicate delivery
+becomes possible, and the skip is announced on stderr). `parlay shutdown <id>`
+reaps by the same id-based match, so it reaches across instances too. Only a process
+whose own `argv[0]` is `parlay` or `parlay-cli` is ever a candidate, so a script,
+shell or agent harness that merely *contains* that command line is never the victim
+— arming from a wrapper cannot kill the wrapper (this repo's guard got that wrong
+until 2026-10-05). The flip side is that a renamed copy of the binary is not
+detected at all, so duplicate delivery comes back silently.
+
+And a fourth, in the relay itself: **the relay is a per-user singleton that binds
+one upstream server for life.** `tools/relay` runs one process per user on the
+host-wide `$TMPDIR/parlay` runtime dir, started with a single `-server`. A second
+instance shares that process, so `listen`/`monitor` without `--legacy-poll` would
+enroll into a relay that is polling the *other* instance's chat server — the
+enroll succeeds, the tab looks live, and nothing you send to your own server ever
+arrives. `parlay monitor`/`listen` now refuse this before registering anything:
+`preflight OK` means the relay is up **and** polling the server your CLI is
+pointed at, and a mismatch exits 1 naming both (a relay too old to report which
+server it polls is let through — the check cannot guess). Three ways out — use
+`--legacy-poll`, give the instance its own relay (a `PARLAY_RELAY_RUNTIME=<dir>`
+plus a relay started with `-server $PARLAY_SERVER`), or point `PARLAY_SERVER` at
+whatever the existing relay is already polling.
+
 **4. Open the panel (optional — this is the only step that needs Bun):**
 
 ```sh
@@ -195,8 +243,21 @@ Launch a background agent that shows up as a live tab (needs a
 
 ```sh
 parlay spawn code-reviewer "Code Reviewer" "#c084fc" \
-  "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
+  "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo --model sonnet
 ```
+
+**`--model` is mandatory and there is no default.** Omit it and `parlay spawn` refuses
+with exit 2 and *`refusing to spawn — no model was chosen`*: the launching session's
+model is never inherited and there is no silent sonnet fallback. Three things satisfy
+the gate — `--model <id>` (what the example does), a `--profile <name>` that carries a
+model ([`packages/spawn-profiles`](packages/spawn-profiles)), or `--no-pii`, which
+auto-routes to a free model. `parlay spawn --list` renders the profile catalog.
+
+One thing to know before your first spawn: for the default `claude` harness the
+launcher starts it with `--dangerously-skip-permissions` (plus a `--strict-mcp-config`
+and a sonnet fallback), deliberately — a phone-driven agent cannot answer a permission
+prompt. Every other harness gets only its explicit `--model` and uses its own
+permission config. Details in [`docs/launcher.md`](docs/launcher.md).
 
 `parlay spawn` is the sole entry point for spawning, and the only one there is: the
 launcher runs in-process (`tools/cli/internal/spawn`). The bash spawner and its
@@ -340,8 +401,19 @@ your running server alone — read its limits in [`examples/`](examples/) before
 ```sh
 cd packages/go-server && go test ./...     # the Go server
 cd packages/client && bun test             # a TS client package, from inside it — see note below
-cd tools/cli && go test ./...              # the Go CLI
+cd tools/cli && CGO_ENABLED=0 go test ./...  # the Go CLI — see the cgo note below
 ```
+
+The `CGO_ENABLED=0` on the CLI line is required, not decoration.
+`tools/cli`'s beads dependency carries an embedded Dolt tree whose ICU binding
+needs C++ headers that a stock macOS toolchain does not ship, so the same
+command with cgo on fails to build with
+`fatal error: 'unicode/regex.h' file not found` — for `go test`, for
+`go build`, and for the plain `go build .` that `bin/parlay` runs (which is why
+the wrapper pins the flag itself). Nothing in the CLI needs cgo. On Linux, or
+with a full Xcode/ICU toolchain installed, the flag is harmless either way.
+Every committed `deploy/install.sh` carries it for the same reason, and
+`tools/cli/deploy_build_flags_gate_test.go` fails the build if one regresses.
 
 There is no root `bunfig.toml`, so `bun test` at the repo root does not load the
 happy-dom preload some client packages need: DOM-touching suites fail there with

@@ -147,7 +147,106 @@ func TestHealthHelpDoesNotPanic(t *testing.T) {
 	}
 }
 
+// The engine's identity IS its address: it has no state dir and no persisted
+// config key, so 127.0.0.1:4343 is a host-wide slot. A dev/isolated instance
+// (parlay-dev, -state-dir, `parlay remote set`) that leaves the default in
+// place is probing the DEFAULT instance's engine, and an unqualified green
+// line is a claim the probe cannot support.
+func TestEngineScopeNoteOnlyFiresCrossInstance(t *testing.T) {
+	t.Run("explicit engine url is already unambiguous", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:9999")
+		t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1234")
+		if got := engineScopeNote(); got != "" {
+			t.Errorf("engineScopeNote() = %q, want empty when PARLAY_EVAL_ENGINE_URL is set", got)
+		}
+	})
+	t.Run("default instance owns the default engine", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "")
+		t.Setenv("PARLAY_SERVER", "")
+		t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+		if got := engineScopeNote(); got != "" {
+			t.Errorf("engineScopeNote() = %q, want empty on the default instance", got)
+		}
+	})
+	t.Run("non-default server on the default engine is flagged", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "")
+		t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1234")
+		t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+		got := engineScopeNote()
+		if got == "" {
+			t.Fatal("engineScopeNote() = \"\", want a cross-instance note")
+		}
+		for _, want := range []string{"host-wide default", "PARLAY_EVAL_ENGINE_URL"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("engineScopeNote() = %q, want it to mention %q", got, want)
+			}
+		}
+	})
+}
+
+// The note is worthless if a call site forgets to apply it, and a call site
+// that hardcodes the URL string instead of engineTarget() is the same bug
+// iteration 12 found in doctor deploy. Read the file: a green eval-engine
+// line must name the endpoint the probe actually used.
+func TestEngineTargetAndItsTwoCallSitesStayInSync(t *testing.T) {
+	src, err := os.ReadFile("doctor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if strings.Contains(text, `return "http://127.0.0.1:4343"`) {
+		t.Error("doctor.go still hardcodes the engine URL inline; it must come from engineTarget/defaultEngineURL")
+	}
+	if n := strings.Count(text, "engineScopeNote()"); n < 3 {
+		t.Errorf("engineScopeNote() is applied at %d sites (want the helper + both renderers), "+
+			"so a green eval-engine line can print without the cross-instance note", n)
+	}
+}
+
 // ── doctor ───────────────────────────────────────────────────────────────
+
+// The eval-engine repair line is the FIRST fix a newcomer sees: it is the
+// only expected red line in the Quickstart, and `health` prints it verbatim on
+// FAIL while `doctor` prints it on WARN. Both defects this pins were found by
+// running the Quickstart on a real fresh clone, where neither repair could
+// work:
+//
+//   - the fallback said `cd tools/cli && go build .`, a default-cgo build of
+//     the CLI module, which dies on macOS on the missing ICU headers that
+//     bin/parlay pins CGO_ENABLED=0 against (robots-wgij);
+//   - and that same command writes a binary named `cli`, not `parlay`, so it
+//     could not have been the `parlay eval serve` it was a parenthetical for.
+//
+// The repo-relative paths are checked against the tree, so the line cannot
+// drift back into naming a checkout that does not exist.
+func TestEvalEngineFixNamesRepairsThatActuallyRun(t *testing.T) {
+	if strings.Contains(evalEngineFix, "go build .") {
+		t.Error("evalEngineFix still suggests a bare `go build .` of the CLI module: " +
+			"it is a default-cgo build (dies on missing ICU headers, robots-wgij) and it " +
+			"writes a binary named `cli`, not `parlay`")
+	}
+	for _, want := range []string{"tools/eval-engine/deploy/install.sh", "./bin/parlay eval serve"} {
+		if !strings.Contains(evalEngineFix, want) {
+			t.Errorf("evalEngineFix no longer offers %q; a fresh clone has no other working repair", want)
+		}
+	}
+
+	// The repo-relative half must exist in the tree. Walk up from
+	// internal/commands to the repository root.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(wd, "..", "..", "..", "..")
+	for _, rel := range []string{
+		"tools/eval-engine/deploy/install.sh",
+		"bin/parlay",
+	} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("evalEngineFix points at %s, which is not in the tree: %v", rel, err)
+		}
+	}
+}
 
 func TestDoctorFailsWithNoAgentID(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_ID", "")

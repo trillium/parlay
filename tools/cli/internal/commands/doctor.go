@@ -34,23 +34,73 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
-// engineURL mirrors the server-side default (eval-relay.ts) — same-host
-// deploy. Read lazily (not a package var) so tests can override it per-case
-// with t.Setenv.
+// defaultEngineURL mirrors the server-side default (eval-relay.ts) — same-host
+// deploy. A const, not a package var, precisely so it cannot be mutated: the
+// override path is the PARLAY_EVAL_ENGINE_URL env read in engineTarget, which
+// tests drive per-case with t.Setenv.
+const defaultEngineURL = "http://127.0.0.1:4343"
+
+// engineURL is the engine endpoint health/doctor probe.
 func engineURL() string {
+	url, _ := engineTarget()
+	return url
+}
+
+// engineTarget resolves the engine endpoint AND which precedence level
+// supplied it, because the engine's identity IS its address: it has no state
+// dir and no persisted config key, so 127.0.0.1:4343 is a HOST-WIDE slot that
+// belongs to whichever instance bound it first. When the CLI is pointed at a
+// non-default chat server (a dev/isolated instance — `parlay-dev`, a
+// -state-dir run, a `parlay remote set`) a PASS here describes the default
+// instance's engine, not this one's, and the caller says so via
+// engineScopeNote rather than printing an unqualified green line.
+func engineTarget() (url, source string) {
 	if v := strings.TrimSpace(os.Getenv("PARLAY_EVAL_ENGINE_URL")); v != "" {
-		return v
+		return v, "env"
 	}
-	return "http://127.0.0.1:4343"
+	return defaultEngineURL, "default"
+}
+
+// engineScopeNote returns a one-line parenthetical to append to a PASSing
+// eval-engine line, or "" when the green line already means what it says.
+//
+// The condition is deliberately narrow: the coded default AND a CLI pointed
+// somewhere other than the coded default server. On a plain clone (default
+// server, no engine) the line is a FAIL and the note would be noise; on the
+// default instance the 4343 engine IS this instance's engine. Only the
+// cross-instance case is a claim the output cannot otherwise support.
+func engineScopeNote() string {
+	_, source := engineTarget()
+	if source != "default" {
+		return ""
+	}
+	if config.ServerSource().Source == config.SourceDefault {
+		return ""
+	}
+	return " (host-wide default, not this instance — set PARLAY_EVAL_ENGINE_URL for this instance's engine)"
 }
 
 // evalEngineFix is the repair line both `health` (FAIL) and `doctor` (WARN)
 // print for an unreachable eval-engine. It must hold on any clone: the old
 // text hardcoded the author's ~/code/parlay checkout path and a
 // ./parlay-eval-engine binary that nothing on a fresh clone builds — the
-// binary is a gitignored artifact only `go build` (or the installer, which
-// builds it if missing) produces.
-const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd), or: nohup parlay eval serve > engine.log 2>&1 & (the engine ships inside the parlay binary; cd tools/cli && go build . if you need one)"
+// binary is a gitignored artifact only the installer (which builds it if
+// missing) or an explicit `go build` produces.
+//
+// Two defects lived in the same string, both verified on a fresh clone:
+//   - `cd tools/cli && go build .` is a default-cgo build of the CLI module,
+//     which dies on macOS for the same missing-ICU reason bin/parlay pins
+//     CGO_ENABLED=0 against (robots-wgij) — so the suggested repair could not
+//     build anything.
+//   - It also named the wrong artifact: `go build .` in tools/cli writes a
+//     binary named `cli` (the directory base), not `parlay`, and never lands
+//     it on PATH, so the `parlay eval serve` it is a parenthetical for could
+//     not have been that binary.
+//
+// So the fallback names the wrapper, which builds the CLI with the right flags
+// and then execs it: `./bin/parlay eval serve` from the clone (or plain
+// `parlay eval serve` once installed). Verified end to end on a fresh clone.
+const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd, supervised), or: ./bin/parlay eval serve > engine.log 2>&1 & — the engine ships inside the CLI itself, so any parlay binary can serve it and ./bin/parlay builds one on first run"
 
 // jsonAttempt is the outcome of tryJSON: either decoded data, or a short
 // error string describing why it failed (network error, non-2xx status, or
@@ -160,7 +210,7 @@ func Health(argv []string) {
 
 	engineRes := tryJSON[engineHealthInfo](engine, "/health")
 	if engineRes.ok && engineRes.data.OK != nil && *engineRes.data.OK {
-		fmt.Printf("ok    eval-engine %s — protocol v%d\n", engine, derefInt(engineRes.data.Protocol))
+		fmt.Printf("ok    eval-engine %s — protocol v%d%s\n", engine, derefInt(engineRes.data.Protocol), engineScopeNote())
 	} else {
 		sick = true
 		reason := "unhealthy response"
@@ -445,14 +495,14 @@ func checkScratchpadMD(st *doctorState) (CheckResult, bool) {
 // checkEvalEngineEnv is check 6: eval-engine reachability — informational
 // (agents don't need it to talk), so a miss is WARN, never FAIL.
 func checkEvalEngineEnv(st *doctorState) (CheckResult, bool) {
-	engine := engineURL()
+	engine, source := engineTarget()
 	engineRes := tryJSON[engineHealthInfo](engine, "/health")
 	if engineRes.ok && engineRes.data.OK != nil && *engineRes.data.OK {
-		return singleLine("eval-engine", vPass, fmt.Sprintf("eval-engine healthy at %s", engine), "",
-			map[string]any{"engine_url": engine}), true
+		return singleLine("eval-engine", vPass, fmt.Sprintf("eval-engine healthy at %s%s", engine, engineScopeNote()), "",
+			map[string]any{"engine_url": engine, "engine_url_source": source}), true
 	}
 	return singleLine("eval-engine", vWarn, fmt.Sprintf("eval-engine unreachable at %s — panel voice commands degraded", engine),
-		evalEngineFix, map[string]any{"engine_url": engine}), true
+		evalEngineFix, map[string]any{"engine_url": engine, "engine_url_source": source}), true
 }
 
 // spawnCredsSummary picks the text of the first line whose label matches the

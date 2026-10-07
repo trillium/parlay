@@ -51,3 +51,73 @@ func TestHelpNamingHandoffCreateAlsoCarriesTheNotInstalledCaveat(t *testing.T) {
 		t.Error("parlay help's usage block still says `for 'handoff create'`")
 	}
 }
+
+// The listener takeover guard (`singleton.go`) matches an agent ID in this
+// HOST's process table — it cannot tell which server or state dir a candidate
+// listener belongs to. Verified 2026-10-05: two isolated instances on
+// different servers, same agent id, and the second `listen` SIGTERMed the
+// first's listener, leaving it registered but deaf. Both enrolling verbs
+// therefore have to say so where a reader actually sees it, and both have to
+// name the opt-out (`PARLAY_LISTEN_NO_SINGLETON=1`); "one listener per
+// channel" is the same words the bug shipped with.
+// The one place parlay kills processes is worth stating precisely in both
+// directions: the match is the candidate's OWN argv[0] (so a wrapper that
+// merely contains the command line is safe), and that same rule is the
+// coverage hole (a renamed binary is invisible). Before 2026-10-05 the guard
+// accepted any line whose subcommand token was merely PRECEDED by a parlay
+// binary name, so `bash -c '... ( parlay-cli listen --agent demo ... )'` was
+// reaped — parlay killed its own caller.
+func TestListenerHelpNamesTheArgvZeroRuleAndItsCoverageHole(t *testing.T) {
+	for _, verb := range []string{"listen", "monitor"} {
+		text, ok := Lookup(verb)
+		if !ok {
+			t.Fatalf("no help entry for %q", verb)
+		}
+		for _, want := range []string{"argv[0]", "renamed"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("parlay %s --help does not mention %q — the takeover kills processes, and a\nreader arming from a script needs to know the script is not the victim while a\nrenamed binary is not the guard's problem:\n%s", verb, want, text)
+			}
+		}
+	}
+}
+
+func TestListenerHelpStatesTheTakeoverIsHostWide(t *testing.T) {
+	for _, verb := range []string{"listen", "monitor"} {
+		text, ok := Lookup(verb)
+		if !ok {
+			t.Fatalf("no help entry for %q", verb)
+		}
+		for _, want := range []string{"HOST-WIDE", "PARLAY_LISTEN_NO_SINGLETON=1"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("parlay %s --help does not say %q — a reader running two instances on\none host cannot learn that this verb evicts the other instance's listener:\n%s", verb, want, text)
+			}
+		}
+		if strings.Contains(text, "one channel keeps exactly one reader") {
+			t.Errorf("parlay %s --help still scopes the takeover to a channel, which reads as\nper-instance; it is per agent ID across every instance on the host", verb)
+		}
+	}
+}
+
+// The relay-backed enroll path has its own cross-instance failure mode that the
+// takeover wording does not cover: the relay is one process per user on a
+// host-wide runtime dir and binds ONE -server for life, so two instances share
+// it. Without this in the help, a second instance's `listen` enrolls into a
+// relay polling the FIRST instance's server and comes up registered-but-deaf
+// with no error anywhere — a strictly worse failure than the eviction the
+// SCOPE paragraph above does describe.
+func TestListenerHelpNamesTheRelayServerBinding(t *testing.T) {
+	for _, verb := range []string{"listen", "monitor"} {
+		text, ok := Lookup(verb)
+		if !ok {
+			t.Fatalf("no help entry for %q", verb)
+		}
+		for _, want := range []string{"PARLAY_RELAY_RUNTIME", "--legacy-poll", "PARLAY_SERVER"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("parlay %s --help does not name %q — a reader running two instances\ncannot learn that the relay they would enroll through is bound to one\nserver and may not be the one this CLI is pointed at:\n%s", verb, want, text)
+			}
+		}
+		if !strings.Contains(text, "preflight") {
+			t.Errorf("parlay %s --help does not mention the preflight that refuses a\nserver-mismatched relay before anything is registered:\n%s", verb, text)
+		}
+	}
+}
