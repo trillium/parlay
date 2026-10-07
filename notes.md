@@ -60,15 +60,14 @@ This branch makes the first hour in this repo readable instead of source-bound. 
 
 ## What now keeps the path from rotting
 
-The docs-index gate scans `docs/*.md` only, so a note under `docs/agent-notes/` that no document
-links is invisible to every gate (one existed until `traps.md` was written), and a broken relative
-link renders as plain text on GitHub. One new hygiene step closes both, deriving each side from the
-filesystem and resolving each link against the containing file's directory, scoped to the newcomer
-path (`README.md`, `AGENTS.md`, `docs/README.md`, `docs/traps.md`, `examples/README.md`) rather than
-all of `docs/`, which holds dated snapshots. Proved to fail, not just to pass: the `run:` block is
-extracted from the workflow YAML (tested text = shipped text) and run against six fresh-tree shapes —
-control, an unplaced note, a prose-only mention, a missing path document, a dangling link, an empty
-`agent-notes/` (12/12 assertions).
+The docs-index gate scans `docs/*.md` only, so a note under `docs/agent-notes/` that no document links
+is invisible to every gate (one existed until `traps.md` was written), and a broken relative link
+renders as plain text on GitHub. One new hygiene step closes both, deriving each side from the
+filesystem and resolving each link against its containing directory, scoped to the newcomer path
+(`README.md`, `AGENTS.md`, `docs/README.md`, `docs/traps.md`, `examples/README.md`) rather than all of
+`docs/`, which holds dated snapshots. Proved to fail, not just to pass: the `run:` block is extracted
+from the YAML (tested text = shipped text) and run against six tree shapes — control, an unplaced note,
+a prose-only mention, a missing path document, a dangling link, an empty `agent-notes/` (12/12).
 
 ## What was deliberately left alone
 
@@ -82,11 +81,9 @@ control, an unplaced note, a prose-only mention, a missing path document, a dang
   deliberate and documented in the code — a product decision, not an onboarding one).
 - The server's startup-time asset resolution: documented, not made lazy. What a mid-flight asset
   swap should do is a product decision; the new note says so and warns against a drive-by fix.
-- `docs/ux-eval-2026-08-30.md`: a dated field report citing the README's old step numbers. Rewriting
-  it would falsify evidence; the new note points at it instead.
-- The README below the Quickstart (system map, layout, worked config, development, publishing):
-  reachable and accurate, so left in place. No root `go.work`: it would not make the stop condition
-  below pass, and it contradicts the README, `AGENTS.md` and CI doctrine that all assert none.
+- `docs/ux-eval-2026-08-30.md` (a dated field report citing the README's old step numbers) and the
+  README below the Quickstart: not rewritten — the first would falsify evidence, the second is
+  reachable and accurate. No root `go.work`: it would not make the stop condition pass.
 
 ## Verification
 
@@ -210,7 +207,7 @@ lines printed, and `env -i PATH=/nonexistent` against the real checkout. CI runs
 
 ```
 $ bash /tmp/gate-step.sh        # the shipped hygiene step, extracted from .github/workflows/ci.yml
-66 agent-notes are placed in docs/traps.md; 239 links across 5 documents resolve      exit=0
+66 agent-notes are placed in docs/traps.md; 241 links across 5 documents resolve      exit=0
 $ bash /tmp/docsindex-step.sh   # the other shipped hygiene step
 all 30 top-level docs are indexed in docs/README.md                                   exit=0
 ```
@@ -230,20 +227,24 @@ note and in `docs/command-server.md` were run, not inferred: from `packages/go-s
 
 ### Line budget
 
-The repo enforces 250 lines only for staged `*.ts` files (`tools/hooks/pre-commit`), so markdown has
-no enforced budget; self-imposed anyway, and every file touched here is ≤ 250 (`bin/parlay-preflight`
-249, its harness 250, `docs/traps.md` 246, both agent notes ≤ 43, this file). The gate is a step
-inside `ci.yml`, not a new script.
+Enforced only for staged `*.ts` files (`tools/hooks/pre-commit`), so markdown has no budget; self-imposed
+anyway and met: `bin/parlay-preflight` 249, its harness 250, `docs/traps.md` 246, the agent notes ≤ 43,
+this file. The gate is a step inside `ci.yml`, not a new script.
 
 ## Where this stands
 
 - **The PR is open, not merged**: <https://github.com/trillium/parlay/pull/314>,
-  `gnhf/objective-make-a-new-904428` → `main`. HEAD `15f5d4c` carries every fix: CI green on it, a
-  completed CodeRabbit review covering that exact commit, both earlier findings fixed, all threads
-  resolved, and `parlay merge-gate 314` reporting **READY**.
-- **This iteration's edits are the next push.** The harness commits after the turn, so the new "Your
-  first routed message" subsection and this evidence travel as the next commit; that push re-pins the
-  review, spending one more ~1-hour window before the gate reads READY again.
+  `gnhf/objective-make-a-new-904428` → `main`. HEAD `cd9859d` is pushed and carries the delivery step,
+  the preflight and the hygiene gate; CI run 37641669118 is green on it (Go, Shell harnesses, Hygiene —
+  whose shipped newcomer-path step printed `66 agent-notes are placed in docs/traps.md; 241 links
+  across 5 documents resolve`), and a completed CodeRabbit review covers `cd9859d` (15:42Z).
+- **`parlay merge-gate 314` reads BLOCKED on that head for two expected reasons**: GitGuardian's check
+  was still `in_progress` at verdict time, and the review's one finding is the staleness this revision
+  fixes — this file still called `15f5d4c` the head while the PR already contained `cd9859d`. Every
+  earlier thread (placement as a link target, the sandbox coverage claim, the AGENTS.md index pointer)
+  is resolved, and each fix is in the pushed head.
+- **This revision is one commit ahead of the remote by construction**: the harness commits after the
+  turn, so it travels as the next push, which re-pins the review and spends one more ~1-hour window.
 - **The stop condition is unmet and cannot be met for this build topology** — literal output above.
 - **No harness scratch is in the PR**: an auto-commit once captured eight `.pi/tasks/**` files, so
   `.pi/` and `.gnhf/` are tracked-ignored now; the net PR diff contains none of them.
