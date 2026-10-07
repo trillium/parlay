@@ -98,9 +98,14 @@ The guard also covers whole subtrees (`guardedPrefixes`): `/api/chat/agents/`,
 `/api/chat/plugin/`, `/api/debug/` — anything added under those is guarded
 before its handler exists.
 
-The read routes (`history`, `agents`, `version`,
-`GET /api/chat/uploads/<name>`) are outside the guard and behave as documented
-below. `/api/chat/events` is **guarded**: `packages/go-server` serves
+The read routes (`history`, `agents`, `commands`, `version`, `pages`,
+`plugins`, `GET /api/chat/uploads/<name>`) are outside the guard and behave as
+documented below. `TestUnguardedRoutes` in
+`packages/go-server/internal/guard/route_coverage_test.go` is that list with a
+reason per entry, and `TestEveryRegisteredRouteIsGuardedOrExplained` parses
+`internal/handlers` for every path on the mux and fails the build on one that
+is neither guarded nor listed — so a new route cannot ship outside the boundary
+unnoticed. `/api/chat/events` is **guarded**: `packages/go-server` serves
 an external-producer ingress on `POST /api/chat/events` (see [SSE
 Events](#sse-events) below), so the path is in `internal/guard.GuardedPaths`,
 and because that classifier is method-independent the `GET` SSE stream is
@@ -671,7 +676,11 @@ By design the registry stores **no free-form text**: verb, agent id, pid, flag
 *names*, outcome token — never argv values, paths, or error strings.
 
 The three report routes require POST **and** `Content-Type: application/json`
-— anything else is **415** (`requireCommandReport`).
+— anything else is **415** (`requireCommandReport`) — and all three are in the
+origin guard's `GuardedPaths` (see [Origin guard](#origin-guard)), so a
+cross-origin POST is **403** before the handler runs. `GET /api/chat/commands`
+is the read half and is deliberately **unguarded**, on the `/api/chat/agents`
+precedent.
 
 ### `GET /api/chat/commands`
 ```jsonc
@@ -730,7 +739,9 @@ The server serves the built panel bundle standalone (no Pulse front door):
 `/` (SPA fallback to `index.html`), `/annotate/<path>` (the Pulse symlink
 convention, mapped onto the bundle root), and `/fleet/` (the
 `packages/webview` fleet dashboard), from `PARLAY_ASSETS_DIR` (`-assets-dir`;
-default: the sibling `packages/client/dist`). Dispatched
+default: the first `packages/client/dist` found by walking up from the
+executable's directory and then from the working directory, else a bare `dist`).
+Dispatched
 after all `/api/*` routes so it can never shadow them — and an unrouted
 `/api/*` path stays a real 404, never the SPA fallback (the CLI's
 `commandreport` caches that 404 to detect unsupported verbs). Source:

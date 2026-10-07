@@ -147,7 +147,106 @@ func TestHealthHelpDoesNotPanic(t *testing.T) {
 	}
 }
 
+// The engine's identity IS its address: it has no state dir and no persisted
+// config key, so 127.0.0.1:4343 is a host-wide slot. A dev/isolated instance
+// (parlay-dev, -state-dir, `parlay remote set`) that leaves the default in
+// place is probing the DEFAULT instance's engine, and an unqualified green
+// line is a claim the probe cannot support.
+func TestEngineScopeNoteOnlyFiresCrossInstance(t *testing.T) {
+	t.Run("explicit engine url is already unambiguous", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:9999")
+		t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1234")
+		if got := engineScopeNote(); got != "" {
+			t.Errorf("engineScopeNote() = %q, want empty when PARLAY_EVAL_ENGINE_URL is set", got)
+		}
+	})
+	t.Run("default instance owns the default engine", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "")
+		t.Setenv("PARLAY_SERVER", "")
+		t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+		if got := engineScopeNote(); got != "" {
+			t.Errorf("engineScopeNote() = %q, want empty on the default instance", got)
+		}
+	})
+	t.Run("non-default server on the default engine is flagged", func(t *testing.T) {
+		t.Setenv("PARLAY_EVAL_ENGINE_URL", "")
+		t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1234")
+		t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+		got := engineScopeNote()
+		if got == "" {
+			t.Fatal("engineScopeNote() = \"\", want a cross-instance note")
+		}
+		for _, want := range []string{"host-wide default", "PARLAY_EVAL_ENGINE_URL"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("engineScopeNote() = %q, want it to mention %q", got, want)
+			}
+		}
+	})
+}
+
+// The note is worthless if a call site forgets to apply it, and a call site
+// that hardcodes the URL string instead of engineTarget() is the same bug
+// iteration 12 found in doctor deploy. Read the file: a green eval-engine
+// line must name the endpoint the probe actually used.
+func TestEngineTargetAndItsTwoCallSitesStayInSync(t *testing.T) {
+	src, err := os.ReadFile("doctor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if strings.Contains(text, `return "http://127.0.0.1:4343"`) {
+		t.Error("doctor.go still hardcodes the engine URL inline; it must come from engineTarget/defaultEngineURL")
+	}
+	if n := strings.Count(text, "engineScopeNote()"); n < 3 {
+		t.Errorf("engineScopeNote() is applied at %d sites (want the helper + both renderers), "+
+			"so a green eval-engine line can print without the cross-instance note", n)
+	}
+}
+
 // ── doctor ───────────────────────────────────────────────────────────────
+
+// The eval-engine repair line is the FIRST fix a newcomer sees: it is the
+// only expected red line in the Quickstart, and `health` prints it verbatim on
+// FAIL while `doctor` prints it on WARN. Both defects this pins were found by
+// running the Quickstart on a real fresh clone, where neither repair could
+// work:
+//
+//   - the fallback said `cd tools/cli && go build .`, a default-cgo build of
+//     the CLI module, which dies on macOS on the missing ICU headers that
+//     bin/parlay pins CGO_ENABLED=0 against (robots-wgij);
+//   - and that same command writes a binary named `cli`, not `parlay`, so it
+//     could not have been the `parlay eval serve` it was a parenthetical for.
+//
+// The repo-relative paths are checked against the tree, so the line cannot
+// drift back into naming a checkout that does not exist.
+func TestEvalEngineFixNamesRepairsThatActuallyRun(t *testing.T) {
+	if strings.Contains(evalEngineFix, "go build .") {
+		t.Error("evalEngineFix still suggests a bare `go build .` of the CLI module: " +
+			"it is a default-cgo build (dies on missing ICU headers, robots-wgij) and it " +
+			"writes a binary named `cli`, not `parlay`")
+	}
+	for _, want := range []string{"tools/eval-engine/deploy/install.sh", "./bin/parlay eval serve"} {
+		if !strings.Contains(evalEngineFix, want) {
+			t.Errorf("evalEngineFix no longer offers %q; a fresh clone has no other working repair", want)
+		}
+	}
+
+	// The repo-relative half must exist in the tree. Walk up from
+	// internal/commands to the repository root.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(wd, "..", "..", "..", "..")
+	for _, rel := range []string{
+		"tools/eval-engine/deploy/install.sh",
+		"bin/parlay",
+	} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("evalEngineFix points at %s, which is not in the tree: %v", rel, err)
+		}
+	}
+}
 
 func TestDoctorFailsWithNoAgentID(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_ID", "")
@@ -353,6 +452,7 @@ func TestDoctorHandoffPointerNoted(t *testing.T) {
 	t.Setenv("PARLAY_AGENT_HOME", home)
 	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
 	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+	pinHandoffStore(t, true)
 
 	out := captureStdout(t, func() {
 		withExitTrap(t, func() { Doctor(nil) })
@@ -360,6 +460,69 @@ func TestDoctorHandoffPointerNoted(t *testing.T) {
 	if !strings.Contains(out, "note: handoff pointer → handoff-abc123 (run: handoff show handoff-abc123)") {
 		t.Errorf("Doctor() output = %q, want the handoff pointer note", out)
 	}
+}
+
+// Fresh-clone case: `handoff` is a federation store wrapper this repo does not
+// install, so doctor must report the pointer WITHOUT telling the reader to run
+// a command they do not have. The pointer itself is still surfaced.
+func TestDoctorHandoffPointerOmitsCommandWhenNoStore(t *testing.T) {
+	home := t.TempDir()
+	agentDir := filepath.Join(home, "doc-agent-4")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "identity.md"), []byte("---\nid: doc-agent-4\n---\n📎 Handoff: handoff-abc123\n"), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "scratchpad.md"), []byte("notes\n"), 0o644)
+
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-4")
+	t.Setenv("PARLAY_AGENT_HOME", home)
+	t.Setenv("PARLAY_SERVER", "http://127.0.0.1:1")
+	t.Setenv("PARLAY_EVAL_ENGINE_URL", "http://127.0.0.1:1")
+	pinHandoffStore(t, false)
+
+	out := captureStdout(t, func() {
+		withExitTrap(t, func() { Doctor(nil) })
+	})
+	if !strings.Contains(out, "note: handoff pointer → handoff-abc123") {
+		t.Errorf("Doctor() must still report the pointer, got: %q", out)
+	}
+	if strings.Contains(out, "handoff show handoff-abc123") {
+		t.Errorf("with no store installed, doctor must not prescribe `handoff show`, got: %q", out)
+	}
+}
+
+// The context-rotation advisory is printed on every doctor run, including on
+// a fresh clone, and its next-step clause used to name the uninstallable
+// `handoff` wrapper. Same rule as the pointer note above: the verdict and the
+// percentages are fixed; only the wording tracks store availability.
+func TestDoctorContextLineIsStoreAware(t *testing.T) {
+	t.Setenv("PARLAY_AGENT_ID", "doc-agent-5")
+	t.Setenv("PARLAY_AGENT_HOME", t.TempDir())
+
+	t.Run("with store", func(t *testing.T) {
+		pinHandoffStore(t, true)
+		cr, ran := checkContextRotation(&doctorState{})
+		if !ran {
+			t.Fatal("checkContextRotation did not run")
+		}
+		if !strings.Contains(cr.Summary, "on ROTATE, handoff + identity --submit") {
+			t.Errorf("summary = %q, want the historical clause when the store is installed", cr.Summary)
+		}
+		if !strings.Contains(cr.Summary, "parlay context-check <pct>") {
+			t.Errorf("summary = %q, want it to still name context-check", cr.Summary)
+		}
+	})
+
+	t.Run("without store", func(t *testing.T) {
+		pinHandoffStore(t, false)
+		cr, _ := checkContextRotation(&doctorState{})
+		if strings.Contains(cr.Summary, "on ROTATE, handoff + identity --submit") {
+			t.Errorf("summary = %q, want the store-installed clause dropped with no store", cr.Summary)
+		}
+		for _, want := range []string{"parlay context-check <pct>", "parlay drawdown", "identity --submit <handoff-id>"} {
+			if !strings.Contains(cr.Summary, want) {
+				t.Errorf("summary = %q, want it to name %q", cr.Summary, want)
+			}
+		}
+	})
 }
 
 func TestDoctorHelpDoesNotPanic(t *testing.T) {

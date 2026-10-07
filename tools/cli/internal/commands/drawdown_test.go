@@ -7,9 +7,26 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// pinHandoffStore puts exactly one `handoff` on PATH — present when present is
+// true, absent otherwise. Drawdown's closing recipe names `handoff create`, so
+// the output depends on whether the author's federation store is installed;
+// without pinning it, these tests would pass or fail based on the box.
+func pinHandoffStore(t *testing.T, present bool) {
+	t.Helper()
+	dir := t.TempDir()
+	if present {
+		if err := os.WriteFile(filepath.Join(dir, "handoff"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
 
 func historyServer(t *testing.T, wantLimit string, rawJSON string) *httptest.Server {
 	t.Helper()
@@ -33,6 +50,7 @@ func TestDrawdownDefaultLimitAndTemplate(t *testing.T) {
 	]`)
 	t.Setenv("PARLAY_SERVER", srv.URL)
 	t.Setenv("PARLAY_AGENT_ID", "agent-a")
+	pinHandoffStore(t, true)
 
 	out := captureStdout(t, func() { Drawdown(nil) })
 
@@ -45,6 +63,33 @@ func TestDrawdownDefaultLimitAndTemplate(t *testing.T) {
 		"handoff create \"agent-a context handoff",
 		"identity --submit",
 	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Drawdown() output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
+
+// Fresh-clone case: no `handoff` store installed, so the closing recipe must
+// not tell the reader to run `handoff create` — a command they do not have.
+// The portable substitute (an explicit id) is named instead.
+func TestDrawdownWithoutStoreDoesNotPrescribeHandoffCreate(t *testing.T) {
+	srv := historyServer(t, "20", `[{"role":"agent","text":"working","ts":"2026-08-01T00:00:01Z"}]`)
+	t.Setenv("PARLAY_SERVER", srv.URL)
+	t.Setenv("PARLAY_AGENT_ID", "agent-a")
+	pinHandoffStore(t, false)
+
+	out := captureStdout(t, func() { Drawdown(nil) })
+
+	if strings.Contains(out, "handoff create") {
+		t.Errorf("with no store installed, drawdown must not prescribe `handoff create`:\n%s", out)
+	}
+	for _, want := range []string{"No `handoff` store is installed here", "identity --submit <handoff-id>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Drawdown() output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	// The portable half of the artifact — the handoff body itself — is unchanged.
+	for _, want := range []string{"## Handoff —", "### What I was doing", "working", "### Next steps"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Drawdown() output missing %q\nfull output:\n%s", want, out)
 		}

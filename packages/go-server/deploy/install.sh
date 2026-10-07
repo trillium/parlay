@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Install parlay-server (packages/go-server/cmd/parlay-server, the Go rewrite
-# of packages/server, Pulse's HTTP/SSE chat server) as a supervised,
-# always-on macOS LaunchAgent.
+# Install parlay-server (packages/go-server/cmd/parlay-server — parlay's HTTP/SSE
+# chat server, the Go rewrite of a TypeScript server that no longer exists in
+# this tree) as a supervised, always-on macOS LaunchAgent.
 #
 # What it does (idempotent — safe to re-run to update):
 #   1. Builds packages/go-server/parlay-server if it is missing (or --rebuild).

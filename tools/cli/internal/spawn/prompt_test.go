@@ -1,107 +1,99 @@
 package spawn
 
 import (
-	"bytes"
 	"os"
-	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-// TestStartupPromptMatchesBashPath is the single-source-of-truth parity gate
-// (robots-hrt2): composeStartupPrompt (the Go path) must render byte-identical
-// output to bin/parlay-spawn's load_template (the bash path) for the same
-// inputs, against the same physical template file. Both paths now consume the
-// one canonical launch-templates/default.txt (the regular file embedded from
-// tools/cli/internal/spawn/launch-templates/default.txt — the repo-root launch-templates/default.txt
-// is a symlink to it), so they can never silently re-implement different text;
-// this test proves the substitution still matches too.
+// TestStartupPromptRendersTheCanonicalTemplate is the single-source-of-truth
+// gate for the startup brief: the template `go:embed` compiles in must be the
+// SAME BYTES as the physical file agents and humans read (the repo-root
+// launch-templates/default.txt is a symlink to it), and rendering it must
+// leave no `{{VAR}}` behind — a leftover placeholder would be handed to a live
+// agent as literal text, in the one prompt it is guaranteed to read.
 //
-// The name deliberately carries command-injection characters that survive into
-// the Monitor arm-command as a JSON string (`$( )` and embedded quotes), proving
-// both renderers single-quote and JSON-escape them identically (robots-2h4n).
-// It omits an apostrophe on purpose: a `'` in the name makes shell_quote emit a
-// `\` inside the monitor command, and bin/parlay-spawn's load_template
-// substitution `${content//…/$var_value}` collapses `\\` → `\` (a pre-existing
-// bash quirk this task is forbidden from touching), so the Go path — which
-// preserves both backslashes, the correct JSON — deliberately does not match
-// bash on that exotic edge. For every realistic spawn input (no apostrophes)
-// the two paths are byte-identical.
-func TestStartupPromptMatchesBashPath(t *testing.T) {
-	agentID := "mc-x"
-	name := "hostile() $(x) \"quoted\" and value"
-	color := "#f97316"
-	setupBlock := "## Setup\n\nYou are running in an isolated git worktree.\n"
-	prompt := "Do the thing, then say done."
-	dod := "reply your result with 'reply \"<summary>\"' and run: parlay status done"
-
-	goOut := composeStartupPrompt(agentID, name, color, setupBlock, prompt, dod)
-
-	// Render the same template through bin/parlay-spawn's exact load_template
-	// algorithm (cat + per-{{VAR}} literal substitution), reading the same
-	// physical file the Go path embeds. The MONITOR_CMD_JSON value is built the
-	// way bash did it: shell_quote each component, then json_escape
-	// the whole command (jq -Rs .).
-	templatePath := "launch-templates/default.txt"
-	if _, err := os.Stat(templatePath); err != nil {
-		t.Fatalf("canonical template not reachable from test cwd (%v): %v", templatePath, err)
+// It USED to be a bash/Go byte-parity test against bin/parlay-spawn's
+// load_template, but that script was deleted with the bash spawner
+// (task-42qot): the comparison was re-rendering the same file through an
+// algorithm nothing ships any more, so it guarded nothing while its name and
+// comment claimed a live second implementation. What is worth keeping is the
+// invariant below. The monitor arm-command's shell-quoting is still pinned, by
+// TestComposeStartupPromptQuotesMonitorCommand.
+func TestStartupPromptRendersTheCanonicalTemplate(t *testing.T) {
+	physical, err := os.ReadFile("launch-templates/default.txt")
+	if err != nil {
+		t.Fatalf("canonical template not reachable from test cwd: %v", err)
+	}
+	if string(physical) != defaultTemplate {
+		t.Errorf("the embedded launch-templates/default.txt has drifted from the physical file\n"+
+			"(%d embedded bytes vs %d on disk) — edit the real file, never the embed or the symlink",
+			len(defaultTemplate), len(physical))
 	}
 
-	bashScript := `
-set -euo pipefail
-load_template() {
-  local template_path="$1"
-  shift
-  local content
-  content=$(cat "$template_path")
-  while [ $# -gt 0 ]; do
-    local var_pair="$1"
-    local var_name="${var_pair%%=*}"
-    local var_value="${var_pair#*=}"
-    content="${content//"{{$var_name}}"/$var_value}"
-    shift
-  done
-  printf '%s' "$content"
+	// A name carrying command-injection characters, to prove they are
+	// single-quoted and JSON-escaped rather than interpolated raw (robots-2h4n).
+	out := composeStartupPrompt("mc-x", `hostile() $(x) "quoted"`, "#f97316",
+		"## Setup\n\nYou are running in an isolated git worktree.\n",
+		"Do the thing, then say done.", `reply "done"`)
+
+	if strings.Contains(out, "{{") {
+		t.Errorf("rendered startup prompt has an unsubstituted {{VAR}} — an agent would read it literally:\n%s", out)
+	}
+	for _, want := range []string{
+		`Monitor({ command: "parlay listen --agent 'mc-x'`,
+		"Do the thing, then say done.",
+		"## Setup",
+		`reply "done"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered startup prompt missing %q:\n%s", want, out)
+		}
+	}
 }
-shell_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
-json_escape() { printf '%s' "$1" | jq -Rs .; }
-MONITOR_CMD_JSON=$(json_escape "parlay listen --agent $(shell_quote "$AGENT_ID") --name $(shell_quote "$NAME") --color $(shell_quote "$COLOR")")
-load_template "$1" \
-  "AGENT_ID=$AGENT_ID" \
-  "NAME=$NAME" \
-  "COLOR=$COLOR" \
-  "MONITOR_CMD_JSON=$MONITOR_CMD_JSON" \
-  "SETUP_BLOCK=$SETUP_BLOCK" \
-  "PROMPT=$PROMPT" \
-  "DOD=$DOD"
-`
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq not on PATH; skipping both-paths parity comparison")
-	}
-	cmd := exec.Command("bash", "-c", bashScript, "--", templatePath)
-	// Pass PATH through (bash's json_escape shells out to jq) on top of the
-	// substitution inputs — a fresh cmd.Env would otherwise leave bash without
-	// PATH and jq unresolvable.
-	cmd.Env = append(
-		[]string{"PATH=" + os.Getenv("PATH")},
-		"AGENT_ID="+agentID,
-		"NAME="+name,
-		"COLOR="+color,
-		"SETUP_BLOCK="+setupBlock,
-		"PROMPT="+prompt,
-		"DOD="+dod,
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("bash load_template render failed: %v\nstderr: %s", err, stderr.String())
-	}
-	bashOut := stdout.String()
 
-	if goOut != bashOut {
-		t.Errorf("Go path and bash path produce DIFFERENT prompt output\n--- bash ---\n%s\n--- go ---\n%s", bashOut, goOut)
+// declaredPlaceholders lists every {{NAME}} the template uses, so the render
+// test can assert the template and the substitution map agree in both
+// directions: a placeholder nothing supplies would otherwise survive into an
+// agent's first message.
+func declaredPlaceholders(template string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`\{\{([A-Z_]+)\}\}`).FindAllStringSubmatch(template, -1) {
+		out = append(out, m[0])
+	}
+	return out
+}
+
+// Every placeholder the templates declare must be one composeStartupPrompt /
+// composeClaimPrompt actually substitutes. A new {{FOO}} added to a template
+// and forgotten in prompt.go would otherwise reach a live agent verbatim.
+func TestEveryTemplatePlaceholderIsSubstituted(t *testing.T) {
+	cases := []struct {
+		name     string
+		template string
+		render   func() string
+	}{
+		{"default.txt", defaultTemplate, func() string {
+			return composeStartupPrompt("mc-x", "n", "#f97316", "setup", "prompt", "dod")
+		}},
+		{"claim.txt", claimTemplate, func() string {
+			return composeClaimPrompt("mc-x", "task-abc123", "setup")
+		}},
+	}
+	for _, tc := range cases {
+		phs := declaredPlaceholders(tc.template)
+		if len(phs) == 0 {
+			t.Errorf("%s declares no {{PLACEHOLDER}} at all — the file was probably emptied by a bad edit", tc.name)
+			continue
+		}
+		out := tc.render()
+		for _, ph := range phs {
+			if strings.Contains(out, ph) {
+				t.Errorf("%s: placeholder %s survived rendering — add it to the substitution map in prompt.go:\n%s", tc.name, ph, out)
+			}
+		}
 	}
 }
 

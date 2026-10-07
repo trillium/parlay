@@ -20,9 +20,13 @@ on a phone, driving autonomous terminal coding agents on a machine somewhere els
 - **Voice-first control.** A compiled phrase engine turns spoken commands into panel
   actions, and agent replies can be read back aloud with per-passage playback — so a
   whole review cycle can happen without a keyboard.
-- **Durable identity + memory.** `identity`, `scratchpad`, and `handoff` persist
-  across restarts, so an agent that blows its context window recovers *who it is* and
-  *what it was doing* via the `identity → handoff → scratchpad` chain.
+- **Durable identity + memory.** `identity` and `scratchpad` persist across
+  restarts, so an agent that blows its context window recovers *who it is* and
+  *what it was doing*. Both are plain files under `~/.parlay/agents/<id>/` and work
+  standalone on any clone. (The full `identity → handoff → scratchpad` chain adds a
+  `handoff` leg from the author's private beads-store tooling — `handoff` is not a
+  `parlay` verb and is not installed by this repo, so a clone gets the portable two
+  legs. See the note below.)
 - **Spawn + supervise.** Launch a background agent that auto-enrols as a live tab, and
   drive event-based follow-ups.
 - **Reachable from anywhere you can reach the host** — over your LAN, a
@@ -30,19 +34,21 @@ on a phone, driving autonomous terminal coding agents on a machine somewhere els
 
 ## Requirements, honestly
 
-**The CLI + server work standalone.** `bun install`, start the server, point the CLI
+**The CLI + server work standalone.** Start the server, point the CLI
 at it — no other services, no accounts, no tunnel. That's the path in the Quickstart
-below and it is the one this repo fully supports.
+below and it is the one this repo fully supports. ([Bun](https://bun.sh) is only
+needed if you also want the chat panel or the git hooks.)
 
-**The web panel does not ship with a host.** The chat panel
-(`packages/client`) is a browser bundle that expects to be served from the *same
-origin* as the chat API, and the author serves it from a personal, unreleased page
-host called Pulse. **Pulse is not open source and is not available** — so there is no
-turnkey `open this URL and see the panel` path here yet. To run the UI you build the
-bundle (`cd packages/client && bun run build`, which writes
-`dist/parlay-agent.js`), serve it yourself, and reverse-proxy `/api/chat/*` to the
-parlay server. That wiring is not documented here yet, and it is the main gap
-between this repo and the demo.
+**The chat panel needs Bun and nothing else.** `packages/client` is a browser
+bundle, and the Go server *is* its host: it serves the bundle same-origin from the
+same `:4242` it serves `/api/chat/*` on, so there is no reverse proxy to wire and
+no second service to run. Build the bundle (`cd packages/client && bun run build`)
+and open `http://localhost:4242/` — Quickstart step 4. The author's own install
+hosts the panel behind a private page host called Pulse, which is **not open
+source and not available here**, but nothing in this repo requires it; it is a
+distribution choice, not a dependency. A second, separate bundle — the fleet
+dashboard (`packages/webview`) — is served at `/fleet/` and is not part of the
+Quickstart.
 
 **Tailscale is optional.** Nothing requires it. It is simply how the author reaches
 the host from a phone; a LAN address or any other private tunnel works the same way.
@@ -140,6 +146,74 @@ so that line is red and `health` exits 1; that is the engine, not your install.
 Start one with `nohup ./bin/parlay eval serve &` only if you want spoken or typed
 phrase commands — the CLI, the API and the panel's text chat do not need it.
 
+The engine is the one component with no per-instance identity: it has no state
+directory and no `config.json` key, so its *address* is its identity, and
+`127.0.0.1:4343` is a host-wide slot shared by every parlay instance on the
+machine. That is fine for the single-instance Quickstart above. If you run a
+second instance — `parlay-dev`, a `-state-dir` server, or `parlay remote set` —
+the engine needs two knobs moved together, because it both *answers* probes and
+*pushes* actions:
+
+- `PARLAY_EVAL_ENGINE_URL` — where `parlay health` / `parlay doctor` probe it.
+  Leave it at the default with a non-default server and those two annotate the
+  line as the host's engine rather than let a green tick describe another
+  instance's.
+- `parlay eval serve --push-url` (or `PARLAY_EVAL_PUSH_URL`) — where the engine
+  delivers computed panel actions. Its default is the **default** server's
+  `http://127.0.0.1:4242/api/chat/eval-push`, so an engine started for a second
+  instance without this would drive the *first* instance's panel.
+
+There is a third, quieter cross-instance coupling, in the CLI rather than the
+engine: **`parlay listen --agent <id>` is a host-wide takeover.** It finds any
+other live `listen`/`monitor` on the same agent *id* in this host's process
+table and ends it — it does not distinguish instances, servers or state dirs. So
+a second instance's `listen --agent demo` kills the first instance's `demo`
+listener and leaves that instance registered but deaf. Give each instance its own
+agent ids (`demo` vs `demo-dev`); `--name`/`--color` do not scope it. If you
+deliberately want two instances sharing one channel name, set
+`PARLAY_LISTEN_NO_SINGLETON=1` in the one that must not evict (duplicate delivery
+becomes possible, and the skip is announced on stderr). `parlay shutdown <id>`
+reaps by the same id-based match, so it reaches across instances too. Only a process
+whose own `argv[0]` is `parlay` or `parlay-cli` is ever a candidate, so a script,
+shell or agent harness that merely *contains* that command line is never the victim
+— arming from a wrapper cannot kill the wrapper (this repo's guard got that wrong
+until 2026-10-05). The flip side is that a renamed copy of the binary is not
+detected at all, so duplicate delivery comes back silently.
+
+And a fourth, in the relay itself: **the relay is a per-user singleton that binds
+one upstream server for life.** `tools/relay` runs one process per user on the
+host-wide `$TMPDIR/parlay` runtime dir, started with a single `-server`. A second
+instance shares that process, so `listen`/`monitor` without `--legacy-poll` would
+enroll into a relay that is polling the *other* instance's chat server — the
+enroll succeeds, the tab looks live, and nothing you send to your own server ever
+arrives. `parlay monitor`/`listen` now refuse this before registering anything:
+`preflight OK` means the relay is up **and** polling the server your CLI is
+pointed at, and a mismatch exits 1 naming both (a relay too old to report which
+server it polls is let through — the check cannot guess). Three ways out — use
+`--legacy-poll`, give the instance its own relay (a `PARLAY_RELAY_RUNTIME=<dir>`
+plus a relay started with `-server $PARLAY_SERVER`), or point `PARLAY_SERVER` at
+whatever the existing relay is already polling.
+
+**4. Open the panel (optional — this is the only step that needs Bun):**
+
+```sh
+cd packages/client && bun run build      # writes dist/index.html + dist/parlay-agent.js
+```
+
+Then open <http://localhost:4242/>. The server found the bundle by itself: it
+resolves `packages/client/dist` from its own install location first and from the
+directory you started it in second, so the command in step 1 works unchanged. If
+your bundle lives somewhere else, pass `-assets-dir <path>` or export
+`PARLAY_ASSETS_DIR`.
+
+Until you build it, `GET /` answers `503` with those instructions on its body —
+every `/api/chat/*` route works regardless, and none of the CLI in step 3 ever
+needed the panel. The bundle is gitignored, so this is a once-per-clone build.
+
+`/fleet/` is a *different* app (`packages/webview`, React) served from
+`<assets-dir>/fleet`; `packages/go-server/deploy/install.sh --build` builds and
+copies it there. It is not needed for anything above.
+
 That round-trip is the whole substrate. From here:
 
 ```sh
@@ -169,8 +243,21 @@ Launch a background agent that shows up as a live tab (needs a
 
 ```sh
 parlay spawn code-reviewer "Code Reviewer" "#c084fc" \
-  "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo
+  "Review the diff in ~/code/foo and report findings." --cwd ~/code/foo --model sonnet
 ```
+
+**`--model` is mandatory and there is no default.** Omit it and `parlay spawn` refuses
+with exit 2 and *`refusing to spawn — no model was chosen`*: the launching session's
+model is never inherited and there is no silent sonnet fallback. Three things satisfy
+the gate — `--model <id>` (what the example does), a `--profile <name>` that carries a
+model ([`packages/spawn-profiles`](packages/spawn-profiles)), or `--no-pii`, which
+auto-routes to a free model. `parlay spawn --list` renders the profile catalog.
+
+One thing to know before your first spawn: for the default `claude` harness the
+launcher starts it with `--dangerously-skip-permissions` (plus a `--strict-mcp-config`
+and a sonnet fallback), deliberately — a phone-driven agent cannot answer a permission
+prompt. Every other harness gets only its explicit `--model` and uses its own
+permission config. Details in [`docs/launcher.md`](docs/launcher.md).
 
 `parlay spawn` is the sole entry point for spawning, and the only one there is: the
 launcher runs in-process (`tools/cli/internal/spawn`). The bash spawner and its
@@ -179,6 +266,18 @@ launcher runs in-process (`tools/cli/internal/spawn`). The bash spawner and its
 
 To reach it from your phone, expose the host — Tailscale, LAN IP, or a private
 tunnel — and export `PARLAY_SERVER` as that address instead of `localhost`.
+
+> **One honest caveat about context recovery.** A spawned agent that exhausts its
+> context is supposed to recover through an `identity → handoff → scratchpad` chain.
+> Two of those three legs are yours: `parlay identity` and `parlay scratchpad` are
+> plain files under `~/.parlay/agents/<id>/` and work on any clone. The middle leg,
+> `handoff`, is **not a `parlay` verb** — it is a beads-store wrapper from the
+> author's own federation tooling (the same family as `task`/`inbox`), and this repo
+> neither ships nor installs it. So the flags that lean on it —
+> `identity --submit`, `--park`, `--complete`, and `parlay drawdown`'s closing
+> recipe — either need an id passed explicitly (`parlay identity --submit <handoff-id>`,
+> which works with no store installed) or are simply skipped. Every command involved
+> detects this and says so rather than pointing you at a command you do not have.
 
 **The chat API is unauthenticated by design** (that is how the CLI and plain `curl`
 work — see the origin guard in `packages/go-server/internal/guard`), so anything
@@ -234,8 +333,8 @@ need first, not a complete index of every module in the repo:
 |---|---|
 | `packages/go-server` | The Go server that owns `/api/chat/*`: chat history, SSE, the long-poll feed the relay consumes, the server-side-eval relay, upload/link handling, drafts/settings. Runs standalone on `:4242` (`cd packages/go-server && go run ./cmd/parlay-server`). The contract it implements lives in [`docs/api-contract.md`](docs/api-contract.md). |
 | `tools/relay` | The standalone per-agent relay daemon — its own Go module, built by `tools/relay/build.sh`. Fans the server's `/api/chat/poll` feed out to enrolled agents; `parlay monitor`/`listen` need it unless you pass `--legacy-poll`. |
-| `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle; needs a host that serves it same-origin with the API. |
-| `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`/`handoff`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
+| `packages/client` | The chat panel — tabs, presence, message rendering, TTS/speech playback, annotations. Built as a browser bundle with `cd packages/client && bun run build`; the Go server serves it same-origin from `-assets-dir` (`packages/client/dist`), so it needs no separate host or proxy. |
+| `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
 | `examples/fleet` | The author's personal **fleet layer** — inbox dispatcher/emit, pi-inbox bridge, and the agent skills. Not core product; installs via `examples/fleet/install.sh`. |
 
@@ -288,7 +387,7 @@ flowchart LR
 | **Relay** | Single fan-out daemon between the server's long-poll feed and every enrolled agent's monitor; a per-runtime-dir singleton, not built by default. | [`docs/relay.md`](docs/relay.md) |
 | **Live-command registry** | A separate registry from agent enrollment — tracks running `parlay` CLI invocations for `parlay commands` and the panel's live-commands view. | [`docs/live-commands.md`](docs/live-commands.md) |
 | **CLI** | The `parlay` Go command surface and the embedded voice/phrase eval engine. | [`tools/cli`](tools/cli) — start with `parlay help`, then `parlay <verb> --help`. The authoring doc ([`docs/CLI_VERBS_AND_EVENTS.md`](docs/CLI_VERBS_AND_EVENTS.md)) is TS-era design, not the live surface. |
-| **Panel** | The browser chat UI — tabs, presence, TTS, annotations. Not shipped with a host; see the Requirements section above. | [`packages/client`](packages/client) |
+| **Panel** | The browser chat UI — tabs, presence, TTS, annotations. A gitignored bundle (`packages/client/dist`) that the Go server serves same-origin from `-assets-dir`, so it is the server's own host rather than a separate one. | [`packages/client`](packages/client) |
 
 ## A worked config
 
@@ -302,8 +401,19 @@ your running server alone — read its limits in [`examples/`](examples/) before
 ```sh
 cd packages/go-server && go test ./...     # the Go server
 cd packages/client && bun test             # a TS client package, from inside it — see note below
-cd tools/cli && go test ./...              # the Go CLI
+cd tools/cli && CGO_ENABLED=0 go test ./...  # the Go CLI — see the cgo note below
 ```
+
+The `CGO_ENABLED=0` on the CLI line is required, not decoration.
+`tools/cli`'s beads dependency carries an embedded Dolt tree whose ICU binding
+needs C++ headers that a stock macOS toolchain does not ship, so the same
+command with cgo on fails to build with
+`fatal error: 'unicode/regex.h' file not found` — for `go test`, for
+`go build`, and for the plain `go build .` that `bin/parlay` runs (which is why
+the wrapper pins the flag itself). Nothing in the CLI needs cgo. On Linux, or
+with a full Xcode/ICU toolchain installed, the flag is harmless either way.
+Every committed `deploy/install.sh` carries it for the same reason, and
+`tools/cli/deploy_build_flags_gate_test.go` fails the build if one regresses.
 
 There is no root `bunfig.toml`, so `bun test` at the repo root does not load the
 happy-dom preload some client packages need: DOM-touching suites fail there with
