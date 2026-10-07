@@ -1895,6 +1895,11 @@ the mechanism that made that possible (a poll with no backlog cursor could
 never have returned it). This file records what the tooling can and cannot tell
 the operator **right now**.
 
+Latest addition (iteration 11): the threshold is now visible against the
+measurements it was applied to, not only against the ones it stopped — a `CONF`
+column on every input whose surface reported a confidence, and a line naming
+the input that came nearest the hold. See "Reporting what was measured" below.
+
 ## What the operator can now tell apart
 
 The question this exists to answer, from the panel: did the speech recogniser
@@ -1921,7 +1926,7 @@ identical:
 | `recogniser error` | The dictation sent an empty transcript. Nothing was said, or nothing was transcribed. | A bare `400` the phone logged and dropped. |
 | `no match` | The input parsed as a command but named no destination that matched: a dictation whose focus target did not become the active app/window, or a spoken channel/contact name in the composer's picker that matched none of the offered entries (`WHY` says `channel-not-matched` or `sender-not-matched`). | The submission settled `focus_failed` in an in-memory map nothing read; the picker's miss flashed as a hint for a second and left no durable record at all. |
 | `command` | The engine read the buffer as that phrase command, and `WHY` names which (`submit`, `clear`, `switch-tab`, …). It was acted on rather than left as text. | A phrase that became a command and a phrase that matched nothing leave the same visible trace — the box keeps its text — so "did my input become a command?" had no answer anywhere. |
-| `held` | A reported confidence fell below the configured threshold. `WHY` names the number. Nothing was typed; the text is preserved. | Did not exist: no surface reported a confidence at all. |
+| `held` | A reported confidence fell below the configured threshold. `WHY` names the number. Nothing was typed; the text is preserved. The view also prints the reported confidence of *every* input that has one (`CONF`) and names the input nearest the line. | Did not exist: no surface reported a confidence at all — and once it did, only the FAILING measurement was visible, so a dictation that cleared the line by a hundredth looked like one that cleared it by a mile. |
 | `confidence_unknown` | No recognition confidence was reported for this input. | Did not exist, and would otherwise read as "confident". |
 | `superseded` | A later input replaced this one before it was acted on — today, a composer snapshot the eval engine dropped because a newer snapshot of the same buffer had already been evaluated. | The engine fast-returned a noop and the relay forwarded it: no hop, no record, no trace anywhere. |
 | `received`/`interpreted`/`routed` with no later hop | Where the input **stopped** (`WHY` says so, with the age). | Read as ordinary silence. |
@@ -1934,6 +1939,139 @@ Two rules are enforced rather than intended:
   defect in the tooling, not a quiet night.
 - **`confidence_unknown` is its own state**, never folded into `ok`. `/send` and
   `/alert` have nothing to report, so that is what they honestly are.
+
+## Reporting what was measured, not only what was refused (iteration 11)
+
+The hold made low-confidence input stoppable, and the view named the threshold
+a hold was decided against — but the **measurements that cleared it were
+invisible**. A dictation measured at 0.61 against a 0.60 threshold and one
+measured at 0.99 produced the same row, `delivered … —`, because the confidence
+number only ever reached the view through a failure. So the operator could see
+the arithmetic of every input that was stopped, and nothing at all about the
+one that nearly was: a threshold nothing ever approaches and a threshold doing
+real work every night read identically.
+
+Two additions close that, both derived from the ledger rather than a new
+source:
+
+- **A `CONF` column**, filled for **every** input whose surface reported a
+  confidence — delivered, queued, held or refused alike — and `-` for the ones
+  it did not. `-` is not `0.00`: an unreported confidence is the same honest
+  state as `confidence_unknown`, and a number there would invent a measurement
+  nothing took.
+- **A `Threshold margin:` line** naming the input that came closest to the
+  hold, with its margin. The closest-not-worst choice is deliberate: the input
+  an operator wants to look at is the one nearest the line from *either* side.
+
+Four honesty rules, each a way this could have lied:
+
+| Rule | What would have been wrong |
+|---|---|
+| Each margin uses the input's **own** recorded threshold, never the one in force now | A threshold changed since then would silently re-judge an older input — and report it as having cleared a line it never saw. |
+| A confidence measured while **no** threshold was set is **not comparable**, and the line says so | Calling it "far above" compares two things that were never compared. |
+| A window that reported **no** confidence says that, rather than "0 inputs near the line" | An absence of measurement rendered as an absence of risk. |
+| Margins are computed at the 0.01 the view prints | A printed margin and its printed verdict (`above` / `below` / `at`) could otherwise disagree by a rounding step. |
+
+The same measurement reaches the other two surfaces, because one operator reads
+all three during one incident: a **replay** prints the clause on the hop that
+carried it, and the **live tail** appends it to that hop's line. When no
+threshold is configured at all, the view still prints the reported confidences
+and prints no margin line — the measurement is a fact about the input, and the
+threshold line above the table already says nothing is held.
+
+The view pastes earlier in this file predate this column; the class matrix they
+demonstrate is unchanged, but their tables lack `CONF` and the margin line.
+
+### Demonstration (isolated server, real CLI, two thresholds)
+
+Two isolated servers on `/tmp` state dirs, `TALON_REPL_PATH` pointed at a stub
+that types nothing (`dryRun: true` on every submission), `PARLAY_SERVER`
+pointed at each in turn. Server A holds below 0.60; server B has no threshold.
+
+```
+########## start isolated server A (PARLAY_INPUT_MIN_CONFIDENCE=0.60) ##########
+
+-- confidence 0.61 against a 0.60 threshold: it clears the line by a hundredth --
+-> POST /api/chat/remote-input/submit {"device":"phone-1","text":"deal it in","dryRun":true,"allowUnfocused":true,"confidence":0.61}
+   HTTP 202  {"id":"ri-1","status":"queued"}
+
+-- confidence 0.25: HELD, nothing typed --
+-> POST /api/chat/remote-input/submit {"device":"phone-1","text":"ship it maybe","dryRun":true,"allowUnfocused":true,"confidence":0.25}
+   HTTP 202  {"id":"ri-2","status":"held"}
+
+-- a dictation that reported NO confidence: never held, and CONF shows - --
+-> POST /api/chat/remote-input/submit {"device":"phone-1","text":"no confidence at all","dryRun":true,"allowUnfocused":true}
+   HTTP 202  {"id":"ri-3","status":"queued"}
+
+-- a chat message (no recogniser on this door) --
+-> POST /api/chat/send {"text":"typed reply, no recogniser involved","toAgent":"c0"}
+   HTTP 200  {"ok":true,"id":"m0"}
+
+-- the delivery hop for that chat message --
+-> GET /api/chat/poll?channel=c0&after=nonexistent
+   HTTP 200  {"id":"m0","role":"user","text":"typed reply, no recogniser involved","cursorReset":true}
+
+########## A1. parlay input ##########
+INPUT SEAM — 4 input(s) from the last 40 retained hop(s)
+ledger: 10 retained, 10 written, 0 dropped, 0 rejected, 0 queued, newest seq 10
+threshold: hold below confidence 0.60 (server PARLAY_INPUT_MIN_CONFIDENCE); a hold needs a reported confidence — unreported input is never held
+STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  CONF   WHY
+delivered        m0                          poll-backlog c0         1.1s      +5ms     -      —
+delivered        ri-3                        remote-input -          1.1s      +0ms     -      —
+held             ri-2                        remote-input -          1.1s      —        0.25   confidence 0.25 below threshold 0.60
+delivered        ri-1                        remote-input -          1.1s      +0ms     0.61   —
+
+Confidence: reported for 2 of 4 input(s) in this window.
+Threshold margin: the closest input in this window is ri-1 — confidence 0.61 above threshold 0.60 (margin 0.01). Nothing else came nearer the line.
+```
+
+The three rows that matter: `ri-1` was **delivered** and still shows `0.61`,
+which is the whole point of the iteration; `ri-3` and `m0` show `-` because no
+surface reported a confidence for them, and `-` is not a zero; `ri-2` shows
+`0.25` next to the number it missed.
+
+Replay of the held input, and of the one that cleared the line by a hundredth:
+
+```
+########## A2. replay ri-2, the HELD input ##########
+REPLAY ri-2 — 3 hop(s)
+
+  #1 —       2026-10-07T05:00:42.925  received    ok                 source=remote-input  channel=- detail=mode=inject
+  #2 +0ms    2026-10-07T05:00:42.925  interpreted low_confidence     source=remote-input  channel=- why=below-confidence-threshold confidence 0.25 below threshold 0.60
+  #3 +0ms    2026-10-07T05:00:42.925  held        held               source=remote-input  channel=- why=below-confidence-threshold confidence 0.25 below threshold 0.60
+
+Outcome: HELD in 0ms — confidence 0.25 below threshold 0.60
+
+########## A3. replay ri-1, the input that cleared the line by a hundredth ##########
+REPLAY ri-1 — 3 hop(s)
+
+  #1 —       2026-10-07T05:00:42.918  received    ok                 source=remote-input  channel=- detail=mode=inject
+  #2 +0ms    2026-10-07T05:00:42.918  interpreted ok                 source=remote-input  channel=- confidence 0.61 above threshold 0.60 (margin 0.01)
+  #3 +0ms    2026-10-07T05:00:42.918  delivered   ok                 source=remote-input  channel=- detail=outcome=dry_run_passed
+
+Outcome: DELIVERED in 0ms
+```
+
+And the same view against a server with **no** threshold: the measurement is
+still printed, the policy lines say there is none, and no margin is claimed.
+
+```
+########## start isolated server B (NO threshold configured) ##########
+   HTTP 202  POST /submit confidence 0.42 (no threshold configured)
+
+########## B1. parlay input on a server with NO threshold ##########
+INPUT SEAM — 1 input(s) from the last 40 retained hop(s)
+ledger: 3 retained, 3 written, 0 dropped, 0 rejected, 0 queued, newest seq 3
+threshold: none — no confidence threshold is set, so nothing is held (set PARLAY_INPUT_MIN_CONFIDENCE on the server to hold low-confidence input)
+STATE            INPUT                       SOURCE       CHANNEL    WHEN      LATENCY  CONF   WHY
+delivered        ri-1                        remote-input -          1.0s      +0ms     0.42   —
+
+Confidence: reported for 1 of 1 input(s) in this window.
+```
+
+No `Threshold margin:` line here on purpose: nothing is held, so there is no
+line to be near. The `0.42` is still on screen, which is the difference between
+"no policy" and "no measurement".
 
 ## Who is listening: the cause the ledger cannot hold (iteration 9)
 
@@ -2817,6 +2955,31 @@ it is kept because it is where the six-class paste lives.
 
 ## What running it caught
 
+### The measurement the view could not show (iteration 11)
+
+Adding the `CONF` column was mostly derivation, and the demonstration above
+confirmed the intent. Two things it surfaced are worth recording:
+
+- **A table's alignment is a RUNE property, and a byte-index assertion is only
+  accidentally right.** The first version of the CONF alignment test compared
+  `strings.Index` offsets and failed: the row's `LATENCY` cell holds an em dash
+  for an unmeasured latency, which is **3 bytes and 1 column**, so every cell to
+  its right sits 2 bytes further along while the table is perfectly aligned.
+  Go's `fmt` pads strings by runes, so the invariant is "the value starts at the
+  header's column", measured in runes. The pre-existing SOURCE check is
+  byte-safe only because it precedes the em dash — a later column would have
+  been compared wrongly forever.
+- **A wire contract can be wrong about a field the tooling depends on.**
+  `docs/api-contract.md` and the OpenAPI twin both said `threshold` is "present
+  iff the hold was decided by one". The producer does not do that: the dictation
+  intake writes the threshold in force on *every* hop that carries a confidence
+  (nil when disabled), precisely so an accepted input can be told apart from one
+  measured under a different policy. That is what makes the margin line honest —
+  it compares each input against the line that input was actually judged against
+  — so the docs were corrected, not the producer. Had the docs been believed, a
+  natural "present iff held" reading would have hidden every accepted input's
+  threshold and made the margin line fall back to the current policy.
+
 ### The real-engine audit (iteration 7)
 
 Every previous demonstration drove the eval door through a **hand-written stub
@@ -2978,8 +3141,8 @@ was removed; nothing about it is in the diff.)
 
 The equivalent per-module sweep, matching CI's `GO_MODULES`
 (`tools/cli tools/relay packages/go-server packages/spawn-profiles`), run fresh
-this iteration (`-count=1`) after every edit — including the cursor fact on the
-poll path, the read-route field, the view's new clause and its tests:
+this iteration (`-count=1`) after every edit — including the `CONF` column, the
+margin line, the replay's per-hop clause, the live tail's clause and their tests:
 
 ```
 ########## 0. the literal stop condition, at the repo root ##########
@@ -3007,16 +3170,21 @@ ok-packages=1
 fail-lines=0
 packages/spawn-profiles exit=0
 
-########## 3. -race on the packages this work touches (go-server) ##########
-ok  	parlay/go-server/internal/inputlog	4.460s
-ok  	parlay/go-server/internal/handlers	17.299s
-ok  	parlay/go-server/internal/store	1.559s
-race-exit=0
+########## 3. -race on the packages this work touches ##########
+tools/cli -race exit=1
+# github.com/dolthub/go-icu-regex/internal/icu
+file.cpp:3:10: fatal error: 'unicode/regex.h' file not found
+FAIL	github.com/trillium/parlay/tools/cli/internal/commands [build failed]
+ok  	parlay/go-server/internal/inputlog	4.446s
+ok  	parlay/go-server/internal/handlers	17.203s
+go-server -race exit=0
 
 ########## 4. make test-bdd ##########
-make-test-bdd-exit=0
+bdd-exit=0
 17 scenarios (17 passed)
+55 steps (55 passed)
 7 scenarios (7 passed)
+21 steps (21 passed)
 ```
 
 There is no known-red BDD baseline on this box: `make test-bdd` is green at
@@ -3027,12 +3195,20 @@ a regression**: with cgo on, `tools/cli` — including `internal/parlaybeads`, a
 package this branch never touches — fails to build on
 `go-icu-regex/internal/icu` (`unicode/regex.h` not found). CI installs
 `libicu-dev`; this Mac has no ICU headers. `-race` requires cgo, so that leg is
-go-server only.
+go-server only; iteration 11 is a pure-function change in `tools/cli`
+(`confidenceClause`, `thresholdMarginLine` and `confidenceCell` share no state
+and take their rows by argument), so the leg it cannot run adds nothing here —
+stated rather than implied.
 
 ## Hard constraints, and how each is met
 
 - **Observability never sits in the delivery path.**
-  **New this iteration:** the cursor fact is one more bit in that same
+  **Iteration 11:** the only code this iteration adds runs *client-side*, in the
+  view, over a page the server already returned: no server route, no poll path,
+  no delivery path and no new wire field are touched, so there is nothing new
+  for a delivery to wait on. The clause it renders comes from the same hop
+  fields the `held`/`low_confidence` rows already printed.
+  **Iteration 10:** the cursor fact is one more bit in that same
   in-memory write — `TouchPoll` now takes a `carriedCursor bool` and stores it
   alongside the timestamp it already stored, still one lock, still no I/O, no
   error, no new failure mode on the poll path (the condition it records,
@@ -3165,6 +3341,11 @@ go-server only.
 
 ## Left undone
 
+- **The margin line is over the window the view read.** It names the closest
+  input among the inputs in the page (`--limit`, default 40), so a busy window
+  can push the near-miss out of view — and the line says "in this window"
+  rather than pretending otherwise. A durable margin history would need its own
+  retention decision (the ledger retains a bounded window) and is not built.
 - **The next field added here needs the same three-state care.**
   `lastPollCursored` is a pointer on the wire precisely so that a server which
   does not report it cannot be read as `false` — a CLI that did would call every
@@ -3173,13 +3354,15 @@ go-server only.
   onto these rows.
 - **The branch lags the working tree by one commit.** PR
   [#312](https://github.com/trillium/parlay/pull/312) is open against `main`.
-  This iteration pushed `gnhf/objective-give-the-o-ad0a88` to iteration 9's head
-  (`ef9f759`), so this iteration's changes (the cursor bit on the poll path, the
-  three-state wire field, the view's cursor clause and its tests, the docs, the
-  contract and the help text) reach the PR on **the next push of that branch**;
-  nothing blocks that. The PR has still never had a real CodeRabbit review — the
-  repository is under 10 stars, so the bot posts a "skip review" summary unless a
-  comment asks it with `@coderabbitai review`, which is worth spending.
+  This iteration pushed `gnhf/objective-give-the-o-ad0a88` to iteration 10's head
+  (`63404be`) and posted a PR comment describing this iteration, so the PR
+  currently holds every change through iteration 10; this iteration's own
+  changes (the `CONF` column, the margin line, the replay/live-tail clauses,
+  their tests, the docs, the contract wording and the help text) are in the
+  working tree and reach the PR on **the next push of that branch** — nothing
+  blocks that. The PR has still never had a real CodeRabbit review: the
+  repository is under 10 stars, so the bot posts a "skip review" summary unless
+  a comment asks it with `@coderabbitai review`, which is worth spending.
 - **The listener facts are process-local.** They live in memory and a restart
   resets them, so after a restart the first poll is what makes a channel appear;
   a channel that has not been polled since then reads `never` rather than
@@ -3224,30 +3407,37 @@ go-server only.
 This repository enforces no per-file line budget (CI gates are conflict markers,
 a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and docs-index completeness —
 `.github/workflows/ci.yml`). Following the objective, every **new** file this
-branch adds is under 250 lines. This iteration's are
+branch adds is under 250 lines. This iteration's are `input_margin_test.go`
+(110, split out of the threshold tests when they crossed the ceiling) and
+`input_threshold.go` (160, which also took `confidenceWhy` and the new clause
+and margin rules off `input_model.go`); the files it edited are
+`input_threshold_test.go` (53 → 155), `input_model.go` (243 → 233),
+`input_view.go` (215 → 224), `input_watch.go` (234 → 240) and
+`input_watch_test.go` (135 → 156) — all under the ceiling, and no new split was
+forced this time. The previous iteration's are
 `input_listeners_render.go` (90, split out of `input_listeners.go` when the
 cursor rule pushed it over), `input_listeners_cursor_test.go` (125) and
-`input_events_cursor_fact_test.go` (87); the previous iteration's are
+`input_events_cursor_fact_test.go` (87); the one before that are
 `input_listeners.go` (223 → 193 after the split), `input_listeners_test.go`
 (187), `packages/go-server/internal/store/presence_poll_test.go` (78 → 112 with
 the cursor fact) and
 `packages/go-server/internal/handlers/input_events_listeners_test.go` (203);
-the previous iteration's are `input_latency.go` (232),
-`input_latency_test.go` (230), `input_snapshot_test.go` (75, split out so the
-derivation tests stayed under the ceiling) and `inputlog/timestamp_test.go`
-(95); earlier ones are `eval_interpret_precedence_test.go` (126),
-`eval_interpret.go` (157 → 188 with the picker-mode rule and its comment),
-`eval_interpret_test.go` (219 → 184 after the precedence tests moved out),
-`eval_interpret_unit_test.go` (56 → 85), `eval_door_failure_test.go` (76),
-`input_command_test.go` (121), `input_watch.go` (234), `read_after_test.go`
-(144), `input_watch_test.go` (135), `input_events_cursor_test.go` (80),
-`eval_supersede.go` (82), `eval_supersede_test.go` (222),
-`inputlog/vocabulary.go` (105) and `input_threshold.go` (45). The ceiling was
-chosen by this branch, not by the repository: 250 lines is small enough that a
-file has one subject and large enough that a real subject fits, and it has now
-forced a split three times (`eval_interpret_test.go` at 252, and the latency
-derivation tests, which moved their wiring half into `input_snapshot_test.go`)
-and a fourth this iteration (`input_listeners.go` at 223 + the cursor rule).
+before that `input_latency.go` (232), `input_latency_test.go` (230),
+`input_snapshot_test.go` (75, split out so the derivation tests stayed under the
+ceiling) and `inputlog/timestamp_test.go` (95); earlier ones are
+`eval_interpret_precedence_test.go` (126), `eval_interpret.go` (157 → 188 with
+the picker-mode rule and its comment), `eval_interpret_test.go` (219 → 184 after
+the precedence tests moved out), `eval_interpret_unit_test.go` (56 → 85),
+`eval_door_failure_test.go` (76), `input_command_test.go` (121),
+`input_watch.go` (234), `read_after_test.go` (144), `input_watch_test.go` (135),
+`input_events_cursor_test.go` (80), `eval_supersede.go` (82),
+`eval_supersede_test.go` (222), `inputlog/vocabulary.go` (105) and
+`input_threshold.go` (45). The ceiling was chosen by this branch, not by the
+repository: 250 lines is small enough that a file has one subject and large
+enough that a real subject fits, and it has now forced a split in five
+iterations (`eval_interpret_test.go` at 252, the latency derivation tests, which
+moved their wiring half into `input_snapshot_test.go`, `input_listeners.go` at
+223, and the threshold tests this iteration).
 
 The edited files above 250 lines are pre-existing ones this branch only adds to:
 `handlers/eval.go` (380, the eval door itself) and `inputlog/log.go` (**242 at

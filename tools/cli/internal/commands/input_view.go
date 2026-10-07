@@ -121,16 +121,19 @@ func renderInputRows(w io.Writer, rows []inputRow, stats inputStats, limit int) 
 			"not evidence that input is flowing.")
 		return
 	}
-	fmt.Fprintf(w, "%-16s %-*s %-12s %-10s %-9s %-8s %s\n",
-		"STATE", inputIDWidth, "INPUT", "SOURCE", "CHANNEL", "WHEN", "LATENCY", "WHY")
+	fmt.Fprintf(w, "%-16s %-*s %-12s %-10s %-9s %-8s %-6s %s\n",
+		"STATE", inputIDWidth, "INPUT", "SOURCE", "CHANNEL", "WHEN", "LATENCY", "CONF", "WHY")
 	now := time.Now()
 	for _, r := range rows {
-		fmt.Fprintf(w, "%-16s %-*s %-12s %-10s %-9s %-8s %s\n",
+		fmt.Fprintf(w, "%-16s %-*s %-12s %-10s %-9s %-8s %-6s %s\n",
 			r.State, inputIDWidth, cell(r.ID, inputIDWidth), cell(r.Source, 12), cell(r.Channel, 10),
-			humanAge(now.Sub(r.At)), latencyCell(r), whyCell(r))
+			humanAge(now.Sub(r.At)), latencyCell(r), confidenceCell(r), whyCell(r))
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, inputConfidenceNote(rows))
+	if line := thresholdMarginLine(rows, stats.MinConfidence); line != "" {
+		fmt.Fprintln(w, line)
+	}
 	fmt.Fprintln(w, inputLegend)
 }
 
@@ -200,6 +203,12 @@ func renderInputReplay(w io.Writer, id string, page inputPage, now time.Time, st
 		extra := ""
 		if e.Reason != "" {
 			extra = " why=" + e.Reason
+		}
+		// A hop that carried a reported confidence says so here too: a replay
+		// is read to find the hop that went wrong, and a measured confidence
+		// is the fact that explains a hold sitting next to it.
+		if c := confidenceClause(e.Confidence, e.Threshold); c != "" {
+			extra += " " + c
 		}
 		if e.Detail != "" {
 			extra += " detail=" + e.Detail

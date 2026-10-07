@@ -247,6 +247,41 @@ The threshold travels to the reader inside `stats.minConfidence`, and
 `parlay input` prints it above the table, so a hold can never be inferred from a
 row without the number behind it.
 
+### Reporting what was measured, not only what was refused
+
+A threshold is only visible in a view if the measurements it was applied to are
+visible too. Publishing the failing confidences alone gives an operator the
+arithmetic of every input that was stopped and nothing about the ones that
+scraped through: a transcript measured at 0.61 against a 0.60 threshold reads
+exactly like one measured at 0.99, and a threshold nothing ever approaches gets
+the same view as one that nearly caught something.
+
+The snapshot therefore carries a `CONF` column, filled for **every** input whose
+surface reported a confidence — delivered, queued, held, or refused alike — and
+`-` for the ones it did not. `-` is not `0.00`: an unreported confidence is the
+same honest state as `confidence_unknown`, and rendering it as a number would
+invent a measurement nothing took.
+
+Under the table one line names the input that came closest to the line:
+
+```
+Threshold margin: the closest input in this window is ri-3 — confidence 0.61 above threshold 0.60 (margin 0.01). Nothing else came nearer the line.
+```
+
+Three rules keep that line from lying. Each margin is computed from the input's
+**own** record — the confidence it reported and the threshold in force when it
+was measured — so a threshold changed since then cannot silently re-judge an
+older input; a window where confidences were reported while no threshold was set
+says they are not comparable rather than pretending they were far above; and a
+window that reported nothing says that instead of "0 inputs near the threshold".
+Margins are computed at the two decimals the view prints, so a printed margin
+and its printed verdict (`above`, `below`, `at`) cannot disagree.
+
+The same measurement travels to the other two surfaces, because all three are
+read by one operator during one incident: a replay prints the clause on the hop
+that carried it (so the hop that went wrong is the hop that shows the number),
+and the live tail appends it to that hop's line.
+
 ## What is recorded today, and what is not
 
 Recorded: the full hop set of the dictation intake (above); the `queued` hop of
@@ -272,7 +307,6 @@ picker whose spoken destination matched nothing.
 - A provenance threshold. The threshold today is over reported confidence
   only. No surface reports provenance strength, so a provenance hold would
   compare against a value nothing produces.
-
 A `parlay input` view and a replay-by-id verb are the consumers; both read
 this ledger over `GET /api/chat/input-events` rather than any second source.
 

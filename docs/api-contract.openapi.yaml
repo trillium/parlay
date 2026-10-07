@@ -1646,7 +1646,7 @@ components:
         source: { type: string, description: "The surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input, eval." }
         channel: { type: string, description: Destination agent/channel, when one had been chosen. }
         confidence: { type: number, description: "Reported recognition confidence in [0,1]; absent means not reported." }
-        threshold: { type: number, description: The confidence threshold it was compared against; present iff the hold was decided by one. }
+        threshold: { type: number, description: "The confidence threshold that measurement was compared against, as it was in force at that moment. Absent when no threshold was configured when the measurement was taken." }
         reason: { type: string, description: Short machine-readable token for a non-ok hop. Required for every class but `ok`. Never a message body. }
         detail: { type: string, description: Bounded non-content context. Never message text. }
 

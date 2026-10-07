@@ -43,9 +43,15 @@ func watchHeader() string {
 // watchRowLine renders one hop of the live tail, with the gap since that same
 // input's previous hop.
 func watchRowLine(e inputEvent, delta string) string {
+	// A hop that carried a reported confidence says so here too: the live
+	// tail is what an operator watches during an incident, and the number that
+	// explains a hold one line later belongs beside it.
 	extra := ""
+	if c := confidenceClause(e.Confidence, e.Threshold); c != "" {
+		extra += " " + c
+	}
 	if e.Reason != "" {
-		extra = " why=" + e.Reason
+		extra += " why=" + e.Reason
 	}
 	return fmt.Sprintf("%-12s %-*s %-11s %-18s %-14s %s%s",
 		inputClock(e.Ts), inputIDWidth, cell(e.InputID, inputIDWidth), e.Stage, e.Class,

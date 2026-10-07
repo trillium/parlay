@@ -280,7 +280,7 @@ interface InputEvent {
   source?: string      // the surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input, eval
   channel?: string     // destination agent/channel, once one was chosen
   confidence?: number  // reported recognition confidence in [0,1]; absent = not reported
-  threshold?: number   // the threshold a hold was decided against
+  threshold?: number   // the threshold that measurement was compared against, as it was in force at that moment (absent = no threshold configured, or none reported)
   reason?: string      // short token; REQUIRED for every class but "ok"
   detail?: string      // bounded non-content context
 }

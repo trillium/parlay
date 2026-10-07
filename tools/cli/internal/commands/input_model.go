@@ -6,7 +6,6 @@
 package commands
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -219,17 +218,8 @@ func lastStage(hops []inputEvent) string {
 	return stage
 }
 
-// confidenceWhy renders a hold so the threshold behind it is visible rather
-// than implied.
-func confidenceWhy(e inputEvent) string {
-	if e.Confidence == nil || e.Threshold == nil {
-		if e.Reason != "" {
-			return e.Reason
-		}
-		return "held by policy"
-	}
-	return fmt.Sprintf("confidence %.2f below threshold %.2f", *e.Confidence, *e.Threshold)
-}
+// confidenceWhy and the rest of the confidence rendering live in
+// input_threshold.go.
 
 // inputRowFor derives a replay's row through the same rules the live view
 // uses.

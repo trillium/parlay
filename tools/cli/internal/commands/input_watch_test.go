@@ -133,3 +133,24 @@ func TestWatchTailDoesNotReplayHistoryAfterALateJoin(t *testing.T) {
 		t.Errorf("a late join replayed retained history into the live tail: %v", lines)
 	}
 }
+
+// The live tail is the surface an operator watches DURING the incident, so a
+// hop that carried a reported confidence has to show it there too — otherwise
+// the hold line one row later arrives with no number explaining it.
+func TestWatchRowCarriesTheReportedConfidence(t *testing.T) {
+	e := watchEvent(103, "ri-9", "interpreted", "low_confidence")
+	e.Reason = "below-confidence-threshold"
+	e.Confidence, e.Threshold = fl(0.31), fl(0.80)
+	row := watchRowLine(e, "+1.2s")
+	for _, want := range []string{"why=below-confidence-threshold", "confidence 0.31 below threshold 0.80"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("live tail row %q does not carry %q", row, want)
+		}
+	}
+	// A hop that reported nothing must not acquire a confidence: absence is a
+	// different fact from a measurement.
+	plain := watchRowLine(watchEvent(104, "m1", "queued", "ok"), "—")
+	if strings.Contains(plain, "confidence") {
+		t.Errorf("live tail invented a confidence for a hop that reported none: %q", plain)
+	}
+}
