@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -60,11 +61,14 @@ func main() {
 	)
 	flag.Parse()
 
-	st, err := store.Open(store.Config{Dir: *dirFlag})
+	st, err := store.Open(store.Config{
+		Dir:                *dirFlag,
+		MinInputConfidence: envConfidence("PARLAY_INPUT_MIN_CONFIDENCE"),
+	})
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
-	defer st.Messages.Close()
+	defer st.Close()
 
 	mux := http.NewServeMux()
 	registerHealth(mux, st)
@@ -219,6 +223,25 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envConfidence reads a confidence threshold in [0,1]. Empty or unset means
+// the threshold is disabled — nil, not zero — because a zero threshold and
+// no threshold are different postures and only one of them is opt-in. An
+// unparseable or out-of-range value is a hard error rather than a silent
+// fallback: a typo'd threshold that quietly disabled the hold is exactly the
+// failure this whole seam exists to make visible.
+func envConfidence(key string) *float64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < 0 || v > 1 {
+		log.Fatalf("%s=%q is not a confidence in [0,1]", key, raw)
+		return nil
+	}
+	return &v
 }
 
 // defaultStateHome mirrors packages/server/src/debug-log.ts's own default:

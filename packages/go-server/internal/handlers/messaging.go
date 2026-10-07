@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"parlay/go-server/internal/inputlog"
 	"parlay/go-server/internal/store"
 )
 
@@ -20,11 +21,17 @@ func handleSend(st *store.Store, b *broker) http.HandlerFunc {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
+		// inputID keys this request in the input-seam ledger even if nothing
+		// gets stored under it — a refused send has no message id, and a
+		// refusal the operator cannot see is the failure this ledger exists
+		// to remove.
+		inputID := inputlog.NewInputID()
 		var req sendRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
 		if req.Text == "" && len(req.Images) == 0 {
+			recordRefused(st, inputID, inputSourceSend, "empty-input")
 			writeAppError(w, "text or images required")
 			return
 		}
@@ -37,9 +44,11 @@ func handleSend(st *store.Store, b *broker) http.HandlerFunc {
 		}
 		stored, _, err := appendAndPublish(st, b, msg)
 		if err != nil {
+			recordRefused(st, inputID, inputSourceSend, "store-failed")
 			writeAppError(w, err.Error())
 			return
 		}
+		recordQueued(st, stored, inputSourceSend)
 		writeJSON(w, okIDResponse{OK: true, ID: stored.ID})
 	}
 }
@@ -126,11 +135,12 @@ func handleAlert(st *store.Store, b *broker) http.HandlerFunc {
 		delivered := 0
 		for _, ch := range targets {
 			msg := store.ChatMessage{Role: "user", Text: req.Text, Channel: ch, Type: "alert"}
-			_, d, err := appendAndPublish(st, b, msg)
+			stored, d, err := appendAndPublish(st, b, msg)
 			if err != nil {
 				writeAppError(w, err.Error())
 				return
 			}
+			recordQueued(st, stored, inputSourceAlert)
 			delivered += d
 		}
 		writeJSON(w, alertResponse{OK: true, Channels: len(targets), Delivered: delivered})

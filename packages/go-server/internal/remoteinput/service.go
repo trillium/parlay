@@ -31,11 +31,12 @@ type Service struct {
 	settleDelay time.Duration
 	onSettled   func(Outcome)
 
-	mu       sync.Mutex
-	nextID   uint64
-	pending  []Submission
-	outcomes map[string]Outcome
-	order    []string
+	mu         sync.Mutex
+	nextID     uint64
+	pending    []Submission
+	outcomes   map[string]Outcome
+	order      []string
+	onAccepted func(Submission)
 
 	wake chan struct{}
 	stop chan struct{}
@@ -71,6 +72,17 @@ func (s *Service) Stop() {
 	<-s.done
 }
 
+// SetOnAccepted installs the accept hook, called by Submit once the
+// submission has an id and before any worker can pick it up. It is how the
+// input-seam ledger records the phone boundary without racing the outcome.
+// The hook is called while Submit holds the service lock, so it must be
+// non-blocking and must not call back into the Service. Nil is a no-op.
+func (s *Service) SetOnAccepted(fn func(Submission)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onAccepted = fn
+}
+
 // Submit enqueues text for injection and returns its id at once (202
 // semantics: queued, not done). The terminal outcome arrives via Get or
 // the onSettled callback.
@@ -78,6 +90,9 @@ func (s *Service) Submit(sub Submission) string {
 	s.mu.Lock()
 	s.nextID++
 	sub.ID = fmt.Sprintf("ri-%d", s.nextID)
+	if s.onAccepted != nil {
+		s.onAccepted(sub)
+	}
 	s.pending = append(s.pending, sub)
 	s.remember(Outcome{ID: sub.ID, Device: sub.Device, Status: StatusQueued})
 	s.mu.Unlock()
@@ -86,6 +101,26 @@ func (s *Service) Submit(sub Submission) string {
 	default:
 	}
 	return sub.ID
+}
+
+// Hold records a submission that policy stopped before routing and returns
+// its id. Nothing is queued and no Talon call is made: the terminal held
+// outcome is what tells the phone the text is preserved because a threshold
+// stopped it, rather than because a delivery failed. reason is the
+// human-readable threshold statement carried in Outcome.Error; the ledger's
+// own reason token lives with the hop that records the hold.
+func (s *Service) Hold(sub Submission, reason string) string {
+	s.mu.Lock()
+	s.nextID++
+	sub.ID = fmt.Sprintf("ri-%d", s.nextID)
+	id, device := sub.ID, sub.Device
+	s.mu.Unlock()
+	s.setOutcome(Outcome{
+		ID: id, Device: device, Status: StatusHeld,
+		Mode: NormalizeMode(sub.Mode), InjectAttempted: false,
+		PreserveText: true, Error: reason,
+	})
+	return id
 }
 
 // SetBeadCreator swaps the bead backend (tests inject a fake; the

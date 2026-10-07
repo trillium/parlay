@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"parlay/go-server/internal/inputlog"
 	"parlay/go-server/internal/store"
 )
 
@@ -212,6 +213,10 @@ func hasVerb(verbs []string, want string) bool {
 // connection is refused before the engine is called; a muted action has its
 // emission suppressed after it), and the command-log record for every
 // evaluation, whatever its outcome. Both are why this handler needs the store.
+//
+// st is also the input-seam ledger, which records the one verdict on this path that
+// is an input outcome rather than a transport detail: a snapshot the engine
+// dropped because a newer one had already replaced it. See eval_supersede.go.
 func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -226,6 +231,10 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 
 		// Validate required fields
 		if req.Device == "" {
+			// Recorded like every other intake refusal: an eval the door declined
+			// used to leave no trace anywhere, which is the shape of failure this
+			// ledger exists to remove.
+			recordRefused(st, inputlog.NewInputID(), inputSourceEval, reasonMissingDevice)
 			writeAppError(w, "device required")
 			return
 		}
@@ -302,6 +311,11 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 				Reason:   "engine-unreachable",
 				RelayMs:  relayMs,
 			})
+			// The engine never interpreted this input. That is an input outcome,
+			// not a transport detail: the operator said something and nothing
+			// acted on it. Silence here is exactly the ambiguity this ledger
+			// exists to remove.
+			recordRefused(st, inputlog.NewInputID(), inputSourceEval, reasonInterpreterUnreachable)
 			writeStatusError(w, http.StatusBadGateway, "engine unreachable: "+err.Error())
 			return
 		}
@@ -316,6 +330,7 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 				Reason:   "engine-bad-response",
 				RelayMs:  relayMs,
 			})
+			recordRefused(st, inputlog.NewInputID(), inputSourceEval, reasonInterpreterResponseInvalid)
 			writeStatusError(w, http.StatusBadGateway, "invalid engine response")
 			return
 		}
@@ -347,6 +362,14 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 		}
 
 		rememberFired(req.StreamID, env.Fired)
+
+		// The engine's verdict carries input OUTCOMES, not just actions: what
+		// this buffer became (a fired command), a spoken destination that
+		// matched nothing, or a snapshot a newer one replaced before it was
+		// acted on. All of them used to be forwarded and forgotten here. See
+		// eval_interpret.go for the precedence and for why nothing is
+		// recomputed.
+		recordEvalOutcome(st, req.StreamID, req.Mode, len(req.Tabs), req.Version, env)
 
 		timing := relayTiming{
 			EngineEvalNs: env.EngineEvalNs,

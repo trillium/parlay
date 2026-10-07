@@ -14,7 +14,7 @@ func TestOpenCreatesStateDirAndAllSubstores(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer st.Messages.Close()
+	defer st.Close()
 
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("state dir not created: %v", err)
@@ -43,15 +43,13 @@ func TestOpenIsIdempotentAcrossRestarts(t *testing.T) {
 	if _, err := st1.Registry.Upsert(AgentInfo{ID: "c0"}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := st1.Messages.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	st1.Close()
 
 	st2, err := Open(Config{Dir: dir})
 	if err != nil {
 		t.Fatalf("Open 2 (restart): %v", err)
 	}
-	defer st2.Messages.Close()
+	defer st2.Close()
 
 	if got := st2.Messages.Count(); got != 1 {
 		t.Errorf("after restart Messages.Count() = %d, want 1", got)

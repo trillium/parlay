@@ -22,6 +22,7 @@
 //	agents.json      full-snapshot agent registry, atomic rewrite on change
 //	draft.json       full-snapshot single current draft, atomic rewrite
 //	settings.json    full-snapshot ParlaySettings, atomic rewrite
+//	input.jsonl      append-only input-seam ledger, one inputlog.Event per line
 //	uploads/         one file per uploaded attachment, named by UploadStore.Save
 //
 // PresenceTracker and CommandRegistry have no on-disk form at all: both hold
@@ -38,6 +39,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"parlay/go-server/internal/inputlog"
 )
 
 // Store aggregates every substore the server needs. Each field is safe for
@@ -57,6 +60,11 @@ type Store struct {
 	// Presence and Commands are.
 	ActionLog *ActionLog
 	OffSwitch *OffSwitch
+	// Input is the input-seam ledger: what happened to operator input
+	// between an intake surface accepting it and a listener being handed
+	// it. Nil-safe (every method tolerates a nil receiver) so a Store
+	// built by hand in a test needs no special case.
+	Input *inputlog.Log
 }
 
 // Config controls where and how much Open persists.
@@ -64,6 +72,12 @@ type Config struct {
 	Dir             string // state directory; created if missing
 	MaxMessages     int    // ring-buffer cap; <=0 uses DefaultMaxMessages
 	MaxHistoryBytes int64  // messages.jsonl compaction trigger; <=0 uses DefaultMaxHistoryBytes
+
+	// MinInputConfidence is the confidence below which operator input is
+	// held rather than routed. Nil (the zero value) disables the
+	// threshold, and a disabled threshold is byte-identical behavior to a
+	// server without this field. See inputlog.Judge.
+	MinInputConfidence *float64
 }
 
 // Open loads (or initializes) every substore from cfg.Dir, creating the
@@ -106,6 +120,13 @@ func Open(cfg Config) (*Store, error) {
 		messages.Close()
 		return nil, fmt.Errorf("store: channels: %w", err)
 	}
+	inputs, err := inputlog.Open(filepath.Join(cfg.Dir, "input.jsonl"), inputlog.Options{
+		MinConfidence: cfg.MinInputConfidence,
+	})
+	if err != nil {
+		messages.Close()
+		return nil, fmt.Errorf("store: input ledger: %w", err)
+	}
 
 	return &Store{
 		Messages:  messages,
@@ -118,5 +139,17 @@ func Open(cfg Config) (*Store, error) {
 		Channels:  channels,
 		ActionLog: NewActionLog(ActionLogConfig{}),
 		OffSwitch: NewOffSwitch(),
+		Input:     inputs,
 	}, nil
+}
+
+// Close releases every substore that owns a resource. The message log and
+// the input ledger each hold an append handle and a goroutine, so a caller
+// that closed only Messages would leak the ledger's writer.
+func (s *Store) Close() {
+	if s == nil {
+		return
+	}
+	_ = s.Messages.Close()
+	s.Input.Close()
 }

@@ -44,6 +44,7 @@ Linked from the root README's system map.
 | [`input.md`](input.md) | The `parlay-input` DOM wrapper — the up-channel from a composer element into the phrase engine. |
 | [`command-server.md`](command-server.md) | The Go chat API server (`packages/go-server`) — what it owns, how it runs, and the wire contract |
 | [`events-history.md`](events-history.md) | The chat-history file the Go server actually keeps (`messages.jsonl`), what reads it, and the out-of-process hook/tool streams that feed it. |
+| [`input-seam.md`](input-seam.md) | The input seam's ledger (`input.jsonl`): every hop an operator input made between an intake surface accepting it and a listener being handed it, the failure classes it tells apart, and why recording can never sit in the delivery path. |
 | [`agent-registry.md`](agent-registry.md) | Who is enrolled as a chat tab, and the transient presence counters — distinct from the live-command registry below. |
 | [`monitor.md`](monitor.md) | `parlay monitor`/`listen` — how an agent receives messages, relay-backed or legacy-poll. |
 | [`launcher.md`](launcher.md) | `parlay spawn` — the in-process Go launcher (`tools/cli/internal/spawn`), the only spawner. |

@@ -196,6 +196,43 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AppError" }
 
+  /api/chat/input-events:
+    get:
+      operationId: inputEvents
+      x-parlay-server: go-only
+      x-parlay-guard: unguarded-read
+      summary: The input-seam ledger — every recorded hop of operator input
+      description: >-
+        One append-only record per hop an operator input made between an intake
+        surface accepting it and a listener being handed it, keyed by the
+        input's id (a stored message id, or a ledger-local `in-…` id for a
+        request an intake refused before storing anything). `inputId` narrows
+        the answer to one input's hops — the material a replay renders. The
+        response always carries the ledger's own counters, so an empty event
+        list and a ledger that is silently shedding records cannot look alike.
+        Unguarded deliberately: it hands out only message ids, channel names
+        (which `/api/chat/history` already returns unguarded) and per-channel
+        poll counts and timestamps, and it never stores anything (an unknown
+        `inputId` is an empty list). The ledger holds no message text.
+      parameters:
+        - name: inputId
+          in: query
+          schema: { type: string }
+          description: Return only this input's hops; unknown ids return an empty list.
+        - name: afterSeq
+          in: query
+          schema: { type: integer }
+          description: "Cursor: return only hops with seq strictly greater, oldest first — what a live tail reads forward with. A cursor older than the retained window is not an error: the oldest retained hops come back, and their first seq names the span that was evicted. Unreadable values are read as 0 (the widest answer)."
+        - name: limit
+          in: query
+          schema: { type: integer }
+          description: "At most N events. Without `afterSeq` that is the newest N retained; with it, the oldest N of the matching set, so a paging reader never has a page omitted out from under it. Absent or unparseable means all."
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InputEventPage" }
+
   /api/chat/history:
     get:
       operationId: history
@@ -1032,6 +1069,17 @@ paths:
                 store: { type: string, description: "Bead-mode capture queue (default inbox); any registered wrapper name." }
                 allowUnfocused: { type: boolean, description: "Deliberate opt-in to inject with no focus target." }
                 dryRun: { type: boolean, description: "Real focus + verification, nothing typed; ?dryRun=1 forces the same mode." }
+                confidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  description: >-
+                    Optional and additive: the recognition confidence the submitting
+                    surface reported for text. Omission means "not reported" — never
+                    "confident" and never held. When the server has a threshold in
+                    force (PARLAY_INPUT_MIN_CONFIDENCE) and this is below it, the
+                    submission is held: status 202 with status=held, nothing typed,
+                    text preserved.
       parameters:
         - name: dryRun
           in: query
@@ -1055,7 +1103,7 @@ paths:
           description: "Mirrors the body store field (?store=task); the body wins when both are set."
       responses:
         "202":
-          description: Queued; poll status or wait for the SSE event.
+          description: Queued, or held when a reported confidence is below the configured threshold; poll status or wait for the SSE event.
           content:
             application/json:
               schema:
@@ -1063,7 +1111,7 @@ paths:
                 required: [id, status]
                 properties:
                   id: { type: string, description: "Submission id (ri-N)." }
-                  status: { const: queued }
+                  status: { enum: [queued, held] }
         "400":
           description: device/text required, unknown mode, invalid bead store, over-long bead text, targetless live inject, or invalid JSON body.
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
@@ -1076,7 +1124,7 @@ paths:
       description: >
         Returns the latest Outcome for id. Terminal status:
         injected | focus_failed | inject_failed | dry_run_passed |
-        bead_created | bead_failed;
+        bead_created | bead_failed | held;
         transient: queued | injecting. Guarded (GuardedPaths). Full
         contract owned by docs/remote-input.md.
       parameters:
@@ -1095,7 +1143,7 @@ paths:
                 properties:
                   id: { type: string }
                   device: { type: string }
-                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed, dry_run_passed, bead_created, bead_failed] }
+                  status: { enum: [queued, injecting, injected, focus_failed, inject_failed, dry_run_passed, bead_created, bead_failed, held] }
                   focus: { enum: [verified, not_required, unfocused_allowed] }
                   injectAttempted: { type: boolean }
                   preserveText: { type: boolean }
@@ -1575,6 +1623,94 @@ components:
         images: { type: array, items: { type: string } }
         from: { type: string, description: User-role sender attribution; absent = the captain. }
         received: { type: boolean, description: Runtime-only delivery pip; stripped from disk. }
+
+    InputEvent:
+      type: object
+      description: >-
+        One hop of one operator input through the input seam. Never carries
+        message text.
+      required: [seq, ts, inputId, stage, class]
+      properties:
+        seq: { type: integer, description: Monotonic within the retained ledger; the replay ordering key. }
+        ts: { type: string, description: ISO 8601. }
+        inputId: { type: string, description: The stored message id, or a ledger-local `in-…` id for input that never became a message (a refusal, or a superseded composer snapshot). }
+        stage:
+          enum: [received, interpreted, routed, queued, delivered, held, superseded]
+          description: What had happened to the input at this hop.
+        class:
+          enum: [ok, recogniser_error, low_confidence, confidence_unknown, no_match, refused, unpicked, superseded, held]
+          description: >-
+            The hop's outcome. Anything but `ok` carries a reason. `confidence_unknown`
+            is the honest state when no recognition confidence was reported — never
+            folded into `ok`.
+        source: { type: string, description: "The surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input, eval." }
+        channel: { type: string, description: Destination agent/channel, when one had been chosen. }
+        confidence: { type: number, description: "Reported recognition confidence in [0,1]; absent means not reported." }
+        threshold: { type: number, description: "The confidence threshold that measurement was compared against, as it was in force at that moment. Absent when no threshold was configured when the measurement was taken." }
+        reason: { type: string, description: Short machine-readable token for a non-ok hop. Required for every class but `ok`. Never a message body. }
+        detail: { type: string, description: Bounded non-content context. Never message text. }
+
+    InputEventStats:
+      type: object
+      description: The ledger's own honesty report; travels with every page.
+      properties:
+        retained: { type: integer, description: Events currently in the in-memory ring. }
+        written: { type: integer, description: Events durably appended this process. }
+        dropped: { type: integer, description: Events shed because the writer queue was full. }
+        rejected: { type: integer, description: Events refused as malformed (e.g. a failure with no reason). }
+        queue: { type: integer, description: Events queued and not yet written. }
+        newestSeq: { type: integer, description: "The highest seq the ledger has assigned, 0 when it has written nothing. It lets a cursor reader tell 'nothing new yet' apart from 'my cursor is ahead of this ledger' — the state a tail lands in when a server comes up against a fresh ledger." }
+        minConfidence: { type: number, description: "The confidence threshold actually in force, or absent when it is disabled. The number a hold was decided against, travelling with the events so a hold and a misconfigured policy cannot look alike." }
+
+    InputEventPage:
+      type: object
+      properties:
+        events: { type: array, items: { $ref: "#/components/schemas/InputEvent" } }
+        stats: { $ref: "#/components/schemas/InputEventStats" }
+        listeners:
+          type: array
+          description: >-
+            Who has been asking each channel for messages — the half of the
+            seam the ledger cannot carry, because a queued hop and a queued hop
+            nothing will ever collect are the same row. Never omitted: an empty
+            array means nothing has polled any channel since the server
+            started, while an ABSENT field means this server does not report
+            listener activity at all. A channel that was never polled is absent
+            from the array. `limit`, `inputId` and `afterSeq` narrow the ledger
+            only, never this list.
+          items: { $ref: "#/components/schemas/InputListener" }
+        pollHoldMs:
+          type: integer
+          description: >-
+            How long this server holds a parked long-poll, in milliseconds
+            (25000). A listener that is attached cannot be quieter than the
+            hold, so this is the window below which quiet is normal and above
+            which nothing is polling the channel.
+
+    InputListener:
+      type: object
+      required: [channel, activePollers]
+      properties:
+        channel: { type: string }
+        lastPollTs:
+          type: string
+          description: >-
+            ISO 8601; when anything last ASKED this channel for messages
+            (a served backlog and a parked long-poll both count). It is not
+            the time of the last message: this is a fact about listeners.
+        activePollers:
+          type: integer
+          description: Long-polls parked on this channel right now (0 between polls of a live listener, which is why lastPollTs exists).
+        lastPollCursored:
+          type: boolean
+          description: >-
+            Whether the most recent poll on this channel asked for the
+            retained backlog (`after=`). handlePoll reads the retained store
+            only for a cursored request, so a cursorless poll can only ever see
+            a message published while it waited. A server that reports this
+            always sets it; an ABSENT field means the server does not report it
+            and must not be read as false, since that would call every listener
+            on an older server unable to replay anything.
 
     AgentInfo:
       type: object

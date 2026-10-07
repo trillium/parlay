@@ -15,6 +15,6 @@ func newTestStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	t.Cleanup(func() { st.Messages.Close() })
+	t.Cleanup(st.Close)
 	return st
 }

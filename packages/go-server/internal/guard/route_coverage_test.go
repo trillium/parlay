@@ -39,12 +39,19 @@ var TestUnguardedRoutes = map[string]string{
 	// sent CORS headers — a widening, not a narrowing. Unguarded here they send
 	// no ACAO at all, so a foreign page's read executes and its body stays
 	// unreadable. See divergence 1 in the package comment.
-	"/api/chat/history":  "read: chat history, no identifiers and no device uuid",
-	"/api/chat/agents":   "read: registered agent ids. Deliberately asymmetric with the /api/chat/agents/ prefix below — see that entry",
-	"/api/chat/commands": "read: the live-command snapshot. Same class as /api/chat/agents; its three POST siblings ARE guarded",
-	"/api/chat/version":  "read: bundle version string, polled by every SSE client",
-	"/api/chat/pages":    "read: the page manifest the panel's page picker renders",
-	"/api/chat/plugins":  "read: static plugin manifests. The mutating plugin subtree is guarded by the /api/chat/plugin/ prefix",
+	"/api/chat/history": "read: chat history, no identifiers and no device uuid",
+	"/api/chat/agents":  "read: registered agent ids. Deliberately asymmetric with the /api/chat/agents/ prefix below — see that entry",
+	// The input-seam ledger hands out message ids and channel names — the same
+	// pair /api/chat/history already returns unguarded — plus short typed
+	// reason tokens and, since the listener half was added, per-channel poll
+	// counts and timestamps. No device uuid, no message text (the ledger never
+	// stores any), no caller identity (a poll timestamp names a channel, not
+	// who asked), and nothing writable: an unknown ?inputId= is an empty list.
+	"/api/chat/input-events": "read: the input-seam ledger; message ids, channel names and per-channel poll timestamps are already unguarded at /api/chat/history",
+	"/api/chat/commands":     "read: the live-command snapshot. Same class as /api/chat/agents; its three POST siblings ARE guarded",
+	"/api/chat/version":      "read: bundle version string, polled by every SSE client",
+	"/api/chat/pages":        "read: the page manifest the panel's page picker renders",
+	"/api/chat/plugins":      "read: static plugin manifests. The mutating plugin subtree is guarded by the /api/chat/plugin/ prefix",
 	// The mux registers the UPLOAD SERVING SUBTREE under its prefix
 	// constant; /api/chat/uploads/<name> is the URL shape it answers.
 	"/api/chat/uploads/": "read: serves an uploaded image by server-generated name, same class as /api/chat/agents",

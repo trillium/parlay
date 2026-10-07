@@ -243,6 +243,118 @@ interface ChatMessage {
 }
 ```
 
+### `GET /api/chat/input-events?inputId=<id>&afterSeq=<seq>&limit=N`
+The input-seam ledger: what happened to operator input between an intake
+surface accepting it and a listener being handed it. See
+[`input-seam.md`](input-seam.md) for the vocabulary and the failure classes it
+tells apart.
+
+One record per hop, append-only, keyed by the input's id — the stored message
+id, or a ledger-local `in-…` id for input that never became a message (a
+request an intake surface refused before storing anything, or a composer
+snapshot the eval engine dropped as superseded). `inputId` narrows the answer
+to one input's hops (what a replay renders); an unknown id is an **empty
+list**, not an error and not a created record.
+
+`afterSeq` is the cursor a live tail reads forward with: only hops whose `seq`
+is strictly greater are returned, oldest first. A cursor older than the
+retained window is **not** an error — the oldest retained hops come back, and
+because `seq` is dense their first value names the span that was evicted, which
+is the only way a reader can tell "nothing new" from "I fell off the end". An
+unreadable `afterSeq` is read as `0`, the widest and least-lossy answer.
+
+`limit` is where the one asymmetry lives: without a cursor it returns at most
+the **newest** N retained events (unchanged), but with `afterSeq` it returns at
+most the **oldest** N of the matching set, so a reader paging forward never has
+a page silently omitted out from under it.
+
+Response: `{ events: InputEvent[], stats: InputEventStats, listeners: InputListener[], pollHoldMs: number }`
+```ts
+interface InputEvent {
+  seq: number          // monotonic within the retained ledger; the replay ordering key
+  ts: string           // ISO 8601
+  inputId: string
+  stage: "received" | "interpreted" | "routed" | "queued" | "delivered" | "held" | "superseded"
+  class: "ok" | "recogniser_error" | "low_confidence" | "confidence_unknown"
+       | "no_match" | "refused" | "unpicked" | "superseded" | "held"
+  source?: string      // the surface or mechanism that produced this hop: send, alert, poll-wake, poll-backlog, remote-input, eval
+  channel?: string     // destination agent/channel, once one was chosen
+  confidence?: number  // reported recognition confidence in [0,1]; absent = not reported
+  threshold?: number   // the threshold that measurement was compared against, as it was in force at that moment (absent = no threshold configured, or none reported)
+  reason?: string      // short token; REQUIRED for every class but "ok"
+  detail?: string      // bounded non-content context
+}
+interface InputEventStats {
+  retained: number; written: number; dropped: number; rejected: number; queue: number
+  newestSeq: number       // highest seq assigned (0 = nothing written); a cursor reader's anchor
+  minConfidence?: number  // the hold threshold actually in force; absent = disabled
+}
+interface InputListener {
+  channel: string
+  lastPollTs?: string  // ISO 8601; when anything last ASKED this channel for messages
+  activePollers: number // long-polls parked on it right now
+  lastPollCursored?: boolean // did that last ask carry a backlog cursor (`after=`)?
+}
+```
+
+`listeners` and `pollHoldMs` are the half of the seam the ledger cannot
+carry, and they are the reason a waiting input is no longer a dead end: a
+`queued` hop and a `queued` hop nobody will ever collect are the same row, so
+`listeners` reports the server's own poll activity per channel — when anything
+last asked it for messages, and how many long-polls are parked on it right now.
+`pollHoldMs` is how long this server holds a parked poll (25s), which is the
+window a listener that is attached cannot be quieter than; a reader uses it to
+tell "attached and took nothing" from "nothing is there".
+
+Two shapes here are load-bearing:
+
+- **`listeners` is never omitted.** `[]` means *nothing has polled any channel
+  since the server started*; an **absent** field means an older server that
+  does not report listener activity at all. A reader that read those as the
+  same thing would turn an old server into a silently deaf fleet.
+- **A channel that was never polled is absent from the array**, not present
+  with an empty timestamp, and a channel stays listed after its poller leaves
+  (that is the whole point — `activePollers` goes to 0 while `lastPollTs`
+  remains). `limit`, `inputId` and `afterSeq` narrow the ledger only: who is
+  listening is a fact about the server right now, not about the window a
+  reader asked for.
+- **`lastPollCursored` is a three-state field, not a boolean.** A server that
+  reports it always sets it, so `true` and `false` are real facts about the
+  last poll on that channel, while **absent** means the server does not report
+  it at all. It must not be read as `false`: that would brand every listener on
+  an older server as unable to replay anything. The fact exists because
+  `handlePoll` consults the retained store **only** for a request that carried
+  `after=`, so a cursorless poll can only ever see a message published while it
+  waited — which is what turns "a listener is attached and has not taken it"
+  into a named mechanism instead of a shrug.
+
+The listener facts come from the same in-memory presence tracker
+`/api/chat/subscribers` counts (`poll.channels[].count`), read here per
+channel with the timestamp that surface does not carry. Recording them is one
+map write on the poll path — no I/O, no error — and reading them never touches
+the ledger's disk (`TestPollDeliveryIsNotBlockedByInputEventsReaders`).
+
+Three invariants a reader can rely on, because each is enforced rather than
+intended:
+
+- **No message text, ever.** The ledger holds ids, stages, classes, short
+  reason tokens and numbers. The full transcript lives in `messages.jsonl`
+  under its own retention rule; this is not a second copy of it.
+- **A non-`ok` hop always carries a `reason`.** A failure with no recorded
+  reason is a defect in the tooling, so the ledger refuses to store one and
+  counts it in `stats.rejected` instead.
+- **`stats` travels with `events`.** An empty list and a ledger that is
+  silently shedding records must never look the same. `stats.minConfidence`
+  is the hold threshold in force, so a hold is never inferred from a row.
+
+Unguarded: it returns only message ids, channel names (which
+`/api/chat/history` already returns unguarded) and per-channel poll
+counts/timestamps (which name a channel, not a caller), and it writes nothing.
+Recording is asynchronous and never sits in the delivery path — a wedged
+ledger sink cannot slow or fail a send or a poll (pinned by
+`TestDeliveryIsNotSlowedOrFailedByAWedgedLedger`), and readers of the listener
+half cannot stall a woken poll either.
+
 ### `GET /api/chat/poll?after=<lastId>&channel=<agentId>`
 Agent long-poll. Blocks until a message for the channel arrives or the
 server-side timeout elapses (25s), then returns exactly one
@@ -589,7 +701,7 @@ capture it as a bead (no Talon path, no target needed; `bead_created` /
 `{ "device": "string (required)", "text": "string (required)",
 "app"?: "…", "windowTitle"?: "…", "trigger"?: "…",
 "mode"?: "inject"|"bead", "store"?: "…",
-"allowUnfocused"?: true, "dryRun"?: true }`
+"allowUnfocused"?: true, "dryRun"?: true, "confidence"?: 0.0..1.0 }`
 (`?dryRun=1` / `?allowUnfocused=1` / `?mode=bead` / `?store=…` force the same modes without touching
 the body; the body wins when both are set; dry-run runs the real focus + verification and reports
 `wouldInsert`, typing nothing). A live inject submit with no `app` and no
@@ -601,6 +713,18 @@ below — Talon `ui.apps()` names, not OS process names). Bead text is capped at
 done — the terminal outcome arrives via status poll or the
 `remote_input_result` SSE event). Errors: **400** `device`/`text` missing;
 **405** non-POST. All three routes are in the guard's `GuardedPaths`.
+
+`confidence` is optional and additive: the recognition confidence the
+submitting surface reported for `text`. Omitting it means *not reported*,
+never *confident*. When the server has a hold threshold in force
+(`PARLAY_INPUT_MIN_CONFIDENCE`, in [0,1]), a submission whose reported
+confidence is below it is **held** rather than routed: **202**
+`{ "id": "ri-N", "status": "held" }`, nothing is typed, the text is
+preserved, and the terminal outcome carries `status: "held"` with an `error`
+naming the threshold. An input with **no** reported confidence is never held —
+a threshold that refused an absent value would refuse every surface that
+cannot report one. Every submit, refusal and outcome is recorded in
+[`input-seam.md`](input-seam.md)'s ledger (source `remote-input`).
 
 ### `GET /api/chat/remote-input/targets`
 List Talon's applications in Talon's own `ui.apps()` ordering (200) or
@@ -615,7 +739,9 @@ Poll one submission's latest `Outcome` (200) or **404** unknown id
 `focus_failed` | `inject_failed` | `dry_run_passed` (dry-run success:
 real focus + verification, nothing typed, `wouldInsert` carries the exact
 bytes) | `bead_created` (capture success: `beadId`/`beadStore`/`beadWrapper`/`capturedText`) |
-`bead_failed` (typed `error`, text preserved, never an id); transient: `queued` | `injecting`.
+`bead_failed` (typed `error`, text preserved, never an id) | `held` (a reported
+confidence fell below the configured threshold: nothing typed, text preserved);
+transient: `queued` | `injecting`.
 Parlay clears shared input state only on `injected` (never on `dry_run_passed`); on `focus_failed` it
 preserves the text and strips `trigger`. **400** `id` missing; **405**
 non-GET.
@@ -881,7 +1007,7 @@ implements the same contract for hosts without a shared subscription.
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `tts_event` | `{ "id", "role": "tts_event", "type", "device", …, "ts" }` | TTS lifecycle fan-out from `POST /tts-event`. |
-| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"?, "allowUnfocused"?, "mode"?, "beadId"?, "beadStore"?, "beadWrapper"?, "capturedText"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`/`bead_created`/`bead_failed`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
+| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"?, "allowUnfocused"?, "mode"?, "beadId"?, "beadStore"?, "beadWrapper"?, "capturedText"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`/`bead_created`/`bead_failed`/`held`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
 | `lavish_session` | `{ "key", "file", "proxyUrl", "status" }` | Embedded-workspace card upsert. **Producer routes not wired** — see below. |
 | `reload` | *(none)* | `location.reload()`. |
 | `navigate` | `{ "url", "openDrawer" }` | Workspace navigation. Gated by capability declarations. |

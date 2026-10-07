@@ -197,6 +197,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.OffSwitch(args, true, "off")
 	case "on":
 		commands.OffSwitch(args, false, "on")
+	case "input":
+		commands.Input(args)
 	case "landed":
 		commands.Landed(args)
 	case "lavish-import":

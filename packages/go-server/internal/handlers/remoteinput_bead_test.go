@@ -73,7 +73,7 @@ func beadTestService(b *fakeBeadBackend) *remoteinput.Service {
 
 func postBead(t *testing.T, svc *remoteinput.Service, url, body string) (int, []byte) {
 	t.Helper()
-	submit := handleRemoteInputSubmit(svc)
+	submit := handleRemoteInputSubmit(svc, nil)
 	req := httptest.NewRequest("POST", url, bytes.NewBufferString(body))
 	w := httptest.NewRecorder()
 	submit(w, req)

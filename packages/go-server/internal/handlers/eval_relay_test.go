@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"parlay/go-server/internal/store"
 )
 
 // resetStreamTable clears the package-level stream table so tests that fill it
@@ -35,10 +37,17 @@ func fakeEngine(t *testing.T, h http.HandlerFunc) {
 
 func postEval(t *testing.T, hub *Hub, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return postEvalWithStore(t, hub, newTestStore(t), body)
+}
+
+// postEvalWithStore drives the relay with an input-seam ledger attached, so a
+// test can assert what the relay recorded as well as what it returned.
+func postEvalWithStore(t *testing.T, hub *Hub, st *store.Store, body string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/eval", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	handleEval(newTestStore(t), hub)(rec, req)
+	handleEval(st, hub)(rec, req)
 	return rec
 }
 
