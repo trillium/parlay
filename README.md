@@ -299,6 +299,49 @@ server it polls is let through — the check cannot guess). Three ways out — u
 plus a relay started with `-server $PARLAY_SERVER`), or point `PARLAY_SERVER` at
 whatever the existing relay is already polling.
 
+### Your first routed message
+
+Step 4 put a message onto a channel, but nothing has *received* it yet — and step 1's sandbox
+says so from the other side: its `LIMITS` line names delivery as the one thing that run does
+not cover. One command closes that gap on a fresh clone, because `--legacy-poll` polls the
+server natively in Go and needs no relay binary:
+
+```sh
+./bin/parlay listen --agent demo --name Demo --legacy-poll   # register, announce, then stream; runs until Ctrl-C, so use a second shell
+```
+
+**Success looks like** those three lines in the listening shell —
+
+```
+parlay listen: registering 'demo' …
+parlay listen: announced — arming monitor …
+parlay monitor (legacy poll) — server http://localhost:4242 channel demo
+```
+
+— and then, when you send from the first shell, the message itself arriving as one
+`CHAT_MSG` line:
+
+```sh
+./bin/parlay send --demo "first routed message"   # no --force needed now: listen just registered demo
+```
+```
+CHAT_MSG|m1|user|first routed message      ← the id is the one `send` just printed
+```
+
+That line **is** delivery — the same text an agent process would read. The send also shows up
+in `parlay history`, so a message that is in history but never arrives as a `CHAT_MSG` line is
+a listener problem, not a routing one. Ctrl-C ends it when you are done.
+
+**If it fails**, the listener's own output names the layer: `relay is not up and could not be
+started` means `--legacy-poll` was dropped (the relay path needs a binary a fresh clone does
+not have — the two cases are spelled out below), and a listener that starts but stays silent
+while `parlay history` shows your message is the registered-but-deaf shape [`docs/traps.md`](docs/traps.md)
+stage 3 opens with. Two things to know before you reach for it: the listener is a **takeover**,
+not an addition (a second `listen`/`monitor` for the same agent id ends the first on this host,
+whatever instance it belongs to — stage 4), and this path is one process that leaves nothing
+behind, because `--legacy-poll` neither enrolls in the relay nor writes a spool into
+`$TMPDIR/parlay`.
+
 **5. Open the panel (optional — this is the only step that needs Bun):**
 
 ```sh
