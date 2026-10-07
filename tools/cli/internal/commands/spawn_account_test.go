@@ -107,12 +107,20 @@ func TestSpawnAccountUnknownSubcommandDiesUsage(t *testing.T) {
 
 // --help prints the full USAGE fallback (spawn-account has no per-command
 // HELP entry — TS help.ts had none either) and does no work.
-func TestSpawnAccountHelpFallsBackToUsageAndDoesNothing(t *testing.T) {
+// This test used to assert the OPPOSITE — that `--help` prints the full USAGE
+// fallback — which is how the verb stayed invisible in `parlay help` and how
+// `parlay spawn-account --help` answered with 90 lines that never mention
+// spawn-account. The assertion now pins the behaviour a reader expects, and
+// the do-nothing half (help is still not a mutation) is kept.
+func TestSpawnAccountHelpPrintsItsOwnHelpAndDoesNothing(t *testing.T) {
 	testsupport.TempStateHome(t)
 
 	out := captureStdout(t, func() { SpawnAccount([]string{"--help", "set", "acc2"}) })
-	if !strings.Contains(out, "parlay — talk to a Parlay chat server") {
-		t.Errorf("SpawnAccount(--help) output = %q, want the full USAGE fallback", out)
+	if !strings.Contains(out, "parlay spawn-account") {
+		t.Errorf("SpawnAccount(--help) output = %q, want spawn-account's own help text", out)
+	}
+	if !strings.Contains(out, "parlay defaults") {
+		t.Errorf("SpawnAccount(--help) output = %q, want the pointer to the preferred verb 'parlay defaults'", out)
 	}
 	if got := config.PersistedSpawnAccount(); got != "" {
 		t.Errorf("PersistedSpawnAccount() after --help = %q, want no write", got)

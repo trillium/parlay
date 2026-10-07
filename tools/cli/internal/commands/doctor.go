@@ -1,8 +1,9 @@
 // parlay doctor + health: glanceable diagnosis surfaces.
 //
-// `health` is the SERVER'S vitals (relay, subscribers, memory, eval-engine) —
-// same view for every caller. `doctor` is THIS AGENT'S self-diagnosis: each
-// named check (doctor_check.go's registry) reports PASS/WARN/FAIL/UNKNOWN
+// `health` is the SERVER'S vitals (reachability, subscribers, memory,
+// eval-engine) — same view for every caller. `doctor` is THIS AGENT'S
+// self-diagnosis: each named check (doctor_check.go's registry) reports
+// PASS/WARN/FAIL/UNKNOWN
 // with the fix for anything broken, keeps going past failures (a dead server
 // must not hide a corrupt identity file), and exits 1 if anything FAILed so
 // scripts can gate on it. `--json` renders the same registry as a single
@@ -29,26 +30,77 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
 	account "github.com/trillium/parlay/tools/cli/internal/juggle"
+	"github.com/trillium/parlay/tools/cli/internal/resolvehandoff"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
-// engineURL mirrors the server-side default (eval-relay.ts) — same-host
-// deploy. Read lazily (not a package var) so tests can override it per-case
-// with t.Setenv.
+// defaultEngineURL mirrors the server-side default (eval-relay.ts) — same-host
+// deploy. A const, not a package var, precisely so it cannot be mutated: the
+// override path is the PARLAY_EVAL_ENGINE_URL env read in engineTarget, which
+// tests drive per-case with t.Setenv.
+const defaultEngineURL = "http://127.0.0.1:4343"
+
+// engineURL is the engine endpoint health/doctor probe.
 func engineURL() string {
+	url, _ := engineTarget()
+	return url
+}
+
+// engineTarget resolves the engine endpoint AND which precedence level
+// supplied it, because the engine's identity IS its address: it has no state
+// dir and no persisted config key, so 127.0.0.1:4343 is a HOST-WIDE slot that
+// belongs to whichever instance bound it first. When the CLI is pointed at a
+// non-default chat server (a dev/isolated instance — `parlay-dev`, a
+// -state-dir run, a `parlay remote set`) a PASS here describes the default
+// instance's engine, not this one's, and the caller says so via
+// engineScopeNote rather than printing an unqualified green line.
+func engineTarget() (url, source string) {
 	if v := strings.TrimSpace(os.Getenv("PARLAY_EVAL_ENGINE_URL")); v != "" {
-		return v
+		return v, "env"
 	}
-	return "http://127.0.0.1:4343"
+	return defaultEngineURL, "default"
+}
+
+// engineScopeNote returns a one-line parenthetical to append to a PASSing
+// eval-engine line, or "" when the green line already means what it says.
+//
+// The condition is deliberately narrow: the coded default AND a CLI pointed
+// somewhere other than the coded default server. On a plain clone (default
+// server, no engine) the line is a FAIL and the note would be noise; on the
+// default instance the 4343 engine IS this instance's engine. Only the
+// cross-instance case is a claim the output cannot otherwise support.
+func engineScopeNote() string {
+	_, source := engineTarget()
+	if source != "default" {
+		return ""
+	}
+	if config.ServerSource().Source == config.SourceDefault {
+		return ""
+	}
+	return " (host-wide default, not this instance — set PARLAY_EVAL_ENGINE_URL for this instance's engine)"
 }
 
 // evalEngineFix is the repair line both `health` (FAIL) and `doctor` (WARN)
 // print for an unreachable eval-engine. It must hold on any clone: the old
 // text hardcoded the author's ~/code/parlay checkout path and a
 // ./parlay-eval-engine binary that nothing on a fresh clone builds — the
-// binary is a gitignored artifact only `go build` (or the installer, which
-// builds it if missing) produces.
-const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd), or: nohup parlay eval serve > engine.log 2>&1 & (the engine ships inside the parlay binary; cd tools/cli && go build . if you need one)"
+// binary is a gitignored artifact only the installer (which builds it if
+// missing) or an explicit `go build` produces.
+//
+// Two defects lived in the same string, both verified on a fresh clone:
+//   - `cd tools/cli && go build .` is a default-cgo build of the CLI module,
+//     which dies on macOS for the same missing-ICU reason bin/parlay pins
+//     CGO_ENABLED=0 against (robots-wgij) — so the suggested repair could not
+//     build anything.
+//   - It also named the wrong artifact: `go build .` in tools/cli writes a
+//     binary named `cli` (the directory base), not `parlay`, and never lands
+//     it on PATH, so the `parlay eval serve` it is a parenthetical for could
+//     not have been that binary.
+//
+// So the fallback names the wrapper, which builds the CLI with the right flags
+// and then execs it: `./bin/parlay eval serve` from the clone (or plain
+// `parlay eval serve` once installed). Verified end to end on a fresh clone.
+const evalEngineFix = "from your parlay clone: tools/eval-engine/deploy/install.sh (macOS launchd, supervised), or: ./bin/parlay eval serve > engine.log 2>&1 & — the engine ships inside the CLI itself, so any parlay binary can serve it and ./bin/parlay builds one on first run"
 
 // jsonAttempt is the outcome of tryJSON: either decoded data, or a short
 // error string describing why it failed (network error, non-2xx status, or
@@ -122,10 +174,15 @@ func Health(argv []string) {
 	server := config.ServerURL()
 	engine := engineURL()
 
+	// The label is "server", never "relay": this probe measures the chat
+	// server itself, and parlay ships a SEPARATE component called the relay
+	// (tools/relay, the per-agent spool fan-out `parlay monitor` needs). Calling
+	// the server "relay" here told a newcomer their relay was healthy when it
+	// was not running at all — and the two fail and get fixed independently.
 	subs := tryJSON[healthSubscribersInfo](server, "/api/chat/subscribers")
 	if !subs.ok {
 		sick = true
-		fmt.Printf("FAIL  relay %s — %s\n", server, subs.err)
+		fmt.Printf("FAIL  server %s — %s\n", server, subs.err)
 		fmt.Printf("      fix: is the Go server running? curl %s/api/chat/subscribers\n", server)
 	} else {
 		d := subs.data
@@ -139,7 +196,7 @@ func Health(argv []string) {
 		if d.Registered != nil {
 			registered = d.Registered.Count
 		}
-		fmt.Printf("ok    relay %s — %d client(s), %d poller(s), %d agent(s)\n", server, clients, pollers, registered)
+		fmt.Printf("ok    server %s — %d client(s), %d poller(s), %d agent(s)\n", server, clients, pollers, registered)
 		if d.Memory != nil {
 			historyCount, historyKB := "?", "?"
 			if d.History != nil {
@@ -153,7 +210,7 @@ func Health(argv []string) {
 
 	engineRes := tryJSON[engineHealthInfo](engine, "/health")
 	if engineRes.ok && engineRes.data.OK != nil && *engineRes.data.OK {
-		fmt.Printf("ok    eval-engine %s — protocol v%d\n", engine, derefInt(engineRes.data.Protocol))
+		fmt.Printf("ok    eval-engine %s — protocol v%d%s\n", engine, derefInt(engineRes.data.Protocol), engineScopeNote())
 	} else {
 		sick = true
 		reason := "unhealthy response"
@@ -161,6 +218,16 @@ func Health(argv []string) {
 			reason = engineRes.err
 		}
 		fmt.Printf("FAIL  eval-engine %s — %s\n", engine, reason)
+		// The engine is OPTIONAL for the substrate this repo ships working:
+		// the Quickstart's CLI + server need no other service, so on a fresh
+		// clone this line is red by default. Exit 1 is still correct (a dead
+		// engine is exactly what an operator wants screamed about, and
+		// docs/ux-eval-2026-08-30.md recorded that decision deliberately), but
+		// the newcomer must be able to tell WHICH part of their install is
+		// missing instead of concluding the whole thing is broken.
+		fmt.Printf("      the voice engine is OPTIONAL for the CLI + server (it is what turns spoken or typed\n")
+		fmt.Printf("      phrases into panel actions); the CLI, the API and the panel's text chat all work\n")
+		fmt.Printf("      without it. This line is about the engine, not about your install.\n")
 		fmt.Printf("      fix: %s\n", evalEngineFix)
 	}
 
@@ -262,16 +329,20 @@ func checkServerReachable(st *doctorState) (CheckResult, bool) {
 		return singleLine("server-reachable", vPass, fmt.Sprintf("server reachable at %s", st.server), "",
 			map[string]any{"server_url": st.server, "url_source": string(st.src.Source)}), true
 	}
-	fix := "check the Go server and relay are up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
+	// Only the server is being probed here. Blaming "the Go server and relay"
+	// sent a newcomer to build tools/relay when the thing that was actually
+	// unreachable is the chat server — and the relay is a separate, optional
+	// daemon that `--legacy-poll` exists to avoid.
+	fix := "check the Go server is up; set a default with: parlay remote set <url> (or env PARLAY_SERVER)"
 	if st.src.Source != config.SourceDefault {
-		fix = fmt.Sprintf("check the Go server and relay are up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
+		fix = fmt.Sprintf("check the Go server is up; target came from %s — env PARLAY_SERVER overrides, 'parlay remote clear' removes a persisted default", st.src.Source)
 	}
 	text := fmt.Sprintf("server unreachable at %s — %s", st.server, st.subs.err)
 	return singleLine("server-reachable", vFail, text, fix,
 		map[string]any{"server_url": st.server, "url_source": string(st.src.Source), "error": st.subs.err}), true
 }
 
-// checkAgentRegistered is check 3: does the relay's agent registry know this
+// checkAgentRegistered is check 3: does the server's agent registry know this
 // agent — needs agent + a reachable server.
 func checkAgentRegistered(st *doctorState) (CheckResult, bool) {
 	if st.agent == "" || !st.subs.ok {
@@ -288,7 +359,7 @@ func checkAgentRegistered(st *doctorState) (CheckResult, bool) {
 		}
 	}
 	if registered {
-		return singleLine("agent-registered", vPass, fmt.Sprintf("registered as %q on the relay", st.agent), "",
+		return singleLine("agent-registered", vPass, fmt.Sprintf("registered as %q with the server", st.agent), "",
 			map[string]any{"agent_id": st.agent}), true
 	}
 	fixText := fmt.Sprintf("first poll auto-registers: parlay monitor --agent %s (via Monitor{})", st.agent)
@@ -390,7 +461,14 @@ func checkIdentityMD(st *doctorState) (CheckResult, bool) {
 	}
 
 	if hm := doctorHandoffRe.FindStringSubmatch(txt); hm != nil {
-		note := fmt.Sprintf("handoff pointer → %s (run: handoff show %s)", hm[1], hm[1])
+		// Only name `handoff show` when that command can actually be run —
+		// `handoff` is a federation store wrapper, not something this repo
+		// installs, so a fresh clone would otherwise be pointed at a command
+		// it does not have. The pointer itself is still reported.
+		note := fmt.Sprintf("handoff pointer → %s (full session state lives in the handoff store)", hm[1])
+		if resolvehandoff.StoreAvailable("") {
+			note = fmt.Sprintf("handoff pointer → %s (run: handoff show %s)", hm[1], hm[1])
+		}
 		cr.Lines = append(cr.Lines, textLine{kind: "note", text: note})
 		cr.Evidence["handoff"] = hm[1]
 	}
@@ -417,14 +495,14 @@ func checkScratchpadMD(st *doctorState) (CheckResult, bool) {
 // checkEvalEngineEnv is check 6: eval-engine reachability — informational
 // (agents don't need it to talk), so a miss is WARN, never FAIL.
 func checkEvalEngineEnv(st *doctorState) (CheckResult, bool) {
-	engine := engineURL()
+	engine, source := engineTarget()
 	engineRes := tryJSON[engineHealthInfo](engine, "/health")
 	if engineRes.ok && engineRes.data.OK != nil && *engineRes.data.OK {
-		return singleLine("eval-engine", vPass, fmt.Sprintf("eval-engine healthy at %s", engine), "",
-			map[string]any{"engine_url": engine}), true
+		return singleLine("eval-engine", vPass, fmt.Sprintf("eval-engine healthy at %s%s", engine, engineScopeNote()), "",
+			map[string]any{"engine_url": engine, "engine_url_source": source}), true
 	}
 	return singleLine("eval-engine", vWarn, fmt.Sprintf("eval-engine unreachable at %s — panel voice commands degraded", engine),
-		evalEngineFix, map[string]any{"engine_url": engine}), true
+		evalEngineFix, map[string]any{"engine_url": engine, "engine_url_source": source}), true
 }
 
 // spawnCredsSummary picks the text of the first line whose label matches the
@@ -536,7 +614,16 @@ func checkContextRotation(st *doctorState) (CheckResult, bool) {
 		v = vPass
 		evidence["context_percentage"] = ctx
 	}
-	text := fmt.Sprintf("context: %s — rotate at ~85%% (run: parlay context-check <pct>; on ROTATE, handoff + identity --submit)", ctx)
+	// The next-step clause is store-aware for the same reason context-check's
+	// ROTATE line is: `handoff` is a beads-store wrapper from the author's
+	// federation, not something this repo installs, so a clone must never be
+	// pointed at it as a command to run (same rule as checkIdentityMD's
+	// pointer note and `parlay drawdown`'s closing recipe).
+	next := "on ROTATE, handoff + identity --submit"
+	if !resolvehandoff.StoreAvailable("") {
+		next = "on ROTATE, write the handoff body (parlay drawdown) + identity --submit <handoff-id>"
+	}
+	text := fmt.Sprintf("context: %s — rotate at ~85%% (run: parlay context-check <pct>; %s)", ctx, next)
 	return informationalLine("context-rotation", v, text, evidence), true
 }
 

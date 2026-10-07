@@ -42,6 +42,22 @@ func readStdin() string {
 	return strings.TrimSpace(string(data))
 }
 
+// pinFlagName returns the flag the reader actually typed, so the
+// store-missing error echoes back the exact invocation that would work
+// instead of naming a different verb.
+func pinFlagName(wantHandoff, wantDismiss, wantSubmit, wantPark bool) string {
+	switch {
+	case wantPark:
+		return "--park"
+	case wantSubmit:
+		return "--submit"
+	case wantDismiss:
+		return "--dismiss-handoff"
+	default:
+		return "--handoff"
+	}
+}
+
 func headerWord(kind MemKind) string {
 	if kind == KindIdentity {
 		return "Identity"
@@ -55,6 +71,14 @@ var blankRunRe = regexp.MustCompile(`\n{3,}`)
 // below its "# <Header> — <agent>" line, or seeding one if absent), removing
 // any prior pointer line first. Ported from mem.ts's --handoff/--submit/
 // --park pointer-splice logic verbatim (including the 3+-newline collapse).
+//
+// The pointer text is deliberately NOT environment-dependent. A pointer is a
+// durable artifact read by the NEXT session on the same machine, so it keeps
+// naming `handoff show` even where the store is absent — varying it per write
+// would make identity.md's format depend on which box wrote it, and would
+// break the byte-exact assertions three other packages pin. The fresh-clone
+// gap is handled at the interactive surfaces instead (the --submit/--park
+// error, doctor's note, drawdown's recipe, `identity --help`, the README).
 func pinHandoffPointer(kind MemKind, file, agent, pinID string) {
 	header := fmt.Sprintf("# %s — %s", headerWord(kind), agent)
 	const marker = "> 📎 Handoff:"
@@ -306,7 +330,22 @@ func cmdMem(kind MemKind, argv []string) {
 			pinID = resolvehandoff.ResolveCurrentHandoff("", agent)
 		}
 		if pinID == "" {
-			httpc.Die(fmt.Sprintf("parlay %s: no handoff id given and none active in the handoff store — create one first (handoff create …) or pass the id", kind), config.ExitUsage)
+			flag := pinFlagName(wantHandoff, wantDismiss, wantSubmit, wantPark)
+			// Two distinct causes collapse to "" above. "Nothing open in the
+			// store" and "the store is not installed at all" need different
+			// advice: the second is the fresh-clone case, where `handoff` is a
+			// beads-store wrapper from the author's federation, not something
+			// this repo installs. Telling that reader to run `handoff create`
+			// points at a command they do not have.
+			if resolvehandoff.StoreAvailable("") {
+				httpc.Die(fmt.Sprintf("parlay %s: no handoff id given and none active in the handoff store — create one first (handoff create …) or pass the id", kind), config.ExitUsage)
+			} else {
+				httpc.Die(fmt.Sprintf("parlay %s: no handoff id given, and no `handoff` store is installed on this machine.\n"+
+					"  `handoff` is a beads-store wrapper from the author's federation (like task/inbox), not a command parlay ships.\n"+
+					"  This repo's half of the chain — `identity` and `scratchpad` — works standalone and needs none of it.\n"+
+					"  To %s anyway, pass an id explicitly: parlay %s %s <handoff-id>",
+					kind, flag, string(kind), flag), config.ExitUsage)
+			}
 			return
 		}
 		pinHandoffPointer(kind, file, agent, pinID)

@@ -41,6 +41,21 @@ it boots out the old agent, bootstraps + enables + kickstarts it in `gui/<uid>`,
 and finishes by polling `/health`. Listen address defaults to `127.0.0.1:4343`;
 override with `PARLAY_EVAL_ADDR`.
 
+The engine build inside `install.sh` is pinned `CGO_ENABLED=0`, and it has to
+be: the CLI module's beads dependency carries an embedded Dolt tree whose ICU
+binding needs C++ headers a stock macOS toolchain does not ship, so a
+default-cgo build fails with `unicode/regex.h: file not found` (the same
+reason `bin/parlay` sets it). Nothing in the CLI needs cgo. If you are only
+running the engine in the foreground — no launchd, no supervision — skip the
+installer entirely and use the wrapper, which builds with the same flags:
+
+```sh
+./bin/parlay eval serve            # or plain `parlay eval serve` once installed
+```
+
+That is also the fix `parlay health` / `parlay doctor` print when the engine is
+unreachable.
+
 ## Operate
 
 ```sh

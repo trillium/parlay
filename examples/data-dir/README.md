@@ -87,6 +87,6 @@ this one is here to show the shape and to seed a panel that is not blank.
 
 One thing to know before you copy this file over a real one: `textScale` is a
 **percentage**, where 100 is the default, and the client divides by 100 when it
-applies the value. The server's built-in fallback for an unset document is `1`,
-which is a server-side inconsistency rather than a documented unit — if you are
-writing the file yourself, write `100`, not `1`.
+applies the value (and clamps anything it saves to 85–160). The server's
+built-in fallback for an unset document is the same 100, so this file is
+genuinely optional.

@@ -34,7 +34,7 @@ Authentication for non-local access is delegated to the network environment; par
 
 A route that mutates, deletes, or discloses identifiers is guarded before it is fast.
 Worktree destruction requires explicit confirmation of clean state; refusal is the default when the check is inconclusive.
-Test instances redirect every write path - `PARLAY_DATA_DIR` and `HOME` - before touching disk.
+Test instances redirect every write path - `HOME`, `PARLAY_STATE_HOME`, `PARLAY_AGENT_HOME`, `PAI_DIR` - before touching disk.
 A deletion goes through trash, never `rm -rf`, so recovery is always possible.
 
 ## Go is the target language
@@ -49,7 +49,7 @@ Every verb is a Go verb; no verb acquires a TypeScript counterpart.
 Process execution is delegated to Gas City; process representation - routing, staleness, supersession, workflows-as-beads - belongs to parlay.
 Pulse is open source and part of PAI, but not part of this repository; parlay exists and works independently of Pulse and PAI.
 The API surface trusts the network boundary; authentication for external access is the operator's responsibility.
-`packages/server` is a publishable relay library; PAI store layouts and TTS caches are extracted before publishing and are not part of its public contract.
+The chat server takes its PAI paths as parameters (`-pai-dir`, default `PAI_DIR`), so PAI store layouts and TTS caches are supplied at runtime and are not part of its contract.
 
 A change aligns when it deepens the captain-to-crew relay contract, makes fleet state more visible and queryable, closes a safety gap on a destructive path, or makes a CLI verb's behavior more faithful to its documented contract.
 A change should be resisted when it adds a user role beyond the captain and crew, couples the relay to PAI infrastructure, loosens the origin guard without a named caller that requires it, or ships a best-effort probe that can silently absorb its own failure.

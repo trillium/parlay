@@ -37,7 +37,7 @@ parlay spawn <id> <name> <color> <task> [options]
 | `--worktree` | Isolated git worktree at `<repo>/.worktrees/parlay-<id>`; auto-enabled by `--mode branch\|pr` |
 | `--mode report\|branch\|pr` | DoD shape: reply when done (default) / commit on `parlay/<id>` branch / push+open PR |
 | `--kind KIND` | Harness via herdr (`claude` default, `opencode`, ...) |
-| `--model MODEL` | Pin model (e.g. `sonnet`, `opencode-go/deepseek-v4-pro`) |
+| `--model MODEL` | Pin model (e.g. `sonnet`, `opencode-go/deepseek-v4-pro`). **Required** — a spawn with no resolved model is refused (exit 2, `no model was chosen`). Only `--profile <name>` and `--no-pii` (free-model auto-routing) also satisfy the gate. |
 | `--bead <id>` | **Required when beads-required mode is ON** (config `[spawn] beads_required`). Binds an OPEN bead; its lifecycle governs the agent — identity submit closes it, closed refuses respawn. With `--bead`, still pass a positional prompt (only `--claim` sources the task from the ticket). |
 | `--claim <task-id>` | First turn = `parlay claim <task-id>`; task pulled from ticket, positional optional. REJECTED while beads-required mode is on — use `--bead`. |
 | `--workspace <id\|label>` | Place tab in a herdr workspace by ID (`w6T`) or label (`"firstmate"`). Creates the workspace if the label doesn't exist. |
@@ -50,7 +50,7 @@ parlay spawn <id> <name> <color> <task> [options]
 # bead carries the full spec; prompt carries the brief
 parlay spawn <id> "<Display Name>" "#hex" \
   "<brief: read the bead via '<store> show <id>', conventions, gate command, close-with-evidence>" \
-  --bead <store>-xxxx --cwd ~/code/<repo> --mode branch
+  --bead <store>-xxxx --cwd ~/code/<repo> --mode branch --model sonnet
 ```
 
 Empirical notes (2026-08-25): `--claim` errors out in this mode; a bare tab can reject
@@ -116,17 +116,17 @@ Spawn exits non-zero with a clear error if no token is found. Token is injected 
 # Spawn a background research agent on acc2 (from config.toml)
 parlay spawn gas-city-scope "Gascity Scope" "#f59e0b" \
   "Auto-discover what gascity is … reply when done." \
-  --cwd ~/code/parlay
+  --cwd ~/code/parlay --model sonnet
 
 # Explicit account override
 parlay spawn pr-auditor "PR Auditor" "#f97316" \
   "Audit PRs #78 #82 #98 in trillium/parlay …" \
-  --cwd ~/code/parlay --account acc1
+  --cwd ~/code/parlay --account acc1 --model sonnet
 
 # Worktree-isolated agent
 parlay spawn refactor-x "Refactor X" "#6366f1" \
   "Refactor the auth layer …" \
-  --cwd ~/code/myapp --worktree
+  --cwd ~/code/myapp --worktree --model sonnet
 ```
 
 ## Spawn stages (what happens after you run it)

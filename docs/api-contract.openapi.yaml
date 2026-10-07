@@ -200,11 +200,16 @@ paths:
     get:
       operationId: history
       summary: Recent chat history, oldest first
+      description: >-
+        `limit` bounds how many of the retained messages are returned (the
+        server retains 5,000). An absent, non-numeric or non-positive `limit`
+        returns the whole retained window — there is no smaller server-side
+        default. `channel` is accepted by some clients and ignored.
       parameters:
         - name: limit
           in: query
-          schema: { type: integer, default: 200 }
-          description: Non-numeric or non-positive falls back to 200.
+          schema: { type: integer }
+          description: Maximum retained messages to return; 0 or absent means all retained.
       responses:
         "200":
           content:
@@ -1353,7 +1358,8 @@ paths:
     post:
       operationId: commandStart
       x-parlay-server: go-only
-      summary: Register a running CLI verb (415 without POST+JSON content type)
+      summary: Register a running CLI verb. Guarded (GuardedPaths) — a foreign
+        Origin is 403 before the handler runs; 415 without POST+JSON content type.
       requestBody:
         required: true
         content:
@@ -1383,7 +1389,8 @@ paths:
     post:
       operationId: commandHeartbeat
       x-parlay-server: go-only
-      summary: Keep a command's registration fresh
+      summary: Keep a command's registration fresh. Guarded (GuardedPaths), same
+        posture as command-start
       requestBody:
         required: true
         content:
@@ -1410,7 +1417,8 @@ paths:
     post:
       operationId: commandEnd
       x-parlay-server: go-only
-      summary: Report a command's terminal state
+      summary: Report a command's terminal state. Guarded (GuardedPaths), same
+        posture as command-start
       requestBody:
         required: true
         content:
@@ -1597,7 +1605,7 @@ components:
           additionalProperties: { type: array, items: { type: string } }
         hybridVoice: { type: boolean }
         localOnlyVoice: { type: boolean }
-        textScale: { type: number, description: Clamped 85-160 on TS PUT. }
+        textScale: { type: number, description: "PERCENT; 100 = default (client divides by 100). Clamped 85-160 on TS PUT; the Go server serves 100 when settings.json is absent." }
         voiceSettleMs: { type: number, description: Clamped 0-3000 on TS PUT. }
         noKeyboardMode: { type: boolean, description: Go server + client only — absent from the TS server interface. }
 

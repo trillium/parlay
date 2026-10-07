@@ -41,3 +41,39 @@ answers in milliseconds at any fleet size. `TestControlSocketBindsBeforeSpoolRes
 (`tools/relay/startup_test.go`) pins that ordering against the process's own log;
 `tools/relay/deploy/ensure-up.test.sh` pins the start/wait policy with stubbed
 `launchctl`/`curl`. Anything reordering relay startup must keep the bind first.
+
+## One relay per user means one upstream per user (added 2026-10-05)
+
+The singleton is bound to a single `-server` for its whole life, and the runtime
+dir is host-wide, so every parlay instance on the box shares that one upstream.
+"Liveness" is therefore not a sufficient preflight condition: `listen`/`monitor`
+would enroll into a relay polling *another* instance's chat server, announce
+success, create a spool the relay never writes to, and stream it forever — the
+registered-but-deaf agent, reached by a different road than the one issue #173
+closed. Reproduced live: a `-state-dir` server on `:14401` whose CLI
+`PARLAY_SERVER` was `:14401` while the canonical relay reported
+`"server":"http://localhost:4242"`.
+
+The fix is to make the relay say what it is bound to. `GET /health` on the
+control socket now returns `{"ok":true,"server":…,"runtime":…}`, and
+`tools/monitor/parlay-monitor.sh` compares `server` against the CLI's resolved
+`PARLAY_SERVER` before enrolling, refusing with both URLs named.
+
+Three rules this shape is worth keeping:
+
+- **`/health` must stay additive.** `ensure-up` decides liveness with
+  `curl … | grep -q '"ok":true'` (`tools/relay/deploy/lib.sh`), so `ok` has to
+  remain the first key emitted; Go's encoder sorts map keys, and
+  `TestHealthKeepsOkFirstForTheEnsureUpGrep` is what stops a refactor to a struct
+  with a field order from silently disabling relay autostart.
+- **Compare normalized, never raw strings.** `http://localhost:4242` and
+  `http://127.0.0.1:4242` are one server; a raw compare refuses a working
+  install and is worse than no check.
+- **Unknown is not a mismatch.** A relay that reports no `server` — any build
+  predating the field, including an already-installed one — must still enroll,
+  or the check breaks working machines the moment it lands. Refusing on an
+  unanswerable question turns a safety check into an outage.
+
+The success line changed with it: `preflight OK` now names the server it
+verified, because "the relay is up" was never the whole precondition and a green
+line that omits it reads as a weaker promise than the code just made.
