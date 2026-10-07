@@ -35,6 +35,10 @@ func gatherLiveness(a livenessArgs) livenessGather {
 	// --- the server: registration and the only per-channel activity record ---
 	registered := map[string]bool{}
 	presence := map[string]wire.PresenceEntry{}
+	diskReg := registryFile{}
+	// diskRegKnown means "the roster came from the server's own file on this
+	// host": registration is answerable, presence is NOT (it is never on disk).
+	diskRegKnown := false
 	subs, subsOK := fetchSubscribers()
 	if subsOK {
 		g.answered = true
@@ -51,6 +55,19 @@ func gatherLiveness(a livenessArgs) livenessGather {
 	} else {
 		g.Sources = append(g.Sources, sourceNote{Name: "registry + presence", State: srcUnreachable,
 			Detail: fmt.Sprintf("no answer from %s — registration and channel activity are UNKNOWN, not absent (an unreachable server is not an empty fleet)", g.Server)})
+		// The server did not answer, and the roster is a FILE whose writer being
+		// dead does not erase it (agents.json is a full snapshot, rewritten on
+		// every change). Read it only when this host is the target server's own
+		// host — another machine's agents.json is not this server's roster.
+		note, ok, reg := readDiskRegistry(g.Server)
+		g.Sources = append(g.Sources, note)
+		diskReg, diskRegKnown = reg, ok
+		if ok {
+			g.answered = true
+			for _, a := range diskReg.Agents {
+				registered[a.ID] = true
+			}
+		}
 	}
 
 	// --- this host's process table: registration is not a listener ---
@@ -132,15 +149,16 @@ func gatherLiveness(a livenessArgs) livenessGather {
 
 	for _, id := range names {
 		obs := liveness.Observation{
-			RegistryKnown:  subsOK,
-			Registered:     registered[id],
-			ListenersKnown: listenersKnown,
-			HasListener:    listeners[id],
-			PresenceKnown:  subsOK,
-			RelayKnown:     relayAgentsKnown,
-			RelayEnrolled:  enrolled[id],
-			Now:            now,
-			Window:         a.window,
+			RegistryKnown:    subsOK || diskRegKnown,
+			Registered:       registered[id],
+			RegistryFromDisk: !subsOK && diskRegKnown,
+			ListenersKnown:   listenersKnown,
+			HasListener:      listeners[id],
+			PresenceKnown:    subsOK,
+			RelayKnown:       relayAgentsKnown,
+			RelayEnrolled:    enrolled[id],
+			Now:              now,
+			Window:           a.window,
 		}
 		var looked []string
 		if subsOK {
@@ -148,6 +166,8 @@ func gatherLiveness(a livenessArgs) livenessGather {
 			obs.HasPresenceRow = hasRow
 			obs.LastSeen = p.LastSeen
 			looked = append(looked, "the server's presence row for this channel")
+		} else if diskRegKnown {
+			looked = append(looked, "the server's on-disk registry "+diskReg.Path+" (which holds no heartbeat: presence is never persisted)")
 		}
 		if e, ok := newestDelivery[id]; ok {
 			if at, ok := liveness.ParseStamp(e.Ts); ok {
@@ -188,6 +208,15 @@ func localAgentHomes() map[string]bool {
 		}
 	}
 	return out
+}
+
+// readDiskRegistry is the fallback for a server that did not answer: the
+// roster it last persisted, read off disk. It returns the source note to
+// print, whether the roster is USABLE, and the read itself. The usability gate
+// (this host == the target server's host) lives in readRegistryFile.
+func readDiskRegistry(serverURL string) (sourceNote, bool, registryFile) {
+	f := readRegistryFile(serverURL)
+	return registryFileNote(f), f.Read(), f
 }
 
 // localStatus reads one agent's status file and its mtime. It deliberately

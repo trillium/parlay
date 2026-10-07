@@ -49,13 +49,14 @@ type sourceNote struct {
 
 // Source states.
 const (
-	srcRead        = "read"        // the record answered, possibly with nothing in it
-	srcAbsent      = "absent"      // the record has never been written
-	srcUnreadable  = "unreadable"  // it exists and could not be read
-	srcUnreachable = "unreachable" // the thing to ask is not running
-	srcUnsupported = "unsupported" // it answered 404: too old to have this record
-	srcOff         = "off"         // recording is switched off for the trail
-	srcUnconfirmed = "unconfirmed" // only a live socket could say; it did not answer
+	srcRead        = "read"          // the record answered, possibly with nothing in it
+	srcAbsent      = "absent"        // the record has never been written
+	srcUnreadable  = "unreadable"    // it exists and could not be read
+	srcUnreachable = "unreachable"   // the thing to ask is not running
+	srcUnsupported = "unsupported"   // it answered 404: too old to have this record
+	srcOff         = "off"           // recording is switched off for the trail
+	srcUnconfirmed = "unconfirmed"   // only a live socket could say; it did not answer
+	srcNotThisHost = "not-this-host" // the record belongs to another host, so it is not this server's
 )
 
 // timelineGather is everything the renderer is allowed to know. Keeping the

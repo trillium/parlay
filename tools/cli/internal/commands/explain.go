@@ -80,6 +80,14 @@ type explainReport struct {
 	presence   *wire.PresenceEntry // nil = no row in an answered snapshot
 	cmdsRead   bool                // /api/chat/commands answered
 	commands   []wire.CommandInvocation
+	// regFile is the server's on-disk roster, consulted ONLY when the server did
+	// not answer: a dead process does not un-write agents.json. Nil means the
+	// live answer was used (or the fallback was never needed).
+	regFile *registryFile
+	// regDiskListed is the fallback's answer for THIS agent, kept apart from
+	// `registered` so the live answer and the persisted one can never be
+	// mistaken for each other.
+	regDiskListed bool
 
 	// --- relay half ---
 	relayHealth   *relayctl.Health // nil = control socket did not answer
@@ -129,8 +137,11 @@ func Explain(argv []string) {
 // news" counts; only total silence does not.
 func (r explainReport) sawAnything() bool {
 	deliveryAnswered := r.delivery != nil && r.delivery.Exists
+	// A roster read off disk is a source answering — with the caveat the
+	// registration line carries. An absent or unreadable roster is not.
+	rosterAnswered := r.regFile != nil && r.regFile.Read()
 	return r.subsRead || r.cmdsRead || r.relayHealth != nil || r.relayAgentsOK ||
-		deliveryAnswered || r.crew.Source != "none" || r.statusOK ||
+		deliveryAnswered || rosterAnswered || r.crew.Source != "none" || r.statusOK ||
 		r.spool.Exists || r.sessionOK
 }
 
@@ -168,6 +179,19 @@ func gatherExplain(agentID string) explainReport {
 			}
 		}
 		enrolled = enrollmentOf(reg, true, agentID)
+	} else {
+		// The server did not answer, so its registry is asked of the FILE it
+		// keeps on disk instead (see registry_file.go). This answers "who is
+		// enrolled" and never "who is talking": the server keeps presence in
+		// memory only, and a heartbeat that survived a restart would be lying.
+		// The reconciled crew state above still treats enrollment as unknown,
+		// because the live registry — not last night's roster — is its oracle.
+		f := readRegistryFile(rep.Server)
+		rep.regFile = &f
+		if a, ok := f.Find(agentID); ok {
+			rep.regDiskListed = true
+			rep.agentName, rep.agentColor = a.Name, a.Color
+		}
 	}
 
 	// Commands are filtered server-side records for this agent only; a record

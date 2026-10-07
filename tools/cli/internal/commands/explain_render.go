@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trillium/parlay/tools/cli/internal/agentregistry"
+	"github.com/trillium/parlay/tools/cli/internal/config"
 	"github.com/trillium/parlay/tools/cli/internal/relayctl"
 )
 
@@ -40,7 +42,7 @@ func renderExplain(r explainReport) {
 // registrationLine answers "does the server know this agent".
 func registrationLine(r explainReport) string {
 	if !r.subsRead {
-		return fmt.Sprintf("unknown — the server did not answer %s", r.Server)
+		return registrationLineFromDisk(r)
 	}
 	if !r.registered {
 		return "NOT in the registry — the server answered and does not list it"
@@ -53,6 +55,38 @@ func registrationLine(r explainReport) string {
 		desc += ", color " + r.agentColor
 	}
 	return desc
+}
+
+// registrationLineFromDisk is the same question asked of the roster the server
+// last persisted, for the case where the server did not answer. It says which
+// file answered, what the answer is, and what the answer is NOT: a roster read
+// off disk is the state as of the last write, so "listed" here is a persisted
+// row rather than a live enrollment — and channel activity, which the server
+// never writes to disk, is unknowable either way.
+func registrationLineFromDisk(r explainReport) string {
+	f := r.regFile
+	if f == nil {
+		return fmt.Sprintf("unknown — the server did not answer %s", r.Server)
+	}
+	switch {
+	case f.Elsewhere:
+		return fmt.Sprintf("unknown — the server did not answer %s, and the roster file on this host (%s) was NOT consulted: the target is another machine, whose registry lives with it", r.Server, f.Path)
+	case f.Read() && r.regDiskListed:
+		desc := fmt.Sprintf("listed in the roster the server last persisted to disk (%s)", f.Path)
+		if r.agentName != "" {
+			desc += " — name " + r.agentName
+		}
+		if r.agentColor != "" {
+			desc += ", color " + r.agentColor
+		}
+		return desc + " — the server did not answer, so whether it is registered RIGHT NOW is unknown; that file holds no heartbeat either"
+	case f.Read():
+		return fmt.Sprintf("not in the roster the server last persisted to disk (%s) — the server did not answer, so this is the last roster it wrote, not a live answer", f.Path)
+	case f.State == agentregistry.StateAbsent:
+		return fmt.Sprintf("unknown — the server did not answer %s and there is no roster file at %s to fall back on (that absence is not a 'not registered') — either it has never enrolled an agent or it runs with a -state-dir other than %s", r.Server, f.Path, config.StateHome())
+	default:
+		return fmt.Sprintf("unknown — the server did not answer %s and its roster file at %s exists but could not be read (%v) — the file is there and what it holds is unknown, not empty", r.Server, f.Path, f.Err)
+	}
 }
 
 // channelLine answers "when was this agent's channel last observed", keeping a
@@ -150,6 +184,8 @@ func relayEnrollLine(r explainReport) string {
 		return "REGISTERED BUT NOT POLLED — the server lists it and this relay holds no poll loop for it, so a message sent to it is stored and never spooled"
 	case r.subsRead && !r.registered:
 		return "not polled by this relay, and the server's registry does not list it either"
+	case r.regDiskListed:
+		return "NOT polled by this relay — the server did not answer, and the roster it last persisted to disk DOES list this agent: a message sent to it is stored and never spooled"
 	default:
 		return "NOT polled by this relay — whether the server registry lists it is unknown (the server did not answer)"
 	}

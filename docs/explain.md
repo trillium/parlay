@@ -2,7 +2,9 @@
 
 **Code:** `tools/cli/internal/commands/explain.go` (gather), `explain_delivery.go`
 (the trail, from the socket or from disk), `explain_render.go` (one line per
-fact), `tools/cli/internal/relayctl` (the read-only relay client).
+fact), `registry_file.go` (the roster fallback, shared with `liveness`),
+`tools/cli/internal/relayctl` (the read-only relay client), and
+`tools/cli/internal/agentregistry` (the roster file reader).
 
 ```
 parlay explain <agent-id>
@@ -23,7 +25,7 @@ mistake.
 
 | Section | Source | Answers |
 |---|---|---|
-| `registration` | `GET /api/chat/subscribers` | is it registered, name, colour |
+| `registration` | `GET /api/chat/subscribers`, falling back to the roster **file** (`agents.json`) | is it registered, name, colour. The server is asked first; when it does not answer the file it last persisted is read instead, and the line says so — a registration answered from a file is a persisted row, not a live answer |
 | `channel` | the same snapshot's `presence` row | when its channel was last observed — and whether it ever was |
 | `crew state` | the frozen `reconcileCrewState` contract | state + source + detail, **from the same registry read** `parlay crew-state` performs, so the two verbs cannot disagree about enrollment |
 | `status file` | `<agents-root>/<id>/status` (or the crew bead) | the words the agent last said about itself, and when it wrote them |
@@ -49,6 +51,12 @@ answer says what it saw — including "there is nothing". Concretely:
 
 - a failed `GET /api/chat/subscribers` renders `registration unknown — the
   server did not answer <url>`, never "not registered";
+- when it does not answer, the roster the server **last persisted**
+  (`agents.json`) is read instead, so an operator who already knows this fleet
+  still sees whether the id is in it — with three limits stated on the line: the
+  row is as of the last write, channel activity is **not** in that file (the
+  server keeps presence in memory only), and an id that is missing from it is
+  `not in the roster … not a live answer`, never the confident negative;
 - a relay with no control socket says so on the `relay` line, and every
   relay-derived section separately says unknown;
 - a spool that exists is not called empty, an empty spool is not called absent,
@@ -86,6 +94,38 @@ commands        2 record(s) for this agent, newest first:
                   running  listen           started 12m ago · took 12m00s
 last error      `parlay send` ended failed exit 1 outcome error (2m ago)
 ```
+
+**Server down, roster on disk** — the same substitution the relay's trail gets,
+for the half of the answer the server keeps in a file. Exit 0: the roster
+answered. Verbatim against a private fixture with a dead server:
+
+```
+registration    listed in the roster the server last persisted to disk (/tmp/pdoc.w9fTru/state/agents.json) — name Crew One, color #abc — the server did not answer, so whether it is registered RIGHT NOW is unknown; that file holds no heartbeat either
+channel         unknown — the server did not answer http://127.0.0.1:1
+crew state      working · source: status-degraded · building the parser (relay unreachable; status may be stale)
+status file     working [key=parser]: building the parser [last written 1s ago]
+relay enroll    unknown — the relay did not answer GET /agents
+```
+
+`channel` stays `unknown` on purpose: the fallback answers one question and the
+line names exactly which. Three further shapes, each pinned by a test:
+
+- the id is **not** in that roster — `not in the roster the server last
+  persisted to disk (<path>) — the server did not answer, so this is the last
+  roster it wrote, not a live answer` (deliberately not `NOT in the registry`);
+- there is **no** roster file — `unknown — the server did not answer <url> and
+  there is no roster file at <path> to fall back on (that absence is not a 'not
+  registered') — either it has never enrolled an agent or it runs with a
+  -state-dir other than <statehome>`;
+- a roster file that exists and **cannot be read** — `unknown — … its roster
+  file at <path> exists but could not be read (<err>) — the file is there and
+  what it holds is unknown, not empty`;
+- the CLI targets **another machine** — `unknown — the server did not answer
+  <url>, and the roster file on this host (<path>) was NOT consulted: the target
+  is another machine, whose registry lives with it`. `agents.json` belongs to a
+  host, so another host's file is never presented as this server's roster.
+- a **live** answer always wins: with the server up, the file is not consulted
+  and none of this wording appears.
 
 **Relay down, spool exists with no writer, no ledger on disk** — exit 0
 

@@ -293,3 +293,88 @@ func TestParseStamp(t *testing.T) {
 		t.Error("a literal null must not parse")
 	}
 }
+
+// --- the on-disk roster (the server did not answer) -------------------------
+
+// TestDiskRosterListedIsLiveWithTheSubstitutionNamed: the verdict is the same
+// one a live registry would give, but the WORDS must say where the roster came
+// from — a registration answered off a file is not a live answer, and a surface
+// that printed it as one would hide that the server is down.
+func TestDiskRosterListedIsLiveWithTheSubstitutionNamed(t *testing.T) {
+	o := obs()
+	o.RegistryFromDisk = true
+	o.PresenceKnown = false
+	o.HasPresenceRow = false
+	o.LastSeen = ""
+	v := Classify(o)
+	if v.State != StateLive {
+		t.Fatalf("state = %q, want %q", v.State, StateLive)
+	}
+	if !strings.Contains(v.StateNote, "on-disk registry") || !strings.Contains(v.StateNote, "last persisted") {
+		t.Errorf("state note must name the disk substitution: %q", v.StateNote)
+	}
+	// Presence is never written to disk, so the heartbeat cannot be answered
+	// from the same file — and it must say WHY rather than just "unknown".
+	if v.Heartbeat != HeartbeatUnknown {
+		t.Fatalf("heartbeat = %q, want %q", v.Heartbeat, HeartbeatUnknown)
+	}
+	if !strings.Contains(v.HeartbeatNote, "never written to disk") {
+		t.Errorf("heartbeat note must say presence is never on disk: %q", v.HeartbeatNote)
+	}
+}
+
+// TestDiskRosterListedWithoutAListenerIsGhost: the process table is a LOCAL
+// measurement and stays trustworthy when the server is dead, so a listed agent
+// with nothing listening is a ghost the operator can act on.
+func TestDiskRosterListedWithoutAListenerIsGhost(t *testing.T) {
+	o := obs()
+	o.RegistryFromDisk = true
+	o.HasListener = false
+	o.PresenceKnown = false
+	v := Classify(o)
+	if v.State != StateGhost {
+		t.Fatalf("state = %q, want %q", v.State, StateGhost)
+	}
+	if !strings.Contains(v.StateNote, "on-disk registry") {
+		t.Errorf("state note must name the disk substitution: %q", v.StateNote)
+	}
+}
+
+// TestDiskRosterSilentOnThisAgentIsUnknownNotOffline is the honesty rule that
+// makes the fallback safe: "not in the file this CLI read" is not "not
+// enrolled", because which state directory the server runs with is a separate
+// configuration point. A wrong offline sends an operator to re-register a
+// healthy agent; unknown is the only supportable answer.
+func TestDiskRosterSilentOnThisAgentIsUnknownNotOffline(t *testing.T) {
+	o := obs()
+	o.RegistryFromDisk = true
+	o.Registered = false
+	o.HasListener = false
+	o.PresenceKnown = false
+	v := Classify(o)
+	if v.State != StateUnknown {
+		t.Fatalf("state = %q, want %q — a roster read off disk cannot settle enrollment", v.State, StateUnknown)
+	}
+	if !strings.Contains(v.StateNote, "unknown, not settled") {
+		t.Errorf("state note must say what is unsettled: %q", v.StateNote)
+	}
+}
+
+// TestDiskRosterDoesNotQuietTheOrdinaryPath: when the server answered, nothing
+// about the disk fallback may appear — the substitution is only ever named
+// when it was actually made.
+func TestDiskRosterDoesNotQuietTheOrdinaryPath(t *testing.T) {
+	o := obs()
+	o.HasPresenceRow = true
+	o.LastSeen = stamp(30 * time.Second)
+	v := Classify(o)
+	if v.State != StateLive {
+		t.Fatalf("state = %q, want %q", v.State, StateLive)
+	}
+	if v.StateNote != "" {
+		t.Errorf("a healthy registered agent needs no state note, got %q", v.StateNote)
+	}
+	if v.HeartbeatNote != "" {
+		t.Errorf("a fresh heartbeat needs no note, got %q", v.HeartbeatNote)
+	}
+}

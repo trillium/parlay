@@ -98,6 +98,12 @@ type Observation struct {
 	// --- the server's registry snapshot ---
 	RegistryKnown bool
 	Registered    bool
+	// RegistryFromDisk is true when the two fields above came from the
+	// server's on-disk registry (agents.json) because the server itself did
+	// not answer. It changes the WORDS, never the verdict: the roster is the
+	// last one the server persisted, and presence — which is never on disk —
+	// stays unknown either way.
+	RegistryFromDisk bool
 
 	// --- this host's process table ---
 	ListenersKnown bool

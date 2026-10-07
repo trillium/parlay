@@ -17,21 +17,44 @@ import (
 // live-with-a-caveat rather than libelling it as a ghost. A wrong ghost sends
 // an operator to clear the registration of a working agent.
 func classifyState(v *Verdict, o Observation) {
+	disk := ""
+	if o.RegistryFromDisk {
+		disk = " (from the server's on-disk registry: the server did not answer, so this is the roster it last persisted, not a live answer)"
+	}
 	switch {
 	case !o.RegistryKnown:
 		v.State = StateUnknown
 		v.StateNote = "the server did not answer, so registration is unknown — this is not the same as offline"
+	case o.RegistryFromDisk && !o.Registered:
+		// A roster read off disk is the server's last write, but "not in it" is
+		// not the same claim as "not enrolled": which state directory the
+		// server runs with is a separate configuration point from the one this
+		// CLI reads, and only a live server settles it. Unknown, never a
+		// confident offline — the same rule the enrollment lookup follows for a
+		// failed fetch (robots-me7m).
+		v.State = StateUnknown
+		v.StateNote = "not in the roster the server last persisted to disk, and the server did not answer — whether it is enrolled right now is unknown, not settled"
 	case !o.Registered:
 		v.State = StateOffline
 		v.StateNote = "not in the server's registry — nothing here can receive a message until it is registered"
 	case !o.ListenersKnown:
 		v.State = StateLive
-		v.StateNote = "registered; the process table could not be read, so a listener cannot be confirmed OR ruled out"
+		v.StateNote = "registered" + disk + "; the process table could not be read, so a listener cannot be confirmed OR ruled out"
 	case o.HasListener:
 		v.State = StateLive
+		// No note on the ordinary healthy path: a note that fires on every row is
+		// noise an operator learns to skip. The disk caveat is the exception —
+		// it says the registration half came from a file, which is exactly the
+		// kind of substitution this verb must never make silently.
+		if o.RegistryFromDisk {
+			v.StateNote = "registered" + disk + " and a listener for this agent is running on this host"
+		}
 	default:
 		v.State = StateGhost
 		v.StateNote = "registered with nothing listening on this host — a message sent to this channel is spooled for a reader that is gone"
+		if o.RegistryFromDisk {
+			v.StateNote = "listed in the server's on-disk registry with nothing listening on this host — a message sent to this channel is spooled for a reader that is gone"
+		}
 	}
 }
 
@@ -44,6 +67,9 @@ func classifyHeartbeat(v *Verdict, o Observation, now time.Time, window time.Dur
 	case !o.PresenceKnown:
 		v.Heartbeat = HeartbeatUnknown
 		v.HeartbeatNote = "the server did not answer, so channel activity is unknown (not absent, and not fresh)"
+		if o.RegistryFromDisk {
+			v.HeartbeatNote += "; presence is kept in memory by the server and is never written to disk, so there is no heartbeat record to fall back on"
+		}
 	case !o.HasPresenceRow:
 		v.Heartbeat = HeartbeatNoRow
 		v.HeartbeatNote = "the server's snapshot has no presence row for this channel — it has never recorded activity on it"
