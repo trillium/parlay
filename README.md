@@ -470,6 +470,25 @@ between client, CLI, and server), [`docs/COMMAND_DESIGN_CONTRACT.md`](docs/COMMA
 own agent fleet, some of it public and some not — [`docs/README.md`](docs/README.md)
 says which is which.
 
+## Publishing
+
+**The `parlay` package name on npm is taken by an unrelated third party**, so no package in
+this repo can be published under the bare name. That single fact drives every naming decision
+here, and it is not a style preference:
+
+- **Publishable packages use flat, unscoped `parlay-<part>` names** — `parlay-input`, and any
+  future `parlay-<part>`. Only `packages/input` is public today.
+- **The `@parlay` scope is never published.** It has no packages under it, and adding some
+  would mean claiming a scope this project does not own. If you are tempted to "fix" a
+  package name by moving it under `@parlay/…`, don't — that is the one direction that is
+  closed.
+
+If you hit an install that resolves to something unexpected, check the version you actually
+got. `parlay-input` on the npm registry is a **0.1.0 alias stub** that points at the
+unpublished `@parlay/input`; the real implementation here is **0.2.0** and has not been
+published. Consumers who need the working package today vendor `dist/` from this repo — see
+`packages/input/README.md`.
+
 ## Contributing
 
 This is an alpha, single-owner project moving fast, so there's no formal contribution

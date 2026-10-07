@@ -13,7 +13,27 @@ stream.
 
 ## Install / quick start
 
+> **The npm registry copy of `parlay-input` is a 0.1.0 alias stub**, not this package. It
+> redirects to `@parlay/input`, which is unpublished and does not exist — so `npm install
+> parlay-input` does **not** give you the real wrapper (this repo is at **0.2.0**). Until
+> 0.2.0 is published, vendor `dist/` from this repo:
+>
+> ```sh
+> # from a checkout of this repo — copy the package ROOT, not just dist/.
+> # A "file:" dependency resolves against a directory containing package.json;
+> # dist/ alone has none, so copying only dist produces an unresolvable dep.
+> mkdir -p <your-project>/vendor/parlay-input
+> cp -R packages/input/dist packages/input/package.json packages/input/LICENSE \
+>       <your-project>/vendor/parlay-input/
+> ```
+>
+> then depend on it as `"parlay-input": "file:./vendor/parlay-input"`. Keeping the directory
+> under version control also makes a missing copy fail loudly at `npm ci` instead of
+> silently degrading to a plain, voiceless input box. See the README's
+> [Publishing](../../README.md#publishing) section for why the registry copy is a stub.
+
 ```sh
+# once 0.2.0 is on the registry, this is the intended line:
 npm install parlay-input
 ```
 

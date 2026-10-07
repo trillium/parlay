@@ -181,9 +181,9 @@ never runs.
 *narrow* what its own connection receives. It cannot subscribe a client
 to anything it would not otherwise get, cannot affect any other client,
 and grants no send/aim authority. This is why `?caps=` on the read
-stream needs no new entry in `GUARDED_CHAT_PATHS`/`GuardedPaths`: the
-guard posture of `GET /api/chat/events` is unchanged on both servers
-(the Go side's method-independent guard already covers it). Issuing
+stream needs no new entry in `GuardedPaths`: the guard posture of
+`GET /api/chat/events` is unchanged — the method-independent guard in
+`packages/go-server/internal/guard` already covers it. Issuing
 presentation commands stays exactly as guarded as it is today, and the
 `POST /api/chat/events` ingress allowlist is untouched — capability
 declaration decides who *receives*, never who may *send*.

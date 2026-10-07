@@ -322,7 +322,7 @@ the companion `busEmitEvents` set (the Gas City bus dual-write filter in
 hard-coded; deriving its ingress-name members is a follow-up, not part of
 the proof.
 
-**`JSON_EXEMPT_PATHS` — untouchable.** Contracts have no field that can
+**`jsonExemptPaths` — untouchable.** Contracts have no field that can
 reference it; the list stays a closed three-member set. A contract cannot
 declare a content-type exemption, an origin-policy change, or anything else
 about how the guard treats its route. Trust posture selects *which existing
