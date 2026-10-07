@@ -1,135 +1,155 @@
 # Onboarding work: what changed, and the evidence
 
-This branch makes the first hour in this repo readable instead of source-bound. Five
+This branch makes the first hour in this repo readable instead of source-bound. Six
 pieces, in the order a newcomer meets them:
 
 | Piece | What it is |
 |---|---|
 | `bin/parlay-preflight` (+ `bin/parlay-preflight.test.sh`) | One bash-only command that checks the whole prerequisite set and names **every** missing thing in one run with its exact `fix:` command. Step 0 of the README path, and the command to re-run when a machine misbehaves. |
-| `docs/traps.md` | `AGENTS.md`'s incident record reordered into the nine stages a newcomer walks through. All 64 `docs/agent-notes/` notes appear, none dropped, none rewritten, every link target unchanged. |
+| `docs/traps.md` | `AGENTS.md`'s incident record reordered into the nine stages a newcomer walks through. All 65 `docs/agent-notes/` notes appear, none dropped, none rewritten, every link target unchanged. |
 | `README.md` Quickstart | One ordered five-step path with a real first command, an isolated-fleet step, one health surface named in both roles, and success/failure criteria on every step. |
-| `docs/agent-notes/a-relay-that-cannot-name-its-server-passes.md` | A newly observed fact (below): the relay preflight that protects against cross-instance enrollment is inert against a relay older than its own `server` field. Linked from `traps.md` stage 4. |
+| `.github/workflows/ci.yml` (new hygiene step) | Keeps the two lines above from rotting: every `docs/agent-notes/*.md` must be placed in the ordering, and every local link in the five documents of the path must resolve. |
+| `docs/agent-notes/a-relay-that-cannot-name-its-server-passes.md` | A newly observed fact (below): the relay check that protects against cross-instance enrollment is inert against a relay older than its own `server` field. Linked from `traps.md` stage 4. |
 | `.gitignore` | `.pi/` ignored, and the harness task-log files an auto-commit had picked up are untracked — so no harness scratch file can be committed again. |
 
 ## What a newcomer can now do without reading source
 
-1. **Run `./bin/parlay-preflight`** and be told everything the machine needs at once, with the exact remedy for each, rather than one blocker per failed build.
-2. **Run `./examples/bootstrap-sandbox.sh`** and watch the whole stack work — server, CLI, registry, history, the reply path, `doctor` — in a throwaway sandbox, with a `LIMITS` block saying what it did *not* prove; then follow steps 2–4 literally and get a served message, a read-back, a health verdict and two predicted non-zero exits (the optional voice engine; `doctor`'s agent-only self-check).
+1. **Run `./bin/parlay-preflight`** and be told everything the machine needs at once, with
+   the exact remedy for each, rather than one blocker per failed build.
+2. **Run `./examples/bootstrap-sandbox.sh`** and watch the server, CLI, registry, history, the
+   reply path and `doctor` work in a throwaway sandbox whose `LIMITS` line names what it does
+   *not* cover (delivery and the relay); then steps 2–4 give a served message, a read-back, a
+   health verdict, and three predicted non-zero exits (voice engine; `doctor`; `doctor deploy`).
 3. **Know where to look when it breaks**: the same `./bin/parlay-preflight` an operator runs, then `docs/traps.md` at the stage they are in.
 
 ## What was reordered, or corrected, and why
 
-- **`docs/traps.md` is new** (250 lines). `AGENTS.md` and `docs/agent-notes/` are in incident order, which is right to maintain and wrong to meet; `traps.md` orders the same facts by when they bite: before you run anything → first server and message → an agent that receives → a second instance or fleet → when something looks wrong → spawning → changing the code → landing the change → only if you go deeper.
-- **The README Quickstart gained a step and was renumbered** (step 1 is now the sandbox, server → 2, CLI → 3, talk/health → 4, panel → 5), every internal step reference updated, and every step now states what success and failure look like.
-- **The `-state-dir` advice was corrected.** It previously read "To keep a dev run fully isolated from live state", which overclaims: `-state-dir` moves the server's store and nothing else — `HOME`, the agent store, the TTS cache and the listener layer are untouched. The step now says exactly that and points at the sandbox for a whole fleet.
-- **The health surface is one surface, named in both roles.** `./bin/parlay-preflight` is the machine half, `./bin/parlay health` the running-instance half, and the README says so in step 0, step 4 and "when a step fails". The preflight is state-aware: with a parlay instance already answering on the resolved port it prints `Ready. A parlay instance already answers on 127.0.0.1:4242 — nothing to start.`
-- **The relay follow-on paragraph was corrected, and `doctor deploy`'s fresh-clone behaviour is now stated** — see the next section; executing the path proved the first paragraph's absolute claim false on any machine that already runs a relay, and showed that `doctor deploy` exits 1 on a fresh clone for the same not-installed voice engine `health` reports.
+- **`docs/traps.md` is new** (250 lines): `AGENTS.md` and `docs/agent-notes/` are in incident
+  order — right to maintain, wrong to meet. It orders the same facts by when they bite:
+  before you run anything → first server and message → an agent that receives → a second
+  instance or fleet → when something looks wrong → spawning → changing the code → landing the
+  change → only if you go deeper.
+- **The README Quickstart gained a step and was renumbered** (step 1 is now the sandbox,
+  server → 2, CLI → 3, talk/health → 4, panel → 5), every internal step reference updated,
+  and every step now states what success and failure look like.
+- **The `-state-dir` advice was corrected.** It read "fully isolated from live state", which
+  overclaims: `-state-dir` moves the server's store and nothing else — `HOME`, the agent
+  store, the TTS cache and the listener layer are untouched. It now says exactly that and
+  points at the sandbox for a whole fleet.
+- **The health surface is one surface, named in both roles.** `./bin/parlay-preflight` is the
+  machine half, `./bin/parlay health` the running-instance half; step 0, step 4 and "when a
+  step fails" all say so. The preflight is state-aware: with an instance already answering on
+  the resolved port it prints `Ready. A parlay instance already answers on 127.0.0.1:4242 —
+  nothing to start.`
+- **The relay follow-on paragraph was corrected.** Running the path proved its absolute claim
+  false: `parlay monitor`/`listen` without `--legacy-poll` enroll into whatever relay the host
+  is already running, and that check cannot refuse when the relay is too old to report its
+  upstream in `/health` — so an enroll into the wrong server looks live (observed: `preflight
+  OK — canonical relay is up for 'demo'`, no `and polling <url>`). The README now says to read
+  that suffix and gives both remedies; the full finding, with the code on both sides and the
+  transcript, is `docs/agent-notes/a-relay-that-cannot-name-its-server-passes.md`. The
+  stale-relay half needs a current relay build — a build decision, so documented, not patched.
 
-## What executing the path found: a relay that cannot name its server
+## What now keeps the path from rotting
 
-Running the README's own follow-on commands in a clean `HOME` produced a healthy-looking
-enroll against the wrong upstream:
-
+The docs-index gate scans `docs/*.md` only, so a note under `docs/agent-notes/` that no
+document links is invisible to every gate — one existed (`bun-test-ts-gate-is-repo-wide.md`)
+until `traps.md` was written — and a broken relative link is equally invisible, since GitHub
+renders it as ordinary text. One new hygiene step closes both, deriving each side from the
+filesystem rather than a list that goes stale, and resolving each link against the directory
+of the file that contains it (done by hand once, resolving against the repo root reported 117
+false failures). Scope is the newcomer path — `README.md`, `AGENTS.md`, `docs/README.md`,
+`docs/traps.md`, `examples/README.md` — deliberately not all of `docs/`, which also holds
+dated snapshots (`ux-eval-*`, `dogfood/`) whose value is being what was true that day.
+Proved to fail, not just to pass. The run block was extracted from the workflow YAML (so the
+tested text is the shipped text) and run against a faithful copy of the tree with one note
+written and never placed and one link pointed at a file that does not exist:
 ```
-$ ./bin/parlay monitor --agent demo            # CLI resolved http://localhost:4242
-parlay-monitor: preflight OK — canonical relay is up for 'demo'
-parlay-monitor: streaming 'demo' from …/T/parlay/demo.chan
-```
+$ bash /tmp/extracted-step.sh       # control, the real tree
+65 agent-notes are placed in docs/traps.md; 238 links across 5 documents resolve   (exit 0)
 
-`tools/monitor/parlay-monitor.sh` refuses a cross-instance enroll by comparing the CLI's
-server against the one the relay reports in `GET /health` over `relay.sock`;
-`tools/cli/internal/monitor/monitor.go` passes `PARLAY_SERVER=config.ServerURL()` into that
-script, so the CLI's half is always present. The other half was missing: this host's
-canonical relay (a September build, started with `-server http://macbook:31337`) answers
-`{"ok":true}` and nothing else, and an absent answer is deliberately *not* a mismatch —
-refusing on unknown would break every relay older than the field. So the check was skipped,
-the enroll went through the host-wide relay, and the upstream it polls was refusing
-connections. The `and polling <url>` suffix the script appends once it *has* verified an
-upstream is the visible difference; the README now says to read that line and gives the two
-remedies (`--legacy-poll`, or the instance's own `PARLAY_RELAY_RUNTIME`). The stale-relay
-half needs a current relay build — a build decision, not a document one — so it is recorded
-in the new note rather than patched around.
+$ bash /tmp/extracted-step.sh       # one unplaced note + one dangling link
+::error file=docs/agent-notes/an-orphan-note.md::docs/agent-notes/an-orphan-note.md is not placed in docs/traps.md — put it at the stage where a newcomer meets it
+::error::these links in the newcomer path do not resolve:
+README.md -> docs/traps.md.bak      (×5; the link that was broken)
+exit=1
+```
 
 ## Harness scratch was committed once, and now cannot be
 
-The constraint is that nothing under `.pi/`, `.gnhf/` or any other harness scratch directory is ever committed. It was already broken on this branch: the auto-commit that landed `docs/traps.md` also captured eight `.pi/tasks/<session>/*.json` + `*.output` task-log files, because `.pi/` was not ignored and nothing else kept them out. This was fixed in an earlier iteration by untracking them (`git rm --cached`, files kept on disk) and adding `.pi/` to `.gitignore` with the incident recorded next to the entry. `.gnhf/` needs no such entry here: the harness already excludes `.gnhf/runs/` through `.git/info/exclude`.
-
+Nothing under `.pi/`, `.gnhf/` or any other harness scratch directory may be committed, and
+it was already broken on this branch: the auto-commit that landed `docs/traps.md` captured
+eight `.pi/tasks/<session>/*.json` + `*.output` files, because `.pi/` was not ignored. Fixed
+earlier by untracking them (`git rm --cached`, files kept on disk) and adding `.pi/` to
+`.gitignore` with the incident recorded next to the entry. `.gnhf/` needs no entry: the
+harness already excludes `.gnhf/runs/` through `.git/info/exclude`. Files added in one commit
+and removed in another do not appear in a PR's net diff, so the PR is clean without a rewrite.
 ## What was deliberately left alone
 
-- `AGENTS.md`, `docs/agent-notes/*` and every existing incident record: no fact was changed. `AGENTS.md` gained one paragraph naming the preflight as the first command.
-- `examples/bootstrap-sandbox.sh` itself: reused as-is, not reimplemented — it already encodes the isolation recipe, including the hardcoded paths.
+- `AGENTS.md`, `docs/agent-notes/*` and every existing incident record: no fact was changed;
+  `AGENTS.md` gained the preflight-as-first-command paragraph and the new CI gate in its CI line.
+- `examples/bootstrap-sandbox.sh`: reused as-is, not reimplemented — it already encodes the
+  isolation recipe, including the hardcoded paths.
 - Deployment scripts, `internal/guard.GuardedPaths`, and every public endpoint shape.
-- `tools/monitor/parlay-monitor.sh`: its tolerance for a relay that cannot report its upstream is deliberate and documented in the code; changing it is a product decision, not an onboarding one. It is documented and linked instead.
-- `docs/ux-eval-2026-08-30.md`: a dated field report that cites the README's old step numbers. Rewriting a historical record to match today's numbering would falsify evidence.
-- A root `go.work`: not added. It would make repo-root-relative module paths work, but it contradicts the README, `AGENTS.md` and CI doctrine that all state there is no root workspace, and adds a `go.work.sum` to maintain.
+- `tools/monitor/parlay-monitor.sh`: its tolerance for a relay that cannot report its
+  upstream is deliberate and documented in the code; changing it is a product decision, not an
+  onboarding one, so it is documented and linked instead.
+- `docs/ux-eval-2026-08-30.md`: a dated field report citing the README's old step numbers;
+  rewriting a historical record to match today's numbering would falsify evidence.
 
 ## Verification
 
 ### The configured stop condition, literally, at the repo root
 
 ```
-$ go build ./... ; echo exit=$?
+$ go build ./... && go vet ./... && gofmt -l . | (! grep .) && go test ./... && make test-bdd
 pattern ./...: directory prefix . does not contain main module or its selected dependencies
 exit=1
+$ for m in tools/cli tools/relay packages/go-server packages/spawn-profiles; do   # same chain, per module
+  (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...); done
+tools/cli exit=0 · tools/relay exit=0 · packages/go-server exit=0 · packages/spawn-profiles exit=0
+$ gofmt -l .            → (no output, exit 0)      $ make test-bdd → exit 0, 7+7 scenarios passed
+$ bash bin/parlay-preflight.test.sh → 20 passed, 0 failed, exit 0
 ```
 
-This repo is four Go modules with no root module, so `./...` at the root cannot resolve. That is pre-existing, unrelated to this branch, and **not gamed**: a vacuous root module would make the command exit 0 while proving nothing. The per-module equivalent, plus the rest of the chain, is what was actually run:
-
-```
-$ for m in tools/cli packages/go-server tools/relay packages/spawn-profiles; do (cd $m && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...); echo "$m exit=$?"; done
-tools/cli exit=0 · packages/go-server exit=0 · tools/relay exit=0 · packages/spawn-profiles exit=0
-$ gofmt -l .        → (no output)
-$ make test-bdd ; echo exit=$?
-... 7 scenarios (7 passed), 21 steps (21 passed) ... PASS    exit=0
-```
-
-Baseline before any change: identical — all four modules exit 0, `gofmt -l .` empty,
-`make test-bdd` exit 0. No known-red on this box.
+The repo is four Go modules with no root module, so `./...` at the root cannot resolve.
+Pre-existing, unrelated to this branch, and **not gamed**: a vacuous root module would exit 0
+while testing nothing, and a root `go.work` does not fix it either (verified here, then
+removed). The per-module equivalent plus the rest of the chain is at the end of this section;
+the baseline before any change was identical, with no known-red on this box, including
+`make test-bdd`.
 
 ### The newcomer path, executed end to end (steps 0–5, clean `HOME`)
 
-Run literally as the README writes it, with `HOME` at an empty directory and the Go caches
-pinned at the real ones (a fresh *parlay* state, not a fresh module download). This box has
-a live install; `find ~/.parlay -newermt -30 minutes` afterwards → nothing.
+Run literally as the README writes it, `HOME` at an empty directory, Go caches pinned at the
+real ones. This box has a live install; `find ~/.parlay -newermt -30 minutes` afterwards →
+nothing. (The sandbox's ten PASS lines are re-wrapped here, never reworded.)
 
 ```
 $ ./bin/parlay-preflight
-  ok    HOME          /tmp/parlay-newcomer.cgGbdT
-  ok    CLI state     /tmp/parlay-newcomer.cgGbdT/.parlay (PARLAY_STATE_HOME: writable)
-  ok    server port   127.0.0.1:4242 is free (this is where the CLI expects the server)
-  ok    isolation     /tmp/parlay-newcomer.cgGbdT/.parlay is not the live default state home, or holds no agents
-12 checks: 12 ok, 0 warning(s), 0 failure(s).
-exit=0
-
+  ok    HOME /tmp/parlay-newcomer.cgGbdT · CLI state …/.parlay (writable) · server port 127.0.0.1:4242 free
+  ok    isolation …/.parlay is not the live default state home, or holds no agents
+12 checks: 12 ok, 0 warning(s), 0 failure(s).        exit=0
 $ ./examples/bootstrap-sandbox.sh
-== starting packages/go-server on http://127.0.0.1:61534
 2026/10/07 02:59:04 parlay-server: listening on http://127.0.0.1:61534 (state dir: …, assets: …)
 sent to helm — id m1
-  PASS  registry served the seeded agents
-  PASS  message round-tripped through the server
-  PASS  message persisted to the state dir's messages.jsonl
-  PASS  reply path routed --agent helm onto the helm channel
-  PASS  server URL resolved from config.json
-  PASS  identity.md read back with frontmatter stripped
+  PASS  registry served the seeded agents · message round-tripped through the server · message
+        persisted to the state dir's messages.jsonl · reply path routed --agent helm onto the helm channel
+  PASS  server URL resolved from config.json · identity.md read back with frontmatter stripped
   PASS  launch spec discovered for both agents, both reported ghost (registered, no listener)
   PASS  seeded history served on both channels
-  PASS  doctor PASSes identity, registry membership, reachability
-  PASS  server persisted only into the state dir it was given
+  PASS  doctor PASSes identity, registry membership, reachability · server persisted only into
+        the state dir it was given
   LIMITS of this run — what the PASSes above do not say: UNCOVERED (delivery, the relay), BOUND (the unauthenticated port while up)
-all checks passed — port 61534, sandbox /var/folders/…/T/parlay-example.lLK8hV
-exit=0                       # and the sandbox was removed on exit
-
+all checks passed — port 61534, sandbox /var/folders/…/T/parlay-example.lLK8hV      exit=0
 $ cd packages/go-server && go run ./cmd/parlay-server        # step 2
 2026/10/07 03:00:17 parlay-server: listening on http://127.0.0.1:4242 (state dir: /tmp/parlay-newcomer.cgGbdT/.parlay, assets: dist)
 $ curl -sS -i http://127.0.0.1:4242/health
 HTTP/1.1 200 OK
 {"agents":0,"messages":0,"ok":true}
-
 $ ./bin/parlay remote                                        # step 3
 http://localhost:4242 (source: default)
-$ ./bin/parlay                                               # step 4
-agents: 0 registered
-$ ./bin/parlay send --demo --force "hello"
+$ ./bin/parlay send --demo --force "hello"                   # step 4
 sent to demo — id m0
 $ ./bin/parlay history 5
 [10:00:18] you          hello
@@ -141,30 +161,21 @@ $ ./bin/parlay doctor ; echo exit=$?
 FAIL  PARLAY_AGENT_ID is not set
 PASS  server reachable at http://localhost:4242
 exit=1
-$ ./bin/parlay doctor --json          # schema parlay.doctor/v1, verdict FAIL, 2 pass / 3 warn / 1 fail / 1 unknown
 $ ./bin/parlay doctor deploy ; echo exit=$?
 UNKNOWN no com.parlay.* LaunchAgents installed — nothing to inventory
 FAIL  eval-engine 127.0.0.1:4343 — port connection refused through the full deadline (service down or wedged)
 exit=1                                # now stated in the README
-
 $ curl -sS -i http://localhost:4242/ | head -1               # step 5, before building the bundle
 HTTP/1.1 503 Service Unavailable
-
-$ ./bin/parlay reply --agent demo "on it"                    # follow-ons
-said as demo (id m1)
-$ ./bin/parlay listen --agent demo --name Demo --legacy-poll # native path, no relay
-parlay listen: registering 'demo' … / announced — arming monitor …
-parlay monitor (legacy poll) — server http://localhost:4242 channel demo
-$ ./bin/parlay monitor --agent demo                          # the relay path — see above
-parlay-monitor: preflight OK — canonical relay is up for 'demo'
 ```
 
-Every step behaved as the README says except the relay-path one, which is what led to the
-correction above. Cleanup: the server was killed by port, the `demo` spool this run created
-in the host-wide runtime dir was removed, the temp `HOME` and sandbox were deleted. Live
-install residue, recorded rather than hidden: the shared relay's `.ensure-up.ok` freshness
-marker was refreshed (a TTL cache, harmless); nothing was registered anywhere, because the
-relay's upstream is not running.
+Every required step behaved as the README says. The follow-on commands were run too —
+`reply --agent demo` (`said as demo (id m1)`), `listen --agent demo --legacy-poll` (registers,
+announces, arms the native poller), and `monitor --agent demo` (the relay path, the one place
+the path's own text was wrong). Cleanup: the server was killed by port, the `demo` spool this
+run created in the host-wide runtime dir was removed, the temp `HOME` and sandbox were
+deleted, and no agent was left registered anywhere. Live-install residue, recorded rather
+than hidden: the shared relay's `.ensure-up.ok` freshness marker was refreshed (a TTL cache).
 
 ### The preflight demonstrated failing, on a deliberately broken environment
 
@@ -185,66 +196,55 @@ Fix the 4 failure(s) above, then run this again — nothing else works until the
 exit=1
 ```
 
-`bin/parlay-preflight.test.sh` (250 lines, 20 assertions) is what makes the preflight a
-check rather than a decoration: a healthy synthetic checkout (exit 0), the Go version floor
-as a real comparison, a live instance answering `/health` (reported up, **not** told to
-start a server), six simultaneous blockers named in **one** run with the summary's own count
-asserted equal to the FAIL lines printed, and `env -i PATH=/nonexistent` against the real
-checkout. It is wired into CI's hermetic shell job.
+`bin/parlay-preflight.test.sh` (250 lines, 20 assertions) is what makes the preflight a check
+rather than a decoration: a healthy synthetic checkout (exit 0), the Go version floor as a
+real comparison, a live instance answering `/health` (reported up, **not** told to start a
+server), six simultaneous blockers named in **one** run with the summary's own count asserted
+equal to the FAIL lines printed, and `env -i PATH=/nonexistent` against the real checkout. It
+is wired into CI's hermetic shell job.
 
 ### Links, and claims checked against the code
 
 ```
-README.md 33 local · docs/traps.md 76 · docs/README.md 40 · examples/README.md 2 · AGENTS.md 74
-TOTAL: 225 links, 225 local, 0 broken   (resolved against each file's dir; CI docs-index gate locally: scanned=30 fail=0)
+README.md 33 local · AGENTS.md 74 · docs/README.md 40 · docs/traps.md 76 · examples/README.md 2
+TOTAL: 238 links scanned, 225 local, 0 broken (resolved against each file's dir)
+CI docs-index gate locally: scanned=30 fail=0
 ```
 
 Claims were checked against the code, not against another document: `bootstrap-sandbox.sh`'s
-redirects, ten `run_check` calls, `--keep` and `LIMITS` block; `go-server`'s `/health` body;
-`tools/cli/go.mod`'s `go 1.26.5` floor; the launchd label in
+redirects, its ten `run_check` calls, `--keep` and `LIMITS` block; `go-server`'s `/health`
+body; `tools/cli/go.mod`'s `go 1.26.5` floor; the launchd label in
 `packages/go-server/deploy/lib.sh` (`com.parlay.go-server`, not the retired
 `com.parlay.chat-server` that `AGENTS.md` still named — corrected earlier on this branch);
-`tools/monitor/parlay-monitor.sh`'s upstream comparison and
-`tools/cli/internal/monitor/monitor.go`'s `PARLAY_SERVER=config.ServerURL()`, both quoted in
-the new note; and the relay's `/health` handler in `tools/relay/relay_control.go` with its
-pinned test. The step 2/3/5 criteria were run too: a held port prints `listen failed: …
-address already in use`, `parlay remote` prints `source: default`, and `GET /` answers `503`
-with the `bun run build` body (`404` when `-assets-dir` points at an empty directory).
-
+`parlay-monitor.sh`'s upstream comparison and `monitor.go`'s `PARLAY_SERVER=config.ServerURL()`;
+`relay_control.go`'s `/health` handler with its pinned test; and the new hygiene step's YAML,
+parsed and run as extracted. The step 2/3/5 criteria were run too: a held port prints
+`listen failed: … address already in use`, `parlay remote` prints `source: default`, and
+`GET /` answers `503` with the `bun run build` body (`404` with an empty `-assets-dir`).
 ### Line budget
 
 The repo enforces a 250-line limit only for staged `*.ts` files (`tools/hooks/pre-commit`),
-so markdown has no enforced budget. Self-imposed anyway: every file added or touched on
-this branch is ≤ 250 lines (`bin/parlay-preflight` 249, `bin/parlay-preflight.test.sh`
-250, `docs/traps.md` 250, the new agent note 38, `.gitignore` 74, this file 250).
+so markdown has no enforced budget. Self-imposed anyway: every file added or touched on this
+branch is ≤ 250 lines (`bin/parlay-preflight` 249, its harness 250, `docs/traps.md` 250, the
+new note 38, `.gitignore` 74, this file). The new gate is a step inside
+`.github/workflows/ci.yml` rather than a new script, because the job it extends already has
+the checkout and needs no toolchain.
 
-## Left undone, with reasons
+## Where this stands
 
 - **The PR is open, not merged**: <https://github.com/trillium/parlay/pull/314>,
-  `gnhf/objective-make-a-new-904428` → `main`. Its net diff is the ten files listed at the
-  top of this write-up (`README.md`, `AGENTS.md`, `docs/README.md`, `docs/traps.md`,
-  `docs/agent-notes/a-relay-that-cannot-name-its-server-passes.md`, `bin/parlay-preflight`,
-  `bin/parlay-preflight.test.sh`, `.github/workflows/ci.yml`, `.gitignore`, `notes.md`).
-  The `.pi/` scratch files an early auto-commit captured were added in one commit and
-  removed in another, so they do not appear in the pull request's net diff at all.
-- **The branch was brought level with `main`** (`git merge origin/main`, two docs-only
-  commits), clearing `parlay merge-gate 314`'s `behind-base` finding — a real blocker, since
-  a behind branch's checks ran against an older merge and GitHub does not re-run them when
-  the base moves.
-- **CodeRabbit review was requested** (`gh-axi pr comment 314 --body "@coderabbitai
-  review"`); on this repo the bot never runs on its own, so that comment is the only route
-  to gate-visible review evidence. All four CI checks report `pass`. The review itself had
-  not posted a body when this was written, so `parlay merge-gate 314` still reports
-  `no-review-evidence` alongside `head-not-pushed` for the commits the harness had not yet
-  handed to the remote.
+  `gnhf/objective-make-a-new-904428` → `main`; the branch is pushed to `c50a1fe` and the PR
+  body re-written from this file. Net diff: the ten files above, plus `notes.md`.
+- **The branch was brought level with `main`** (`git merge origin/main`), clearing
+  `parlay merge-gate 314`'s `behind-base` finding — a real blocker, since a behind branch's
+  checks ran against an older merge and GitHub does not re-run them when the base moves.
+  CodeRabbit review was requested, and re-requested after this push (`gh-axi pr comment 314
+  --body "@coderabbitai review"`); on this repo the bot never runs on its own, so that comment
+  is the only route to gate-visible review evidence. Its one finding — the sandbox coverage
+  claim overstated what `./examples/bootstrap-sandbox.sh` tests — is fixed here.
 - **The harness commits after the turn and never pushes**, so the tip a turn can push is
-  always one commit behind what it just wrote; the remaining edits need one more push, and
-  then a re-read of the gate.
-- **`docs/traps.md` completeness is not gated.** The CI docs-index gate covers `docs/*.md`
-  only, so a future `docs/agent-notes/*.md` that no document links is invisible to every
-  gate. `traps.md` is currently the only thing that makes every note reachable; a gate for
-  that would be a new CI check, which this task was not asked to add.
-- **The README below the Quickstart is still reference material** (system map, layout,
-  worked config, development, publishing). It was left in place rather than moved: it is
-  reachable, accurate, and the task was to add a path, not to prune the manual.
-- **A root `go.work`** — see "what was deliberately left alone".
+  always one commit behind what it just wrote: the newest edits need one more push.
+  `parlay merge-gate 314` is otherwise clean and blocks only on that one review thread.
+- **The README below the Quickstart is still reference material** (system map, layout, worked
+  config, development, publishing): reachable and accurate, so left in place — the task was to
+  add a path, not to prune the manual.

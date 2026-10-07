@@ -28,8 +28,8 @@ missing prerequisite at once rather than one per attempt.
 `cd packages/go-server && go run ./cmd/parlay-server`, then
 `./bin/parlay send --demo --force "hello"` and `./bin/parlay history 5` from the clone
 root. No account, no tunnel, no panel needed. The Quickstart's step 1 is the same thing
-in a throwaway sandbox (`./examples/bootstrap-sandbox.sh`) — the fastest way to see the
-whole stack work without touching your own state.
+in a throwaway sandbox (`./examples/bootstrap-sandbox.sh`) — the fastest way to see the server, CLI, registry,
+history and reply path work without touching your own state; its `LIMITS` line names what is not covered: delivery and the relay.
 
 - **Never `pkill -f` a parlay-looking process on a host with a live install** — the production server is a launchd
   job (`com.parlay.go-server` today; `com.parlay.chat-server` for the retired Bun server), so kill a test server by
