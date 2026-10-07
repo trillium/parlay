@@ -243,7 +243,7 @@ interface ChatMessage {
 }
 ```
 
-### `GET /api/chat/input-events?inputId=<id>&limit=N`
+### `GET /api/chat/input-events?inputId=<id>&afterSeq=<seq>&limit=N`
 The input-seam ledger: what happened to operator input between an intake
 surface accepting it and a listener being handed it. See
 [`input-seam.md`](input-seam.md) for the vocabulary and the failure classes it
@@ -254,8 +254,19 @@ id, or a ledger-local `in-…` id for input that never became a message (a
 request an intake surface refused before storing anything, or a composer
 snapshot the eval engine dropped as superseded). `inputId` narrows the answer
 to one input's hops (what a replay renders); an unknown id is an **empty
-list**, not an error and not a created record. `limit` returns at most the
-newest N retained events.
+list**, not an error and not a created record.
+
+`afterSeq` is the cursor a live tail reads forward with: only hops whose `seq`
+is strictly greater are returned, oldest first. A cursor older than the
+retained window is **not** an error — the oldest retained hops come back, and
+because `seq` is dense their first value names the span that was evicted, which
+is the only way a reader can tell "nothing new" from "I fell off the end". An
+unreadable `afterSeq` is read as `0`, the widest and least-lossy answer.
+
+`limit` is where the one asymmetry lives: without a cursor it returns at most
+the **newest** N retained events (unchanged), but with `afterSeq` it returns at
+most the **oldest** N of the matching set, so a reader paging forward never has
+a page silently omitted out from under it.
 
 Response: `{ events: InputEvent[], stats: InputEventStats }`
 ```ts
@@ -275,6 +286,7 @@ interface InputEvent {
 }
 interface InputEventStats {
   retained: number; written: number; dropped: number; rejected: number; queue: number
+  newestSeq: number       // highest seq assigned (0 = nothing written); a cursor reader's anchor
   minConfidence?: number  // the hold threshold actually in force; absent = disabled
 }
 ```

@@ -67,7 +67,7 @@ func (l *Log) loadFromDisk() error {
 		return fmt.Errorf("inputlog: read %s: %w", l.path, err)
 	}
 	l.ring = ring
-	l.nextSeq = maxSeq + 1
+	l.lastSeq.Store(maxSeq)
 	return nil
 }
 
@@ -75,8 +75,7 @@ func (l *Log) loadFromDisk() error {
 // file outgrows its cap. A compaction failure is logged, never propagated:
 // the append itself already succeeded.
 func (l *Log) write(e Event) {
-	e.Seq = l.nextSeq
-	l.nextSeq++
+	e.Seq = l.lastSeq.Add(1)
 	if e.Ts == "" {
 		e.Ts = time.Now().UTC().Format(time.RFC3339Nano)
 	}

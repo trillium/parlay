@@ -62,6 +62,13 @@ type Stats struct {
 	Rejected uint64 `json:"rejected"`
 	Queue    int    `json:"queue"`
 
+	// NewestSeq is the highest Seq assigned, 0 when nothing is written. It
+	// lets a cursor reader tell "nothing new yet" apart from "my cursor is
+	// AHEAD of this ledger" — the state a tail lands in when a server comes up
+	// against a ledger whose seqs begin again, and which would otherwise leave
+	// that tail printing nothing, forever, looking like a quiet night.
+	NewestSeq uint64 `json:"newestSeq"`
+
 	// MinConfidence is the confidence threshold actually in force, or nil
 	// when disabled. It travels with the events because a hold is
 	// meaningless without the number behind it: a view that showed "held"
@@ -94,8 +101,14 @@ type Log struct {
 	appendLine func([]byte) error
 
 	ring     []Event
-	nextSeq  uint64
 	appended uint64
+
+	// lastSeq is the highest Seq assigned. It is an atomic, not a
+	// mutex-guarded field, on purpose: the writer assigns a Seq BEFORE its file
+	// append and only takes the lock afterwards to push onto the ring, so a
+	// reader asking where the ledger is must not wait on the disk — or on a
+	// wedged sink. The zero value means nothing has been assigned yet.
+	lastSeq atomic.Uint64
 
 	queue chan Event
 	stop  chan struct{}
@@ -127,7 +140,6 @@ func Open(path string, opts Options) (*Log, error) {
 		maxEvents:     maxEvents,
 		maxBytes:      maxBytes,
 		minConfidence: opts.MinConfidence,
-		nextSeq:       1,
 		queue:         make(chan Event, queue),
 		stop:          make(chan struct{}),
 		done:          make(chan struct{}),

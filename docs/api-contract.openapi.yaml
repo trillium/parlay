@@ -219,10 +219,14 @@ paths:
           in: query
           schema: { type: string }
           description: Return only this input's hops; unknown ids return an empty list.
+        - name: afterSeq
+          in: query
+          schema: { type: integer }
+          description: "Cursor: return only hops with seq strictly greater, oldest first — what a live tail reads forward with. A cursor older than the retained window is not an error: the oldest retained hops come back, and their first seq names the span that was evicted. Unreadable values are read as 0 (the widest answer)."
         - name: limit
           in: query
           schema: { type: integer }
-          description: Return at most the newest N retained events; absent or unparseable means all retained.
+          description: "At most N events. Without `afterSeq` that is the newest N retained; with it, the oldest N of the matching set, so a paging reader never has a page omitted out from under it. Absent or unparseable means all."
       responses:
         "200":
           content:
@@ -1655,6 +1659,7 @@ components:
         dropped: { type: integer, description: Events shed because the writer queue was full. }
         rejected: { type: integer, description: Events refused as malformed (e.g. a failure with no reason). }
         queue: { type: integer, description: Events queued and not yet written. }
+        newestSeq: { type: integer, description: "The highest seq the ledger has assigned, 0 when it has written nothing. It lets a cursor reader tell 'nothing new yet' apart from 'my cursor is ahead of this ledger' — the state a tail lands in when a server comes up against a fresh ledger." }
         minConfidence: { type: number, description: "The confidence threshold actually in force, or absent when it is disabled. The number a hold was decided against, travelling with the events so a hold and a misconfigured policy cannot look alike." }
 
     InputEventPage:

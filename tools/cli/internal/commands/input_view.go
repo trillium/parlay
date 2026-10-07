@@ -94,8 +94,14 @@ func printJSON(v any) {
 
 func renderInputRows(w io.Writer, rows []inputRow, stats inputStats, limit int) {
 	fmt.Fprintf(w, "INPUT SEAM — %d input(s) from the last %d retained hop(s)\n", len(rows), limit)
-	fmt.Fprintf(w, "ledger: %d retained, %d written, %d dropped, %d rejected, %d queued\n",
-		stats.Retained, stats.Written, stats.Dropped, stats.Rejected, stats.Queue)
+	// The newest seq is what a live tail's cursor (and any GAP line it
+	// printed) refers to, so the snapshot window says where it ends.
+	seq := ""
+	if stats.NewestSeq > 0 {
+		seq = fmt.Sprintf(", newest seq %d", stats.NewestSeq)
+	}
+	fmt.Fprintf(w, "ledger: %d retained, %d written, %d dropped, %d rejected, %d queued%s\n",
+		stats.Retained, stats.Written, stats.Dropped, stats.Rejected, stats.Queue, seq)
 	fmt.Fprintln(w, thresholdLine(stats.MinConfidence))
 	if len(rows) == 0 {
 		fmt.Fprintln(w, "Nothing recorded. An empty view means no operator input reached an intake\n"+

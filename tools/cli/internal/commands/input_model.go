@@ -27,13 +27,16 @@ type inputEvent struct {
 }
 
 // inputStats is the ledger's own honesty report — an empty view and a shedding
-// ledger cannot look alike. MinConfidence is the hold threshold, nil when off.
+// ledger cannot look alike. MinConfidence is the hold threshold, nil when off;
+// NewestSeq is what lets the live tail tell "nothing new" apart from "my
+// cursor is ahead of this ledger".
 type inputStats struct {
 	Retained      uint64   `json:"retained"`
 	Written       uint64   `json:"written"`
 	Dropped       uint64   `json:"dropped"`
 	Rejected      uint64   `json:"rejected"`
 	Queue         int      `json:"queue"`
+	NewestSeq     uint64   `json:"newestSeq"`
 	MinConfidence *float64 `json:"minConfidence,omitempty"`
 }
 

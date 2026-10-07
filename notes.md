@@ -1884,10 +1884,10 @@ The sections above are main's onboarding account (PR #314) and runtime-observabi
 
 # Input-seam observability — working notes
 
-Status: both doors are instrumented end to end, the confidence hold is real, and
-all six named failure classes now have a real producer and an end-to-end
-demonstration. This file records what the tooling can and cannot tell the
-operator **right now**.
+Status: both doors are instrumented end to end, the confidence hold is real,
+all six named failure classes have a real producer, and the live view can no
+longer show a gap without naming it. This file records what the tooling can and
+cannot tell the operator **right now**.
 
 ## What the operator can now tell apart
 
@@ -1897,9 +1897,9 @@ never send it?
 
 There is a durable **input-seam ledger** (`input.jsonl` beside
 `messages.jsonl`): one record per **hop** an input made, keyed by the input's own
-id, plus a live view (`parlay input`), a replay (`parlay input --input <id>`)
-and a JSON form for scripts. Four doors are instrumented: the chat door
-(`POST /api/chat/send`, `/alert`), the dictation door
+id, plus a live view (`parlay input`), a replay (`parlay input --input <id>`), a
+live tail (`parlay input --watch`) and a JSON form for scripts. Four doors are
+instrumented: the chat door (`POST /api/chat/send`, `/alert`), the dictation door
 (`POST /api/chat/remote-input/submit`), the delivery hop at both poll points,
 and the composer door (`POST /api/chat/eval`).
 
@@ -1982,6 +1982,33 @@ This class needs no separate guard: the engine has already refused to act on the
 snapshot. It is the one failure the product drops *before* the ledger existed;
 what was missing was the operator being able to see that it happened.
 
+## The live tail, and the four ways it names its own incompleteness
+
+`parlay input --watch` reads **forward from a cursor** (`?afterSeq=<seq>`) rather
+than re-reading a fixed newest-N window on every poll. That window form had a
+hole of exactly the kind this seam exists to remove: a burst larger than the
+window was printed minus whatever fell off its front, and nothing said so. A
+cursor cannot be outrun, because when one is present `limit` means the **oldest**
+N of the set it matches (the snapshot view, with no cursor, still gets the newest
+N — unchanged).
+
+The tail can still be incomplete in ways no cursor fixes, so all of them are
+printed rather than inferred. A tail that shows a gap silently is the same defect
+as an input event that failed with no recorded reason:
+
+| Line | What it means | How it is known |
+|---|---|---|
+| `JOINED at the live edge (seq N) — M retained hop(s) before this tail are NOT shown` | A tail follows the live edge. The history before it is a deliberate starting point, not an omission; `parlay input` reads it. When the server was unreachable at startup the tail adopts the edge on the first page it does get, rather than dumping the retained window into a live view. | The join page's own `retained` and `newestSeq`. |
+| `GAP — N hop(s) (seq X–Y) were evicted from the retained ledger before this tail read them` | The ring holds 5,000 events and dropped older ones between two polls. | The first `seq` a page returns, against the cursor. `seq` is dense, so `cursor+1 … first-1` is provably missing. |
+| `OBSERVER LOSS — the ledger itself did not write N record(s) (… dropped on a full queue, … rejected as malformed)` | The ledger's own writer shed records. | `stats` travels with every page; only a change is announced. |
+| `CURSOR AHEAD — this tail is at seq N but the ledger's newest is M (it restarted against a fresh ledger)` | The ledger is **behind** the cursor: seqs began again. Without this the tail prints nothing for ever and looks calm. It re-joins at the live edge. | `stats.newestSeq`, which is why that field exists. |
+
+Adding `stats.newestSeq` also exposed a real defect: the ledger's `nextSeq` was
+written by the writer goroutine without the mutex, so reading it from `Stats`
+raced. It is now an atomic assigned *before* the append, which is also what lets
+a reader learn where the ledger is without ever waiting on the disk
+(`TestStatsDoesNotWaitOnAWedgedSink`).
+
 ## Demonstration (isolated server, `TALON_REPL_PATH` pinned away from the live machine)
 
 Eight injections covering the six named failure classes plus two healthy
@@ -2052,19 +2079,6 @@ reason in every case. Every INPUT id is printed whole, and pasting one into
 `parlay input --input <id>` replays its hops. See docs/input-seam.md.
 ```
 
-The live tail over the same window (`--watch`) — the minted ids are ≤25 bytes,
-so the header and the rows have to agree on one width:
-
-```
-==================== parlay input --watch (3s of live tail) ====================
-WATCHING the input seam — polling every 1s (the ledger has no push stream yet)
-TIME         INPUT                       STAGE       CLASS              SOURCE         LATENCY
-02:48:58.332 in-1791366538331951000-01   interpreted recogniser_error   remote-input   — why=empty-transcript
-02:48:58.342 ri-1                        received    ok                 remote-input   —
-02:48:58.342 ri-1                        interpreted low_confidence     remote-input   +0ms why=below-confidence-threshold
-02:48:58.342 ri-1                        held        held               remote-input   +0ms why=below-confidence-threshold
-```
-
 Not one of the six failures reads as healthy. Replays, straight off the durable
 ledger (`parlay input --input <id>`), one per class:
 
@@ -2109,13 +2123,73 @@ Outcome: SUPERSEDED — superseded-by-newer-version
 
 `m0` is the dropped one: queued, never polled, and the replay says so rather
 than stopping silently. The `in-…` ids exist on no wire response, so the view is
-their only copy — and two of the six classes (refusals, recogniser errors,
+their only copy — and three of the six classes (refusals, recogniser errors,
 superseded snapshots) are keyed by one.
 
-The pastes come from `.pi/demo/input-seam-demo.sh` — run-local scratch,
-deliberately **not** part of the diff. It pins `TALON_REPL_PATH` away from the
-live REPL so nothing can be typed or focused on this machine, and uses a fresh
-temp state dir.
+## Demonstration: what the live tail does with a hole (freshly captured)
+
+Everything below is a **real** isolated server and the **real** CLI. Two steps
+replace the ledger *file* under a running observer — which is what restoring a
+backup or swapping a state dir does — and are labelled FIXTURE.
+
+```
+############ A. the tail joins at the live edge (real) ############
+WATCHING the input seam — polling every 1s (the ledger has no push stream yet)
+JOINED at the live edge (seq 2) — 1 retained hop(s) before this tail are NOT shown; `parlay input` reads them.
+TIME         INPUT                       STAGE       CLASS              SOURCE         LATENCY
+03:12:23.577 m2                          queued      ok                 send           —
+
+-- the snapshot view over the same ledger (note 'newest seq') --
+INPUT SEAM — 3 input(s) from the last 20 retained hop(s)
+ledger: 3 retained, 3 written, 0 dropped, 0 rejected, 0 queued, newest seq 3
+
+############ B. the cursor pages forward, from the OLDEST (real) ############
+-- ?afterSeq=0&limit=2 (a cursor keeps the OLDEST page) --
+seqs: [1, 2] newestSeq: 3
+-- ?limit=2 with no cursor (the snapshot keeps the NEWEST page) --
+seqs: [2, 3] newestSeq: 3
+-- ?afterSeq=<newest> (the live edge: an empty list, HTTP 200) --
+   HTTP 200  events: []
+
+############ C. a ledger that restarts under the tail (real) ############
+-- the observer stops answering: the tail says so, and keeps watching --
+  (server unreachable — still watching; this is not evidence that nothing came in)
+WATCHING the input seam — polling every 1s (the ledger has no push stream yet)
+JOINED at the live edge (seq 3) — 2 retained hop(s) before this tail are NOT shown; `parlay input` reads them.
+TIME         INPUT                       STAGE       CLASS              SOURCE         LATENCY
+  (server unreachable — still watching; this is not evidence that nothing came in)
+CURSOR AHEAD — this tail is at seq 3 but the ledger's newest is 1 (it restarted against a fresh ledger). Re-joining at the live edge.
+
+############ D. hops evicted before the tail read them (real tail, FIXTURE ledger) ############
+WATCHING the input seam — polling every 1s (the ledger has no push stream yet)
+JOINED at the live edge (seq 1) — 0 retained hop(s) before this tail are NOT shown; `parlay input` reads them.
+TIME         INPUT                       STAGE       CLASS              SOURCE         LATENCY
+GAP — 98 hop(s) (seq 2–99) were evicted from the retained ledger before this tail read them, so they are NOT shown; a shorter --interval narrows the gap.
+03:12:34.407 m3                          queued      ok                 send           —
+03:12:34.407 m4                          queued      ok                 send           —
+
+== replay still works on a hop the tail showed (durable, not memory) ==
+REPLAY m5 — 1 hop(s)
+
+  #1 —       2026-10-07T03:12:34.407  queued      ok                 source=send          channel=c0
+
+Outcome: QUEUED
+```
+
+`OBSERVER LOSS` is not in that paste and cannot honestly be: it fires when the
+ledger's own writer drops records (a full 256-deep queue, or a malformed event),
+which a healthy server does not do on demand. It is demonstrated at the unit
+boundary instead, through the real renderer and the real `stats` shape
+(`TestWatchTailReportsTheLedgersOwnLosses`), which is also where the *first*
+observation reports the running totals so a tail that joined after the loss
+still sees it.
+
+The scripts that produced these pastes are `.pi/demo/input-seam-demo.sh` and
+`.pi/demo/input-tail-demo.sh` — run-local scratch, deliberately **not** part of
+the diff. They pin `TALON_REPL_PATH` away from the live REPL, pin
+`PARLAY_SERVER`/`PARLAY_STATE_HOME` at the isolated instance, and use a fresh
+temp state dir; nothing is typed or focused on this machine and the live fleet
+state is never touched.
 
 ## What running it caught
 
@@ -2125,27 +2199,62 @@ temp state dir.
   22 characters, leaving a string `--input` cannot resolve.
 - **The live tail's header disagreed with its own rows** (iteration 3): a
   14-character INPUT column with 22-character ids in it, drifting 8 columns.
-- **The minted id's width was not actually a bound** (this iteration). The id
+- **The minted id's width was not actually a bound** (iteration 4). The id
   was `in-<UnixNano>-<seq>` with an *unpadded* sequence, so it grew a digit at
   every power of ten and would have exceeded any fixed column after ten
-  thousand minted ids in one process — silently truncating exactly the ids the
-  view is the only copy of. The suffix is now two digits (`in-…-08`, 25 bytes
-  maximum) and `TestMintedIDsFitTheViewsColumn` pins both ends of the contract
-  (producer ≤ 25, consumer column 27).
+  thousand minted ids in one process. The suffix is now two digits (`in-…-08`,
+  25 bytes maximum) and `TestMintedIDsFitTheViewsColumn` pins both ends of the
+  contract (producer ≤ 25, consumer column 27).
+- **The newest-N tail could be silently outrun** (this iteration). Reading the
+  newest N every poll meant a burst larger than N was printed minus whatever
+  fell off its front. The tail now reads forward from a cursor and names every
+  way it can still be incomplete.
+- **Where the ledger was, was a data race** (this iteration). `Stats` needed the
+  newest `seq` for the cursor contract, and reading `nextSeq` from it raced the
+  writer goroutine — `-race` caught it immediately. It is an atomic now,
+  assigned before the file append, so a reader learns where the ledger is
+  without waiting on the disk.
 
 ## Verification (per module)
 
-This repository has four independent Go modules and no root `go.work`: the
-repo-root `go build ./...` form of the stop condition fails there on the missing
-main module — `pattern ./...: directory prefix . does not contain main module or
-its selected dependencies`, exit 1, identical before and after every change on
-this branch. The equivalent per-module sweep, matching CI's `GO_MODULES`
+This repository has four independent Go modules and no root `go.work`. The
+repo-root form of the stop condition fails on the missing main module:
+
+    $ go build ./...
+    pattern ./...: directory prefix . does not contain main module or its selected dependencies
+    exit 1
+
+Verified again this iteration that no workspace fixes it: with a root `go.work`
+listing all four modules, `go build ./...` **still** fails —
+`pattern ./...: directory prefix . does not contain modules listed in go.work or
+their selected dependencies` — because `./...` is resolved relative to a package
+tree, never across workspace members. Only a fifth root module could satisfy the
+literal gate, and nested modules make that impossible. (The probe's `go.work`
+was removed; nothing about it is in the diff.)
+
+The equivalent per-module sweep, matching CI's `GO_MODULES`
 (`tools/cli tools/relay packages/go-server packages/spawn-profiles`), is green:
 
-    gofmt -l (whole tree):    clean
-    build + vet + test:       green across all four modules
-    go test -race:            green for go-server (handlers, inputlog, remoteinput)
-    make test-bdd:            7 scenarios, 21 steps, all passed (exit 0)
+    $ gofmt -l .
+    (no output)
+    gofmt-exit=0
+    $ (cd tools/cli && go build ./... && go vet ./... && go test -count=1 ./...)
+    exit=0   ok-packages:29
+    $ (cd tools/relay && go build ./... && go vet ./... && go test -count=1 ./...)
+    exit=0   ok-packages:1
+    $ (cd packages/go-server && go build ./... && go vet ./... && go test -count=1 ./...)
+    exit=0   ok-packages:12
+    $ (cd packages/spawn-profiles && go build ./... && go vet ./... && go test -count=1 ./...)
+    exit=0   ok-packages:1
+    $ make test-bdd
+    make-test-bdd-exit=0
+    PASS
+    7 scenarios (7 passed)
+    21 steps (21 passed)
+
+`-race` is green for the packages this work touches:
+`CGO_ENABLED=1 go test -race ./internal/inputlog/... ./internal/handlers/...`
+→ both `ok`.
 
 There is no known-red BDD baseline on this box: `make test-bdd` is green at
 baseline and remains green.
@@ -2164,10 +2273,13 @@ go-server only.
   through a ledger whose sink never returns: the relay still answers 200 with
   the engine's verdict, promptly, and the panel still receives its frame.
   `TestFailingLedgerSinkDoesNotFailTheRelay` does the same with a sink that
-  errors. `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` covers `/send` +
-  poll, `TestRemoteInputDeliveryIsNotSlowedOrFailedByAWedgedLedger` the
-  dictation door, and `TestRecordNeverBlocksOnAWedgedSink` the ledger boundary
-  (50,000 records against a wedged sink).
+  errors. `TestDeliveryIsNotSlowedOrFailedByAWedgedLedger` covers `/send` + poll,
+  `TestRemoteInputDeliveryIsNotSlowedOrFailedByAWedgedLedger` the dictation
+  door, `TestRecordNeverBlocksOnAWedgedSink` the ledger boundary (50,000
+  records against a wedged sink), and **new** `TestStatsDoesNotWaitOnAWedgedSink`
+  the read side: the newest `seq` a cursor reader asks for is available while the
+  writer is parked inside a disk write, so watching cannot stall on the incident
+  it is watching.
 - **No raw audio, no change to message-history retention or privacy.** The
   ledger stores ids, stages, classes, short reason tokens and numbers —
   **never message text**. Backend error strings are not copied in either: a
@@ -2175,13 +2287,19 @@ go-server only.
   stream id and a version, never the buffer.
 - **`internal/guard.GuardedPaths` untouched; no guard check reimplemented.**
   No route was added: `POST /api/chat/eval` keeps the guarded classification it
-  already had, and the read surface `/api/chat/input-events` is unchanged.
+  already had, and the read surface `/api/chat/input-events` is unchanged and
+  still deliberately unguarded for the reason written beside it.
 - **No deployment scripts, endpoint shapes or downstream consumers touched.**
-  The relay's action batch is passed through byte-for-byte: it is inspected,
-  never re-typed and never re-encoded. `confidence` on the submit body is
-  optional and additive, and `held` is a new terminal status downstream readers
-  already handle (Parlay clears input state only on `injected` and preserves
-  the text on anything else, which is what a hold wants).
+  `?afterSeq=` is a new *optional* parameter on this branch's own read route;
+  `stats.newestSeq` is an additive field on the same route; the old shape is
+  the absent-parameter path, and it is pinned byte-identical by
+  `TestInputEventsCursorReadsForwardAndPagesFromTheOldest` (`limit` with no
+  cursor still returns the newest N). The relay's action batch is passed through
+  byte-for-byte: it is inspected, never re-typed and never re-encoded.
+  `confidence` on the submit body is optional and additive, and `held` is a new
+  terminal status downstream readers already handle (Parlay clears input state
+  only on `injected` and preserves the text on anything else, which is what a
+  hold wants).
 - **No harness scratch committed.** `.pi/` is in `.gitignore`.
 
 ## Deliberately not built (and why)
@@ -2196,41 +2314,49 @@ go-server only.
 - **Rows for successful evals.** Only the superseded verdict is a named input
   outcome; a row per keystroke would swamp the window.
 - **The phone side's confidence reporting.** The server accepts and enforces
-  `confidence`; nothing in this repo sends it (the panel is not open-sourced
-  here, and `remote-input` has no in-repo client). Until something reports one,
-  the honest state of every dictation is `confidence_unknown`, and the view says
-  so rather than implying trust.
+  `confidence`; nothing in this repo sends it (`packages/client`'s input wrapper
+  relays composer text and settings — `voiceEnabled`, `voiceSettleMs`,
+  `localOnlyVoice` — but the recognition implementation itself is not here, and
+  no in-repo surface reports a per-transcript confidence). Until something
+  reports one, the honest state of every dictation is `confidence_unknown`, and
+  the view says so rather than implying trust.
 - **A provenance threshold.** No surface reports provenance strength, so a
   provenance hold would compare against a value nothing produces.
 - **A push stream for the ledger.** `--watch` polls and its header states the
   cadence; an SSE event would imply a delivery latency the ledger does not have.
+  The cursor makes the poll *lossless within the retained window*, not instant.
+- **Per-input aggregation in the tail.** `--watch` prints hops as they arrive;
+  the per-input state is the snapshot view's job, and a tail that collapsed hops
+  would hide the ordering that makes a stopped input obvious.
 
 ## Left undone
 
 - **The branch lags the working tree by one commit.** PR
-  [#312](https://github.com/trillium/parlay/pull/312) is open against `main`,
-  now at iteration 3's head; this iteration's changes (the eval-door producer,
-  the minted-id bound, the docs) reach it on **the next push of
-  `gnhf/objective-give-the-o-ad0a88`**. Nothing blocks that: re-push the branch
-  before anything else next iteration.
-- `parlay input --watch` prints hops as they arrive; it does not aggregate a
-  per-input state while watching.
-- The ledger's read route has no cursor for incremental tailing beyond
-  newest-N.
+  [#312](https://github.com/trillium/parlay/pull/312) is open against `main` and
+  `gnhf/objective-give-the-o-ad0a88` was pushed as far as iteration 4's head;
+  this iteration's changes (the cursor tail, `newestSeq`, the atomic `lastSeq`,
+  the docs) reach it on **the next push of that branch**. Nothing blocks that:
+  re-push before anything else next iteration.
+- `OBSERVER LOSS` has no end-to-end injection (see above); it is
+  unit-demonstrated through the real renderer.
+- The ledger's read route still has no cursor *backwards* (no `beforeSeq`), so
+  paging older history out of a 5,000-event window is one `limit` at a time.
 - The eval row's stream and version appear in the replay's `detail`, not in the
   snapshot table's columns (CHANNEL is a destination, and a stream id is 20+
   characters). One command away, but worth saying.
 - The stop condition literally configured for this run cannot exit zero here:
-  there is no root `go.mod`, so its repo-root form fails on the missing main
-  module. Confirmed identical at baseline; the per-module equivalent is green.
+  there is no root `go.mod`, and (now verified) no workspace arrangement fixes
+  that. The per-module equivalent above is green.
 
 ## File size
 
 This repository enforces no per-file line budget (CI gates are conflict markers,
 a 2 MiB tracked-blob ceiling, gofmt/vet/build/test, and docs-index completeness —
-`.github/workflows/ci.yml`). Following the objective, every new file is **under
-250 lines**; that ceiling was chosen, not inherited. This iteration's new files:
-`eval_supersede.go` (82) and `eval_supersede_test.go` (222). Two earlier splits
-exist for the same reason: the view's threshold/legend helpers
-(`input_threshold.go`) and the ledger's closed vocabulary
-(`inputlog/vocabulary.go`).
+`.github/workflows/ci.yml`). Following the objective, every **new** file this
+branch adds is under 250 lines: this iteration's `read_after_test.go` (144),
+`input_watch_test.go` (135) and `input_events_cursor_test.go` (80), plus earlier
+`eval_supersede.go` (82), `eval_supersede_test.go` (222),
+`inputlog/vocabulary.go` (105) and `input_threshold.go` (45). The one edited file
+above 250 is `inputlog/log.go`, which was **already 242** and is 254 now because
+it owns the `Stats` struct that gained `newestSeq`; it is not a new file, and
+splitting it for four lines would hurt more than help.

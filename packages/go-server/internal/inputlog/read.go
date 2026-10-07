@@ -23,11 +23,39 @@ func (l *Log) EventsFor(inputID string) []Event {
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
+	return After(l.ring, 0, func(e Event) bool { return e.InputID == inputID })
+}
+
+// EventsAfter returns the retained hops with Seq strictly greater than after,
+// oldest first — the read a live tail needs so it reads FORWARD from where it
+// stopped instead of re-reading a fixed newest-N window that a burst can
+// silently outrun.
+//
+// A cursor older than the retained window is not an error and not a lie. The
+// caller gets the oldest hops still retained, and the first Seq it sees names
+// the span that was evicted in between (nothing else could be missing, because
+// seqs are dense). Only the reader can tell "nothing new" from "I fell off the
+// end", and it can only do that if the answer carries its own oldest seq.
+func (l *Log) EventsAfter(after uint64) []Event {
+	if l == nil {
+		return nil
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return After(l.ring, after, nil)
+}
+
+// After narrows a hop slice to those strictly newer than seq, preserving
+// order; an optional keep predicate narrows it further. It is exported beside
+// EventsAfter so the handler can compose a cursor with an id narrowing without
+// a second copy of the rule.
+func After(events []Event, seq uint64, keep func(Event) bool) []Event {
 	var out []Event
-	for _, e := range l.ring {
-		if e.InputID == inputID {
-			out = append(out, e)
+	for _, e := range events {
+		if e.Seq <= seq || (keep != nil && !keep(e)) {
+			continue
 		}
+		out = append(out, e)
 	}
 	return out
 }
@@ -47,6 +75,7 @@ func (l *Log) Stats() Stats {
 		Dropped:       l.dropped.Load(),
 		Rejected:      l.rejected.Load(),
 		Queue:         len(l.queue),
+		NewestSeq:     l.lastSeq.Load(),
 		MinConfidence: l.minConfidence,
 	}
 }

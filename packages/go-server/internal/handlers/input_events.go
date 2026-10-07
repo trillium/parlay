@@ -1,7 +1,8 @@
 // The input-seam read surface: GET /api/chat/input-events.
 //
 // One route, because there is one ledger. `?inputId=` narrows it to a single
-// input's hops (what a replay renders); no parameter returns the retained
+// input's hops (what a replay renders); `?afterSeq=` reads forward from a
+// cursor (what a live tail follows); no parameter returns the retained
 // window (what the live view renders), always accompanied by the ledger's own
 // Stats so a reader can tell "nothing arrived" apart from "the observer
 // itself is dropping records".
@@ -36,6 +37,11 @@ func registerInputEvents(mux *http.ServeMux, st *store.Store) {
 // out — message ids and channel names — so it stays outside the guard for the
 // same reason history does. It never writes: an unknown inputId is an empty
 // list, not a created record.
+//
+// `afterSeq` is the cursor a live tail reads forward with. It is the one
+// place this route's shape is not the obvious one: `limit` gives the NEWEST N
+// of a set, but with a cursor it gives the OLDEST N, because a reader that is
+// paging forward must never have a page silently omitted out from under it.
 func handleInputEvents(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -47,14 +53,33 @@ func handleInputEvents(st *store.Store) http.HandlerFunc {
 			return
 		}
 
+		query := r.URL.Query()
+		after, cursored := uint64(0), false
+		if _, present := query["afterSeq"]; present {
+			// An unreadable cursor is read as 0: the widest, least-lossy
+			// answer. Degrading a bad filter to the NEWEST N would drop the
+			// page the reader asked for and look like calm.
+			after, _ = strconv.ParseUint(query.Get("afterSeq"), 10, 64)
+			cursored = true
+		}
 		var events []inputlog.Event
-		if id := r.URL.Query().Get("inputId"); id != "" {
+		switch id := query.Get("inputId"); {
+		case id != "":
 			events = st.Input.EventsFor(id)
-		} else {
+			if cursored {
+				events = inputlog.After(events, after, nil)
+			}
+		case cursored:
+			events = st.Input.EventsAfter(after)
+		default:
 			events = st.Input.Events()
 		}
-		if n := parseLimit(r.URL.Query().Get("limit")); n > 0 && n < len(events) {
-			events = events[len(events)-n:]
+		if n := parseLimit(query.Get("limit")); n > 0 && n < len(events) {
+			if cursored {
+				events = events[:n]
+			} else {
+				events = events[len(events)-n:]
+			}
 		}
 		if events == nil {
 			events = []inputlog.Event{}

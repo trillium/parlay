@@ -217,6 +217,27 @@ replay of the same id cannot disagree. `--watch` polls (default every 2s) and
 says so in its header: the ledger has no push stream yet, and implying instant
 delivery would be a lie about its own cadence.
 
+### The live tail, and the three ways it can be incomplete
+
+`--watch` reads **forward from a cursor** (`?afterSeq=<seq>`) rather than
+re-reading a fixed newest-N window on every poll. The window form had a hole of
+exactly the kind this seam exists to remove: a burst larger than the window was
+printed minus whatever fell off its front, and nothing said so. A cursor cannot
+be outrun, because `limit` means the **oldest** N of the set it matches when a
+cursor is present (and the newest N when it is not — the snapshot view is
+unchanged).
+
+The tail can still be incomplete in two ways that no cursor fixes, so both are
+printed rather than inferred — a tail that shows a gap silently is the same
+defect as an input event that failed with no recorded reason:
+
+| Line | What it means |
+|---|---|
+| `JOINED at the live edge (seq N) — M retained hop(s) before this tail are NOT shown` | A tail follows the live edge. The history before it is a deliberate starting point, not an omission; `parlay input` reads it. |
+| `GAP — N hop(s) (seq X–Y) were evicted from the retained ledger before this tail read them` | The ring holds 5,000 events and dropped older ones between two polls. Derived from the first `seq` a page returns, because `seq` is dense: anything from `cursor+1` to it is provably missing. |
+| `OBSERVER LOSS — the ledger itself did not write N record(s) (… dropped on a full queue, … rejected as malformed)` | The ledger's own writer shed records. The `stats` block travels with every page, so a tail that ignored it would be the one view able to show a hole and call it a quiet night. Only a change is announced. |
+| `CURSOR AHEAD — this tail is at seq N but the ledger's newest is M (it restarted against a fresh ledger)` | `stats.newestSeq` is below the cursor: seqs began again. Without this the tail would print nothing for ever and look calm. It re-joins at the live edge. |
+
 The view prints each INPUT id whole — including the `in-…` ids minted for
 input that never became a message (a refusal, or a superseded snapshot),
 which exist nowhere else, since such an id is deliberately kept off every wire
