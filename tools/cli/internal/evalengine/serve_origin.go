@@ -104,7 +104,9 @@ func hostnameOfEval(hostport string) string {
 // isEvalLocalHostname reports whether hostname is one of the captain's own network
 // locations: localhost, *.localhost, *.local (mDNS), IPv6 loopback, a v4
 // literal in loopback / link-local / RFC1918 private-LAN space, a Tailscale
-// CGNAT address (100.64.0.0/10), or a *.ts.net MagicDNS name.
+// CGNAT address (100.64.0.0/10), a *.ts.net MagicDNS name, a bare single-label
+// hostname, or an IPv6 loopback / ULA (fc00::/7, incl. the tailnet
+// fd7a:115c:a1e0::/48) / link-local (fe80::/10) address.
 //
 // v4 is matched on the PARSED address, never a string prefix: "10.evil.com"
 // and "192.168.1.1.evil.com" are public names, not LAN addresses. ".ts.net" is
@@ -120,12 +122,33 @@ func isEvalLocalHostname(hostname string) bool {
 	}
 	ip, err := netip.ParseAddr(h)
 	if err != nil {
-		return false
+		return isSingleLabelHost(h)
 	}
 	if ip.Is6() {
-		return ip == netip.IPv6Loopback()
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || evalTailnetV4.Contains(ip)
 }
 
 var evalTailnetV4 = netip.MustParsePrefix("100.64.0.0/10")
+
+// isSingleLabelHost matches a bare, dot-less hostname such as a Tailscale
+// MagicDNS short name or a LAN machine name ("macbook", "mini1"). Public names
+// always contain a dot, so a single label cannot be an attacker's domain. All-
+// digit labels are refused: browsers read "http://10" as an IPv4 literal.
+func isSingleLabelHost(h string) bool {
+	if h == "" || len(h) > 63 || h[0] == '-' || h[len(h)-1] == '-' {
+		return false
+	}
+	letter := false
+	for _, c := range h {
+		switch {
+		case c >= 'a' && c <= 'z':
+			letter = true
+		case c >= '0' && c <= '9', c == '-':
+		default:
+			return false
+		}
+	}
+	return letter
+}

@@ -75,7 +75,7 @@ no longer registers the channel (task-1t0m). On those routes:
   hook and server-to-server caller, and a browser cannot omit `Origin` on a
   cross-site request. Nothing in this document changes for those callers.
 - A request **with** an `Origin` must be same-origin, a loopback / `.local` /
-  RFC1918 private-LAN / Tailscale (`100.64.0.0/10` or `*.ts.net`) origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
+  RFC1918 private-LAN / Tailscale (`100.64.0.0/10`, `*.ts.net`) / IPv6 ULA (`fc00::/7`) or link-local (`fe80::/10`) / bare single-label hostname (`macbook`) origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
   `*` opts out). Otherwise: **403** with no CORS headers at all, and the
   handler is never reached. Preflight from such an origin is refused the same
   way.
@@ -116,11 +116,13 @@ cross-origin reader: it is served from another origin (for example
 so `GET /api/chat/events` reflects `Access-Control-Allow-Origin` (plus
 `Vary: Origin`) for an http/https origin whose host is on the captain's own
 network — loopback, `.local`, an RFC1918 private-LAN address (`10/8`,
-`172.16/12`, `192.168/16`), or a Tailscale address (`100.64.0.0/10`) or
-`*.ts.net` name — or that is listed verbatim in `PARLAY_ALLOWED_ORIGINS`
+`172.16/12`, `192.168/16`), an IPv6 ULA (`fc00::/7`, including the tailnet
+`fd7a:115c:a1e0::/48`) or link-local (`fe80::/10`) address, a Tailscale address
+(`100.64.0.0/10`), a `*.ts.net` name, or a bare single-label hostname such as
+`macbook` (letters/digits/hyphen, not all digits) — or that is listed verbatim in `PARLAY_ALLOWED_ORIGINS`
 (`listedOriginCORSReads` in `internal/guard/guard.go`). Hosts are matched on the
 parsed address or a label-boundary suffix, so `10.evil.com`, `evil-ts.net` and
-`x.ts.net.evil.com` do not qualify. The echo is always the exact origin, never
+`x.ts.net.evil.com` do not qualify (any dotted non-`.local`/`.ts.net` name is public). The echo is always the exact origin, never
 a wildcard (a `*` entry is not echoed as one). A same-Host origin on a public
 name is allowed through the guard but gets no ACAO unless listed; a disallowed
 origin gets 403. No configuration is needed for LAN or tailnet pages; without
