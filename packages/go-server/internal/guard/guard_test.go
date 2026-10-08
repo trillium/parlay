@@ -701,3 +701,13 @@ func TestNetworkOriginsAreRefusedOnOtherGuardedRoutes(t *testing.T) {
 		}
 	}
 }
+
+// TestStrictRuleDoesNotMatchAddressLookalikeNames pins that the rule every
+// guarded route uses parses v4 literals instead of prefix-matching them.
+func TestStrictRuleDoesNotMatchAddressLookalikeNames(t *testing.T) {
+	for _, origin := range []string{"http://10.evil.com", "http://192.168.1.1.evil.com", "http://127.0.0.1.evil.com"} {
+		if OriginAllowed(req(t, http.MethodPost, "/api/chat/send", origin, "application/json")) {
+			t.Errorf("OriginAllowed(%q) = true, want false", origin)
+		}
+	}
+}

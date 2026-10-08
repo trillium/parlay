@@ -113,7 +113,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -331,26 +330,25 @@ func IsGuarded(path string) bool {
 	return false
 }
 
-// privateV4 mirrors guard/origin.ts's PRIVATE_V4 exactly: loopback and private-LAN
-// literals. The phone reaches the panel over the LAN and a reverse proxy may
-// rewrite Host, so a strict same-host test alone would cut off legitimate
-// local clients. None of these can be an attacker's origin without them
-// already serving pages from inside the captain's network, and DNS rebinding
-// does not help — the Origin header keeps the attacker's own name.
-var privateV4 = regexp.MustCompile(`^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)`)
-
+// isLocalHostname is the strict rule every guarded route uses: localhost,
+// *.localhost, *.local, IPv6 loopback, and a v4 literal in loopback /
+// link-local / RFC1918 private-LAN space. The phone reaches the panel over the
+// LAN and a reverse proxy may rewrite Host, so a strict same-host test alone
+// would cut off legitimate local clients. v4 is matched on the PARSED address,
+// never a string prefix: "10.evil.com" is a public name, not a LAN address.
 func isLocalHostname(hostname string) bool {
 	h := strings.ToLower(strings.Trim(hostname, "[]"))
-	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") || strings.HasSuffix(h, ".local") {
 		return true
 	}
-	if strings.HasSuffix(h, ".local") {
-		return true
+	ip, err := netip.ParseAddr(h)
+	if err != nil {
+		return false
 	}
-	if h == "::1" || h == "0:0:0:0:0:0:0:1" {
-		return true
+	if ip.Is6() {
+		return ip == netip.IPv6Loopback()
 	}
-	return privateV4.MatchString(h)
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
 // isNetworkHostname is the wider "reachable from the captain's tailnet or LAN"
