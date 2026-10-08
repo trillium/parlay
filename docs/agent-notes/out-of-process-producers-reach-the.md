@@ -47,13 +47,14 @@ No real caller notices the refusal — the panel is same-origin and every other
 caller sends no Origin — but **guarding a path is not a one-way tightening**:
 it also makes the guard reflect an `Access-Control-Allow-Origin` back to every
 origin `OriginAllowed` accepts, which is any loopback, `.local` or private-LAN
-page. On the SSE stream that would be brand-new read access, since this server
-has never sent CORS headers on a read route (divergence 1). `noGuardedCORSReads`
-in `guard.go` is the carve-out: for `GET /api/chat/events` the guard sets only
-`Vary: Origin` and no CORS headers at all, so the cross-origin refusal is
-stricter than the TS side while the grant to allowed origins stays exactly
-where it was. The path stays guarded — un-guarding it to drop the ACAO would
-drop the 403 too. Anything else here that acquires a mutating method on a
+page. For `GET /api/chat/events` that is narrowed rather than suppressed
+(`listedOriginCORSReads` in `guard.go`): the herdr web page on a phone is
+cross-origin and needs the ACAO to receive `input_action` (the "bravely"
+line-ender), so the stream reflects ACAO **only** for origins listed verbatim in
+`PARLAY_ALLOWED_ORIGINS` — never a wildcard, never an unlisted origin. The
+earlier blanket suppression (`noGuardedCORSReads`) was a mistake made without
+knowing that; it now holds only `GET /api/chat/action-log`. The path stays
+guarded — the 403 for a disallowed origin is unchanged. Anything else here that acquires a mutating method on a
 read path needs the same entry.
 
 The two PAI observability tailers are the first callers and stay TS-side (they
