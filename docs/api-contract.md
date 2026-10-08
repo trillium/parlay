@@ -118,9 +118,10 @@ so `GET /api/chat/events` reflects `Access-Control-Allow-Origin` (plus
 `PARLAY_ALLOWED_ORIGINS` (`listedOriginCORSReads` in `internal/guard/guard.go`).
 An origin the guard merely accepts (loopback, `.local`, private LAN) but the
 operator did not list gets the stream and no ACAO; a disallowed origin gets 403;
-a `*` entry is never echoed as a wildcard. With `PARLAY_ALLOWED_ORIGINS` unset, the stream sends no ACAO to any cross-origin page; the herdr web origin must be listed there for "bravely" to submit. Without the ACAO the page would never
-receive the `input_action` reply that makes the spoken "bravely" line-ender
-submit.
+a `*` entry is never echoed as a wildcard. With `PARLAY_ALLOWED_ORIGINS` unset the stream sends no ACAO to any
+cross-origin page, so the herdr web origin must be listed there: without the
+ACAO the page never receives the `input_action` reply that makes the spoken
+"bravely" line-ender submit.
 
 The read surface is not purely read-only, but the boundary above is the whole
 of the guard's scope: the deleted TS server's two unguarded reads
