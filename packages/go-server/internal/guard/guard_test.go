@@ -306,13 +306,14 @@ func TestEventsIngressAndStreamAreBothGuarded(t *testing.T) {
 	}
 }
 
-// TestEventsStreamCORSIsListedOriginsOnly pins the herdr-web case: the page
+// TestEventsStreamCORSIsListedOrNetworkOrigins pins the herdr-web case: the page
 // at http://<host>:8787 opens a cross-origin EventSource to this server's
 // GET /api/chat/events and needs an ACAO to read the input_action frames that
-// make the spoken "bravely" line-ender submit. The grant is limited to origins
-// named verbatim in PARLAY_ALLOWED_ORIGINS — never a wildcard, never an origin
-// that is merely accepted by OriginAllowed (LAN, loopback, .local).
-func TestEventsStreamCORSIsListedOriginsOnly(t *testing.T) {
+// make the spoken "bravely" line-ender submit. The grant covers origins named
+// verbatim in PARLAY_ALLOWED_ORIGINS and http/https origins on the captain's own
+// network (loopback, .local, RFC1918, Tailscale) — never a wildcard, never an
+// origin that is merely same-Host on a public name.
+func TestEventsStreamCORSIsListedOrNetworkOrigins(t *testing.T) {
 	const herdr = "http://100.74.138.74:8787"
 	t.Setenv("PARLAY_ALLOWED_ORIGINS", herdr+", http://macbook:8787")
 
@@ -335,16 +336,31 @@ func TestEventsStreamCORSIsListedOriginsOnly(t *testing.T) {
 		}
 	}
 
-	// Allowed by OriginAllowed (private LAN, loopback) but not listed: the
-	// stream is served, no ACAO.
-	for _, origin := range []string{"http://192.168.1.42:4242", "http://localhost:4242", "http://captain.local:8787"} {
+	// Unlisted but on the captain's network: LAN, loopback, .local, tailnet.
+	for _, origin := range []string{
+		"http://192.168.86.32:8787", "http://localhost:4242", "http://captain.local:8787",
+		"http://100.100.1.2:8787", "https://box.tail1234.ts.net", "http://[::1]:8787",
+	} {
 		rec := get(origin)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("unlisted allowed origin %s: status = %d, want 200", origin, rec.Code)
+			t.Fatalf("network origin %s: status = %d, want 200", origin, rec.Code)
 		}
-		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-			t.Errorf("unlisted origin %s: ACAO = %q, want absent", origin, got)
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Errorf("network origin %s: ACAO = %q, want the origin", origin, got)
 		}
+		if got := rec.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("network origin %s: Vary = %q, want Origin", origin, got)
+		}
+	}
+
+	// Same-Host on a public name is let through the guard but is not a network
+	// origin and is not listed: stream, no ACAO.
+	rr := httptest.NewRecorder()
+	same := req(t, http.MethodGet, "/api/chat/events", "https://tunnel.example.com", "")
+	same.Host = "tunnel.example.com"
+	Wrap(pass()).ServeHTTP(rr, same)
+	if rr.Code != http.StatusOK || rr.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("same-Host public origin: status=%d ACAO=%q, want 200 and none", rr.Code, rr.Header().Get("Access-Control-Allow-Origin"))
 	}
 
 	// A hostile origin is still refused outright and gets no ACAO.
@@ -555,5 +571,89 @@ func TestWrapRefusesCrossOriginEval(t *testing.T) {
 	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/eval", "http://192.168.1.42:4242", "application/json"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("lan-origin eval status = %d, want 200", rec.Code)
+	}
+}
+
+// networkOriginCases are the rule edges shared by the guard and the eval gate's
+// copy of it (tools/cli/internal/evalengine/serve_origin_test.go): inclusive and
+// exclusive range boundaries, ts.net suffix spoofing, userinfo/port tricks.
+var networkOriginCases = []struct {
+	origin string
+	want   bool
+}{
+	// Tailscale CGNAT 100.64.0.0/10 = 100.64.0.0 – 100.127.255.255.
+	{"http://100.64.0.0:8787", true},
+	{"http://100.127.255.255:8787", true},
+	{"http://100.74.138.74:8787", true},
+	{"http://100.63.255.255:8787", false},
+	{"http://100.128.0.0:8787", false},
+	// RFC1918 boundaries.
+	{"http://10.0.0.0", true},
+	{"http://10.255.255.255", true},
+	{"http://9.255.255.255", false},
+	{"http://11.0.0.0", false},
+	{"http://172.16.0.0", true},
+	{"http://172.31.255.255", true},
+	{"http://172.15.255.255", false},
+	{"http://172.32.0.0", false},
+	{"http://192.168.0.0", true},
+	{"http://192.168.255.255", true},
+	{"http://192.167.255.255", false},
+	{"http://192.169.0.0", false},
+	{"https://192.168.86.32:8787", true},
+	// Loopback.
+	{"http://127.0.0.1", true},
+	{"http://[::1]:8787", true},
+	{"http://[::2]:8787", false},
+	{"http://[::ffff:8.8.8.8]", false},
+	// MagicDNS.
+	{"https://macbook.tail1234.ts.net", true},
+	{"https://macbook.tail1234.ts.net:8443", true},
+	{"https://MACBOOK.TS.NET", true},
+	{"https://evil-ts.net", false},
+	{"https://evilts.net", false},
+	{"https://ts.net.evil.com", false},
+	{"https://x.ts.net.evil.com", false},
+	{"https://x.ts.net.evil.com:8787", false},
+	{"https://ts.net", false},
+	// Names that merely start like an address are public hosts.
+	{"http://10.evil.com", false},
+	{"http://192.168.1.1.evil.com", false},
+	{"http://100.64.0.1.evil.com", false},
+	{"http://0100.64.0.1", false},
+	// Userinfo / path / port tricks and malformed values.
+	{"http://100.64.0.1@evil.com", false},
+	{"http://evil.com@100.64.0.1", false},
+	{"http://evil.com:80@192.168.1.1", false},
+	{"http://192.168.1.1/", false},
+	{"http://192.168.1.1?x", false},
+	{"http://192.168.1.1:notaport", false},
+	{"ftp://192.168.1.1", false},
+	{"192.168.1.1", false},
+	{"null", false},
+	{"http://", false},
+	{"https://8.8.8.8", false},
+}
+
+func TestNetworkOriginRuleEdges(t *testing.T) {
+	for _, c := range networkOriginCases {
+		t.Run(c.origin, func(t *testing.T) {
+			r := req(t, http.MethodGet, "/api/chat/events", c.origin, "")
+			if got := OriginAllowed(r); got != c.want {
+				t.Errorf("OriginAllowed(%q) = %v, want %v", c.origin, got, c.want)
+			}
+			rec := httptest.NewRecorder()
+			Wrap(pass()).ServeHTTP(rec, r)
+			acao := rec.Header().Get("Access-Control-Allow-Origin")
+			if c.want && acao != c.origin {
+				t.Errorf("stream ACAO for %q = %q, want the exact origin", c.origin, acao)
+			}
+			if !c.want && acao != "" {
+				t.Errorf("stream ACAO for %q = %q, want none", c.origin, acao)
+			}
+			if acao == "*" {
+				t.Errorf("wildcard ACAO for %q", c.origin)
+			}
+		})
 	}
 }

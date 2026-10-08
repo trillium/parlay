@@ -75,7 +75,7 @@ no longer registers the channel (task-1t0m). On those routes:
   hook and server-to-server caller, and a browser cannot omit `Origin` on a
   cross-site request. Nothing in this document changes for those callers.
 - A request **with** an `Origin` must be same-origin, a loopback / `.local` /
-  private-LAN origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
+  RFC1918 private-LAN / Tailscale (`100.64.0.0/10` or `*.ts.net`) origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
   `*` opts out). Otherwise: **403** with no CORS headers at all, and the
   handler is never reached. Preflight from such an origin is refused the same
   way.
@@ -114,13 +114,17 @@ tailers, the CLI and curl send no `Origin`. The herdr web page is the one
 cross-origin reader: it is served from another origin (for example
 `http://<host>:8787`) and builds its server URL as `${protocol}//${hostname}:4242`,
 so `GET /api/chat/events` reflects `Access-Control-Allow-Origin` (plus
-`Vary: Origin`) **only** for an origin listed verbatim in
-`PARLAY_ALLOWED_ORIGINS` (`listedOriginCORSReads` in `internal/guard/guard.go`).
-An origin the guard merely accepts (loopback, `.local`, private LAN) but the
-operator did not list gets the stream and no ACAO; a disallowed origin gets 403;
-a `*` entry is never echoed as a wildcard. With `PARLAY_ALLOWED_ORIGINS` unset the stream sends no ACAO to any
-cross-origin page, so the herdr web origin must be listed there: without the
-ACAO the page never receives the `input_action` reply that makes the spoken
+`Vary: Origin`) for an http/https origin whose host is on the captain's own
+network — loopback, `.local`, an RFC1918 private-LAN address (`10/8`,
+`172.16/12`, `192.168/16`), or a Tailscale address (`100.64.0.0/10`) or
+`*.ts.net` name — or that is listed verbatim in `PARLAY_ALLOWED_ORIGINS`
+(`listedOriginCORSReads` in `internal/guard/guard.go`). Hosts are matched on the
+parsed address or a label-boundary suffix, so `10.evil.com`, `evil-ts.net` and
+`x.ts.net.evil.com` do not qualify. The echo is always the exact origin, never
+a wildcard (a `*` entry is not echoed as one). A same-Host origin on a public
+name is allowed through the guard but gets no ACAO unless listed; a disallowed
+origin gets 403. No configuration is needed for LAN or tailnet pages; without
+the ACAO the page never receives the `input_action` reply that makes the spoken
 "bravely" line-ender submit.
 
 The read surface is not purely read-only, but the boundary above is the whole
