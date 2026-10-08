@@ -114,10 +114,8 @@ tailers, the CLI and curl send no `Origin`. The herdr web page is the one
 cross-origin reader: it is served from another origin (for example
 `http://<host>:8787`) and builds its server URL as `${protocol}//${hostname}:4242`,
 so `GET /api/chat/events` reflects `Access-Control-Allow-Origin` (plus
-`Vary: Origin`) **only** for an origin listed verbatim in
-`PARLAY_ALLOWED_ORIGINS` (`listedOriginCORSReads` in `internal/guard/guard.go`).
-An origin the guard merely accepts (loopback, `.local`, private LAN) but the
-operator did not list gets the stream and no ACAO; a disallowed origin gets 403;
+`Vary: Origin`) for every origin the guard accepts, like any guarded route;
+a disallowed origin gets 403;
 a `*` entry is never echoed as a wildcard. Without the ACAO the page would never
 receive the `input_action` reply that makes the spoken "bravely" line-ender
 submit.

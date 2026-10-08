@@ -47,13 +47,12 @@ No real caller notices the refusal — the panel is same-origin and every other
 caller sends no Origin — but **guarding a path is not a one-way tightening**:
 it also makes the guard reflect an `Access-Control-Allow-Origin` back to every
 origin `OriginAllowed` accepts, which is any loopback, `.local` or private-LAN
-page. For `GET /api/chat/events` that is narrowed rather than suppressed
-(`listedOriginCORSReads` in `guard.go`): the herdr web page on a phone is
-cross-origin and needs the ACAO to receive `input_action` (the "bravely"
-line-ender), so the stream reflects ACAO **only** for origins listed verbatim in
-`PARLAY_ALLOWED_ORIGINS` — never a wildcard, never an unlisted origin. The
-earlier blanket suppression (`noGuardedCORSReads`) was a mistake made without
-knowing that; it now holds only `GET /api/chat/action-log`. The path stays
+page. `GET /api/chat/events` is deliberately NOT suppressed: the herdr web page on a
+phone is cross-origin and needs the ACAO to receive `input_action` (the
+"bravely" line-ender), so the stream reflects ACAO for every origin
+`OriginAllowed` accepts. The earlier blanket suppression (`noGuardedCORSReads`)
+was a mistake made without knowing that; it now holds only
+`GET /api/chat/action-log`. The path stays
 guarded — the 403 for a disallowed origin is unchanged. Anything else here that acquires a mutating method on a
 read path needs the same entry.
 

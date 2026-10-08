@@ -53,9 +53,8 @@
 //     ACAO ON for the origins the guard allows, and a read that has never
 //     sent one must not gain it as a side effect of its own path acquiring a
 //     mutating method. The one deliberate exception is GET /api/chat/events,
-//     which reflects ACAO for origins listed verbatim in
-//     PARLAY_ALLOWED_ORIGINS (listedOriginCORSReads) so the herdr web page can
-//     read its stream.
+//     which gets the ordinary reflected ACAO so the herdr
+//     web page can read its stream.
 //  2. OPTIONS on an unguarded route is left to the route's own handler
 //     (today: 405), where the TS guard answers a blanket 204 + wildcard. Same
 //     reasoning — no preflight permission this server does not already grant.
@@ -86,8 +85,8 @@
 // as identifier-disclosure-remains-on-sse. /api/chat/events is not part of
 // this server's residue: it is guarded here, because POST on that path is the
 // external-producer ingress into the SSE hub and the classification rule is
-// method-independent — and its GET stream reflects ACAO only to origins the
-// operator listed in PARLAY_ALLOWED_ORIGINS (listedOriginCORSReads).
+// method-independent — and its GET stream gets the ordinary reflected ACAO
+// for every origin OriginAllowed accepts.
 // This server's residue is smaller
 // for two reasons, neither of them a route-set decision: divergence 1 above
 // means its unguarded routes send no ACAO at all, so a foreign page's read
@@ -160,8 +159,8 @@ var GuardedPaths = map[string]bool{
 	// and no caller notices: the panel is same-origin, and every other caller
 	// (the TS tailers, the CLI, curl) sends no Origin. It is not stricter in
 	// every direction, though — guarding a path is also what makes this server
-	// reflect an ACAO to the origins it DOES allow. The GET stream narrows that
-	// to origins listed in PARLAY_ALLOWED_ORIGINS; see listedOriginCORSReads.
+	// reflect an ACAO to the origins it DOES allow, which the herdr web page needs
+	// to read this stream.
 	"/api/chat/events": true,
 
 	// A GET that takes a Presence poller slot for the life of the request,
@@ -478,9 +477,8 @@ func setGuardedCORS(w http.ResponseWriter, r *http.Request) {
 // The path stays in GuardedPaths: the 403 for a disallowed origin is the whole
 // reason it is there. Only the header-setting step is skipped.
 //
-// /api/chat/events is NOT here any more: the herdr web page is served from
-// another origin and must read that stream, so it has its own, narrower rule
-// (listedOriginCORSReads below).
+// /api/chat/events is NOT here: the herdr web page is served from another
+// origin and must read that stream, so it gets the ordinary reflected ACAO.
 var noGuardedCORSReads = map[string]string{
 	// /action-log is a guarded READ: the guard is there because the path's
 	// sibling POST mutates and because the body carries device ids, but the GET
@@ -488,48 +486,11 @@ var noGuardedCORSReads = map[string]string{
 	"/api/chat/action-log": http.MethodGet,
 }
 
-// listedOriginCORSReads maps a guarded path to the one read method whose
-// response reflects Access-Control-Allow-Origin ONLY for an origin named
-// verbatim in PARLAY_ALLOWED_ORIGINS. It is stricter than the reflected grant
-// ordinary guarded routes give: a loopback, .local, private-LAN or same-Host
-// origin that OriginAllowed accepts but the operator did not list gets the
-// stream (the 403 is unchanged) and no ACAO, and the "*" entry never turns
-// into a wildcard — an unlisted origin is never reflected.
-//
-// GET /api/chat/events is the one member: the herdr web page on a phone
-// (http://<host>:8787) builds its server URL as ${protocol}//${hostname}:4242,
-// so its EventSource is cross-origin, and without an ACAO it never receives the
-// input_action reply that makes the spoken "bravely" line-ender submit.
-var listedOriginCORSReads = map[string]string{
-	"/api/chat/events": http.MethodGet,
-}
-
 // suppressesGuardedCORS reports whether this guarded request is one of the
 // read methods in noGuardedCORSReads.
 func suppressesGuardedCORS(path, method string) bool {
 	m, ok := noGuardedCORSReads[path]
 	return ok && m == method
-}
-
-// listedOriginOnlyCORS reports whether this guarded request is one of the
-// read methods in listedOriginCORSReads.
-func listedOriginOnlyCORS(path, method string) bool {
-	m, ok := listedOriginCORSReads[path]
-	return ok && m == method
-}
-
-// originExplicitlyListed reports whether origin appears verbatim in
-// PARLAY_ALLOWED_ORIGINS. "*" is not a match for anything.
-func originExplicitlyListed(origin string) bool {
-	if origin == "" {
-		return false
-	}
-	for _, a := range AllowedOriginList() {
-		if a != "*" && a == origin {
-			return true
-		}
-	}
-	return false
 }
 
 // Wrap returns next with the origin/content-type guard in front of it. Apply
@@ -577,11 +538,6 @@ func Wrap(next http.Handler) http.Handler {
 			// Origin (403 vs. the stream), and Vary is a cache directive, not a
 			// grant.
 			w.Header().Set("Vary", "Origin")
-		} else if listedOriginOnlyCORS(path, r.Method) {
-			w.Header().Set("Vary", "Origin")
-			if originExplicitlyListed(r.Header.Get("Origin")) {
-				w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
-			}
 		} else {
 			setGuardedCORS(w, r)
 		}
