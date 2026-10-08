@@ -128,3 +128,58 @@ func TestEvalHotPathOriginEnforced(t *testing.T) {
 		t.Errorf("same-origin POST status = %d, want 200", rec.Code)
 	}
 }
+
+// TestEvalOriginNetworkRuleEdges mirrors the go-server guard's rule edges
+// (packages/go-server/internal/guard): the two gates must agree.
+func TestEvalOriginNetworkRuleEdges(t *testing.T) {
+	os.Unsetenv("PARLAY_EVAL_ALLOWED_ORIGINS")
+	cases := []struct {
+		origin string
+		want   bool
+	}{
+		{"http://100.64.0.0:8787", true},
+		{"http://100.127.255.255", true},
+		{"http://100.63.255.255", false},
+		{"http://100.128.0.0", false},
+		{"http://10.255.255.255", true},
+		{"http://11.0.0.0", false},
+		{"http://172.16.0.0", true},
+		{"http://172.31.255.255", true},
+		{"http://172.15.255.255", false},
+		{"http://172.32.0.0", false},
+		{"http://192.168.86.32:8787", true},
+		{"http://192.169.0.0", false},
+		{"http://[::1]:8787", true},
+		{"http://[::2]", false},
+		{"https://macbook.tail1234.ts.net", true},
+		// Bare single-label hosts and IPv6 LAN/tailnet space.
+		{"http://macbook:8787", true},
+		{"http://mini1:8787", true},
+		{"https://MacBook", true},
+		{"http://10", false},
+		{"http://-bad", false},
+		{"http://under_score", false},
+		{"ftp://macbook", false},
+		{"http://[fd7a:115c:a1e0::1]:8787", true},
+		{"http://[fd00::1]", true},
+		{"http://[fe80::1]", true},
+		{"http://[2001:db8::1]", false},
+		{"http://user@macbook", false},
+		{"http://macbook.example.com", false},
+		{"https://evil-ts.net", false},
+		{"https://x.ts.net.evil.com", false},
+		{"https://ts.net", false},
+		{"http://10.evil.com", false},
+		{"http://192.168.1.1.evil.com", false},
+		{"http://100.64.0.1@evil.com", false},
+		{"http://evil.com@100.64.0.1", false},
+		{"http://192.168.1.1:notaport", false},
+		{"null", false},
+		{"https://8.8.8.8", false},
+	}
+	for _, c := range cases {
+		if got := evalOriginAllowed(originRequest(c.origin, "127.0.0.1:4343")); got != c.want {
+			t.Errorf("evalOriginAllowed(%q) = %v, want %v", c.origin, got, c.want)
+		}
+	}
+}

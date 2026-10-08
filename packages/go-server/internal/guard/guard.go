@@ -111,8 +111,9 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
-	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -329,26 +330,72 @@ func IsGuarded(path string) bool {
 	return false
 }
 
-// privateV4 mirrors guard/origin.ts's PRIVATE_V4 exactly: loopback and private-LAN
-// literals. The phone reaches the panel over the LAN and a reverse proxy may
-// rewrite Host, so a strict same-host test alone would cut off legitimate
-// local clients. None of these can be an attacker's origin without them
-// already serving pages from inside the captain's network, and DNS rebinding
-// does not help — the Origin header keeps the attacker's own name.
-var privateV4 = regexp.MustCompile(`^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)`)
-
+// isLocalHostname is the strict rule every guarded route uses: localhost,
+// *.localhost, *.local, IPv6 loopback, and a v4 literal in loopback /
+// link-local / RFC1918 private-LAN space. The phone reaches the panel over the
+// LAN and a reverse proxy may rewrite Host, so a strict same-host test alone
+// would cut off legitimate local clients. v4 is matched on the PARSED address,
+// never a string prefix: "10.evil.com" is a public name, not a LAN address.
 func isLocalHostname(hostname string) bool {
 	h := strings.ToLower(strings.Trim(hostname, "[]"))
-	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") || strings.HasSuffix(h, ".local") {
 		return true
 	}
-	if strings.HasSuffix(h, ".local") {
+	ip, err := netip.ParseAddr(h)
+	if err != nil {
+		return false
+	}
+	if ip.Is6() {
+		return ip == netip.IPv6Loopback()
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+// isNetworkHostname is the wider "reachable from the captain's tailnet or LAN"
+// rule used ONLY by streamOriginTrusted: loopback, .local and private-LAN
+// literals, plus *.ts.net MagicDNS names, bare single-label hostnames, a Tailscale
+// CGNAT address (100.64.0.0/10) and IPv6 ULA (fc00::/7, incl. the tailnet
+// fd7a:115c:a1e0::/48) / link-local (fe80::/10) literals.
+//
+// Addresses are matched on the PARSED value, never a string prefix, and
+// ".ts.net" is a label-boundary suffix, so "100.64.0.1.evil.com", "evil-ts.net"
+// and "x.ts.net.evil.com" do not qualify.
+func isNetworkHostname(hostname string) bool {
+	h := strings.ToLower(strings.Trim(hostname, "[]"))
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") ||
+		strings.HasSuffix(h, ".local") || strings.HasSuffix(h, ".ts.net") {
 		return true
 	}
-	if h == "::1" || h == "0:0:0:0:0:0:0:1" {
-		return true
+	ip, err := netip.ParseAddr(h)
+	if err != nil {
+		return isSingleLabelHost(h)
 	}
-	return privateV4.MatchString(h)
+	if ip.Is6() {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || tailnetV4.Contains(ip)
+}
+
+var tailnetV4 = netip.MustParsePrefix("100.64.0.0/10")
+
+// isSingleLabelHost matches a bare, dot-less hostname such as a Tailscale
+// MagicDNS short name or a LAN machine name ("macbook", "mini1"). All-digit
+// labels are refused: browsers read "http://10" as an IPv4 literal.
+func isSingleLabelHost(h string) bool {
+	if h == "" || len(h) > 63 || h[0] == '-' || h[len(h)-1] == '-' {
+		return false
+	}
+	letter := false
+	for _, c := range h {
+		switch {
+		case c >= 'a' && c <= 'z':
+			letter = true
+		case c >= '0' && c <= '9', c == '-':
+		default:
+			return false
+		}
+	}
+	return letter
 }
 
 // AllowedOriginList reads PARLAY_ALLOWED_ORIGINS — comma-separated exact
@@ -424,7 +471,11 @@ func splitOrigin(origin string) (scheme, hostport string, ok bool) {
 // hostnameOf strips the port from a host:port, leaving IPv6 brackets for
 // isLocalHostname to trim (it does the same for the TS side's URL.hostname).
 func hostnameOf(hostport string) string {
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
+	if h, port, err := net.SplitHostPort(hostport); err == nil {
+		// SplitHostPort accepts any port text; an Origin port is digits.
+		if _, perr := strconv.ParseUint(port, 10, 16); perr != nil {
+			return hostport
+		}
 		return h
 	}
 	return hostport
@@ -452,10 +503,10 @@ func deny(w http.ResponseWriter, status int, msg string) {
 // response. Never a wildcard: reflect the single allowed origin so a
 // same-origin panel can still read its own responses, and Vary so a shared
 // cache cannot hand one origin's ACAO to another.
-func setGuardedCORS(w http.ResponseWriter, r *http.Request) {
+func setGuardedCORS(w http.ResponseWriter, r *http.Request, allowed bool) {
 	w.Header().Set("Vary", "Origin")
 	origin := r.Header.Get("Origin")
-	if origin == "" || !OriginAllowed(r) {
+	if origin == "" || !allowed {
 		return
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -489,17 +540,20 @@ var noGuardedCORSReads = map[string]string{
 }
 
 // listedOriginCORSReads maps a guarded path to the one read method whose
-// response reflects Access-Control-Allow-Origin ONLY for an origin named
-// verbatim in PARLAY_ALLOWED_ORIGINS. It is stricter than the reflected grant
-// ordinary guarded routes give: a loopback, .local, private-LAN or same-Host
-// origin that OriginAllowed accepts but the operator did not list gets the
-// stream (the 403 is unchanged) and no ACAO, and the "*" entry never turns
-// into a wildcard — an unlisted origin is never reflected.
+// response reflects Access-Control-Allow-Origin only for an origin in
+// streamOriginTrusted's set: named verbatim in PARLAY_ALLOWED_ORIGINS, or an
+// http/https origin whose host is on the captain's own network (loopback,
+// .local, RFC1918 private LAN, Tailscale 100.64.0.0/10 or *.ts.net). It is
+// stricter than the reflected grant ordinary guarded routes give: an origin
+// that OriginAllowed accepts only because it is same-Host (e.g. a tunnel that
+// forwards Host) gets the stream and no ACAO, and the "*" entry never turns
+// into a wildcard — an untrusted origin is never reflected.
 //
-// GET /api/chat/events is the one member: the herdr web page on a phone
-// (http://<host>:8787) builds its server URL as ${protocol}//${hostname}:4242,
-// so its EventSource is cross-origin, and without an ACAO it never receives the
-// input_action reply that makes the spoken "bravely" line-ender submit.
+// GET /api/chat/events is the one member: the herdr web page (http://<host>:8787,
+// where host is a LAN IP, a tailnet address or name) builds its server URL as
+// ${protocol}//${hostname}:4242, so its EventSource is cross-origin, and without
+// an ACAO it never receives the input_action reply that makes the spoken
+// "bravely" line-ender submit.
 var listedOriginCORSReads = map[string]string{
 	"/api/chat/events": http.MethodGet,
 }
@@ -518,10 +572,11 @@ func listedOriginOnlyCORS(path, method string) bool {
 	return ok && m == method
 }
 
-// originExplicitlyListed reports whether origin appears verbatim in
-// PARLAY_ALLOWED_ORIGINS. "*" is not a match for anything.
-func originExplicitlyListed(origin string) bool {
-	if origin == "" {
+// streamOriginTrusted reports whether origin may read a listedOriginCORSReads
+// stream: listed verbatim in PARLAY_ALLOWED_ORIGINS ("*" matches nothing), or
+// an http/https origin on the captain's own network.
+func streamOriginTrusted(origin string) bool {
+	if origin == "" || origin == "null" {
 		return false
 	}
 	for _, a := range AllowedOriginList() {
@@ -529,7 +584,25 @@ func originExplicitlyListed(origin string) bool {
 			return true
 		}
 	}
-	return false
+	scheme, hostport, ok := splitOrigin(origin)
+	if !ok || (scheme != "http" && scheme != "https") {
+		return false
+	}
+	return isNetworkHostname(hostnameOf(hostport))
+}
+
+// networkOriginPaths maps a guarded path to the one method (plus its OPTIONS
+// preflight) that browser pages on the captain's tailnet/LAN may use: the
+// events stream the herdr web page reads and the eval relay it posts to. Every
+// other guarded route keeps OriginAllowed's strict rule.
+var networkOriginPaths = map[string]string{
+	"/api/chat/events": http.MethodGet,
+	"/api/chat/eval":   http.MethodPost,
+}
+
+func networkOriginRoute(path, method string) bool {
+	m, ok := networkOriginPaths[path]
+	return ok && (m == method || method == http.MethodOptions)
 }
 
 // Wrap returns next with the origin/content-type guard in front of it. Apply
@@ -545,7 +618,11 @@ func Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		if !OriginAllowed(r) {
+		allowed := OriginAllowed(r)
+		if !allowed && networkOriginRoute(path, r.Method) {
+			allowed = streamOriginTrusted(r.Header.Get("Origin"))
+		}
+		if !allowed {
 			if r.Method == http.MethodOptions {
 				deny(w, http.StatusForbidden, "cross-origin preflight rejected")
 				return
@@ -557,7 +634,7 @@ func Wrap(next http.Handler) http.Handler {
 		// Preflight on a guarded path from an ALLOWED origin: answer it here
 		// rather than letting it fall through to a handler that would 405.
 		if r.Method == http.MethodOptions {
-			setGuardedCORS(w, r)
+			setGuardedCORS(w, r, allowed)
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -579,11 +656,11 @@ func Wrap(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		} else if listedOriginOnlyCORS(path, r.Method) {
 			w.Header().Set("Vary", "Origin")
-			if originExplicitlyListed(r.Header.Get("Origin")) {
+			if streamOriginTrusted(r.Header.Get("Origin")) {
 				w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 			}
 		} else {
-			setGuardedCORS(w, r)
+			setGuardedCORS(w, r, allowed)
 		}
 		next.ServeHTTP(w, r)
 	})
