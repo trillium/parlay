@@ -25,8 +25,8 @@
 //     that absence on a cross-site request. This is what keeps the live fleet
 //     working and is the single most important rule here.
 //   - A request WITH an Origin must be same-origin (Origin's host:port equals
-//     the request's Host), or a loopback / .local / RFC1918 private-LAN /
-//     Tailscale (100.64.0.0/10, *.ts.net) host, or listed in PARLAY_ALLOWED_ORIGINS. Anything else is 403 with no CORS
+//     the request's Host), or a loopback / .local / private-LAN literal, or
+//     listed in PARLAY_ALLOWED_ORIGINS. Anything else is 403 with no CORS
 //     headers at all, so the calling page cannot read the outcome either.
 //   - Origin "null" (sandboxed iframe, file://, some redirects) is refused.
 //   - PARLAY_ALLOWED_ORIGINS is a comma-separated list of exact origins; the
@@ -113,6 +113,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -330,23 +331,41 @@ func IsGuarded(path string) bool {
 	return false
 }
 
-// isLocalHostname reports whether hostname is one of the captain's own network
-// locations: localhost, *.localhost, *.local (mDNS), IPv6 loopback, a v4
-// literal in loopback / link-local / RFC1918 private-LAN space, a Tailscale
-// CGNAT address (100.64.0.0/10), a *.ts.net MagicDNS name, a bare single-label
-// hostname, or an IPv6 loopback / ULA (fc00::/7, incl. the tailnet
-// fd7a:115c:a1e0::/48) / link-local (fe80::/10) address.
-//
-// v4 is matched on the PARSED address, never a string prefix: "10.evil.com"
-// and "192.168.1.1.evil.com" are public names, not LAN addresses. ".ts.net" is
-// a suffix match on a label boundary, so "evil-ts.net" and "x.ts.net.evil.com"
-// do not qualify.
+// privateV4 mirrors guard/origin.ts's PRIVATE_V4 exactly: loopback and private-LAN
+// literals. The phone reaches the panel over the LAN and a reverse proxy may
+// rewrite Host, so a strict same-host test alone would cut off legitimate
+// local clients. None of these can be an attacker's origin without them
+// already serving pages from inside the captain's network, and DNS rebinding
+// does not help — the Origin header keeps the attacker's own name.
+var privateV4 = regexp.MustCompile(`^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)`)
+
 func isLocalHostname(hostname string) bool {
 	h := strings.ToLower(strings.Trim(hostname, "[]"))
 	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
 		return true
 	}
-	if strings.HasSuffix(h, ".local") || strings.HasSuffix(h, ".ts.net") {
+	if strings.HasSuffix(h, ".local") {
+		return true
+	}
+	if h == "::1" || h == "0:0:0:0:0:0:0:1" {
+		return true
+	}
+	return privateV4.MatchString(h)
+}
+
+// isNetworkHostname is the wider "reachable from the captain's tailnet or LAN"
+// rule used ONLY by streamOriginTrusted: loopback, .local and private-LAN
+// literals, plus *.ts.net MagicDNS names, bare single-label hostnames, a Tailscale
+// CGNAT address (100.64.0.0/10) and IPv6 ULA (fc00::/7, incl. the tailnet
+// fd7a:115c:a1e0::/48) / link-local (fe80::/10) literals.
+//
+// Addresses are matched on the PARSED value, never a string prefix, and
+// ".ts.net" is a label-boundary suffix, so "100.64.0.1.evil.com", "evil-ts.net"
+// and "x.ts.net.evil.com" do not qualify.
+func isNetworkHostname(hostname string) bool {
+	h := strings.ToLower(strings.Trim(hostname, "[]"))
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") ||
+		strings.HasSuffix(h, ".local") || strings.HasSuffix(h, ".ts.net") {
 		return true
 	}
 	ip, err := netip.ParseAddr(h)
@@ -362,9 +381,8 @@ func isLocalHostname(hostname string) bool {
 var tailnetV4 = netip.MustParsePrefix("100.64.0.0/10")
 
 // isSingleLabelHost matches a bare, dot-less hostname such as a Tailscale
-// MagicDNS short name or a LAN machine name ("macbook", "mini1"). Public names
-// always contain a dot, so a single label cannot be an attacker's domain. All-
-// digit labels are refused: browsers read "http://10" as an IPv4 literal.
+// MagicDNS short name or a LAN machine name ("macbook", "mini1"). All-digit
+// labels are refused: browsers read "http://10" as an IPv4 literal.
 func isSingleLabelHost(h string) bool {
 	if h == "" || len(h) > 63 || h[0] == '-' || h[len(h)-1] == '-' {
 		return false
@@ -487,10 +505,10 @@ func deny(w http.ResponseWriter, status int, msg string) {
 // response. Never a wildcard: reflect the single allowed origin so a
 // same-origin panel can still read its own responses, and Vary so a shared
 // cache cannot hand one origin's ACAO to another.
-func setGuardedCORS(w http.ResponseWriter, r *http.Request) {
+func setGuardedCORS(w http.ResponseWriter, r *http.Request, allowed bool) {
 	w.Header().Set("Vary", "Origin")
 	origin := r.Header.Get("Origin")
-	if origin == "" || !OriginAllowed(r) {
+	if origin == "" || !allowed {
 		return
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -572,7 +590,21 @@ func streamOriginTrusted(origin string) bool {
 	if !ok || (scheme != "http" && scheme != "https") {
 		return false
 	}
-	return isLocalHostname(hostnameOf(hostport))
+	return isNetworkHostname(hostnameOf(hostport))
+}
+
+// networkOriginPaths maps a guarded path to the one method (plus its OPTIONS
+// preflight) that browser pages on the captain's tailnet/LAN may use: the
+// events stream the herdr web page reads and the eval relay it posts to. Every
+// other guarded route keeps OriginAllowed's strict rule.
+var networkOriginPaths = map[string]string{
+	"/api/chat/events": http.MethodGet,
+	"/api/chat/eval":   http.MethodPost,
+}
+
+func networkOriginRoute(path, method string) bool {
+	m, ok := networkOriginPaths[path]
+	return ok && (m == method || method == http.MethodOptions)
 }
 
 // Wrap returns next with the origin/content-type guard in front of it. Apply
@@ -588,7 +620,11 @@ func Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		if !OriginAllowed(r) {
+		allowed := OriginAllowed(r)
+		if !allowed && networkOriginRoute(path, r.Method) {
+			allowed = streamOriginTrusted(r.Header.Get("Origin"))
+		}
+		if !allowed {
 			if r.Method == http.MethodOptions {
 				deny(w, http.StatusForbidden, "cross-origin preflight rejected")
 				return
@@ -600,7 +636,7 @@ func Wrap(next http.Handler) http.Handler {
 		// Preflight on a guarded path from an ALLOWED origin: answer it here
 		// rather than letting it fall through to a handler that would 405.
 		if r.Method == http.MethodOptions {
-			setGuardedCORS(w, r)
+			setGuardedCORS(w, r, allowed)
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -626,7 +662,7 @@ func Wrap(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 			}
 		} else {
-			setGuardedCORS(w, r)
+			setGuardedCORS(w, r, allowed)
 		}
 		next.ServeHTTP(w, r)
 	})

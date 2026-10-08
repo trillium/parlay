@@ -652,12 +652,8 @@ var networkOriginCases = []struct {
 func TestNetworkOriginRuleEdges(t *testing.T) {
 	for _, c := range networkOriginCases {
 		t.Run(c.origin, func(t *testing.T) {
-			r := req(t, http.MethodGet, "/api/chat/events", c.origin, "")
-			if got := OriginAllowed(r); got != c.want {
-				t.Errorf("OriginAllowed(%q) = %v, want %v", c.origin, got, c.want)
-			}
 			rec := httptest.NewRecorder()
-			Wrap(pass()).ServeHTTP(rec, r)
+			Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", c.origin, ""))
 			acao := rec.Header().Get("Access-Control-Allow-Origin")
 			if c.want && acao != c.origin {
 				t.Errorf("stream ACAO for %q = %q, want the exact origin", c.origin, acao)
@@ -669,5 +665,39 @@ func TestNetworkOriginRuleEdges(t *testing.T) {
 				t.Errorf("wildcard ACAO for %q", c.origin)
 			}
 		})
+	}
+}
+
+// The wider tailnet/LAN rule is scoped to the events stream and the eval relay;
+// every other guarded mutating route keeps the strict rule and refuses it.
+func TestNetworkOriginsAreRefusedOnOtherGuardedRoutes(t *testing.T) {
+	wide := []string{"https://box.tail1234.ts.net", "http://macbook:8787", "http://100.74.138.74:8787", "http://[fd7a:115c:a1e0::1]:8787"}
+	for _, origin := range wide {
+		rec := httptest.NewRecorder()
+		Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/send", origin, "application/json"))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("POST /send from %s: status = %d, want 403", origin, rec.Code)
+		}
+		if rec.Header().Get("Access-Control-Allow-Origin") != "" {
+			t.Errorf("POST /send from %s: ACAO present", origin)
+		}
+
+		rec = httptest.NewRecorder()
+		Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/eval", origin, "application/json"))
+		if rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Origin") != origin {
+			t.Errorf("POST /eval from %s: status=%d ACAO=%q, want 200 and echo", origin, rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+		}
+
+		rec = httptest.NewRecorder()
+		Wrap(pass()).ServeHTTP(rec, req(t, http.MethodOptions, "/api/chat/events", origin, ""))
+		if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != origin {
+			t.Errorf("OPTIONS /events from %s: status=%d, want 204 with echo", origin, rec.Code)
+		}
+
+		rec = httptest.NewRecorder()
+		Wrap(pass()).ServeHTTP(rec, req(t, http.MethodOptions, "/api/chat/send", origin, ""))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("OPTIONS /send from %s: status = %d, want 403", origin, rec.Code)
+		}
 	}
 }

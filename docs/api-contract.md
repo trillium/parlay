@@ -75,7 +75,7 @@ no longer registers the channel (task-1t0m). On those routes:
   hook and server-to-server caller, and a browser cannot omit `Origin` on a
   cross-site request. Nothing in this document changes for those callers.
 - A request **with** an `Origin` must be same-origin, a loopback / `.local` /
-  RFC1918 private-LAN / Tailscale (`100.64.0.0/10`, `*.ts.net`) / IPv6 ULA (`fc00::/7`) or link-local (`fe80::/10`) / bare single-label hostname (`macbook`) origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
+  private-LAN origin, or listed in `PARLAY_ALLOWED_ORIGINS` (comma-separated;
   `*` opts out). Otherwise: **403** with no CORS headers at all, and the
   handler is never reached. Preflight from such an origin is refused the same
   way.
@@ -115,7 +115,7 @@ cross-origin reader: it is served from another origin (for example
 `http://<host>:8787`) and builds its server URL as `${protocol}//${hostname}:4242`,
 so `GET /api/chat/events` reflects `Access-Control-Allow-Origin` (plus
 `Vary: Origin`) for an http/https origin whose host is on the captain's own
-network — loopback, `.local`, an RFC1918 private-LAN address (`10/8`,
+tailnet/LAN — loopback, `.local`, an RFC1918 private-LAN address (`10/8`,
 `172.16/12`, `192.168/16`), an IPv6 ULA (`fc00::/7`, including the tailnet
 `fd7a:115c:a1e0::/48`) or link-local (`fe80::/10`) address, a Tailscale address
 (`100.64.0.0/10`), a `*.ts.net` name, or a bare single-label hostname such as
@@ -125,7 +125,10 @@ parsed address or a label-boundary suffix, so `10.evil.com`, `evil-ts.net` and
 `x.ts.net.evil.com` do not qualify (any dotted non-`.local`/`.ts.net` name is public). The echo is always the exact origin, never
 a wildcard (a `*` entry is not echoed as one). A same-Host origin on a public
 name is allowed through the guard but gets no ACAO unless listed; a disallowed
-origin gets 403. No configuration is needed for LAN or tailnet pages; without
+origin gets 403. The same wider tailnet/LAN rule applies to `POST /api/chat/eval`
+and to the OPTIONS preflight of those two routes **only**; every other guarded
+route keeps the strict rule above and answers 403, with no CORS headers, to a
+`*.ts.net`, bare-host, tailnet-address or IPv6 ULA origin. No configuration is needed for LAN or tailnet pages; without
 the ACAO the page never receives the `input_action` reply that makes the spoken
 "bravely" line-ender submit.
 
