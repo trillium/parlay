@@ -306,65 +306,81 @@ func TestEventsIngressAndStreamAreBothGuarded(t *testing.T) {
 	}
 }
 
-// TestGuardingTheEventsPathGrantsNoCORSOnItsStream pins the other half of that
-// classification. Guarding a path also turns the reflected ACAO on for every
-// origin OriginAllowed accepts, which includes any page on the captain's LAN —
-// so putting /api/chat/events in GuardedPaths for the sake of its POST ingress
-// would otherwise hand a LAN page a readable SSE stream it could not read
-// before. The refusal is the part that is stricter than the TS side; the grant
-// must not come with it.
-func TestGuardingTheEventsPathGrantsNoCORSOnItsStream(t *testing.T) {
-	// The regression: an origin the guard ALLOWS still gets no CORS headers on
-	// the stream, so a foreign page's EventSource runs but reads nothing.
-	rec := httptest.NewRecorder()
-	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", "http://192.168.1.42:4242", ""))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("allowed LAN origin: status = %d, want 200", rec.Code)
-	}
-	for _, h := range []string{
-		"Access-Control-Allow-Origin",
-		"Access-Control-Allow-Methods",
-		"Access-Control-Allow-Headers",
-	} {
-		if got := rec.Header().Get(h); got != "" {
-			t.Errorf("GET /api/chat/events carries %s: %q, want it absent", h, got)
-		}
-	}
-	// Vary is a cache directive, not a grant, and the response really does
-	// differ by Origin (403 vs. the stream).
-	if got := rec.Header().Get("Vary"); got != "Origin" {
-		t.Errorf("Vary = %q, want %q", got, "Origin")
+// TestEventsStreamCORSIsListedOriginsOnly pins the herdr-web case: the page
+// at http://<host>:8787 opens a cross-origin EventSource to this server's
+// GET /api/chat/events and needs an ACAO to read the input_action frames that
+// make the spoken "bravely" line-ender submit. The grant is limited to origins
+// named verbatim in PARLAY_ALLOWED_ORIGINS — never a wildcard, never an origin
+// that is merely accepted by OriginAllowed (LAN, loopback, .local).
+func TestEventsStreamCORSIsListedOriginsOnly(t *testing.T) {
+	const herdr = "http://100.74.138.74:8787"
+	t.Setenv("PARLAY_ALLOWED_ORIGINS", herdr+", http://macbook:8787")
+
+	get := func(origin string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", origin, ""))
+		return rec
 	}
 
-	// The 403 the path is guarded for is untouched.
-	rec = httptest.NewRecorder()
-	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", "https://evil.example.com", ""))
+	for _, origin := range []string{herdr, "http://macbook:8787"} {
+		rec := get(origin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("listed origin %s: status = %d, want 200", origin, rec.Code)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Errorf("listed origin %s: ACAO = %q, want the origin", origin, got)
+		}
+		if got := rec.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("Vary = %q, want Origin", got)
+		}
+	}
+
+	// Allowed by OriginAllowed (private LAN, loopback) but not listed: the
+	// stream is served, no ACAO.
+	for _, origin := range []string{"http://192.168.1.42:4242", "http://localhost:4242", "http://captain.local:8787"} {
+		rec := get(origin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("unlisted allowed origin %s: status = %d, want 200", origin, rec.Code)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("unlisted origin %s: ACAO = %q, want absent", origin, got)
+		}
+	}
+
+	// A hostile origin is still refused outright and gets no ACAO.
+	rec := get("https://evil.example.com")
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("hostile origin: status = %d, want 403", rec.Code)
 	}
-
-	// And every caller that actually streams today still gets its stream.
-	for _, c := range []struct{ name, origin string }{
-		{"a no-Origin client (curl, the CLI)", ""},
-		{"the panel itself", "http://localhost:4242"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/events", c.origin, ""))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200", rec.Code)
-			}
-		})
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("hostile origin: ACAO = %q, want absent", got)
 	}
 
-	// Method-scoped: the POST ingress is an ordinary guarded route and keeps
-	// the reflected ACAO, so the carve-out cannot be read as "this path is
-	// half-guarded".
+	// No Origin (curl, the CLI, the tailers): a stream, no CORS headers.
+	rec = get("")
+	if rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("no-Origin: status=%d ACAO=%q, want 200 and none", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// A "*" entry admits origins to the guard but is never echoed as a wildcard
+	// nor reflected for an origin that is not itself listed.
+	t.Setenv("PARLAY_ALLOWED_ORIGINS", "*")
+	rec = get("https://evil.example.com")
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("wildcard entry: ACAO = %q, want absent", got)
+	}
+
+	// Other guarded reads keep their posture: /action-log never sends ACAO.
+	t.Setenv("PARLAY_ALLOWED_ORIGINS", herdr)
+	rec = httptest.NewRecorder()
+	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodGet, "/api/chat/action-log", herdr, ""))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("GET /api/chat/action-log: ACAO = %q, want absent", got)
+	}
+
+	// The POST ingress keeps its ordinary reflected ACAO.
 	rec = httptest.NewRecorder()
 	Wrap(pass()).ServeHTTP(rec, req(t, http.MethodPost, "/api/chat/events", "http://192.168.1.42:4242", "application/json"))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("POST from an allowed LAN origin: status = %d, want 200", rec.Code)
-	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://192.168.1.42:4242" {
 		t.Errorf("POST ingress ACAO = %q, want the reflected origin", got)
 	}

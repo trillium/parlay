@@ -110,14 +110,18 @@ an external-producer ingress on `POST /api/chat/events` (see [SSE
 Events](#sse-events) below), so the path is in `internal/guard.GuardedPaths`,
 and because that classifier is method-independent the `GET` SSE stream is
 guarded with it. No caller loses the stream: the panel is same-origin, and the
-tailers, the CLI and curl send no `Origin`. Guarding a read path is **not** a
-one-way tightening, though — it also reflects an `Access-Control-Allow-Origin`
-back to every origin the guard *allows* (any loopback, `.local` or private-LAN
-page), which on a stream that has never sent CORS headers would be new read
-access. `noGuardedCORSReads` in `internal/guard/guard.go` suppresses it: `GET
-/api/chat/events` answers with `Vary: Origin` and **no** CORS headers, so a
-disallowed origin gets 403 and an allowed one gets a stream it still cannot
-read cross-origin.
+tailers, the CLI and curl send no `Origin`. The herdr web page is the one
+cross-origin reader: it is served from another origin (for example
+`http://<host>:8787`) and builds its server URL as `${protocol}//${hostname}:4242`,
+so `GET /api/chat/events` reflects `Access-Control-Allow-Origin` (plus
+`Vary: Origin`) **only** for an origin listed verbatim in
+`PARLAY_ALLOWED_ORIGINS` (`listedOriginCORSReads` in `internal/guard/guard.go`).
+An origin the guard merely accepts (loopback, `.local`, private LAN) but the
+operator did not list gets the stream and no ACAO; a disallowed origin gets 403;
+a `*` entry is never echoed as a wildcard. With `PARLAY_ALLOWED_ORIGINS` unset the stream sends no ACAO to any
+cross-origin page, so the herdr web origin must be listed there: without the
+ACAO the page never receives the `input_action` reply that makes the spoken
+"bravely" line-ender submit.
 
 The read surface is not purely read-only, but the boundary above is the whole
 of the guard's scope: the deleted TS server's two unguarded reads
