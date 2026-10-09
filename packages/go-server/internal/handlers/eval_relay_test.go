@@ -289,3 +289,25 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// The engine scopes version tracking by (device, stream); it can only do that
+// if the relay hands it the device. Dropping it would put the phone and the
+// laptop back on one shared version counter.
+func TestRelayForwardsDeviceToEngine(t *testing.T) {
+	resetStreamTable(t)
+	fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("engine got undecodable request: %v", err)
+		}
+		if got["device"] != "iphone" {
+			t.Errorf("engine saw device %v, want iphone", got["device"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"v":1,"streamId":"box","seq":1,"baseVersion":1,"actions":[],"engineEvalNs":7}`))
+	})
+	rec := postEval(t, newHub(newBroker()), `{"device":"iphone","streamId":"box","version":1,"text":"bravely"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+}

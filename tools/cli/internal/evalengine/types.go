@@ -21,7 +21,12 @@ type Tab struct {
 
 // EvalRequest is the body of POST /eval — the versioned buffer snapshot.
 type EvalRequest struct {
-	StreamID     string    `json:"streamId"`
+	StreamID string `json:"streamId"`
+	// Device is the client that stamped Version. Version is a per-client counter,
+	// so two devices sharing one streamId (a herdr voice box open on a laptop and
+	// a phone) each count from their own origin; engine state is therefore keyed
+	// by (Device, StreamID). Empty = legacy caller, keyed by StreamID alone.
+	Device       string    `json:"device,omitempty"`
 	Version      int64     `json:"version"`      // client-owned monotonic input version
 	Text         string    `json:"text"`         // full buffer (already voice-settled by the client)
 	Cursor       CursorPos `json:"cursor"`       // selection at snapshot time
@@ -64,7 +69,10 @@ type EvalResponse struct {
 // streamState is the per-input-box server-side state: the armed submit timer and
 // the seq counter. This is the distributed input state brain-v4vje §3 warns about.
 type streamState struct {
-	mu          sync.Mutex
+	mu sync.Mutex
+	// streamID is the client-visible id (the engine map is keyed by streamKey,
+	// which may add the device); async fires report this one so they route.
+	streamID    string
 	seq         int64
 	lastVersion int64
 	// platform is the surface this stream belongs to, recorded from the request so

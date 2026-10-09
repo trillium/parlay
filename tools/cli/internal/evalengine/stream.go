@@ -2,6 +2,17 @@ package evalengine
 
 import "time"
 
+// streamKey is the engine's state key for a request: version, seq and the submit
+// timer are all per (device, stream), never per bare streamId, because the
+// version counter belongs to one client. Without a device it is the streamId,
+// preserving legacy behaviour byte-for-byte.
+func streamKey(req EvalRequest) string {
+	if req.Device == "" {
+		return req.StreamID
+	}
+	return req.Device + "\x00" + req.StreamID
+}
+
 func (e *Engine) stream(id string) *streamState {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -18,7 +29,8 @@ func (e *Engine) stream(id string) *streamState {
 // countdown that in the client build is a local setTimeout now runs on the server,
 // one network hop away from the live buffer.
 func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList, delayMs int) {
-	st := e.stream(req.StreamID)
+	key := streamKey(req)
+	st := e.stream(key)
 	st.mu.Lock()
 	// Re-arm: clear any prior timer (builtins.ts:22 clearTimeout(submitTimer)).
 	if st.submitTimer != nil {
@@ -28,10 +40,10 @@ func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList, del
 	gen := st.timerGen
 	st.submitTail = m.matchedText
 	st.submitBaseVer = req.Version
-	streamID := req.StreamID
+	st.streamID = req.StreamID
 
 	st.submitTimer = time.AfterFunc(time.Duration(delayMs)*time.Millisecond, func() {
-		e.fireSubmit(streamID, gen)
+		e.fireSubmit(key, gen)
 	})
 	st.mu.Unlock()
 
@@ -51,8 +63,8 @@ func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList, del
 // re-verifies against the version it armed with and hands the client a submitNow
 // carrying requireTail. The client does the FINAL re-verify against its truly
 // current buffer before sending — the irreversibility guard.
-func (e *Engine) fireSubmit(streamID string, gen int64) {
-	st := e.stream(streamID)
+func (e *Engine) fireSubmit(key string, gen int64) {
+	st := e.stream(key)
 	st.mu.Lock()
 	// Generation guard: if a newer arm/cancel happened, this fire is stale.
 	if gen != st.timerGen {
@@ -65,6 +77,7 @@ func (e *Engine) fireSubmit(streamID string, gen int64) {
 	tail := st.submitTail
 	base := st.submitBaseVer
 	platform := st.platform // the surface this fire must land on
+	streamID := st.streamID // client-visible id, not the device-qualified key
 	st.submitTimer = nil
 	st.timerGen++ // consume this generation
 	seq := st.seq // the submitNow will get its own seq from pushSubmit
@@ -81,7 +94,7 @@ func (e *Engine) fireSubmit(streamID string, gen int64) {
 	// current buffer and send the remainder" — see dispatcher.ts submitNow.
 	if e.onSubmit != nil {
 		// seq is assigned inside onSubmit via nextSeq to keep ordering correct.
-		e.onSubmit(streamID, e.nextSeq(streamID), base, tail, "", platform)
+		e.onSubmit(streamID, e.nextSeq(key), base, tail, "", platform)
 	}
 }
 

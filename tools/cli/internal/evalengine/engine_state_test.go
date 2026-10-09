@@ -3,6 +3,7 @@ package evalengine
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -346,4 +347,59 @@ func staleFires(e *Engine) int64 {
 	e.stats.mu.Lock()
 	defer e.stats.mu.Unlock()
 	return e.stats.StaleTimerFires
+}
+
+// The herdr voice box uses one fixed streamId on every device, and Version is a
+// per-client counter — so a phone that restarts at 1 must not be judged stale
+// against the laptop's 40. Staleness stays enforced within one (device, stream).
+func TestVersionIsScopedPerDeviceOnSharedStream(t *testing.T) {
+	e := NewEngine()
+	const stream = "herdr-voice-box-wXA:pG"
+	req := func(dev string, v int64) EvalRequest {
+		return EvalRequest{StreamID: stream, Device: dev, Version: v, Text: "bravely"}
+	}
+	isStale := func(r EvalResponse) bool {
+		for _, a := range r.Actions {
+			if strings.Contains(marshal(t, a), "stale-request-version") {
+				return true
+			}
+		}
+		return false
+	}
+
+	if isStale(e.Eval(req("macbook", 40))) {
+		t.Fatal("first macbook request must be accepted")
+	}
+	if isStale(e.Eval(req("iphone", 1))) {
+		t.Fatal("iphone v1 after macbook v40 must be accepted: versions are per device")
+	}
+	if !isStale(e.Eval(req("macbook", 39))) {
+		t.Fatal("stale protection lost: macbook v39 after v40 must still be dropped")
+	}
+	if !isStale(e.Eval(req("iphone", 0))) {
+		t.Fatal("stale protection lost: iphone v0 after v1 must still be dropped")
+	}
+	// Legacy callers (no device) keep the single shared counter.
+	e.Eval(EvalRequest{StreamID: "legacy", Version: 5, Text: "x"})
+	if !isStale(e.Eval(EvalRequest{StreamID: "legacy", Version: 4, Text: "x"})) {
+		t.Fatal("deviceless stale request must still be dropped")
+	}
+}
+
+// A server-owned fire must report the client-visible streamId (so the relay can
+// route it), not the device-qualified internal key.
+func TestSubmitFireReportsClientStreamID(t *testing.T) {
+	e := NewEngine()
+	got := make(chan string, 1)
+	e.onSubmit = func(streamID string, _, _ int64, _, _, _ string) { got <- streamID }
+	m := &matchResult{matchedText: "submit"}
+	e.armSubmit(EvalRequest{StreamID: "box", Device: "iphone", Version: 1}, m, &actionList{}, 10)
+	select {
+	case id := <-got:
+		if id != "box" {
+			t.Fatalf("fire streamId = %q, want %q", id, "box")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("submit never fired")
+	}
 }

@@ -34,7 +34,7 @@ func NewEngine() *Engine {
 // returned so the captain can compare it to network RTT.
 func (e *Engine) Eval(req EvalRequest) EvalResponse {
 	start := time.Now()
-	st := e.stream(req.StreamID)
+	st := e.stream(streamKey(req))
 
 	st.mu.Lock()
 	// Last-write-wins: drop a stale in-flight request whose version is older than
@@ -75,7 +75,7 @@ func (e *Engine) Eval(req EvalRequest) EvalResponse {
 	// client's Enter/button path (untouched by this build).
 	if !req.VoiceEnabled {
 		// A change with voice off cancels any armed submit and does nothing else.
-		e.cancelSubmit(req.StreamID, out, "voice-disabled")
+		e.cancelSubmit(streamKey(req), out, "voice-disabled")
 		out.add(actNoop("voice-disabled"))
 		return e.finish(req, st, out, "", start)
 	}
@@ -188,7 +188,7 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 		// watch(): the submit machine self-cancels the moment the buffer no longer
 		// ends with the armed trigger (builtins.ts:34-36).
 		if submitHandler && !matched {
-			e.cancelSubmit(req.StreamID, out, "tail-changed")
+			e.cancelSubmit(streamKey(req), out, "tail-changed")
 		}
 	}
 	return fired

@@ -280,6 +280,7 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 		// callers (which send none) evaluate exactly as before.
 		engineReq := map[string]interface{}{
 			"streamId":     req.StreamID,
+			"device":       req.Device,
 			"version":      req.Version,
 			"text":         req.Text,
 			"cursor":       req.Cursor,
