@@ -244,10 +244,10 @@ func TestStreamTableIsBounded(t *testing.T) {
 		t.Errorf("eviction list (%d) drifted from the map (%d) — one leaks without the other", order, size)
 	}
 	// Oldest-first eviction: the earliest ids are gone, the newest survive.
-	if _, ok := deviceForStream("stream-0"); ok {
+	if _, ok := deviceForStream("device-0", "stream-0"); ok {
 		t.Errorf("stream-0 survived past the cap; eviction is not oldest-first")
 	}
-	if _, ok := deviceForStream("stream-" + itoa(maxTrackedStreams+499)); !ok {
+	if _, ok := deviceForStream("device-"+itoa(maxTrackedStreams+499), "stream-"+itoa(maxTrackedStreams+499)); !ok {
 		t.Errorf("the most recent stream was evicted")
 	}
 }
@@ -271,9 +271,28 @@ func TestRememberStreamDoesNotDoubleCountRepeats(t *testing.T) {
 		t.Errorf("50 repeats of one stream produced map=%d order=%d, want 1 and 1", size, order)
 	}
 
-	rememberStream("same-stream", "device-b")
-	if got, _ := deviceForStream("same-stream"); got != "device-b" {
-		t.Errorf("re-declare did not re-point the device: got %q", got)
+}
+
+// Two devices on one streamId route independently: the second device's eval must
+// not steal the first device's async submit fire.
+func TestStreamRoutingIsPerDevice(t *testing.T) {
+	resetStreamTable(t)
+
+	rememberStream("shared", "macbook")
+	rememberStream("shared", "iphone")
+	rememberFired("macbook", "shared", "cmd-mac")
+
+	if got, ok := deviceForStream("macbook", "shared"); !ok || got != "macbook" {
+		t.Errorf("macbook fire routed to %q (ok=%v), want macbook", got, ok)
+	}
+	if got, ok := deviceForStream("iphone", "shared"); !ok || got != "iphone" {
+		t.Errorf("iphone fire routed to %q (ok=%v), want iphone", got, ok)
+	}
+	if got := firedForStream("iphone", "shared"); got != "" {
+		t.Errorf("iphone inherited macbook's fired command %q", got)
+	}
+	if got := firedForStream("macbook", "shared"); got != "cmd-mac" {
+		t.Errorf("macbook fired = %q, want cmd-mac", got)
 	}
 }
 

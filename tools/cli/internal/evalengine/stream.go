@@ -41,6 +41,7 @@ func (e *Engine) armSubmit(req EvalRequest, m *matchResult, out *actionList, del
 	st.submitTail = m.matchedText
 	st.submitBaseVer = req.Version
 	st.streamID = req.StreamID
+	st.device = req.Device
 
 	st.submitTimer = time.AfterFunc(time.Duration(delayMs)*time.Millisecond, func() {
 		e.fireSubmit(key, gen)
@@ -77,6 +78,7 @@ func (e *Engine) fireSubmit(key string, gen int64) {
 	tail := st.submitTail
 	base := st.submitBaseVer
 	platform := st.platform // the surface this fire must land on
+	device := st.device
 	streamID := st.streamID // client-visible id, not the device-qualified key
 	st.submitTimer = nil
 	st.timerGen++ // consume this generation
@@ -94,7 +96,7 @@ func (e *Engine) fireSubmit(key string, gen int64) {
 	// current buffer and send the remainder" — see dispatcher.ts submitNow.
 	if e.onSubmit != nil {
 		// seq is assigned inside onSubmit via nextSeq to keep ordering correct.
-		e.onSubmit(streamID, e.nextSeq(key), base, tail, "", platform)
+		e.onSubmit(streamID, e.nextSeq(key), base, tail, "", platform, device)
 	}
 }
 

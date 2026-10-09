@@ -73,6 +73,7 @@ type streamState struct {
 	// streamID is the client-visible id (the engine map is keyed by streamKey,
 	// which may add the device); async fires report this one so they route.
 	streamID    string
+	device      string
 	seq         int64
 	lastVersion int64
 	// platform is the surface this stream belongs to, recorded from the request so
@@ -111,7 +112,7 @@ type Engine struct {
 	// The service layer wires this to push a submitNow over SSE (engine has no
 	// network of its own). base is the version armed against; tail is what to
 	// re-verify; text is the stripped remainder.
-	onSubmit func(streamID string, seq int64, base int64, tail, text, platform string)
+	onSubmit func(streamID string, seq int64, base int64, tail, text, platform, device string)
 
 	// Observability counters (exposed at /stats).
 	stats Stats

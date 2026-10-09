@@ -21,7 +21,7 @@ func collectFires(t *testing.T) (*Engine, func() int) {
 	t.Helper()
 	e := NewEngine()
 	var n int32
-	e.onSubmit = func(string, int64, int64, string, string, string) { atomic.AddInt32(&n, 1) }
+	e.onSubmit = func(string, int64, int64, string, string, string, string) { atomic.AddInt32(&n, 1) }
 	return e, func() int { return int(atomic.LoadInt32(&n)) }
 }
 
@@ -93,7 +93,7 @@ func TestFireSubmitFreshGenerationCallsBack(t *testing.T) {
 	var mu sync.Mutex
 	var gotTail string
 	var gotBase int64
-	e.onSubmit = func(_ string, _ int64, base int64, tail string, _ string, _ string) {
+	e.onSubmit = func(_ string, _ int64, base int64, tail string, _ string, _ string, _ string) {
 		mu.Lock()
 		gotTail, gotBase = tail, base
 		mu.Unlock()
@@ -128,7 +128,7 @@ func TestFireSubmitFreshGenerationCallsBack(t *testing.T) {
 func TestArmSubmitReArmBumpsGenerationAndTail(t *testing.T) {
 	// Re-arming must Stop the prior timer, bump timerGen, and replace the tail.
 	e := NewEngine()
-	e.onSubmit = func(string, int64, int64, string, string, string) {}
+	e.onSubmit = func(string, int64, int64, string, string, string, string) {}
 	e.armSubmit(EvalRequest{StreamID: "s", Version: 1}, &matchResult{matchedText: "bravely"}, &actionList{}, 1000)
 	st := e.stream("s")
 	st.mu.Lock()
@@ -213,7 +213,7 @@ func TestConcurrentStreamsIsolated(t *testing.T) {
 	e := NewEngine()
 	var mu sync.Mutex
 	tails := map[string][]string{}
-	e.onSubmit = func(streamID string, _ int64, _ int64, tail string, _ string, _ string) {
+	e.onSubmit = func(streamID string, _ int64, _ int64, tail string, _ string, _ string, _ string) {
 		mu.Lock()
 		tails[streamID] = append(tails[streamID], tail)
 		mu.Unlock()
@@ -260,7 +260,7 @@ func TestConcurrentStalePathUnderRace(t *testing.T) {
 	// the generation guard + mutex prevent a data race and a wrong-tail fire.
 	e := NewEngine()
 	var fires int32
-	e.onSubmit = func(string, int64, int64, string, string, string) { atomic.AddInt32(&fires, 1) }
+	e.onSubmit = func(string, int64, int64, string, string, string, string) { atomic.AddInt32(&fires, 1) }
 	for i := int64(1); i <= 200; i++ {
 		eval(e, "spam send it", i, nil)
 	}
@@ -391,7 +391,7 @@ func TestVersionIsScopedPerDeviceOnSharedStream(t *testing.T) {
 func TestSubmitFireReportsClientStreamID(t *testing.T) {
 	e := NewEngine()
 	got := make(chan string, 1)
-	e.onSubmit = func(streamID string, _, _ int64, _, _, _ string) { got <- streamID }
+	e.onSubmit = func(streamID string, _, _ int64, _, _, _ string, _ string) { got <- streamID }
 	m := &matchResult{matchedText: "submit"}
 	e.armSubmit(EvalRequest{StreamID: "box", Device: "iphone", Version: 1}, m, &actionList{}, 10)
 	select {

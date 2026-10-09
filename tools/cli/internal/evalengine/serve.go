@@ -43,13 +43,14 @@ type PushClient struct {
 	http *http.Client
 }
 
-func (p *PushClient) pushSubmit(streamID string, seq, base int64, tail, text, platform string) {
+func (p *PushClient) pushSubmit(streamID string, seq, base int64, tail, text, platform, device string) {
 	if p.url == "" {
 		log.Printf("[submit-fire] stream=%s seq=%d base=%d tail=%q platform=%s — NO PUSH URL (dropped)", streamID, seq, base, tail, platform)
 		return
 	}
 	body, _ := json.Marshal(map[string]any{
 		"streamId":    streamID,
+		"device":      device,
 		"seq":         seq,
 		"baseVersion": base,
 		"v":           ProtocolVersion,
@@ -91,8 +92,8 @@ func Serve(addrFlag, pushURLFlag string) {
 
 	push := &PushClient{url: pushURL, http: &http.Client{Timeout: 3 * time.Second}}
 	engine := NewEngine()
-	engine.onSubmit = func(streamID string, seq, base int64, tail, text, platform string) {
-		push.pushSubmit(streamID, seq, base, tail, text, platform)
+	engine.onSubmit = func(streamID string, seq, base int64, tail, text, platform, device string) {
+		push.pushSubmit(streamID, seq, base, tail, text, platform, device)
 	}
 
 	// File layer: load a manifest from PARLAY_COMMANDS (or a commands.json next to
