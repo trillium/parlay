@@ -554,7 +554,7 @@ func handleEvalPush(st *store.Store, hub *Hub) http.HandlerFunc {
 		}
 
 		// Broadcast the response over device-scoped SSE
-		matched := hub.broadcastToDevice(device, "input_action", map[string]interface{}{
+		matched := hub.broadcastToDevice("", "input_action", map[string]interface{}{
 			"v":           v,
 			"streamId":    req.StreamID,
 			"seq":         req.Seq,

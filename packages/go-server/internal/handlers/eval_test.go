@@ -147,3 +147,42 @@ func TestHandleEvalPushWithKnownStream(t *testing.T) {
 		t.Errorf("expected ok:true, got %v", resp)
 	}
 }
+
+func TestHandleEvalPushReachesEveryDevice(t *testing.T) {
+	streamDeviceMapMu.Lock()
+	streamDeviceMap["shared-stream"] = "macbook"
+	streamDeviceMapMu.Unlock()
+	defer func() {
+		streamDeviceMapMu.Lock()
+		delete(streamDeviceMap, "shared-stream")
+		streamDeviceMapMu.Unlock()
+	}()
+
+	hub := newHubCore()
+	macCh, macCancel := hub.subscribe("macbook")
+	defer macCancel()
+	phoneCh, phoneCancel := hub.subscribe("iphone")
+	defer phoneCancel()
+
+	bodyBytes, _ := json.Marshal(evalPushRequest{
+		StreamID: "shared-stream", Seq: 1, Action: map[string]interface{}{"type": "submitNow"},
+	})
+	req := httptest.NewRequest("POST", "/api/chat/eval-push", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handleEvalPush(newTestStore(t), hub)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	for name, ch := range map[string]<-chan sseEvent{"macbook": macCh, "iphone": phoneCh} {
+		select {
+		case ev := <-ch:
+			if ev.name != "input_action" {
+				t.Errorf("%s got event %q, want input_action", name, ev.name)
+			}
+		default:
+			t.Errorf("%s did not receive the pushed submitNow", name)
+		}
+	}
+}
