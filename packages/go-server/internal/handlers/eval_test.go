@@ -58,7 +58,7 @@ func TestHandleEvalWithDevice(t *testing.T) {
 	handler(w, req)
 
 	// Check that the device was registered
-	device, ok := deviceForStream("test-device", "test-stream")
+	device, ok := deviceForStream("test-stream")
 
 	if !ok || device != "test-device" {
 		t.Errorf("expected device to be registered for stream, got %v", device)

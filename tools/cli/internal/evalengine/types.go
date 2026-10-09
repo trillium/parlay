@@ -21,20 +21,16 @@ type Tab struct {
 
 // EvalRequest is the body of POST /eval — the versioned buffer snapshot.
 type EvalRequest struct {
-	StreamID string `json:"streamId"`
-	// Device is the client that stamped Version. Version is a per-client counter,
-	// so two devices sharing one streamId (a herdr voice box open on a laptop and
-	// a phone) each count from their own origin; engine state is therefore keyed
-	// by (Device, StreamID). Empty = legacy caller, keyed by StreamID alone.
-	Device       string    `json:"device,omitempty"`
-	Version      int64     `json:"version"`      // client-owned monotonic input version
-	Text         string    `json:"text"`         // full buffer (already voice-settled by the client)
-	Cursor       CursorPos `json:"cursor"`       // selection at snapshot time
-	Reason       string    `json:"reason"`       // "input" | "blur" | "resync" | "timer-fire"
-	VoiceEnabled bool      `json:"voiceEnabled"` // master gate (input.ts:100 / registry.ts:91)
-	Tabs         []Tab     `json:"tabs"`         // live agent tabs for {agent} resolution
-	Mode         string    `json:"mode"`         // "" = normal eval; "channel-select" = resolve text as a channel pick
-	Platform     string    `json:"platform"`     // "" = default (parlay); which surface this buffer belongs to
+	StreamID     string    `json:"streamId"`
+	Device       string    `json:"device,omitempty"` // client that stamped Version; "" = unknown
+	Version      int64     `json:"version"`          // client-owned monotonic input version
+	Text         string    `json:"text"`             // full buffer (already voice-settled by the client)
+	Cursor       CursorPos `json:"cursor"`           // selection at snapshot time
+	Reason       string    `json:"reason"`           // "input" | "blur" | "resync" | "timer-fire"
+	VoiceEnabled bool      `json:"voiceEnabled"`     // master gate (input.ts:100 / registry.ts:91)
+	Tabs         []Tab     `json:"tabs"`             // live agent tabs for {agent} resolution
+	Mode         string    `json:"mode"`             // "" = normal eval; "channel-select" = resolve text as a channel pick
+	Platform     string    `json:"platform"`         // "" = default (parlay); which surface this buffer belongs to
 
 	// Commands is an OPTIONAL per-request command manifest. When present and valid
 	// it wholly replaces the engine's command set FOR THIS REQUEST ONLY (contract
@@ -69,13 +65,13 @@ type EvalResponse struct {
 // streamState is the per-input-box server-side state: the armed submit timer and
 // the seq counter. This is the distributed input state brain-v4vje §3 warns about.
 type streamState struct {
-	mu sync.Mutex
-	// streamID is the client-visible id (the engine map is keyed by streamKey,
-	// which may add the device); async fires report this one so they route.
-	streamID    string
-	device      string
+	mu          sync.Mutex
 	seq         int64
 	lastVersion int64
+	// lastDevice is who stamped lastVersion. Version is a per-client counter, so
+	// it is only comparable against the same client's earlier versions; a request
+	// from a different device continues the shared stream and is accepted.
+	lastDevice string
 	// platform is the surface this stream belongs to, recorded from the request so
 	// an ASYNC server-owned action (a submit fire) knows which surface to update —
 	// the sync path already returns to its caller, but a fire has no caller to
@@ -112,7 +108,7 @@ type Engine struct {
 	// The service layer wires this to push a submitNow over SSE (engine has no
 	// network of its own). base is the version armed against; tail is what to
 	// re-verify; text is the stripped remainder.
-	onSubmit func(streamID string, seq int64, base int64, tail, text, platform, device string)
+	onSubmit func(streamID string, seq int64, base int64, tail, text, platform string)
 
 	// Observability counters (exposed at /stats).
 	stats Stats

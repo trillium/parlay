@@ -34,19 +34,25 @@ func NewEngine() *Engine {
 // returned so the captain can compare it to network RTT.
 func (e *Engine) Eval(req EvalRequest) EvalResponse {
 	start := time.Now()
-	st := e.stream(streamKey(req))
+	st := e.stream(req.StreamID)
 
 	st.mu.Lock()
 	// Last-write-wins: drop a stale in-flight request whose version is older than
 	// the newest we've seen for this stream (brain-v4vje §2 coalescing). We still
 	// return a noop so the client's seq accounting stays intact.
-	if req.Version < st.lastVersion {
+	//
+	// Versions are per-client counters, though, and every device shares this one
+	// stream: a different device than the one that set lastVersion is continuing
+	// the stream, not racing it, so its (possibly lower) version is accepted and
+	// becomes the new baseline.
+	if req.Version < st.lastVersion && req.Device == st.lastDevice {
 		st.mu.Unlock()
 		out := &actionList{}
 		out.add(actNoop("stale-request-version"))
 		return e.finish(req, st, out, "", start)
 	}
 	st.lastVersion = req.Version
+	st.lastDevice = req.Device
 	// Record which surface this stream is on, so a later async submit fire on this
 	// stream knows where to land (the sync response already returns to its caller).
 	st.platform = requestPlatform(req)
@@ -75,7 +81,7 @@ func (e *Engine) Eval(req EvalRequest) EvalResponse {
 	// client's Enter/button path (untouched by this build).
 	if !req.VoiceEnabled {
 		// A change with voice off cancels any armed submit and does nothing else.
-		e.cancelSubmit(streamKey(req), out, "voice-disabled")
+		e.cancelSubmit(req.StreamID, out, "voice-disabled")
 		out.add(actNoop("voice-disabled"))
 		return e.finish(req, st, out, "", start)
 	}
@@ -188,7 +194,7 @@ func (e *Engine) runPass(req EvalRequest, out *actionList) string {
 		// watch(): the submit machine self-cancels the moment the buffer no longer
 		// ends with the armed trigger (builtins.ts:34-36).
 		if submitHandler && !matched {
-			e.cancelSubmit(streamKey(req), out, "tail-changed")
+			e.cancelSubmit(req.StreamID, out, "tail-changed")
 		}
 	}
 	return fired

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"parlay/go-server/internal/store"
 )
@@ -244,10 +245,10 @@ func TestStreamTableIsBounded(t *testing.T) {
 		t.Errorf("eviction list (%d) drifted from the map (%d) — one leaks without the other", order, size)
 	}
 	// Oldest-first eviction: the earliest ids are gone, the newest survive.
-	if _, ok := deviceForStream("device-0", "stream-0"); ok {
+	if _, ok := deviceForStream("stream-0"); ok {
 		t.Errorf("stream-0 survived past the cap; eviction is not oldest-first")
 	}
-	if _, ok := deviceForStream("device-"+itoa(maxTrackedStreams+499), "stream-"+itoa(maxTrackedStreams+499)); !ok {
+	if _, ok := deviceForStream("stream-" + itoa(maxTrackedStreams+499)); !ok {
 		t.Errorf("the most recent stream was evicted")
 	}
 }
@@ -271,28 +272,9 @@ func TestRememberStreamDoesNotDoubleCountRepeats(t *testing.T) {
 		t.Errorf("50 repeats of one stream produced map=%d order=%d, want 1 and 1", size, order)
 	}
 
-}
-
-// Two devices on one streamId route independently: the second device's eval must
-// not steal the first device's async submit fire.
-func TestStreamRoutingIsPerDevice(t *testing.T) {
-	resetStreamTable(t)
-
-	rememberStream("shared", "macbook")
-	rememberStream("shared", "iphone")
-	rememberFired("macbook", "shared", "cmd-mac")
-
-	if got, ok := deviceForStream("macbook", "shared"); !ok || got != "macbook" {
-		t.Errorf("macbook fire routed to %q (ok=%v), want macbook", got, ok)
-	}
-	if got, ok := deviceForStream("iphone", "shared"); !ok || got != "iphone" {
-		t.Errorf("iphone fire routed to %q (ok=%v), want iphone", got, ok)
-	}
-	if got := firedForStream("iphone", "shared"); got != "" {
-		t.Errorf("iphone inherited macbook's fired command %q", got)
-	}
-	if got := firedForStream("macbook", "shared"); got != "cmd-mac" {
-		t.Errorf("macbook fired = %q, want cmd-mac", got)
+	rememberStream("same-stream", "device-b")
+	if got, _ := deviceForStream("same-stream"); got != "device-b" {
+		t.Errorf("re-declare did not re-point the device: got %q", got)
 	}
 }
 
@@ -309,24 +291,39 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// The engine scopes version tracking by (device, stream); it can only do that
-// if the relay hands it the device. Dropping it would put the phone and the
-// laptop back on one shared version counter.
-func TestRelayForwardsDeviceToEngine(t *testing.T) {
+// Every device shares one stream: the MacBook edits at a high version, then the
+// iPhone (whose counter restarted at 1) edits. The iPhone edit must reach the
+// engine as the shared stream's next edit, and its result must be pushed to
+// BOTH devices.
+func TestSharedStreamEditFromSecondDeviceIsPushedToBothDevices(t *testing.T) {
 	resetStreamTable(t)
+	var seen []map[string]any
 	fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
 		var got map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Errorf("engine got undecodable request: %v", err)
-		}
-		if got["device"] != "iphone" {
-			t.Errorf("engine saw device %v, want iphone", got["device"])
-		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		seen = append(seen, got)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"v":1,"streamId":"box","seq":1,"baseVersion":1,"actions":[],"engineEvalNs":7}`))
+		w.Write([]byte(`{"v":1,"streamId":"box","seq":1,"baseVersion":1,"actions":[{"verb":"setText","args":{"text":"x"}}],"engineEvalNs":7}`))
 	})
-	rec := postEval(t, newHub(newBroker()), `{"device":"iphone","streamId":"box","version":1,"text":"bravely"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
+	mac, cancelMac := hub.subscribe("macbook")
+	defer cancelMac()
+	phone, cancelPhone := hub.subscribe("iphone")
+	defer cancelPhone()
+
+	postEval(t, hub, `{"device":"macbook","streamId":"box","version":40,"text":"hello"}`)
+	postEval(t, hub, `{"device":"iphone","streamId":"box","version":1,"text":"bravely"}`)
+
+	if len(seen) != 2 || seen[1]["device"] != "iphone" {
+		t.Fatalf("engine must see the iphone edit with its device, got %v", seen)
+	}
+	// MacBook gets its own result then the iPhone edit's; the iPhone gets both too.
+	for name, sub := range map[string]<-chan sseEvent{"macbook": mac, "iphone": phone} {
+		for i := 0; i < 2; i++ {
+			if ev := awaitEvent(t, sub, "input_action", time.Second); ev.data == nil {
+				t.Fatalf("%s missed push %d", name, i+1)
+			}
+		}
 	}
 }

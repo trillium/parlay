@@ -107,10 +107,8 @@ hot" tell apart from "drained after a reconnect".
 
 The composer posts every text change — typed or dictated — as a versioned
 buffer snapshot to `POST /api/chat/eval`, and the compiled engine answers with
-actions against that snapshot. When a newer snapshot for the same stream
-*from the same device* has already been evaluated (version state is scoped by
-`(device, stream)`, so a phone whose versions restart low is not superseded by
-a laptop's higher ones on a shared stream id), the engine fast-returns a `noop` whose reason is
+actions against that snapshot. When a newer snapshot for the same stream has
+already been evaluated, the engine fast-returns a `noop` whose reason is
 `stale-request-version`: its own name for **a later input replaced this one
 before it was acted on** (`tools/cli/internal/evalengine/engine.go`,
 "Last-write-wins").

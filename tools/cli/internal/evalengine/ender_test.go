@@ -131,7 +131,7 @@ func TestEnderPerBoxIsolation(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var got []fire
-	e.onSubmit = func(streamID string, _ int64, base int64, tail, _ string, platform string, _ string) {
+	e.onSubmit = func(streamID string, _ int64, base int64, tail, _ string, platform string) {
 		mu.Lock()
 		got = append(got, fire{streamID, tail, platform, base})
 		mu.Unlock()
@@ -177,7 +177,7 @@ func TestEnderEndToEndSubmitNowViaTriggerPath(t *testing.T) {
 	var mu sync.Mutex
 	var tails []string
 	var seqs []int64
-	e.onSubmit = func(_ string, seq, base int64, tail, text, platform string, _ string) {
+	e.onSubmit = func(_ string, seq, base int64, tail, text, platform string) {
 		// Reproduce what PushClient.pushSubmit sends: verb submitNow with
 		// requireTail=tail. The client strips the tail and submits the rest.
 		mu.Lock()

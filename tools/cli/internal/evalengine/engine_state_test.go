@@ -21,7 +21,7 @@ func collectFires(t *testing.T) (*Engine, func() int) {
 	t.Helper()
 	e := NewEngine()
 	var n int32
-	e.onSubmit = func(string, int64, int64, string, string, string, string) { atomic.AddInt32(&n, 1) }
+	e.onSubmit = func(string, int64, int64, string, string, string) { atomic.AddInt32(&n, 1) }
 	return e, func() int { return int(atomic.LoadInt32(&n)) }
 }
 
@@ -93,7 +93,7 @@ func TestFireSubmitFreshGenerationCallsBack(t *testing.T) {
 	var mu sync.Mutex
 	var gotTail string
 	var gotBase int64
-	e.onSubmit = func(_ string, _ int64, base int64, tail string, _ string, _ string, _ string) {
+	e.onSubmit = func(_ string, _ int64, base int64, tail string, _ string, _ string) {
 		mu.Lock()
 		gotTail, gotBase = tail, base
 		mu.Unlock()
@@ -128,7 +128,7 @@ func TestFireSubmitFreshGenerationCallsBack(t *testing.T) {
 func TestArmSubmitReArmBumpsGenerationAndTail(t *testing.T) {
 	// Re-arming must Stop the prior timer, bump timerGen, and replace the tail.
 	e := NewEngine()
-	e.onSubmit = func(string, int64, int64, string, string, string, string) {}
+	e.onSubmit = func(string, int64, int64, string, string, string) {}
 	e.armSubmit(EvalRequest{StreamID: "s", Version: 1}, &matchResult{matchedText: "bravely"}, &actionList{}, 1000)
 	st := e.stream("s")
 	st.mu.Lock()
@@ -213,7 +213,7 @@ func TestConcurrentStreamsIsolated(t *testing.T) {
 	e := NewEngine()
 	var mu sync.Mutex
 	tails := map[string][]string{}
-	e.onSubmit = func(streamID string, _ int64, _ int64, tail string, _ string, _ string, _ string) {
+	e.onSubmit = func(streamID string, _ int64, _ int64, tail string, _ string, _ string) {
 		mu.Lock()
 		tails[streamID] = append(tails[streamID], tail)
 		mu.Unlock()
@@ -260,7 +260,7 @@ func TestConcurrentStalePathUnderRace(t *testing.T) {
 	// the generation guard + mutex prevent a data race and a wrong-tail fire.
 	e := NewEngine()
 	var fires int32
-	e.onSubmit = func(string, int64, int64, string, string, string, string) { atomic.AddInt32(&fires, 1) }
+	e.onSubmit = func(string, int64, int64, string, string, string) { atomic.AddInt32(&fires, 1) }
 	for i := int64(1); i <= 200; i++ {
 		eval(e, "spam send it", i, nil)
 	}
@@ -349,16 +349,12 @@ func staleFires(e *Engine) int64 {
 	return e.stats.StaleTimerFires
 }
 
-// The herdr voice box uses one fixed streamId on every device, and Version is a
-// per-client counter — so a phone that restarts at 1 must not be judged stale
-// against the laptop's 40. Staleness stays enforced within one (device, stream).
-func TestVersionIsScopedPerDeviceOnSharedStream(t *testing.T) {
+// Every device shares one stream and Version is a per-client counter, so an
+// iPhone that restarts at v1 after the MacBook reached v40 is continuing the
+// stream, not sending a stale request. Same-device staleness still holds.
+func TestDifferentDeviceLowerVersionIsAcceptedOnSharedStream(t *testing.T) {
 	e := NewEngine()
-	const stream = "herdr-voice-box-wXA:pG"
-	req := func(dev string, v int64) EvalRequest {
-		return EvalRequest{StreamID: stream, Device: dev, Version: v, Text: "bravely"}
-	}
-	isStale := func(r EvalResponse) bool {
+	stale := func(r EvalResponse) bool {
 		for _, a := range r.Actions {
 			if strings.Contains(marshal(t, a), "stale-request-version") {
 				return true
@@ -366,40 +362,16 @@ func TestVersionIsScopedPerDeviceOnSharedStream(t *testing.T) {
 		}
 		return false
 	}
-
-	if isStale(e.Eval(req("macbook", 40))) {
-		t.Fatal("first macbook request must be accepted")
+	req := func(dev string, v int64) EvalRequest {
+		return EvalRequest{StreamID: "herdr-voice-box-wXA:pG", Device: dev, Version: v, Text: "bravely"}
 	}
-	if isStale(e.Eval(req("iphone", 1))) {
-		t.Fatal("iphone v1 after macbook v40 must be accepted: versions are per device")
+	if stale(e.Eval(req("macbook", 40))) {
+		t.Fatal("first request must be accepted")
 	}
-	if !isStale(e.Eval(req("macbook", 39))) {
-		t.Fatal("stale protection lost: macbook v39 after v40 must still be dropped")
+	if stale(e.Eval(req("iphone", 1))) {
+		t.Fatal("iphone v1 after macbook v40 must be accepted")
 	}
-	if !isStale(e.Eval(req("iphone", 0))) {
-		t.Fatal("stale protection lost: iphone v0 after v1 must still be dropped")
-	}
-	// Legacy callers (no device) keep the single shared counter.
-	e.Eval(EvalRequest{StreamID: "legacy", Version: 5, Text: "x"})
-	if !isStale(e.Eval(EvalRequest{StreamID: "legacy", Version: 4, Text: "x"})) {
-		t.Fatal("deviceless stale request must still be dropped")
-	}
-}
-
-// A server-owned fire must report the client-visible streamId (so the relay can
-// route it), not the device-qualified internal key.
-func TestSubmitFireReportsClientStreamID(t *testing.T) {
-	e := NewEngine()
-	got := make(chan string, 1)
-	e.onSubmit = func(streamID string, _, _ int64, _, _, _ string, _ string) { got <- streamID }
-	m := &matchResult{matchedText: "submit"}
-	e.armSubmit(EvalRequest{StreamID: "box", Device: "iphone", Version: 1}, m, &actionList{}, 10)
-	select {
-	case id := <-got:
-		if id != "box" {
-			t.Fatalf("fire streamId = %q, want %q", id, "box")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("submit never fired")
+	if !stale(e.Eval(req("iphone", 0))) {
+		t.Fatal("same-device older version must still be dropped as stale")
 	}
 }

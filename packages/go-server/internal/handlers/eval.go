@@ -104,20 +104,9 @@ var (
 	streamOrder       []string // insertion order, for eviction
 )
 
-// routeKey is the push-routing key, matching the engine's (device, stream)
-// state key: two devices sharing a streamId route independently. An empty device
-// (legacy caller, or an engine push that predates the field) is the bare streamId.
-func routeKey(device, streamID string) string {
-	if device == "" {
-		return streamID
-	}
-	return device + "\x00" + streamID
-}
-
 // rememberStream records which device owns streamID, evicting the oldest
 // mapping if the table is full.
 func rememberStream(streamID, device string) {
-	streamID = routeKey(device, streamID)
 	streamDeviceMapMu.Lock()
 	defer streamDeviceMapMu.Unlock()
 
@@ -135,8 +124,7 @@ func rememberStream(streamID, device string) {
 }
 
 // deviceForStream returns the device that owns streamID, if it is still tracked.
-func deviceForStream(device, streamID string) (string, bool) {
-	streamID = routeKey(device, streamID)
+func deviceForStream(streamID string) (string, bool) {
 	streamDeviceMapMu.RLock()
 	defer streamDeviceMapMu.RUnlock()
 	device, ok := streamDeviceMap[streamID]
@@ -157,11 +145,10 @@ var (
 
 // rememberFired records which command a stream's evaluation fired, evicting the
 // oldest stream's entry when the table is full.
-func rememberFired(device, streamID, commandID string) {
+func rememberFired(streamID, commandID string) {
 	if streamID == "" || commandID == "" {
 		return
 	}
-	streamID = routeKey(device, streamID)
 	streamFiredMapMu.Lock()
 	defer streamFiredMapMu.Unlock()
 	if _, exists := streamFiredMap[streamID]; exists {
@@ -179,8 +166,7 @@ func rememberFired(device, streamID, commandID string) {
 
 // firedForStream returns the command id a stream's last evaluation fired, if the
 // stream is still tracked.
-func firedForStream(device, streamID string) string {
-	streamID = routeKey(device, streamID)
+func firedForStream(streamID string) string {
 	streamFiredMapMu.RLock()
 	defer streamFiredMapMu.RUnlock()
 	return streamFiredMap[streamID]
@@ -376,7 +362,7 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 			return
 		}
 
-		rememberFired(req.Device, req.StreamID, env.Fired)
+		rememberFired(req.StreamID, env.Fired)
 
 		// The engine's verdict carries input OUTCOMES, not just actions: what
 		// this buffer became (a fired command), a spoken destination that
@@ -400,7 +386,9 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 		verbs := actionVerbs(env.Actions)
 		matched := 0
 		if !preview {
-			matched = hub.broadcastToDevice(req.Device, "input_action", map[string]interface{}{
+			// Every device shares the stream, so the result goes to all of them,
+			// not just the device that posted the edit.
+			matched = hub.broadcastToDevice("", "input_action", map[string]interface{}{
 				"v":           env.V,
 				"streamId":    env.StreamID,
 				"seq":         env.Seq,
@@ -484,7 +472,6 @@ func evalOutcomeReason(preview bool, matched int, verbs []string) string {
 // evalPushRequest is the request shape for POST /api/chat/eval-push.
 type evalPushRequest struct {
 	StreamID    string      `json:"streamId"`
-	Device      string      `json:"device,omitempty"`
 	Seq         int         `json:"seq"`
 	BaseVersion int         `json:"baseVersion"`
 	V           int         `json:"v"`
@@ -517,13 +504,13 @@ func handleEvalPush(st *store.Store, hub *Hub) http.HandlerFunc {
 		}
 
 		// Look up the device that owns this stream
-		device, ok := deviceForStream(req.Device, req.StreamID)
+		device, ok := deviceForStream(req.StreamID)
 		if !ok {
 			writeStatusError(w, http.StatusNotFound, "unknown stream")
 			return
 		}
 
-		fired := firedForStream(req.Device, req.StreamID)
+		fired := firedForStream(req.StreamID)
 		switch {
 		case isPreviewStream(req.StreamID):
 			st.ActionLog.Append(store.ActionRecord{
