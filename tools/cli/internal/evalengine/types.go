@@ -22,14 +22,15 @@ type Tab struct {
 // EvalRequest is the body of POST /eval — the versioned buffer snapshot.
 type EvalRequest struct {
 	StreamID     string    `json:"streamId"`
-	Version      int64     `json:"version"`      // client-owned monotonic input version
-	Text         string    `json:"text"`         // full buffer (already voice-settled by the client)
-	Cursor       CursorPos `json:"cursor"`       // selection at snapshot time
-	Reason       string    `json:"reason"`       // "input" | "blur" | "resync" | "timer-fire"
-	VoiceEnabled bool      `json:"voiceEnabled"` // master gate (input.ts:100 / registry.ts:91)
-	Tabs         []Tab     `json:"tabs"`         // live agent tabs for {agent} resolution
-	Mode         string    `json:"mode"`         // "" = normal eval; "channel-select" = resolve text as a channel pick
-	Platform     string    `json:"platform"`     // "" = default (parlay); which surface this buffer belongs to
+	Device       string    `json:"device,omitempty"` // client that stamped Version; "" = unknown
+	Version      int64     `json:"version"`          // client-owned monotonic input version
+	Text         string    `json:"text"`             // full buffer (already voice-settled by the client)
+	Cursor       CursorPos `json:"cursor"`           // selection at snapshot time
+	Reason       string    `json:"reason"`           // "input" | "blur" | "resync" | "timer-fire"
+	VoiceEnabled bool      `json:"voiceEnabled"`     // master gate (input.ts:100 / registry.ts:91)
+	Tabs         []Tab     `json:"tabs"`             // live agent tabs for {agent} resolution
+	Mode         string    `json:"mode"`             // "" = normal eval; "channel-select" = resolve text as a channel pick
+	Platform     string    `json:"platform"`         // "" = default (parlay); which surface this buffer belongs to
 
 	// Commands is an OPTIONAL per-request command manifest. When present and valid
 	// it wholly replaces the engine's command set FOR THIS REQUEST ONLY (contract
@@ -67,6 +68,10 @@ type streamState struct {
 	mu          sync.Mutex
 	seq         int64
 	lastVersion int64
+	// lastDevice is who stamped lastVersion. Version is a per-client counter, so
+	// it is only comparable against the same client's earlier versions; a request
+	// from a different device continues the shared stream and is accepted.
+	lastDevice string
 	// platform is the surface this stream belongs to, recorded from the request so
 	// an ASYNC server-owned action (a submit fire) knows which surface to update —
 	// the sync path already returns to its caller, but a fire has no caller to

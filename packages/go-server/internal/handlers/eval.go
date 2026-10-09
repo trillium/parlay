@@ -280,6 +280,7 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 		// callers (which send none) evaluate exactly as before.
 		engineReq := map[string]interface{}{
 			"streamId":     req.StreamID,
+			"device":       req.Device,
 			"version":      req.Version,
 			"text":         req.Text,
 			"cursor":       req.Cursor,
@@ -385,7 +386,9 @@ func handleEval(st *store.Store, hub *Hub) http.HandlerFunc {
 		verbs := actionVerbs(env.Actions)
 		matched := 0
 		if !preview {
-			matched = hub.broadcastToDevice(req.Device, "input_action", map[string]interface{}{
+			// Every device shares the stream, so the result goes to all of them,
+			// not just the device that posted the edit.
+			matched = hub.broadcastToDevice("", "input_action", map[string]interface{}{
 				"v":           env.V,
 				"streamId":    env.StreamID,
 				"seq":         env.Seq,
@@ -551,7 +554,7 @@ func handleEvalPush(st *store.Store, hub *Hub) http.HandlerFunc {
 		}
 
 		// Broadcast the response over device-scoped SSE
-		matched := hub.broadcastToDevice(device, "input_action", map[string]interface{}{
+		matched := hub.broadcastToDevice("", "input_action", map[string]interface{}{
 			"v":           v,
 			"streamId":    req.StreamID,
 			"seq":         req.Seq,

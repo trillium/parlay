@@ -3,6 +3,7 @@ package evalengine
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -346,4 +347,31 @@ func staleFires(e *Engine) int64 {
 	e.stats.mu.Lock()
 	defer e.stats.mu.Unlock()
 	return e.stats.StaleTimerFires
+}
+
+// Every device shares one stream and Version is a per-client counter, so an
+// iPhone that restarts at v1 after the MacBook reached v40 is continuing the
+// stream, not sending a stale request. Same-device staleness still holds.
+func TestDifferentDeviceLowerVersionIsAcceptedOnSharedStream(t *testing.T) {
+	e := NewEngine()
+	stale := func(r EvalResponse) bool {
+		for _, a := range r.Actions {
+			if strings.Contains(marshal(t, a), "stale-request-version") {
+				return true
+			}
+		}
+		return false
+	}
+	req := func(dev string, v int64) EvalRequest {
+		return EvalRequest{StreamID: "herdr-voice-box-wXA:pG", Device: dev, Version: v, Text: "bravely"}
+	}
+	if stale(e.Eval(req("macbook", 40))) {
+		t.Fatal("first request must be accepted")
+	}
+	if stale(e.Eval(req("iphone", 1))) {
+		t.Fatal("iphone v1 after macbook v40 must be accepted")
+	}
+	if !stale(e.Eval(req("iphone", 0))) {
+		t.Fatal("same-device older version must still be dropped as stale")
+	}
 }

@@ -620,8 +620,12 @@ The client performs NO local evaluation of typed/dictated text — every buffer
 change is POSTed here; the server relays to the compiled eval engine
 (`tools/cli/internal/evalengine`, run as `parlay eval serve`; `PARLAY_EVAL_ENGINE_URL`, default
 `http://127.0.0.1:4343`) and broadcasts the computed actions to the owning
-device as the `input_action` SSE event (which is the source of truth for
-applying them — the synchronous response is informational).
+connected devices as the `input_action` SSE event (which is the source of
+truth for applying them — the synchronous response is informational). Every
+device shares the stream, so the broadcast is not scoped to the posting device.
+`version` is a per-device counter: the engine drops a lower version as
+`stale-request-version` only when the same `device` sent the newer one; a
+different device's lower version is accepted and becomes the new baseline.
 
 Request body:
 ```jsonc
@@ -648,9 +652,8 @@ Responses:
 
 ### `POST /api/chat/eval-push`
 Down-channel for **server-owned submit fires**: the eval engine calls this
-when its per-stream timer elapses; the server routes the fire to the device
-that owns the stream and broadcasts `input_action` with
-`timing.serverOwnedFire: true`.
+when its per-stream timer elapses; the server broadcasts `input_action` with
+`timing.serverOwnedFire: true` to all connected devices (the stream is shared).
 
 Request: `{ "streamId": "…", "seq"?: N, "baseVersion"?: N, "v"?: N, "action"?: {…} }`.
 Responses: 200 `{ "ok": true, "sseClients": N }`; **400** `streamId` missing;

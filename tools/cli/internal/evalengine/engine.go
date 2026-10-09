@@ -40,13 +40,19 @@ func (e *Engine) Eval(req EvalRequest) EvalResponse {
 	// Last-write-wins: drop a stale in-flight request whose version is older than
 	// the newest we've seen for this stream (brain-v4vje §2 coalescing). We still
 	// return a noop so the client's seq accounting stays intact.
-	if req.Version < st.lastVersion {
+	//
+	// Versions are per-client counters, though, and every device shares this one
+	// stream: a different device than the one that set lastVersion is continuing
+	// the stream, not racing it, so its (possibly lower) version is accepted and
+	// becomes the new baseline.
+	if req.Version < st.lastVersion && req.Device == st.lastDevice {
 		st.mu.Unlock()
 		out := &actionList{}
 		out.add(actNoop("stale-request-version"))
 		return e.finish(req, st, out, "", start)
 	}
 	st.lastVersion = req.Version
+	st.lastDevice = req.Device
 	// Record which surface this stream is on, so a later async submit fire on this
 	// stream knows where to land (the sync response already returns to its caller).
 	st.platform = requestPlatform(req)

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"parlay/go-server/internal/store"
 )
@@ -288,4 +289,41 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// Every device shares one stream: the MacBook edits at a high version, then the
+// iPhone (whose counter restarted at 1) edits. The iPhone edit must reach the
+// engine as the shared stream's next edit, and its result must be pushed to
+// BOTH devices.
+func TestSharedStreamEditFromSecondDeviceIsPushedToBothDevices(t *testing.T) {
+	resetStreamTable(t)
+	var seen []map[string]any
+	fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		seen = append(seen, got)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"v":1,"streamId":"box","seq":1,"baseVersion":1,"actions":[{"verb":"setText","args":{"text":"x"}}],"engineEvalNs":7}`))
+	})
+	hub := newHub(newBroker())
+	t.Cleanup(hub.Stop)
+	mac, cancelMac := hub.subscribe("macbook")
+	defer cancelMac()
+	phone, cancelPhone := hub.subscribe("iphone")
+	defer cancelPhone()
+
+	postEval(t, hub, `{"device":"macbook","streamId":"box","version":40,"text":"hello"}`)
+	postEval(t, hub, `{"device":"iphone","streamId":"box","version":1,"text":"bravely"}`)
+
+	if len(seen) != 2 || seen[1]["device"] != "iphone" {
+		t.Fatalf("engine must see the iphone edit with its device, got %v", seen)
+	}
+	// MacBook gets its own result then the iPhone edit's; the iPhone gets both too.
+	for name, sub := range map[string]<-chan sseEvent{"macbook": mac, "iphone": phone} {
+		for i := 0; i < 2; i++ {
+			if ev := awaitEvent(t, sub, "input_action", time.Second); ev.data == nil {
+				t.Fatalf("%s missed push %d", name, i+1)
+			}
+		}
+	}
 }
