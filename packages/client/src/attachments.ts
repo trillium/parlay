@@ -1,4 +1,4 @@
-import { CHAT_BASE } from './config'
+import { CHAT_BASE, esc } from './config'
 import { inputEl } from './dom'
 
 // ── Pending image attachments (#17 addendum) ─────────────────────────────────
@@ -23,7 +23,7 @@ function renderChips() {
   if (!strip) return
   strip.classList.toggle('visible', pending.length > 0)
   strip.innerHTML = pending.map((u, i) =>
-    `<span class="pa-chip"><img src="${u.replace(/"/g, '%22')}" alt=""><button class="pa-chip-x" data-i="${i}" title="Remove">✕</button></span>`
+    `<span class="pa-chip"><img src="${esc(u)}" alt=""><button class="pa-chip-x" data-i="${i}" title="Remove">✕</button></span>`
   ).join('')
   strip.querySelectorAll('.pa-chip-x').forEach(btn => btn.addEventListener('click', () => {
     pending.splice(Number((btn as HTMLElement).dataset.i), 1)

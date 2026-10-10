@@ -5,6 +5,8 @@
 // Double-tap/double-click toggles 2.5× zoom at the tap point; native
 // long-press/context menu still offers open-in-new-tab for free.
 
+import { esc } from './config'
+
 let overlay: HTMLElement | null = null
 
 export function openLightbox(src: string) {
@@ -13,7 +15,7 @@ export function openLightbox(src: string) {
   overlay.id = 'pa-lightbox'
   overlay.innerHTML = `
     <button id="pa-lightbox-x" title="Close (Esc)">✕</button>
-    <img src="${src.replace(/"/g, '%22')}" alt="">`
+    <img src="${esc(src)}" alt="">`
   document.body.appendChild(overlay)
   const img = overlay.querySelector('img') as HTMLImageElement
 

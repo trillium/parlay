@@ -39,14 +39,25 @@ export function panelCapsQuery(instance: string): string {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// Attribute-safe escape: &, <, >, " and ' are all encoded, so esc() output is
+// safe inside a double- OR single-quoted attribute as well as in text. That used
+// to be false — quotes passed through, and every caller that interpolated esc()
+// into an attribute (rich-text's data-lang, tabs' url pills, thread-lavish's
+// href) had to hand-roll a `.replace(/"/g, '%22')` after it. Don't add another
+// hand-rolled escape: fix esc() here instead. Config/URL/agent text is
+// attacker-influenced (WebFetch output, a file an agent Read), so an unescaped
+// quote is an HTML-attribute breakout, not a cosmetic issue.
 export function esc(s: unknown): string {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
 // Linkify an ALREADY-ESCAPED string: markdown [label](url) and bare http(s) URLs.
 // Escape-first ordering is load-bearing — raw HTML in messages stays inert and
-// only these generated anchors survive. http/https only; quotes in URLs are
-// %-encoded so they can't break out of the href attribute.
+// only these generated anchors survive. http/https only; a quote in a URL is
+// already an entity from esc(), and any stray one is %-encoded here, so nothing
+// can break out of the href attribute.
 export function linkify(escaped: string): string {
   const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s"']+)/g
   return escaped.replace(re, (_match, label: string | undefined, mdUrl: string | undefined, bareUrl: string | undefined) => {
