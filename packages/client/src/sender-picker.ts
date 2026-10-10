@@ -4,6 +4,7 @@ import { bumpInputVersion, currentInputVersion } from './commands'
 import type { PickerSender } from './commands/dispatcher/types'
 import { PA_VERSION } from './version'
 import { getSettings } from './settings-modal'
+import { trapTabKey } from './focus-trap'
 
 // ── Voice-driven sender picker (full-screen modal) ──────────────────────────
 //
@@ -21,6 +22,7 @@ const _pickerEpoch: string = (crypto as any).randomUUID?.() ?? `sp-${Date.now()}
 let _pickerSeq = 0
 
 let _settleTimer: ReturnType<typeof setTimeout> | null = null
+let _releaseTrap: (() => void) | null = null
 
 // ── Open ──────────────────────────────────────────────────────────────────────
 
@@ -38,11 +40,13 @@ export function openSenderPicker(prompt: string, senders: PickerSender[]): void 
       <ol id="pa-sender-picker-list">${renderRows(senders)}</ol>
       <div id="pa-sender-picker-hint" aria-live="polite"></div>
       <input id="${INPUT_ID}" type="text" autocomplete="off" autocapitalize="off"
-             autocorrect="off" spellcheck="false"
+             autocorrect="off" spellcheck="false" aria-label="Sender name or number"
              placeholder="Say a name, number, or number…" />
       <div id="pa-sender-picker-esc">Tap ✕, tap outside, or say "cancel" to close</div>
     </div>`
   document.body.appendChild(overlay)
+  _releaseTrap?.()                      // never leave a handler on a replaced overlay
+  _releaseTrap = trapTabKey(overlay)
 
   const closeBtn = document.getElementById('pa-sender-picker-close')
   if (closeBtn) closeBtn.addEventListener('click', () => closeSenderPicker())
@@ -127,6 +131,7 @@ export function senderPickerHint(text: string): void {
 
 export function closeSenderPicker(): void {
   if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null }
+  _releaseTrap?.(); _releaseTrap = null
   const overlay = document.getElementById(OVERLAY_ID)
   if (overlay) overlay.remove()
   // Return focus to the main composer

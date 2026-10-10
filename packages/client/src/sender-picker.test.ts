@@ -44,3 +44,24 @@ describe('closeSenderPicker — hands-free mode', () => {
     expect(document.activeElement?.id).toBe('pa-input')
   })
 })
+
+// ── Keyboard containment (aria-modal is one-sided) ──────────────────────────
+describe('openSenderPicker — focus stays inside the modal', () => {
+  beforeEach(() => { document.body.innerHTML = '' })
+
+  test('Tab on the last focusable wraps to the first instead of leaving the modal', () => {
+    openSenderPicker('pick', SENDERS)
+    const input = document.getElementById('pa-sender-picker-input') as HTMLInputElement
+    input.focus()
+    const e = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    input.dispatchEvent(e)
+    expect(e.defaultPrevented).toBe(true)
+    expect(document.activeElement?.id).toBe('pa-sender-picker-close')
+  })
+
+  test('the input carries an accessible name', () => {
+    openSenderPicker('pick', SENDERS)
+    expect(document.getElementById('pa-sender-picker-input')?.getAttribute('aria-label'))
+      .toBe('Sender name or number')
+  })
+})
