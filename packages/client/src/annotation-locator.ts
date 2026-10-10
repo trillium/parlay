@@ -10,7 +10,10 @@
 //   2. Otherwise walk up to <body>, each hop = `tag:nth-of-type(n)` (position
 //      among same-tag siblings) — position-stable across identical re-renders.
 //   3. On resolve failure, fall back to the first element whose tag matches the
-//      path's leaf and whose trimmed text starts with the saved elementText.
+//      path's leaf and whose trimmed text starts with the saved elementText. A
+//      second, weaker pass accepts a candidate whose text is a *prefix* of the
+//      saved label (live text can shrink — streaming output, a removed child),
+//      but only for a substantial prefix: see MIN_PREFIX_MATCH below.
 //
 // Parlay's own injected UI (#pa-*) is never an annotation target, but the
 // resolver still rejects any match inside it so a moved/rebuilt page can never
@@ -88,17 +91,44 @@ export function resolveLocator(locator: string, elementText: string): HTMLElemen
   // first element of that tag whose trimmed text starts with the saved label.
   const wanted = (elementText || '').trim()
   if (!wanted) return null
-  const leafTag = leafTagOf(locator)
+  return scanByText(leafTagOf(locator), wanted)
+}
+
+// Shortest candidate text the weaker reverse pass will accept. Without a floor,
+// ANY element whose text happens to be a prefix of the label matches — the
+// first single character in document order — so a stale annotation on the
+// button "Logout" re-anchors onto the site's one-letter logo link. Below this
+// floor the resolver returns null and the caller keeps the note markerless,
+// which is the safe outcome: a missing marker beats a marker on the wrong
+// element.
+const MIN_PREFIX_MATCH = 4
+
+// Find a replacement target by text among elements of `leafTag` (or any element
+// when the leaf was an id segment and carries no tag). Two ordered passes:
+//
+//   a) forward — candidate text starts with the saved label (the documented
+//                contract, and the only pass that can match a full label);
+//   b) reverse — candidate text is a prefix of the saved label, i.e. the
+//                element's live text has shrunk since the annotation was made.
+//                Consulted only when (a) found nothing, so a shortened
+//                candidate never outranks a real match appearing later in the
+//                document.
+function scanByText(leafTag: string, wanted: string): HTMLElement | null {
+  let nodes: ArrayLike<Element>
   try {
-    const scope = leafTag ? document.getElementsByTagName(leafTag) : document.querySelectorAll('*')
-    for (const node of Array.from(scope)) {
-      if (!(node instanceof HTMLElement)) continue
-      if (isParlayUi(node)) continue
-      const text = (node.textContent || '').trim()
-      if (text && (text.startsWith(wanted) || wanted.startsWith(text))) return node
-    }
+    nodes = leafTag ? document.getElementsByTagName(leafTag) : document.querySelectorAll('*')
   } catch {
     return null
+  }
+  const candidates = Array.from(nodes).filter(
+    (n): n is HTMLElement => n instanceof HTMLElement && !isParlayUi(n),
+  )
+  for (const node of candidates) {
+    if ((node.textContent || '').trim().startsWith(wanted)) return node
+  }
+  for (const node of candidates) {
+    const text = (node.textContent || '').trim()
+    if (text.length >= MIN_PREFIX_MATCH && wanted.startsWith(text)) return node
   }
   return null
 }
