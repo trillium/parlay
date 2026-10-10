@@ -56,11 +56,16 @@ export function harness(overrides: Partial<ParlayInputOptions> = {}): Harness {
 export class FakeEventSource {
   static instances: FakeEventSource[] = []
   url: string
+  // `close()` must RECORD that it ran: the reconnect tests assert which
+  // instance a handler closed, which is the whole point of the liveness
+  // guards in sse.ts. A no-op close() makes every one of those assertions
+  // pass vacuously.
+  closed = false
   listeners: Record<string, Array<(e: any) => void>> = {}
   onerror: (() => void) | null = null
   constructor(url: string) { this.url = url; FakeEventSource.instances.push(this) }
   addEventListener(type: string, fn: (e: any) => void) { (this.listeners[type] ||= []).push(fn) }
-  close() {}
+  close() { this.closed = true }
   emit(type: string, data: unknown) { for (const fn of this.listeners[type] ?? []) fn({ data: JSON.stringify(data) }) }
   fireOpen() { for (const fn of this.listeners['open'] ?? []) fn(undefined) }
   fireError() { this.onerror?.() }
