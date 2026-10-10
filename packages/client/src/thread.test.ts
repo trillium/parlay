@@ -1,6 +1,6 @@
 import '../happydom' // registers DOM before the imports below; CWD-independent
 import { test, expect, describe, beforeEach, afterEach } from 'bun:test'
-import { injectDOM, bindDOMRefs, thread } from './dom'
+import { injectDOM, bindDOMRefs, thread, tabsEl } from './dom'
 import { _appendMsgEl, addThinkEl, rmThinkEl } from './thread'
 import { renderTabs } from './tabs'
 import { renderSheet } from './switcher'
@@ -145,5 +145,66 @@ describe('the other two renderers of the same colour', () => {
     expect((document.getElementById('pa-dot') as HTMLElement).style.background).toContain('#ff8800')
     const row = document.querySelector('#pa-sheet-list .pa-sheet-row') as HTMLElement
     expect(row.style.getPropertyValue('--tab-color')).toBe('#ff8800')
+  })
+})
+
+// The same registry id reaches the tab bar's unread-badge `id=` attribute. Agent
+// ids are stored verbatim by the unauthenticated register-agent handler, so an
+// id of `x" onmouseover="alert(1)` used to close that attribute and install a
+// live event handler on the badge of every tab in every panel. esc() keeps the
+// whole id inside the attribute value.
+describe('an agent id in the tab unread badge', () => {
+  const HOSTILE_ID = 'mech" onmouseover="alert(1)'
+
+  function renderTwoTabs() {
+    agentInfo.set('other', { id: 'other', name: 'Other', color: '#00ff00' })
+    agentInfo.set(HOSTILE_ID, { id: HOSTILE_ID, name: 'Mech', color: '#ff8800' })
+    setChannelStatuses({ other: 'listening', [HOSTILE_ID]: 'listening' })
+    renderTabs()
+  }
+
+  test('a quote in the id cannot break out of the id attribute', () => {
+    renderTwoTabs()
+    const badge = document.getElementById('pa-tab-unread-' + HOSTILE_ID)
+    expect(badge).not.toBeNull()
+    // Assert on the PARSED DOM, not on innerHTML: the HTML serializer is
+    // allowed to emit `<`, `>` and `onmouseover=` verbatim inside an attribute
+    // value, so a substring check on the serialization proves nothing. What
+    // matters is that no extra attribute and no extra element came into being.
+    expect(badge!.getAttribute('onmouseover')).toBeNull()
+    expect([...badge!.attributes].map(a => a.name).sort()).toEqual(['class', 'id'])
+    expect(badge!.tagName).toBe('SPAN')
+  })
+
+  test('a script tag in the id never becomes an element', () => {
+    const id = 'mech"><script>alert(1)</script'
+    agentInfo.set('other', { id: 'other', name: 'Other', color: '#00ff00' })
+    agentInfo.set(id, { id, name: 'Mech', color: '#ff8800' })
+    setChannelStatuses({ other: 'listening', [id]: 'listening' })
+    renderTabs()
+    // Same reasoning as above: the payload stays inert text inside the id
+    // attribute rather than becoming markup.
+    expect(tabsEl.querySelector('script')).toBeNull()
+    const badge = document.getElementById('pa-tab-unread-' + id)
+    expect(badge).not.toBeNull()
+    expect(badge!.tagName).toBe('SPAN')
+  })
+
+  test('the escaped badge is still findable by the id the SSE unread path uses', () => {
+    // sse.ts and jump-button.ts both look the badge up with
+    // getElementById(`pa-tab-unread-${ch}`) using the RAW channel, so escaping
+    // must not change the element's id — the parser decodes the entities back.
+    renderTwoTabs()
+    const badge = document.getElementById('pa-tab-unread-' + HOSTILE_ID)
+    expect(badge).not.toBeNull()
+    expect(badge!.className).toContain('pa-tab-unread')
+  })
+
+  test('an ordinary agent id still gets its badge', () => {
+    agentInfo.set('other', { id: 'other', name: 'Other', color: '#00ff00' })
+    agentInfo.set('mech', { id: 'mech', name: 'Mech', color: '#ff8800' })
+    setChannelStatuses({ other: 'listening', mech: 'listening' })
+    renderTabs()
+    expect(document.getElementById('pa-tab-unread-mech')).not.toBeNull()
   })
 })

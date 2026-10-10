@@ -159,7 +159,8 @@ export function renderTabs() {
     tab.title = id === 'system' ? 'Hook & tool events from all sessions' : statusTooltip(id) + urlHint
     const count = unreadByChannel[id] || 0
     const idLabel = id !== label.toLowerCase().replace(/\s+/g, '-') ? `<span class="pa-tab-id">${esc(id)}</span>` : ''
-    tab.innerHTML = `<span class="pa-tab-pip ${statusOf(id)}"></span><span class="pa-tab-label-wrap">${esc(label)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${id}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
+    // Agent id is verbatim registry data (register-agent) into an id= ATTRIBUTE, so it needs esc() like every interpolation here. Still safe for sse.ts's getElementById(`pa-tab-unread-${ch}`): the parser decodes entities back.
+    tab.innerHTML = `<span class="pa-tab-pip ${statusOf(id)}"></span><span class="pa-tab-label-wrap">${esc(label)}${idLabel}</span><span class="pa-tab-unread${count ? ' visible' : ''}" id="pa-tab-unread-${esc(id)}">${count || ''}</span><span class="pa-tab-x" title="Archive this tab">×</span>`
     tab.addEventListener('click', () => switchChannel(id))
     tab.querySelector('.pa-tab-x')!.addEventListener('click', (e) => {
       e.stopPropagation()
