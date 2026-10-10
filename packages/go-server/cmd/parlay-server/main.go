@@ -43,7 +43,8 @@ func main() {
 	log.SetPrefix("parlay-server: ")
 
 	var (
-		addrFlag   = flag.String("addr", envOr("PARLAY_SERVER_ADDR", defaultAddr), "address to listen on")
+		addrFlag   = flag.String("addr", envOr("PARLAY_SERVER_ADDR", defaultAddr), "address to listen on (explicit; overrides -exposure)")
+		exposeFlag = flag.String("exposure", envOr("PARLAY_EXPOSURE", "loopback"), "who can reach the server: loopback (127.0.0.1, default), lan (0.0.0.0) or tailnet (this machine's Tailscale address); see docs/client-contract.md")
 		dirFlag    = flag.String("state-dir", envOr("PARLAY_STATE_HOME", defaultStateHome()), "directory for persisted state (messages/agents/drafts/settings/uploads)")
 		assetsFlag = flag.String("assets-dir", envOr("PARLAY_ASSETS_DIR", defaultAssetsDir()), "directory containing the built packages/client/dist bundle (serves the panel HTML)")
 		paiDirFlag = flag.String("pai-dir", envOr("PAI_DIR", defaultPAIDir()), "PAI directory for TTS cache and substitutions")
@@ -60,6 +61,19 @@ func main() {
 		gcCityFlag     = flag.String("gc-city", envOr("PARLAY_GC_CITY", ""), "parlay-owned Gas City city root; empty means <state-dir>/gascity/city (only used with -bus-emit/-bus-consume)")
 	)
 	flag.Parse()
+
+	addrExplicit := os.Getenv("PARLAY_SERVER_ADDR") != ""
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "addr" {
+			addrExplicit = true
+		}
+	})
+	listenAddr, exposure, err := resolveListen(*exposeFlag, *addrFlag, addrExplicit, systemIfaceAddrs)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	*addrFlag = listenAddr
+	guard.SetStateDir(*dirFlag)
 
 	st, err := store.Open(store.Config{
 		Dir:                *dirFlag,
@@ -94,6 +108,7 @@ func main() {
 	handlers.RegisterTTS(mux, *paiDirFlag, hub)
 	handlers.RegisterPages(mux, hub)
 	handlers.RegisterPlugins(mux, hub)
+	handlers.RegisterClient(mux, handlers.ClientInfo{Listen: *addrFlag, Exposure: exposure, StateDir: *dirFlag})
 	// Static file serving — registered last so /api/* routes are never shadowed.
 	// Serves index.html at / and falls back to it for any unknown path (SPA).
 	// /fleet/ serves the packages/webview fleet dashboard from <assets-dir>/fleet/.
@@ -112,7 +127,7 @@ func main() {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("listening on http://%s (state dir: %s, assets: %s)", *addrFlag, *dirFlag, *assetsFlag)
+		log.Printf("listening on http://%s [exposure: "+exposure+"] (state dir: %s, assets: %s)", *addrFlag, *dirFlag, *assetsFlag)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
 			return

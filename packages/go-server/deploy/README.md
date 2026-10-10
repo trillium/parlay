@@ -38,6 +38,14 @@ installed, launchd-run server, bake it in at install time with
 `--allowed-origins` (below); the rendered plist's `EnvironmentVariables`
 dict is the only thing launchd actually sees.
 
+**Prefer the admit file.** `parlay client admit <origin>` writes
+`<state-dir>/allowed-origins`, which the server re-reads on change — no plist
+edit, no re-install, no restart. It merges with `PARLAY_ALLOWED_ORIGINS`.
+`parlay client list` shows both; `parlay client check <origin>` says why a
+client cannot connect. See `docs/client-contract.md`. The listen address
+(`--addr`) is the exposure choice: loopback by default, `0.0.0.0:4242` for the
+LAN, a Tailscale address for the tailnet only.
+
 ## Install
 
 ```sh

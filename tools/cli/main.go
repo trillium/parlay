@@ -89,6 +89,8 @@ func dispatch(cmd string, args []string, finish func(int)) {
 		commands.CrewState(args)
 	case "explain":
 		commands.Explain(args)
+	case "client":
+		commands.Client(args)
 	case "liveness":
 		commands.Liveness(args)
 	case "timeline":

@@ -113,8 +113,11 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // GuardedPaths is this server's mutating and identifier-aiming surface: the
@@ -398,22 +401,100 @@ func isSingleLabelHost(h string) bool {
 	return letter
 }
 
-// AllowedOriginList reads PARLAY_ALLOWED_ORIGINS — comma-separated exact
-// origins (e.g. a tunnel hostname). "*" opts out of the origin check
-// entirely: an escape hatch for a deployment that needs it, never the
-// default.
-func AllowedOriginList() []string {
-	raw := os.Getenv("PARLAY_ALLOWED_ORIGINS")
-	if raw == "" {
-		return nil
+// AllowedOriginsFileName is the admit list, relative to the state directory:
+// one exact origin per line, "#" starts a comment. It is the single place an
+// operator admits a client origin without editing a launchd plist; `parlay
+// client admit/revoke/list` is the CLI over it. Re-read on every change (mtime),
+// so an admission needs no server restart.
+const AllowedOriginsFileName = "allowed-origins"
+
+var (
+	originsMu    sync.Mutex
+	originsDir   string
+	originsMtime time.Time
+	originsSize  int64
+	originsCache []string
+)
+
+// SetStateDir tells the guard where the admit list lives. Empty falls back to
+// $PARLAY_STATE_HOME at read time.
+func SetStateDir(dir string) {
+	originsMu.Lock()
+	defer originsMu.Unlock()
+	originsDir = dir
+	originsMtime = time.Time{}
+	originsCache = nil
+}
+
+func originsFilePath() string {
+	if originsDir != "" {
+		return filepath.Join(originsDir, AllowedOriginsFileName)
 	}
+	if h := os.Getenv("PARLAY_STATE_HOME"); h != "" {
+		return filepath.Join(h, AllowedOriginsFileName)
+	}
+	return ""
+}
+
+// ParseOriginList splits comma- and/or newline-separated origins, dropping
+// blanks and "#" comments.
+func ParseOriginList(raw string) []string {
 	var out []string
-	for _, s := range strings.Split(raw, ",") {
-		if s = strings.TrimSpace(s); s != "" {
-			out = append(out, s)
+	for _, line := range strings.Split(raw, "\n") {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		for _, s := range strings.Split(line, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
 		}
 	}
 	return out
+}
+
+// FileOrigins returns the origins admitted through the admit-list file. A
+// missing or unreadable file admits nothing (it never widens).
+func FileOrigins() []string {
+	originsMu.Lock()
+	defer originsMu.Unlock()
+	path := originsFilePath()
+	if path == "" {
+		return nil
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		originsCache, originsMtime, originsSize = nil, time.Time{}, 0
+		return nil
+	}
+	if fi.ModTime().Equal(originsMtime) && fi.Size() == originsSize {
+		return originsCache
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	originsCache = ParseOriginList(string(data))
+	originsMtime, originsSize = fi.ModTime(), fi.Size()
+	return originsCache
+}
+
+// EnvOrigins returns the origins from PARLAY_ALLOWED_ORIGINS alone.
+func EnvOrigins() []string {
+	return ParseOriginList(os.Getenv("PARLAY_ALLOWED_ORIGINS"))
+}
+
+// AllowedOriginList is the effective admit list: PARLAY_ALLOWED_ORIGINS
+// (comma-separated, kept for existing deployments) plus the admit-list file.
+// Exact origins (e.g. a tunnel hostname). "*" opts out of the origin check
+// entirely: an escape hatch for a deployment that needs it, never the
+// default.
+func AllowedOriginList() []string {
+	env, file := EnvOrigins(), FileOrigins()
+	if len(env) == 0 {
+		return file
+	}
+	return append(append([]string(nil), env...), file...)
 }
 
 // OriginAllowed is the port of guard/origin.ts's originAllowed.
@@ -664,4 +745,45 @@ func Wrap(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ClassifyOrigin names why origin would be admitted (or not) by this guard,
+// for the onboarding endpoint and `parlay client check`. host is the Host the
+// request arrived on. The vocabulary is closed:
+//
+//	listed        named in the admit list (env or file)
+//	wildcard      the admit list holds "*" (the check is off)
+//	same-origin   the origin's host:port is the Host asked
+//	local         loopback / .local / private LAN — every guarded route
+//	network       tailnet/LAN/bare-host — events stream + eval ONLY, not the
+//	              rest of the guarded routes (admit it to widen)
+//	refused       403 on every guarded route
+func ClassifyOrigin(origin, host string) string {
+	if origin == "null" || origin == "" {
+		return "refused"
+	}
+	for _, a := range AllowedOriginList() {
+		if a == origin {
+			return "listed"
+		}
+	}
+	for _, a := range AllowedOriginList() {
+		if a == "*" {
+			return "wildcard"
+		}
+	}
+	scheme, hostport, ok := splitOrigin(origin)
+	if !ok || (scheme != "http" && scheme != "https") {
+		return "refused"
+	}
+	if host != "" && strings.EqualFold(hostport, host) {
+		return "same-origin"
+	}
+	if isLocalHostname(hostnameOf(hostport)) {
+		return "local"
+	}
+	if streamOriginTrusted(origin) {
+		return "network"
+	}
+	return "refused"
 }
