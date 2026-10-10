@@ -4,7 +4,7 @@
 // because three call sites interpolate it straight into an attribute.
 
 import { test, expect, describe } from 'bun:test'
-import { esc, linkify, panelCapsQuery } from './config'
+import { esc, linkify, panelCapsQuery, cssColor } from './config'
 
 // Parse a fragment and report whether any element carries an event handler or a
 // script-ish attribute — i.e. whether the escaping actually held.
@@ -103,5 +103,39 @@ describe('panelCapsQuery', () => {
 
   test('percent-encodes the instance so the query param stays one param', () => {
     expect(panelCapsQuery('a b&c=d')).not.toContain('&c=d')
+  })
+})
+// cssColor() guards the OTHER boundary esc() cannot: agent colours are
+// interpolated into `style="..."` attributes and handed to the CSSOM, so a
+// value must be a colour TOKEN, not merely an escaped string — `url(…)` is a
+// valid `background` shorthand and would make the panel fetch an attacker's URL.
+describe('cssColor', () => {
+  const FB = 'var(--pa-green)'
+  test('passes real colour tokens through untouched', () => {
+    for (const v of ['#fff', '#ff8800', '#ff8800cc', 'rebeccapurple', 'transparent',
+                     'var(--pa-blue)', 'rgb(1, 2, 3)', 'rgba(1,2,3,.5)', 'hsl(210 50% 40%)']) {
+      expect(cssColor(v, FB)).toBe(v)
+    }
+  })
+
+  test('trims surrounding whitespace rather than rejecting it', () => {
+    expect(cssColor('  #ff8800 ', FB)).toBe('#ff8800')
+  })
+
+  test('rejects anything that could break out of a style attribute', () => {
+    for (const v of ['#000" onmouseover="alert(1)', "#000' onx='y", 'red; background:url(//evil/x)',
+                     'url(https://evil.example/track.png)', 'red}</style><script>x', 'expression(alert(1))']) {
+      expect(cssColor(v, FB)).toBe(FB)
+    }
+  })
+
+  test('a url() in the function position cannot smuggle a fetch through', () => {
+    expect(cssColor('rgb(url(https://evil.example/x))', FB)).toBe(FB)
+  })
+
+  test('non-strings and blanks fall back instead of throwing', () => {
+    for (const v of [undefined, null, 42, {}, [], '', '   ']) {
+      expect(cssColor(v, FB)).toBe(FB)
+    }
   })
 })

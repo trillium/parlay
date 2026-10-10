@@ -1,4 +1,4 @@
-import { esc, linkify, fmtTime } from './config'
+import { esc, linkify, fmtTime, cssColor } from './config'
 import { msgs, agentInfo, activeChannel, thinking, setThinkingState, lastActivityByChannel } from './state'
 import { thread, emptyEl } from './dom'
 import { scrollBottom } from './thread-scroll'
@@ -20,8 +20,8 @@ export function addThinkEl() {
   // treatment as _appendMsgEl. Generic AG only in the zero-agent state.
   const info  = activeChannel ? agentInfo.get(activeChannel) : null
   const label = info ? (info.nicknames?.[0] ?? info.name) : null
-  const init  = label ? label.slice(0, 2).toUpperCase() : 'AG'
-  const color = info ? info.color : 'var(--pa-green)'
+  const init  = esc(label ? label.slice(0, 2).toUpperCase() : 'AG')
+  const color = cssColor(info?.color, 'var(--pa-green)')
   d.innerHTML = `<div class="pa-av agent" style="background:color-mix(in srgb,${color} 14%,var(--pa-ink));color:${color};border-color:color-mix(in srgb,${color} 22%,transparent)">${init}</div><div class="pa-thinking-dots"><b></b><b></b><b></b></div>`
   thread.appendChild(d)
   scrollBottom(true)
@@ -53,8 +53,8 @@ export function _appendMsgEl(m: any, skipScroll = false) {
   const info = (cls === 'agent' && m.channel) ? agentInfo.get(m.channel) : null
   const agentLabel = info ? (info.nicknames?.[0] ?? info.name) : null
   const agentName  = agentLabel ? esc(agentLabel) : 'Agent'
-  const agentColor = info ? info.color : 'var(--pa-green)'
-  const agentInit  = agentLabel ? agentLabel.slice(0, 2).toUpperCase() : 'AG'
+  const agentColor = cssColor(info?.color, 'var(--pa-green)')
+  const agentInit  = esc(agentLabel ? agentLabel.slice(0, 2).toUpperCase() : 'AG')
 
   // ── Debug-snapshot attachment ─────────────────────────────────────────────
   // User messages that are purely `[debug-snapshot]` content are not intended

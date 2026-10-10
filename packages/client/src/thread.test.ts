@@ -1,0 +1,149 @@
+import '../happydom' // registers DOM before the imports below; CWD-independent
+import { test, expect, describe, beforeEach, afterEach } from 'bun:test'
+import { injectDOM, bindDOMRefs, thread } from './dom'
+import { _appendMsgEl, addThinkEl, rmThinkEl } from './thread'
+import { renderTabs } from './tabs'
+import { renderSheet } from './switcher'
+import { agentInfo, msgs, setActiveChannel, setThinkingState, setAtBottom, setChannelStatuses } from './state'
+
+// ── Agent metadata must never escape its rendering context ───────────────────
+// agentInfo is filled from server `agents` / `agent_register` SSE payloads,
+// whose `color`/`name` come straight off the unauthenticated register-agent
+// request body (see tools/cli/internal/identity + the go-server handler, which
+// stores them verbatim). thread.ts interpolated `info.color` into a
+// `style="..."` attribute and the name-derived initials into element text, so a
+// registered color like `#000" onmouseover="alert(1)` closed the attribute and
+// installed a live event handler on the avatar of every message in the tab.
+// The color is now validated as a CSS colour token (falling back to the
+// caller's default) and the initials are escaped.
+
+function registerAgent(color: string, name = 'Mech') {
+  agentInfo.set('mech', { id: 'mech', name, color })
+  setActiveChannel('mech')
+}
+
+function avatar(): HTMLElement {
+  return thread.querySelector('.pa-av') as HTMLElement
+}
+
+function msg(over: Record<string, unknown> = {}) {
+  return { id: 'm1', role: 'agent', channel: 'mech', ts: new Date().toISOString(), text: 'hi', ...over }
+}
+
+beforeEach(() => {
+  document.body.innerHTML = ''
+  document.head.innerHTML = ''
+  injectDOM()
+  bindDOMRefs()
+  agentInfo.clear()
+  msgs.length = 0
+  setActiveChannel(null)
+  setThinkingState(false)
+  setAtBottom(true)
+})
+
+afterEach(() => {
+  rmThinkEl()
+  document.body.innerHTML = ''
+  document.head.innerHTML = ''
+})
+
+test('a hostile agent color cannot break out of the avatar style attribute', () => {
+  registerAgent('#000" onmouseover="alert(1)')
+  _appendMsgEl(msg(), true)
+  const av = avatar()
+  expect(av.getAttribute('onmouseover')).toBeNull()
+  expect(thread.innerHTML).not.toContain('onmouseover')
+  // The style attribute survives intact — the whole value is just ignored.
+  expect(av.getAttribute('style')).toContain('color-mix')
+})
+
+test('a hostile agent color cannot break out on the action-request card either', () => {
+  registerAgent('#000"><script>alert(1)</script')
+  _appendMsgEl(msg({ type: 'action_request', action: { kind: 'switch_tab', channel: 'mech', label: 'go' } }), true)
+  expect(thread.querySelector('script')).toBeNull()
+  expect(thread.innerHTML).not.toContain('<script>')
+})
+
+test('the think indicator is hardened the same way', () => {
+  registerAgent('#000" onmouseover="alert(1)')
+  addThinkEl()
+  const av = thread.querySelector('#pa-think .pa-av') as HTMLElement
+  expect(av.getAttribute('onmouseover')).toBeNull()
+  expect(av.getAttribute('style')).toContain('color-mix')
+})
+
+test('a legitimate color still renders', () => {
+  registerAgent('#ff8800')
+  _appendMsgEl(msg(), true)
+  expect(avatar().getAttribute('style')).toContain('#ff8800')
+  expect(avatar().getAttribute('style')).not.toContain('pa-green')
+})
+
+test('an unusable color falls back to the caller default, it is not dropped', () => {
+  registerAgent('red; background-image:url(//evil.example/x)')
+  _appendMsgEl(msg(), true)
+  const style = avatar().getAttribute('style') ?? ''
+  expect(style).toContain('var(--pa-green)')
+  expect(style).not.toContain('url(')
+})
+
+test('an empty color falls back too', () => {
+  registerAgent('')
+  _appendMsgEl(msg(), true)
+  expect(avatar().getAttribute('style')).toContain('var(--pa-green)')
+})
+
+test('name-derived initials are escaped, never parsed as markup', () => {
+  registerAgent('#00ff00', '<img src=x onerror=alert(1)>')
+  _appendMsgEl(msg(), true)
+  const av = avatar()
+  expect(av.querySelector('img')).toBeNull()
+  expect(av.getAttribute('onerror')).toBeNull()
+  // slice(0,2) of the name, as TEXT.
+  expect(av.textContent).toBe('<I')
+})
+
+test('a nickname takes precedence over the name for the initials', () => {
+  registerAgent('#00ff00', 'Fallen')
+  agentInfo.get('mech')!.nicknames = ['<b>']
+  _appendMsgEl(msg(), true)
+  expect(avatar().textContent).toBe('<B')
+  expect(avatar().querySelector('b')).toBeNull()
+})
+// The same registry colour reaches two more renderers, and there it goes
+// through the CSSOM rather than innerHTML — no HTML breakout is possible, but
+// `url(https://…)` IS a valid `background` shorthand and a `--tab-color`
+// custom property, so an unvalidated colour would make the panel fetch an
+// attacker-chosen URL (a visit beacon) on every tab render.
+describe('the other two renderers of the same colour', () => {
+  const HOSTILE = 'url(https://attacker.example/beacon.png)'
+
+  beforeEach(() => {
+    setChannelStatuses({ mech: 'listening' })
+  })
+
+  test('the header dot never carries a url() colour', () => {
+    registerAgent(HOSTILE)
+    renderTabs()
+    const dot = document.getElementById('pa-dot') as HTMLElement
+    expect(dot.style.background).not.toContain('url(')
+    expect(dot.style.background).toContain('var(--pa-green)')
+  })
+
+  test('the mobile switcher rows never carry a url() colour', () => {
+    registerAgent(HOSTILE)
+    renderSheet()
+    const row = document.querySelector('#pa-sheet-list .pa-sheet-row') as HTMLElement
+    expect(row.style.getPropertyValue('--tab-color')).toBe('var(--pa-green)')
+  })
+
+  test('a legitimate colour still reaches both', () => {
+    registerAgent('#ff8800')
+    renderTabs()
+    renderSheet()
+    expect((document.getElementById('pa-dot') as HTMLElement).style.background).toContain('#ff8800')
+    const row = document.querySelector('#pa-sheet-list .pa-sheet-row') as HTMLElement
+    expect(row.style.getPropertyValue('--tab-color')).toBe('#ff8800')
+  })
+})

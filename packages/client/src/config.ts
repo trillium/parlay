@@ -53,6 +53,19 @@ export function esc(s: unknown): string {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
+// Agent colours are server-supplied registry data (the register-agent body is
+// stored verbatim and replayed on the agents / agent_register SSE events) and are
+// interpolated into `style="..."` attributes in thread.ts. Validate, don't
+// escape: an escaped quote is still a CSS injection, and a raw `"` closes the
+// attribute before escaping is even relevant. Anything that is not plainly a
+// colour token gets the caller's default instead.
+const SAFE_COLOR = /^(?:#[0-9a-fA-F]{3,8}|[a-zA-Z][a-zA-Z-]{1,23}|var\(--[a-zA-Z0-9_-]+\)|(?:rgb|rgba|hsl|hsla)\([0-9a-zA-Z.,%/\s-]{1,64}\))$/
+
+export function cssColor(value: unknown, fallback: string): string {
+  const v = typeof value === 'string' ? value.trim() : ''
+  return SAFE_COLOR.test(v) ? v : fallback
+}
+
 // Linkify an ALREADY-ESCAPED string: markdown [label](url) and bare http(s) URLs.
 // Escape-first ordering is load-bearing — raw HTML in messages stays inert and
 // only these generated anchors survive. http/https only; a quote in a URL is

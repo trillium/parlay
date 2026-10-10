@@ -1,4 +1,4 @@
-import { esc, fmtTime } from './config'
+import { esc, fmtTime, cssColor } from './config'
 import { agentInfo, activeChannel, unreadByChannel, setActiveChannel, channelStatus, lastSeenByChannel, lastActivityByChannel, toolLogVisible, type AgentInfo } from './state'
 import { checkAgentOnline } from './tab-online'
 import { tabsEl, inputEl, connBanner, versionEl, urlsEl } from './dom'
@@ -97,7 +97,7 @@ function updateHeader(ch: string | null) {
     subEl.textContent = ` · ${displayName(info)}`
     // Header dot carries the channel's live status, even in single-agent mode
     const st = statusOf(ch)
-    dotEl.style.background = st === 'listening' ? (info.color || 'var(--pa-green)')
+    dotEl.style.background = st === 'listening' ? cssColor(info.color, 'var(--pa-green)')
                            : st === 'idle'      ? 'var(--pa-muted)' : 'transparent'
     dotEl.style.boxShadow  = st === 'offline' ? 'inset 0 0 0 1.5px var(--pa-muted)' : ''
     dotEl.title = statusTooltip(ch)
@@ -152,7 +152,7 @@ export function renderTabs() {
   const makeTab = (id: string, info: AgentInfo) => {
     const tab = document.createElement('button')
     tab.className = 'pa-tab' + (activeChannel === id ? ' active' : '') + (id === 'system' ? ' pa-tab-system' : '')
-    tab.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
+    tab.style.setProperty('--tab-color', cssColor(info.color, 'var(--pa-green)'))
     const label = displayName(info)
     // Tooltip: show status + id when nickname differs from id, plus any owned URLs
     const urlHint = info.urls?.length ? `\n${info.urls.join('\n')}` : ''
@@ -201,7 +201,7 @@ export function renderTabs() {
     for (const [id, info] of archList) {
       const row = document.createElement('button')
       row.className = 'pa-arch-row'
-      row.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
+      row.style.setProperty('--tab-color', cssColor(info.color, 'var(--pa-green)'))
       row.title = `Restore ${id}`
       const count = unreadByChannel[id] || 0
       row.innerHTML = `<span class="pa-tab-pip"></span><span>${esc(displayName(info))}</span><span class="pa-arch-row-id">${esc(id)}</span>${count ? `<span class="pa-tab-unread visible" style="position:static">${count}</span>` : ''}`
