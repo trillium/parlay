@@ -4,7 +4,7 @@
 // because three call sites interpolate it straight into an attribute.
 
 import { test, expect, describe } from 'bun:test'
-import { esc, linkify, panelCapsQuery, cssColor } from './config'
+import { esc, linkify, panelCapsQuery, cssColor, byAttr, firstByAttr } from './config'
 
 // Parse a fragment and report whether any element carries an event handler or a
 // script-ish attribute — i.e. whether the escaping actually held.
@@ -137,5 +137,60 @@ describe('cssColor', () => {
     for (const v of [undefined, null, 42, {}, [], '', '   ']) {
       expect(cssColor(v, FB)).toBe(FB)
     }
+  })
+})
+// byAttr()/firstByAttr() replace `[data-pa-id="${id}"]` selector interpolation.
+// A quote or bracket in the value used to either rewrite the selector (matching
+// a DIFFERENT message) or make it unparseable (a DOMException thrown out of the
+// SSE message handler). Message ids reach the client off a JSONL log that only
+// mostly holds server-shaped ids, so the value is compared, never spliced.
+describe('byAttr / firstByAttr', () => {
+  // The classic selector-injection payload: spliced into
+  // `[data-pa-id="…"]` this becomes two attribute selectors and matches VICTIM.
+  const HOSTILE = 'x"] , [data-pa-id="victim'
+
+  function fixture() {
+    document.body.innerHTML = ''
+    for (const id of ['victim', HOSTILE, 'm1']) {
+      const el = document.createElement('div')
+      el.setAttribute('data-pa-id', id)
+      document.body.appendChild(el)
+    }
+  }
+
+  test('finds an element by exact value, metacharacters and all', () => {
+    fixture()
+    const found = byAttr(document, 'data-pa-id', HOSTILE)
+    expect(found.length).toBe(1)
+    expect(found[0].getAttribute('data-pa-id')).toBe(HOSTILE)
+  })
+
+  test('a selector-shaped value cannot match a different element', () => {
+    fixture()
+    expect(byAttr(document, 'data-pa-id', HOSTILE).map(e => e.getAttribute('data-pa-id')))
+      .toEqual([HOSTILE])
+  })
+
+  test('an unparseable value returns nothing instead of throwing', () => {
+    fixture()
+    for (const bad of ['a" *', 'a] b', 'a\\', 'a\n*', '"', 'm1"']) {
+      expect(byAttr(document, 'data-pa-id', bad)).toEqual([])
+    }
+  })
+
+  test('firstByAttr returns the first match in document order, else null', () => {
+    fixture()
+    expect(firstByAttr(document, 'data-pa-id', 'm1')!.textContent).toBe('')
+    expect(firstByAttr(document, 'data-pa-id', 'nope')).toBeNull()
+  })
+
+  test('scopes to the given root and stringifies non-string values', () => {
+    fixture()
+    const scope = document.querySelectorAll('div')[0]!
+    expect(byAttr(scope, 'data-pa-id', 42)).toEqual([])
+    const el = document.createElement('div')
+    el.setAttribute('data-n', '7')
+    scope.appendChild(el)
+    expect(byAttr(scope, 'data-n', 7).map(e => e.getAttribute('data-n'))).toEqual(['7'])
   })
 })

@@ -1,7 +1,7 @@
 import '../happydom' // registers DOM before the imports below; CWD-independent
 import { test, expect, describe, beforeEach, afterEach } from 'bun:test'
 import { injectDOM, bindDOMRefs, thread, tabsEl } from './dom'
-import { _appendMsgEl, addThinkEl, rmThinkEl } from './thread'
+import { _appendMsgEl, addThinkEl, rmThinkEl, markMsgReceived, loadHistory } from './thread'
 import { renderTabs } from './tabs'
 import { renderSheet } from './switcher'
 import { agentInfo, msgs, setActiveChannel, setThinkingState, setAtBottom, setChannelStatuses } from './state'
@@ -206,5 +206,36 @@ describe('an agent id in the tab unread badge', () => {
     setChannelStatuses({ other: 'listening', mech: 'listening' })
     renderTabs()
     expect(document.getElementById('pa-tab-unread-mech')).not.toBeNull()
+  })
+})
+
+// The pip/dedup lookups used to splice the message id straight into a
+// `[data-pa-id="${id}"]` selector. A balanced payload turned the lookup into
+// TWO selectors and flipped a different message; an unbalanced one threw a
+// DOMException out of the SSE handler that called it.
+describe('a hostile message id in the data-pa-id lookups', () => {
+  const HOSTILE = 'x"] , [data-pa-id="victim'
+
+  function userMsg(id: string) { return msg({ id, role: 'user', received: false }) }
+
+  test('a selector-shaped id flips only its own pip', () => {
+    _appendMsgEl(userMsg('victim'), true)
+    _appendMsgEl(userMsg(HOSTILE), true)
+    expect(() => markMsgReceived(HOSTILE)).not.toThrow()
+    expect([...thread.querySelectorAll('.pa-msg-status')].map(p => p.className))
+      .toEqual(['pa-msg-status queued', 'pa-msg-status received'])
+  })
+
+  test('an unparseable id is a no-op rather than a thrown DOMException', () => {
+    _appendMsgEl(userMsg('victim'), true)
+    expect(() => markMsgReceived('a" *')).not.toThrow()
+    expect(thread.querySelector('.pa-msg-status')!.className).toBe('pa-msg-status queued')
+  })
+
+  test('history dedup still collapses a true duplicate', () => {
+    setActiveChannel('mech')
+    loadHistory([userMsg(HOSTILE)])
+    loadHistory([userMsg(HOSTILE)])
+    expect(thread.querySelectorAll('[data-pa-id]').length).toBe(1)
   })
 })

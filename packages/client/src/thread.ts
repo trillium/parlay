@@ -1,4 +1,4 @@
-import { esc, linkify, fmtTime, cssColor } from './config'
+import { esc, linkify, fmtTime, cssColor, firstByAttr } from './config'
 import { msgs, agentInfo, activeChannel, thinking, setThinkingState, lastActivityByChannel } from './state'
 import { thread, emptyEl } from './dom'
 import { scrollBottom } from './thread-scroll'
@@ -212,7 +212,7 @@ export function appendMsg(m: any) {
 export function markMsgReceived(id: string) {
   const cached = msgs.find((m: any) => m.id === id)
   if (cached) (cached as any).received = true
-  const pip = thread.querySelector(`[data-pa-id="${id}"] .pa-msg-status`)
+  const pip = firstByAttr(thread, 'data-pa-id', id)?.querySelector('.pa-msg-status')
   if (pip) { pip.textContent = '✓'; pip.className = 'pa-msg-status received'; (pip as HTMLElement).title = 'Received by agent' }
 }
 
@@ -233,7 +233,7 @@ export function renderThread() {
 
 export function loadHistory(history: any[]) {
   history.forEach((m: any) => {
-    if (document.querySelector(`[data-pa-id="${m.id}"]`)) return
+    if (firstByAttr(document, 'data-pa-id', m.id)) return
     msgs.push(m)
     // setLastId is in state but imported there; direct mutation here is fine for lastId
     ;(window as any).__paLastId = m.id

@@ -1,4 +1,4 @@
-import { CHAT_BASE, panelCapsQuery } from './config'
+import { CHAT_BASE, panelCapsQuery, firstByAttr } from './config'
 import { PA_VERSION } from './version'
 import {
   msgs, open, unread,
@@ -148,7 +148,7 @@ export function connect() {
 
   es.addEventListener('message', (e: MessageEvent) => {
     const m = JSON.parse(e.data)
-    if (document.querySelector(`[data-pa-id="${m.id}"]`)) return
+    if (firstByAttr(document, 'data-pa-id', m.id)) return
     msgs.push(m)
     ;(window as any).__paLastId = m.id
     storeMessages([m])   // keep IDB current so next reload gets this message

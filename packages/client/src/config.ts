@@ -79,6 +79,27 @@ export function linkify(escaped: string): string {
   })
 }
 
+// Locate elements by an ATTRIBUTE VALUE without building a selector from it.
+// Ids are interpolated from server data, and `[data-pa-id="${id}"]` was the
+// pattern: a quote/bracket in an id turned the lookup into a DIFFERENT selector
+// (silently matching the wrong message) or an unparseable one (a DOMException
+// thrown straight out of the SSE message handler, killing the live stream).
+// Message ids come off a JSONL log whose entries are only mostly server-shaped —
+// ids that do not parse are ignored on load, not rewritten — so the value is
+// compared instead of spliced. Escape in CSS and you still owe the DOM a
+// hand-rolled escape; comparing is the whole fix.
+export function byAttr(root: ParentNode, attr: string, value: unknown): HTMLElement[] {
+  const out: HTMLElement[] = []
+  for (const el of root.querySelectorAll<HTMLElement>(`[${attr}]`)) {
+    if (el.getAttribute(attr) === String(value)) out.push(el)
+  }
+  return out
+}
+
+export function firstByAttr(root: ParentNode, attr: string, value: unknown): HTMLElement | null {
+  return byAttr(root, attr, value)[0] ?? null
+}
+
 export function fmtTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString('en-US', {
