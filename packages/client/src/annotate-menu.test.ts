@@ -8,6 +8,42 @@ const MENU = '#pa-annotate-menu'
 function menu() { return document.querySelector(MENU) as HTMLElement | null }
 function rows() { return Array.from(document.querySelectorAll(`${MENU} .pa-am-row`)) as HTMLElement[] }
 
+// Instrument document listener registration so a leak is observable: the menu
+// is a module singleton, so a handler that outlives its open() is invisible in
+// the rendered DOM. Records (type, capture) per add/remove and counts how many
+// registered click handlers actually run for a single dispatched event.
+type Reg = { type: string; capture: boolean }
+function instrumentDocumentListeners() {
+  const adds: Reg[] = [], removes: Reg[] = []
+  let clickCalls = 0
+  const realAdd = document.addEventListener.bind(document)
+  const realRemove = document.removeEventListener.bind(document)
+  const wrappers = new WeakMap<object, EventListener>()
+  const cap = (o?: boolean | AddEventListenerOptions) => (typeof o === 'boolean' ? o : !!o?.capture)
+  document.addEventListener = ((t: string, f: EventListenerOrEventListenerObject, o?: any) => {
+    if (t === 'click') {
+      adds.push({ type: t, capture: cap(o) }); clickCalls = 0
+      const w: EventListener = (e) => { clickCalls++; (f as EventListener).call(document, e) }
+      wrappers.set(f as object, w)
+      realAdd(t, w, o); return
+    }
+    adds.push({ type: t, capture: cap(o) })
+    realAdd(t, f, o)
+  }) as typeof document.addEventListener
+  document.removeEventListener = ((t: string, f: any, o?: any) => {
+    removes.push({ type: t, capture: cap(o) })
+    realRemove(t, wrappers.get(f) ?? f, o)
+  }) as typeof document.removeEventListener
+  return {
+    adds, removes,
+    clickCalls: () => clickCalls,
+    restore() {
+      document.addEventListener = realAdd as typeof document.addEventListener
+      document.removeEventListener = realRemove as typeof document.removeEventListener
+    },
+  }
+}
+
 beforeEach(() => {
   document.body.innerHTML = ''
   document.head.innerHTML = ''
@@ -107,4 +143,25 @@ test('Escape closes the open menu', () => {
   expect(menu()?.classList.contains('visible')).toBe(true)
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
   expect(menu()?.classList.contains('visible')).toBe(false)
+})
+
+test('closing the menu removes every listener it registered (matching type + capture)', () => {
+  const l = instrumentDocumentListeners()
+  try {
+    openAnnotateMenu()
+    closeAnnotateMenu()
+    expect(l.adds.length).toBeGreaterThan(0)
+    expect(l.removes).toEqual(l.adds)   // same multiset of (type, capture)
+  } finally { l.restore() }
+})
+
+test('repeated open/close cycles do not accumulate outside-click handlers', () => {
+  const l = instrumentDocumentListeners()
+  try {
+    for (let i = 0; i < 3; i++) { openAnnotateMenu(); closeAnnotateMenu() }
+    openAnnotateMenu()                    // one live menu, one live handler
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(l.clickCalls()).toBe(1)
+    expect(menu()?.classList.contains('visible')).toBe(false)
+  } finally { l.restore() }
 })
