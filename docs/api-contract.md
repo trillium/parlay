@@ -884,7 +884,7 @@ guarding it does not newly reflect an `Access-Control-Allow-Origin`.
 
 - `POST /api/chat/clients/report` — body `{clientId, kind: "hello"|"report"|"heartbeat", rollCallId?, state}`.
   `state` keys (all optional, strings truncated to 200 chars, `screenErrors` capped at 5):
-  `version`, `build`, `device`, `loadAddress`, `voiceArmed`, `lastPhrase`,
+  `version`, `build`, `device`, `deviceLabel` (human name, e.g. "iPhone · Safari"), `loadAddress`, `voiceArmed`, `lastPhrase`,
   `engineResult`, `submitOutcome`, `target`, `screenErrors`. Fields merge into
   the stored row, so a bare heartbeat never erases a hello. 200 clients max,
   oldest evicted.
@@ -894,7 +894,7 @@ guarding it does not newly reflect an `Access-Control-Allow-Origin`.
 - `GET /api/chat/clients` — `{connected, lastRollCallId, clients[]}`; each row
   carries `lastSeen`, `lastRollCallId` and `stale` (no report for 45s).
 
-Readers: `parlay liveness` prints a "connected pages" section (`pages` in
+Readers: the panel client's connected-devices view (Ctrl+Shift+V, `packages/client/src/devices-panel.ts`), `parlay liveness` prints a "connected pages" section (`pages` in
 `--json`; null when the server did not answer), and the sandbox has a
 "Connected pages" panel with a Roll call button. The panel client implements the
 hello/report/heartbeat in `packages/client/src/roll-call.ts`; voice and terminal

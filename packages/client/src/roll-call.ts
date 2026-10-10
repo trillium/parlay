@@ -13,6 +13,7 @@ export interface RollCallState {
   version?: string
   build?: string
   device?: string
+  deviceLabel?: string
   loadAddress?: string
   voiceArmed?: boolean
   lastPhrase?: string
@@ -31,6 +32,15 @@ const clientId = `c-${Math.random().toString(36).slice(2, 10)}${Date.now().toStr
 export function setRollCallState(patch: RollCallState) { extra = { ...extra, ...patch } }
 export function resetRollCallState() { extra = {} }
 
+/** Human name for this browser, e.g. "iPhone · Safari" or "Mac · Chrome". */
+export function deviceLabel(ua = navigator.userAgent): string {
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+    : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Unknown device'
+  const br = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /(Chrome|CriOS)\//.test(ua) ? 'Chrome'
+    : /Safari\//.test(ua) ? 'Safari' : 'browser'
+  return `${os} · ${br}`
+}
+
 export function snapshot(device: string, banner = ''): RollCallState {
   const errors = [...(extra.screenErrors ?? [])]
   if (banner) errors.push(banner)
@@ -40,6 +50,7 @@ export function snapshot(device: string, banner = ''): RollCallState {
     loadAddress: location.href,
     ...extra,
     device,
+    deviceLabel: deviceLabel(),
     ...(errors.length ? { screenErrors: errors } : {}),
   }
 }
