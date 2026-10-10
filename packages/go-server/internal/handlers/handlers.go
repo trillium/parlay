@@ -104,6 +104,9 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	// Remote-input intake (task-57ltl): accepted text → Talon injection.
 	registerRemoteInput(mux, hub, st)
 
+	// Client roll call: pages announce themselves; the server can order a report.
+	registerClients(mux, hub)
+
 	registerCommands(mux, st, hub)
 	registerPanel(mux, st, b, hub)
 	registerInputEvents(mux, st)

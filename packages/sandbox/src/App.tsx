@@ -4,6 +4,7 @@ import { buildEvalBody, evaluate, fireStreamId, previewStreamId, type ParlayActi
 import { EMPTY_FILTER, inputActionsByStream, readLog } from './log'
 import { decode, PreviewPanel, rowFor, type ConfigResult } from './PreviewPanel'
 import { LogPanel } from './LogPanel'
+import { ClientsPanel } from './ClientsPanel'
 
 /** The sandbox's device id. It is a real connection as far as the server is
  *  concerned — that is what makes the row-level off switch meaningful and what
@@ -198,6 +199,8 @@ export function App({ fetchImpl, eventSourceFactory, server = '', device }: AppP
           {delivered.length === 0 && <li className="muted">nothing delivered yet</li>}
         </ul>
       </section>
+
+      <ClientsPanel fetchImpl={doFetch} server={server} />
 
       <LogPanel
         fetchImpl={doFetch}

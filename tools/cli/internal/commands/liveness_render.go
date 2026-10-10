@@ -44,6 +44,7 @@ func renderLiveness(g livenessGather, a livenessArgs) {
 			shown = append(shown, r)
 		}
 	}
+	defer renderLivenessPages(g.Pages, g.PagesKnown)
 	if len(shown) == 0 {
 		fmt.Println()
 		if a.silentOnly {

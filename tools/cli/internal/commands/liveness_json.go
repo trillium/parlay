@@ -29,6 +29,8 @@ type livenessJSON struct {
 	Answered  bool                `json:"answered"`
 	Agents    []livenessAgentJSON `json:"agents"`
 	Sources   []sourceNote        `json:"sources"`
+	// Pages is null when the roll call could not be read, [] when read and empty.
+	Pages *livenessPagesResponse `json:"pages"`
 }
 
 type livenessAgentJSON struct {
@@ -63,6 +65,13 @@ func renderLivenessJSON(g livenessGather, a livenessArgs) {
 		Answered:  g.answered,
 		Agents:    []livenessAgentJSON{},
 		Sources:   g.Sources,
+	}
+	if g.PagesKnown {
+		pages := g.Pages
+		if pages.Clients == nil {
+			pages.Clients = []livenessPage{}
+		}
+		out.Pages = &pages
 	}
 	if out.Sources == nil {
 		out.Sources = []sourceNote{}

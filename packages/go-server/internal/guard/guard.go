@@ -251,6 +251,15 @@ var GuardedPaths = map[string]bool{
 	// already willing to do, and a request the guard refuses never reaches it.
 	"/api/chat/action-log": true,
 	"/api/chat/off-switch": true,
+
+	// Client roll call: POST report writes a registry row, POST rollcall
+	// orders every connected page to report, and GET clients hands out client
+	// ids, device ids and page-reported text — mutating or identifier-aiming by
+	// the file's own rule. GET clients is in noGuardedCORSReads: guarding it
+	// must not newly reflect an ACAO on a read that has never sent one.
+	"/api/chat/clients":          true,
+	"/api/chat/clients/report":   true,
+	"/api/chat/clients/rollcall": true,
 }
 
 // jsonExemptPaths are guarded paths that must NOT be held to
@@ -537,6 +546,7 @@ var noGuardedCORSReads = map[string]string{
 	// sibling POST mutates and because the body carries device ids, but the GET
 	// itself has never sent CORS headers and must not start doing so.
 	"/api/chat/action-log": http.MethodGet,
+	"/api/chat/clients":    http.MethodGet,
 }
 
 // listedOriginCORSReads maps a guarded path to the one read method whose

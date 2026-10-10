@@ -869,6 +869,31 @@ out device and command ids, and it is in `noGuardedCORSReads` so guarding it doe
 not newly reflect an `Access-Control-Allow-Origin` on a read that has never sent
 one.
 
+## Client roll call
+
+A page announces itself when its events stream connects, and the server can
+order every connected page to report. All three routes are in the origin guard's
+`GuardedPaths`; `GET /api/chat/clients` is also in `noGuardedCORSReads` so
+guarding it does not newly reflect an `Access-Control-Allow-Origin`.
+
+- `POST /api/chat/clients/report` — body `{clientId, kind: "hello"|"report"|"heartbeat", rollCallId?, state}`.
+  `state` keys (all optional, strings truncated to 200 chars, `screenErrors` capped at 5):
+  `version`, `build`, `device`, `loadAddress`, `voiceArmed`, `lastPhrase`,
+  `engineResult`, `submitOutcome`, `target`, `screenErrors`. Fields merge into
+  the stored row, so a bare heartbeat never erases a hello. 200 clients max,
+  oldest evicted.
+- `POST /api/chat/clients/rollcall` — broadcasts an SSE `roll_call` event
+  `{id, at}` to every connected client; returns `{id, connected}` (clients the
+  order was queued to).
+- `GET /api/chat/clients` — `{connected, lastRollCallId, clients[]}`; each row
+  carries `lastSeen`, `lastRollCallId` and `stale` (no report for 45s).
+
+Readers: `parlay liveness` prints a "connected pages" section (`pages` in
+`--json`; null when the server did not answer), and the sandbox has a
+"Connected pages" panel with a Roll call button. The panel client implements the
+hello/report/heartbeat in `packages/client/src/roll-call.ts`; voice and terminal
+code contribute state with `setRollCallState`.
+
 ### `GET /api/chat/action-log`
 Query (all optional): `source`, `inputAction`, `outputAction`, `outcome`,
 `reason`, `device`, `since`, `until`, `limit`. `since`/`until` accept an RFC3339

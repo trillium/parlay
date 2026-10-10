@@ -70,6 +70,9 @@ func gatherLiveness(a livenessArgs) livenessGather {
 		}
 	}
 
+	// --- the connected pages (client roll call) ---
+	g.Pages, g.PagesKnown = fetchLivenessPages()
+
 	// --- this host's process table: registration is not a listener ---
 	listeners, listenersKnown := liveListeners()
 	ptState, ptDetail := srcRead, fmt.Sprintf("%d live listener process(es) on this host", len(listeners))
