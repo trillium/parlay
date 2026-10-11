@@ -180,8 +180,11 @@ fi
 # messages/registry/draft/settings/uploads, -pai-dir the TTS cache, and
 # -assets-dir is pointed at an empty directory so a real
 # packages/client/dist next to the repo is never served (or read) here.
+# PARLAY_HUB_URL is pinned to a closed port (1) so the out-of-tree hook/tool
+# tailers, which replay into whatever answers it, can never reach the host's
+# real hub on 127.0.0.1:4242.
 (
-  exec env HOME="$SANDBOX" \
+  exec env HOME="$SANDBOX" PARLAY_HUB_URL="http://127.0.0.1:1" \
     "$SANDBOX/bin/parlay-server" \
       -addr "127.0.0.1:$PORT" \
       -state-dir "$SANDBOX/data" \
