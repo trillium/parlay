@@ -144,6 +144,11 @@ invokes it by absolute path for the same reason.
 `$PAI_DIR/tts-substitutions.json`. Unset it and the server writes into your real
 `~/.claude/PAI` even though every other path is scratch.
 
+`PARLAY_HUB_URL` is the other variable to pin. The hook/tool tailers live outside
+this repo and replay into whatever answers it (default `http://127.0.0.1:4242`,
+your real hub). `bootstrap-sandbox.sh` points it at a closed port; do the same
+for a hand-built instance: `export PARLAY_HUB_URL=http://127.0.0.1:1`.
+
 `-assets-dir` points the panel bundle lookup at an empty directory, so a real
 `packages/client/dist` next to your checkout is never served from a scratch
 instance. There is no panel here anyway — the bundle is not shipped (see the
