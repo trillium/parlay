@@ -73,6 +73,11 @@ type livenessGather struct {
 	Rows    []livenessRow
 	Sources []sourceNote
 
+	// Pages is the client roll call; PagesKnown=false means the server did not
+	// answer, which is unknown, not zero pages.
+	Pages      livenessPagesResponse
+	PagesKnown bool
+
 	// answered is the exit-code predicate: did ANY source answer? A source
 	// that answered with nothing counts; a source that could not be reached
 	// does not.

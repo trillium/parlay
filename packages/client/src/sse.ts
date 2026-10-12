@@ -14,6 +14,7 @@ import { draftClientId, lastSendTs } from './input'
 import { navigateWorkspace } from './commands/ctx'
 import { renderTabs } from './tabs'
 import { appendToolEntry } from './toollog'
+import { announce } from './roll-call'
 
 // ── Compact timer ─────────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ export function connect() {
   // Pass current page URL so the server can give the owning channel deeper history.
   const urlQ   = `&url=${encodeURIComponent(window.location.href)}`
   const es = new EventSource(`${CHAT_BASE}/events?device=${encodeURIComponent(getDeviceId())}${afterQ}${urlQ}${panelCapsQuery(getDeviceId())}`)
-  attachPluginHandlers(es)
+  attachPluginHandlers(es); es.addEventListener('connected', () => announce(es, getDeviceId(), () => connBanner.textContent ?? ''))
   ;(window as any).__paEs = es
   setEs(es)
 
@@ -105,9 +106,8 @@ export function connect() {
     connBanner.textContent = ''
     dot.classList.remove('offline')
     drawer.classList.remove('agent-away')
-    // Self-upgrade: PWA pages live for days — on every (re)connect compare our
-    // compiled-in version to the served bundle and reload once if stale. The
-    // sessionStorage guard prevents reload loops when a cache stays sticky.
+    // Self-upgrade: on every (re)connect reload once if our compiled-in version
+    // is stale; the sessionStorage guard prevents loops when a cache sticks.
     fetch(`${CHAT_BASE}/version`).then(r => r.json()).then(({ version }) => {
       if (!version || version === 'unknown' || version === PA_VERSION) return
       if (sessionStorage.getItem('pa-upgrade-attempt') === version) return
