@@ -60,6 +60,12 @@ are kept so a caller can tell a retained-forever quirk from a regression.
 
 ### Origin guard
 
+> Admitting a client origin: `parlay client admit <origin>` (file
+> `$PARLAY_STATE_HOME/allowed-origins`, re-read on change) as well as
+> `PARLAY_ALLOWED_ORIGINS` below; both are merged. The five-step client contract,
+> `GET /api/chat/client` and `parlay client check` are in
+> [`client-contract.md`](client-contract.md).
+
 Unauthenticated does **not** mean unrestricted: the mutating and
 identifier-aiming surface — the routes that write state, drive a device, or
 hand out an identifier (device uuid, agent id) a hostile page could then aim

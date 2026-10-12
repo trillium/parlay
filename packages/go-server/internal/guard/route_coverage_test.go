@@ -49,6 +49,7 @@ var TestUnguardedRoutes = map[string]string{
 	// who asked), and nothing writable: an unknown ?inputId= is an empty list.
 	"/api/chat/input-events": "read: the input-seam ledger; message ids, channel names and per-channel poll timestamps are already unguarded at /api/chat/history",
 	"/api/chat/commands":     "read: the live-command snapshot. Same class as /api/chat/agents; its three POST siblings ARE guarded",
+	"/api/chat/client":       "read: the onboarding document (listen address, admit list, client contract). Sends no CORS headers, so a foreign page cannot read it; the admit list is a CORS allowance, not access control, on a server that has no authentication",
 	"/api/chat/version":      "read: bundle version string, polled by every SSE client",
 	"/api/chat/pages":        "read: the page manifest the panel's page picker renders",
 	"/api/chat/plugins":      "read: static plugin manifests. The mutating plugin subtree is guarded by the /api/chat/plugin/ prefix",
