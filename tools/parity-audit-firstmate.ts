@@ -24,6 +24,7 @@
  */
 import { existsSync, readFileSync } from "node:fs"
 import { execSync } from "node:child_process"
+import { buildMatrix, type Row } from "./parity-audit-matrix"
 
 // Default to the checkout this tool lives in (repo root = tools/..) so the audit probes
 // its own source of truth — canonical run and worktree/CI alike. Override with PL_REPO.
@@ -61,7 +62,7 @@ const cliSuperviseSrc = mustRead(`${PL}/tools/cli/internal/commands/supervise.go
 // reported once as NOT EVALUATED — never a MISSING contraction, never verified. Unset
 // is supported; set-but-unreadable is a mistake, so say so loudly.
 const foldDocPath = process.env.PARLAY_FOLD_DOC
-const foldDoc = foldDocPath ? read(foldDocPath) : ""
+const foldDoc = foldDocPath ? (() => { try { return read(foldDocPath) } catch { return "" } })() : "" // read() only guards a missing path; EISDIR/EACCES must reach the warning below
 const foldDocAvailable = foldDoc.length > 0
 if (foldDocPath && !foldDocAvailable) console.error(`⚠ PARLAY_FOLD_DOC="${foldDocPath}" is unreadable or empty — its probes are NOT EVALUATED.`)
 
@@ -114,97 +115,7 @@ function openFixTasks(): string {
 const fixTasks = openFixTasks()
 const hasFixTask = (tag: string) => new RegExp(`parlay-fold ${tag}\\b`).test(fixTasks)
 
-// ---- the capability matrix -----------------------------------------------
-type Verdict =
-  | "COVERED-same"
-  | "COVERED-alternate"
-  | "EXPANDED"
-  | "STAYS-FIRSTMATE"
-  | "DEFERRED"
-  | "DROP-justified"
-  | "MISSING"
-
-interface Row {
-  cap: string // firstmate capability
-  fm: string // where it lives in firstmate
-  parlay: string // its home in the folded end-state
-  verdict: Verdict
-  built?: boolean // for COVERED-alternate: is it landed yet?
-  fix?: string // contraction ledger tag, when MISSING
-  note?: string
-  docDerived?: "crew-dispatch" | "away-mode" // stable key; verdict sourced from the fold doc: unreadable ⇒ NOT EVALUATED, never MISSING
-}
-
-const M: Row[] = [
-  // --- spawn / launch ---
-  { cap: "Spawn a direct report", fm: "fm-spawn.sh", parlay: "tools/cli/internal/spawn", verdict: "COVERED-same", built: has(`${PL}/tools/cli/internal/spawn/spawn.go`) },
-  { cap: "Model pin", fm: "--model", parlay: "parlay spawn --model", verdict: "COVERED-same", built: probe.spawnFlag("model") },
-  { cap: "Effort level", fm: "--effort", parlay: "parlay spawn --effort (§3.4)", verdict: "COVERED-alternate", built: probe.effortSpawn },
-  { cap: "Per-task worktree isolation (mandatory)", fm: "treehouse worktree", parlay: "parlay spawn --worktree opt-in (§3.3)", verdict: "COVERED-alternate", built: probe.worktreeSpawn, note: "mandatory→opt-in; parlay agents often not in a repo" },
-  { cap: "Batch dispatch (id=repo pairs)", fm: "fm-spawn.sh id=repo …", parlay: "parlay spawn id=repo … --prompt (thin loop, §3.8)", verdict: "COVERED-alternate", built: probe.batchSpawn, note: "C3 RESOLVED (task-ovkq): thin loop re-execs single mode per pair; shared --prompt/--model/--color, name+color derived per id; one failed pair does not stop the rest, batch exits non-zero" },
-  { cap: "Multi-harness (codex/opencode/pi/grok)", fm: "fm-harness.sh + adapters", parlay: "deferred primitive, seam scaffolded (§3.4)", verdict: "DEFERRED", note: "built LAST; claude-only until then" },
-  { cap: "Runtime backend (tmux/zellij/orca/cmux)", fm: "fm-backend.sh", parlay: "firstmate-retained (herdr-only by design)", verdict: "DROP-justified", note: "decision-3ae does not ask parlay to own backends" },
-  { cap: "Crew-dispatch profiles + quota-balanced", docDerived: "crew-dispatch", fm: "crew-dispatch.json + fm-dispatch-select.sh", parlay: foldDocAvailable ? "firstmate POLICY, retention stated (§3.4a)" : "— (retention claim not checkable here)", verdict: "STAYS-FIRSTMATE", note: foldDocAvailable ? "what-to-spawn choice stays fm (decision-3ae); re-activates against the §3.4 harness primitive — inert while parlay is claude-only" : "the retention + re-activation statement was sourced from the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
-
-  // --- brief / meta / identity ---
-  { cap: "Structured brief contract", fm: "fm-brief.sh", parlay: "enrollment + appended task contract (§3.1)", verdict: "COVERED-alternate", built: /## Definition of done/.test(spawnSrc) },
-  // Recorded meta: `parlay spawn` passes --mode/--yolo to identity --register (YAML frontmatter,
-  // not firstmate's key=value .meta format). Probe: --mode/--yolo present in spawn.
-  // BLIND SPOT: --mode/--yolo are all this checks. The rest of the meta superset the row
-  // claims (--project_bead, --worktree recording) is designed-not-built and unprobed here.
-  { cap: "Recorded meta (runtime facts)", fm: "state/<id>.meta", parlay: "identity.md frontmatter superset (§3.2)", verdict: "COVERED-alternate", built: /--mode\b/.test(spawnSrc) && /--yolo\b/.test(spawnSrc) },
-  { cap: "Identity / recovery / self-restart", fm: "(none — disposable)", parlay: "durable identity+handoff+context-reset", verdict: "EXPANDED" },
-  { cap: "Panel enrollment / phone reachability", fm: "(none)", parlay: "parlay monitor + Pulse panel", verdict: "EXPANDED" },
-
-  // --- status / supervision ---
-  { cap: "Keyed status stream (agent→supervisor)", fm: "state/<id>.status + fm-classify-lib", parlay: "parlay status verb (§3.6) — C1 collision resolved (task-ve2v)", verdict: "COVERED-alternate", built: probe.keyedStatusBuilt, note: "C1 RESOLVED: 'parlay status' now the fold §3.6 verb; old alias retired" },
-  { cap: "Event-driven watcher (absorb-when-working)", fm: "fm-watch.sh", parlay: "bridge reuses fm-watch → Slice 3 primitive", verdict: "DEFERRED" },
-  { cap: "Authoritative current-state read", fm: "fm-crew-state.sh", parlay: "Slice 3 crew-state (richer oracle)", verdict: "DEFERRED", note: "parlay adds tab-liveness + subscriber presence" },
-  { cap: "Durable wake queue", fm: "fm-wake-drain + .wake-queue", parlay: "(rolls into Slice 3 supervise primitive)", verdict: "DEFERRED" },
-  { cap: "Worktree-tangle runtime guard", fm: "fm-guard.sh", parlay: "parlay guard — tangle+liveness backstop, wired into variant lifecycle (C4)", verdict: "COVERED-alternate", built: probe.tangleGuardBuilt, note: "runtime banner + non-destructive restore + --beat liveness beacon; anchored on the variant worktree primitive" },
-  { cap: "Turn-end guard hooks", fm: "fm-turnend-guard.sh", parlay: "deferred w/ harness primitive (§3.4)", verdict: "DEFERRED" },
-  // C2 (task-eg75): away-mode home is DERIVED from the fold doc, so a doc supplied via
-  // PARLAY_FOLD_DOC that has lost §3.6.2 reverts this row to MISSING and re-fails
-  // integrity — genuine re-verification. No doc at all is NOT EVALUATED, not MISSING.
-  { cap: "Away-mode unattended sub-supervision", docDerived: "away-mode", fm: "fm-afk-* + fm-supervise-daemon.sh", parlay: afkHomeInFold ? "Slice 3 supervise: unattended mode (§3.6.2) + fm-afk policy" : "— (unaddressed)", verdict: afkHomeInFold ? "COVERED-alternate" : "MISSING", fix: afkHomeInFold ? undefined : "C2", built: afkUnattendedBuilt, note: afkHomeInFold ? "mechanism→Slice 3 headless mode (presence flag + batched escalation + max-defer + in-band captain-return marker); policy→firstmate (/afk gesture, max-defer value, approval-authority preservation)" : foldDocAvailable ? "no home: not in Slice 3 scope, not clearly fm-retained" : "the §3.6.2 home for this capability was stated only in the fold design doc, which is no longer in this repo, so this audit cannot check the claim" },
-  { cap: "Steer agent (captain→crewmate)", fm: "fm-send.sh", parlay: "parlay send/say --agent + monitor", verdict: "COVERED-same", built: probe.verb("send") && probe.verb("say") },
-  { cap: "Peek pane for diagnosis", fm: "fm-peek.sh", parlay: "parlay history + herdr agent get", verdict: "COVERED-alternate", built: probe.verb("history") },
-
-  // --- teardown ---
-  { cap: "Safe teardown (never discard unlanded)", fm: "fm-teardown.sh", parlay: "parlay teardown CLI verb (§3.7) — unlanded-work gate, worktree+store cleanup", verdict: "COVERED-alternate", built: probe.teardownBuilt },
-
-  // --- delivery / merge (POLICY) ---
-  { cap: "Delivery mode report/branch/pr", fm: "no-mistakes/direct-PR/local-only/scout", parlay: "--mode report|branch|pr (§3.5)", verdict: "COVERED-alternate", built: probe.modeSpawn, note: "no-mistakes NOT ported (fm policy)" },
-  { cap: "yolo approval posture", fm: "yolo flag", parlay: "recorded in meta (§3.5)", verdict: "COVERED-alternate", built: /yolo=/.test(spawnSrc) },
-  { cap: "Merge discipline (captain-merge, squash rec.)", fm: "fm-pr-merge/pr-check/merge-local", parlay: "firstmate POLICY", verdict: "STAYS-FIRSTMATE" },
-  { cap: "Branch review vs authoritative base", fm: "fm-review-diff.sh", parlay: "firstmate POLICY (+ lavish surface)", verdict: "STAYS-FIRSTMATE" },
-  { cap: "Review store + decision pages", fm: "fm-review-page/decision.sh", parlay: "firstmate / lavish", verdict: "STAYS-FIRSTMATE" },
-  { cap: "no-mistakes validation pipeline", fm: "no-mistakes gate", parlay: "firstmate POLICY (explicitly not ported)", verdict: "STAYS-FIRSTMATE" },
-
-  // --- intake / project mgmt ---
-  { cap: "Project resolution at intake", fm: "AGENTS.md §7 intake signals", parlay: "--project + resolver (§3.9)", verdict: "COVERED-alternate", built: probe.projectSpawn },
-  { cap: "Project registry", fm: "data/projects.md", parlay: "projects bead store (§3.8/3.9)", verdict: "COVERED-alternate", note: "markdown form dropped; concept kept" },
-  { cap: "Delivery-mode-per-project", fm: "projects.md [mode]", parlay: "per-spawn --mode (§3.8)", verdict: "COVERED-alternate", note: "config location moved, not lost" },
-  { cap: "Proactive grooming / idea-mining", fm: "fm-groom.sh + fm-idea-mine.ts", parlay: "firstmate POLICY (what-to-spawn)", verdict: "STAYS-FIRSTMATE" },
-  { cap: "Backlog queue", fm: "data/backlog.md + tasks-axi", parlay: "MIXED: split Slice 4 (task/projects store)", verdict: "DEFERRED" },
-  { cap: "Knowledge routing (captain/learnings)", fm: "data/*.md + §6", parlay: "firstmate memory POLICY", verdict: "STAYS-FIRSTMATE" },
-
-  // --- fleet / session (supervisor-side) ---
-  { cap: "Fleet sync (ff project clones)", fm: "fm-fleet-sync.sh", parlay: "MIXED fleet-state (Slice 4 split)", verdict: "DEFERRED" },
-  { cap: "Fleet snapshot / view", fm: "fm-fleet-snapshot/view.sh", parlay: "parlay agents/subscribers/stats (partial)", verdict: "DEFERRED", built: probe.verb("agents") },
-  { cap: "Supervisor session-start digest", fm: "fm-session-start.sh", parlay: "firstmate orchestrator infra", verdict: "STAYS-FIRSTMATE", note: "agent-side self-start is EXPANDED separately" },
-  { cap: "Session lock (single owner/home)", fm: "fm-lock.sh", parlay: "firstmate orchestrator infra", verdict: "STAYS-FIRSTMATE" },
-  { cap: "Supervisor recovery reconcile", fm: "AGENTS.md §5", parlay: "MIXED: agent-side EXPANDED, sup-side fm", verdict: "DEFERRED" },
-
-  // --- secondmates / config ---
-  { cap: "Secondmate (persistent domain supervisor)", fm: "fm-home-seed + charter + §7", parlay: "dropped; nested-sup via Slice 3 primitive", verdict: "DROP-justified", note: "abstraction redundant; nested supervision reconstructible post-Slice-3" },
-  { cap: "Config inheritance to secondmates", fm: "fm-config-inherit/push.sh", parlay: "— (rides secondmate drop)", verdict: "DROP-justified", note: "only relevant if secondmates return" },
-
-  // --- X mode ---
-  { cap: "X mode (relay mention → task, answer)", fm: "fm-x-* + §14", parlay: "firstmate POLICY (inert until opted in)", verdict: "STAYS-FIRSTMATE" },
-  { cap: "Herdr-lab hard-isolation brief contract", fm: "fm-herdr-lab.sh + --herdr-lab", parlay: "unmentioned (niche)", verdict: "STAYS-FIRSTMATE", note: "parlay is herdr-native; lab-isolation for herdr-lifecycle tasks" },
-  { cap: "External herdr-agent → firstmate spur", fm: "fm-herdr-spur.sh", parlay: "event fabric (robots-watch, CLI_VERBS §2)", verdict: "DEFERRED" },
-]
+const M: Row[] = buildMatrix({ probe, foldDocAvailable, afkHomeInFold, afkUnattendedBuilt, has, PL, spawnSrc })
 
 // ---- verify integrity ----------------------------------------------------
 const problems: string[] = []
