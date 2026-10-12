@@ -24,11 +24,19 @@ export function readCursor(el: Element): { anchor: number; active: number } {
   return { anchor: 0, active: 0 }
 }
 
-/** Collapse the caret to `pos` on elements that support text selection (a
- * plain `div`/`span` textContent target has none — a harmless no-op there). */
+// <input> types for which the HTML spec defines a selection. On every other
+// type (number, email, date, ...) setSelectionRange EXISTS but throws
+// InvalidStateError, so the method's presence is not evidence of support.
+const SELECTABLE_INPUT_TYPES = new Set(['text', 'search', 'url', 'tel', 'password'])
+
+/** Collapse the caret to `pos` on elements that support text selection. A
+ * plain `div`/`span` textContent target, or an `<input>` whose type has no
+ * selection (e.g. number), has none — a harmless no-op there. */
 export function writeCursor(el: Element, pos: number): void {
   const input = el as HTMLInputElement
-  if (typeof input.setSelectionRange === 'function') input.setSelectionRange(pos, pos)
+  if (typeof input.setSelectionRange !== 'function') return
+  if (el.tagName === 'INPUT' && !SELECTABLE_INPUT_TYPES.has((input.type || 'text').toLowerCase())) return
+  try { input.setSelectionRange(pos, pos) } catch { /* selection refused — no-op */ }
 }
 
 export function randomId(prefix: string): string {
@@ -43,15 +51,17 @@ export function randomId(prefix: string): string {
  * shares one identity). Falls back to an ephemeral id when storage is absent.
  */
 export function getDeviceId(): string {
+  let id: string | null = null
   try {
     const ls = (globalThis as { localStorage?: Storage }).localStorage
     if (ls) {
-      let id = ls.getItem('pa-device-id')
+      id = ls.getItem('pa-device-id')
       if (!id) { id = randomId('dev'); ls.setItem('pa-device-id', id) }
       return id
     }
-  } catch { /* storage disabled — fall through to ephemeral */ }
-  return randomId('dev')
+  } catch { /* storage disabled or full — keep any id already minted */ }
+  // If persistence failed after minting, return that same id rather than a second one.
+  return id || randomId('dev')
 }
 
 // The verbs that MUTATE the buffer. Only these trigger staleness rejection: a
