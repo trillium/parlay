@@ -9,6 +9,7 @@
 
 import { IS_STANDALONE, DESKTOP_BP } from './config'
 import { toggleDebugPanel } from './debug-panel'
+import { toggleDevicesPanel } from './devices-panel'
 import { initDebugLog } from './debug-log'
 import { initMobileConsole } from './mobile-console'
 import { wireJumpButton, restoreScroll } from './jump-button'
@@ -170,6 +171,8 @@ initPickers()
 
 // ── Debug panel (Ctrl+Shift+D) ────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.shiftKey && e.key === 'D') { e.preventDefault(); toggleDebugPanel() } })
+
+document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.shiftKey && e.key === 'V') { e.preventDefault(); toggleDevicesPanel() } })
 
 // ── Annotation ────────────────────────────────────────────────────────────────
 wireAnnotation(

@@ -41,6 +41,7 @@ type clientState struct {
 	Version      string   `json:"version,omitempty"`
 	Build        string   `json:"build,omitempty"`
 	Device       string   `json:"device,omitempty"`
+	DeviceLabel  string   `json:"deviceLabel,omitempty"` // human name, e.g. "iPhone · Safari"
 	LoadAddress  string   `json:"loadAddress,omitempty"`
 	VoiceArmed   *bool    `json:"voiceArmed,omitempty"`
 	LastPhrase   string   `json:"lastPhrase,omitempty"`
@@ -88,6 +89,7 @@ func clip(s string) string {
 
 func sanitizeState(s clientState) clientState {
 	s.Version, s.Build, s.Device = clip(s.Version), clip(s.Build), clip(s.Device)
+	s.DeviceLabel = clip(s.DeviceLabel)
 	s.LoadAddress, s.LastPhrase, s.EngineResult = clip(s.LoadAddress), clip(s.LastPhrase), clip(s.EngineResult)
 	s.SubmitResult, s.Target = clip(s.SubmitResult), clip(s.Target)
 	if len(s.ScreenErrors) > maxClientErrors {
@@ -110,6 +112,9 @@ func (s clientState) merge(n clientState) clientState {
 	}
 	if n.Device != "" {
 		s.Device = n.Device
+	}
+	if n.DeviceLabel != "" {
+		s.DeviceLabel = n.DeviceLabel
 	}
 	if n.LoadAddress != "" {
 		s.LoadAddress = n.LoadAddress

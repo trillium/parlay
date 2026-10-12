@@ -9,6 +9,7 @@ export interface ClientRow {
   state: {
     version?: string
     device?: string
+    deviceLabel?: string
     loadAddress?: string
     voiceArmed?: boolean
     lastPhrase?: string
@@ -69,7 +70,7 @@ export function ClientsPanel({ fetchImpl, server = '' }: ClientsPanelProps) {
           {data.clients.length === 0 && <li className="muted">no page has announced itself</li>}
           {data.clients.map((c) => (
             <li key={c.clientId}>
-              <strong>{dash(c.state.device)}</strong> · v{dash(c.state.version)} ·{' '}
+              <strong>{dash(c.state.deviceLabel || c.state.device)}</strong> · v{dash(c.state.version)} ·{' '}
               {c.state.voiceArmed === undefined ? 'voice —' : c.state.voiceArmed ? 'voice armed' : 'voice off'} ·{' '}
               {c.stale ? 'STALE' : 'live'} · {dash(c.state.loadAddress)} · heard “{dash(c.state.lastPhrase)}” →{' '}
               {dash(c.state.engineResult)} · submit {dash(c.state.submitOutcome)} · target {dash(c.state.target)}
