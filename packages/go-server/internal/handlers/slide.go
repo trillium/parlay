@@ -6,20 +6,27 @@
 //	GET  /slide           the page (static HTML, no secrets, no API calls)
 //	POST /api/chat/slide  {"direction":"next"|"previous"} + bearer token
 //
-// Auth: the route fails closed. With PARLAY_SLIDE_TOKEN unset it answers 503
-// and nothing runs; with it set, every POST must carry the matching bearer
-// token (constant-time compare). The token is the second layer behind
-// network reachability — the server binds loopback and the tailnet forward
-// is tailnet-only — so a Funnel or LAN mistake still cannot move slides.
+// Auth: the route fails closed. The bearer token is PARLAY_SLIDE_TOKEN when
+// set, else the pairing token the server generated on first run
+// (internal/pair, <state>/pair-token) — so a fresh install needs no
+// hand-made secret. With neither, it answers 503 and nothing runs; otherwise
+// every POST must carry the matching bearer token (constant-time compare),
+// OR arrive from a loopback peer carrying a Tailscale identity header —
+// `tailscale serve` proxies from 127.0.0.1 and sets that header itself after
+// authenticating the tailnet user. A header from a non-loopback peer is
+// forgeable and is ignored. The token is the second layer behind network
+// reachability, so a Funnel or LAN mistake still cannot move slides.
 package handlers
 
 import (
 	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"parlay/go-server/internal/remoteinput"
 )
@@ -60,15 +67,17 @@ func handleSlideTrigger(svc *remoteinput.Service, seam remoteInputSeam, tokenFn 
 			return
 		}
 		want := tokenFn()
-		if want == "" {
-			writeStatusError(w, http.StatusServiceUnavailable,
-				"slide trigger disabled: set "+SlideTokenEnv+" and restart")
-			return
-		}
-		got, hasPrefix := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !hasPrefix || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-			writeStatusError(w, http.StatusUnauthorized, "bad or missing bearer token")
-			return
+		if !tailscaleIdentified(r) {
+			if want == "" {
+				writeStatusError(w, http.StatusServiceUnavailable,
+					"slide trigger disabled: no pairing token (state dir unwritable?); set "+SlideTokenEnv+" and restart")
+				return
+			}
+			got, hasPrefix := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if !hasPrefix || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+				writeStatusError(w, http.StatusUnauthorized, "bad or missing bearer token")
+				return
+			}
 		}
 		var req struct {
 			Direction string `json:"direction"`
@@ -90,4 +99,40 @@ func handleSlideTrigger(svc *remoteinput.Service, seam remoteInputSeam, tokenFn 
 	}
 }
 
-func slideTokenFromEnv() string { return os.Getenv(SlideTokenEnv) }
+var (
+	pairMu    sync.RWMutex
+	pairToken string
+)
+
+// SetPairToken installs the server-generated pairing token the slide route
+// accepts when PARLAY_SLIDE_TOKEN is unset. Called once at startup.
+func SetPairToken(t string) {
+	pairMu.Lock()
+	defer pairMu.Unlock()
+	pairToken = t
+}
+
+// slideTokenFromEnv returns the env override if set, else the pairing token.
+func slideTokenFromEnv() string {
+	if v := os.Getenv(SlideTokenEnv); v != "" {
+		return v
+	}
+	pairMu.RLock()
+	defer pairMu.RUnlock()
+	return pairToken
+}
+
+// tailscaleIdentified reports whether the request came through a local
+// `tailscale serve` proxy that vouched for the caller: a loopback peer plus
+// the Tailscale-User-Login header.
+func tailscaleIdentified(r *http.Request) bool {
+	if r.Header.Get("Tailscale-User-Login") == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}

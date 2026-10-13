@@ -78,6 +78,7 @@ one is named at the top of its doc.
 | [`supersession.md`](supersession.md) | The supersession policy (`tools/cli/internal/supersession`) — a superseded record is never mutated, severity is validated against a classified changeset floor, and superseding something a human already acted on is never silent. |
 | [`source-contracts.md`](source-contracts.md) | Source enrollment contracts for human input surfaces: the canonical `contracts/sources/*.json` and what enrolling a surface obliges it to. |
 | [`interface-capabilities.md`](interface-capabilities.md) | Interface capability declaration and delivery gating — how a surface declares (via `?caps=`) which presentation commands it can accept, so state is never routed to a surface that cannot present it. |
+| [`quickstart.md`](quickstart.md) | The four-step phone-to-laptop path: Talon slide actions, server start, pairing QR, tap. Start here for the demo. |
 | [`remote-input.md`](remote-input.md) | The remote/voice input control plane: text parlay has accepted turned into real keystrokes on the target Mac, behind the `TalonAdapter` seam. |
 
 ## Gas City adoption

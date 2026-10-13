@@ -118,3 +118,52 @@ func waitSvcID(t *testing.T, svc *remoteinput.Service, body string) {
 	}
 	t.Fatalf("submission %s never settled", resp.ID)
 }
+
+func TestSlidePageConsumesPairingFragment(t *testing.T) {
+	rec := httptest.NewRecorder()
+	handleSlidePage(rec, httptest.NewRequest(http.MethodGet, "/slide", nil))
+	body := rec.Body.String()
+	for _, want := range []string{`/[#&]t=([^&]+)/.exec(location.hash)`, `history.replaceState`, `localStorage.setItem('slideToken'`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("slide page missing pairing-fragment handling %q", want)
+		}
+	}
+}
+
+func TestSlideTokenFallsBackToPairToken(t *testing.T) {
+	t.Cleanup(func() { SetPairToken("") })
+	t.Setenv(SlideTokenEnv, "")
+	SetPairToken("paired")
+	if got := slideTokenFromEnv(); got != "paired" {
+		t.Fatalf("got %q, want pairing token", got)
+	}
+	t.Setenv(SlideTokenEnv, "envwins")
+	if got := slideTokenFromEnv(); got != "envwins" {
+		t.Fatalf("got %q, want env override", got)
+	}
+}
+
+func TestSlideTailscaleIdentity(t *testing.T) {
+	svc := remoteinput.NewService(&remoteinput.FakeTalon{}, 0, nil)
+	defer svc.Stop()
+	h := handleSlideTrigger(svc, remoteInputSeam{}, func() string { return "tok" })
+	do := func(remote, header string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/chat/slide", strings.NewReader(`{"direction":"next","dryRun":true}`))
+		req.RemoteAddr = remote
+		if header != "" {
+			req.Header.Set("Tailscale-User-Login", header)
+		}
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec.Code
+	}
+	if c := do("127.0.0.1:5555", "me@example.com"); c != http.StatusAccepted {
+		t.Fatalf("loopback proxy with identity: got %d, want 202", c)
+	}
+	if c := do("192.168.1.9:5555", "me@example.com"); c != http.StatusUnauthorized {
+		t.Fatalf("forged identity from LAN peer: got %d, want 401", c)
+	}
+	if c := do("127.0.0.1:5555", ""); c != http.StatusUnauthorized {
+		t.Fatalf("loopback without identity or token: got %d, want 401", c)
+	}
+}

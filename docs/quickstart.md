@@ -1,0 +1,44 @@
+# Quickstart: dictate on your phone, an action fires on your laptop
+
+Four steps. You need a Mac running [Talon Voice](https://talonvoice.com), Go
+(see `./bin/parlay-preflight` for the exact floor), and a phone on the same
+[Tailscale](https://tailscale.com) tailnet (or the same Wi-Fi).
+
+1. **Check the machine.** `./bin/parlay-preflight` — prints every problem with its `fix:` command.
+2. **Install the Talon actions.** `examples/talon/install.sh` — links `slide_next` / `slide_previous`
+   (and the voice commands "slide next" / "slide previous") into `~/.talon/user/`. Talon hot-reloads.
+3. **Start the server where your phone can reach it.**
+   ```sh
+   cd packages/go-server && go run ./cmd/parlay-server -exposure tailnet
+   ```
+   (`-exposure lan` if you are not on Tailscale; it warns, because anyone on that network can then reach the server.)
+   On first run the server mints a pairing token (`~/.parlay/pair-token`, mode 0600) — there is nothing to invent or export.
+4. **Scan the QR the server prints.** It opens `http://<your-address>:4242/slide` already paired:
+   tap **Next** / **Previous** and `actions.user.slide_next()` / `slide_previous()` runs in Talon.
+
+Done: the phone now triggers an action on the laptop.
+
+## How it stays safe
+
+- The QR carries the token in the URL **fragment** (`#t=…`), which browsers never send to a server and the
+  server never logs. The page stores it in the phone's `localStorage` and strips it from the address bar.
+- The QR and token-bearing URL are printed **only when stderr is an interactive terminal** — never into a
+  launchd/log file. Under launchd the banner prints the address and tells you to run the server from a terminal to scan.
+- `POST /api/chat/slide` always needs `Authorization: Bearer <token>`, unless the request comes from a
+  loopback peer carrying a `Tailscale-User-Login` header (what `tailscale serve` sets after authenticating the
+  tailnet user). That header from any other peer is ignored.
+- `PARLAY_SLIDE_TOKEN` still overrides the generated token. To rotate, delete `~/.parlay/pair-token` and restart.
+- Never expose the server with Tailscale Funnel or any public tunnel.
+
+## When it does not work
+
+| Symptom | Fix |
+|---|---|
+| Banner says "loopback-only" | Restart with `-exposure tailnet` (or `lan`). |
+| Phone cannot open the URL | Same tailnet / Wi-Fi? Server must be running on the laptop. |
+| Next/Previous says `502`/`inject_failed` | The Talon actions are missing: run step 2, and check `~/.talon/.venv/bin/repl` exists. |
+| `401 bad or missing bearer token` | Re-scan the QR (token changed), or clear the page's site data. |
+| Tapping works but keys go nowhere | Grant Talon Accessibility permission in macOS System Settings. |
+
+Beyond slides — chat channels, spawning agents, the panel — see the [README](../README.md) and
+[`remote-input.md`](remote-input.md) for the full control plane.

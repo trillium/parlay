@@ -13,6 +13,10 @@ on a phone, driving autonomous terminal coding agents on a machine somewhere els
 
 ---
 
+> **Phone → laptop in four steps:** [docs/quickstart.md](docs/quickstart.md) — install the Talon
+> actions, start the server, scan the QR it prints, tap. (The Quickstart below is the local-only
+> CLI path.)
+
 ## What you actually get
 
 - **A per-agent chat channel.** Every enrolled agent gets its own tab. Messages route

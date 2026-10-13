@@ -247,11 +247,15 @@ The service has no auth; keep it on a private network.
 
 `GET /slide` serves a phone page with an "Open slides" link to the deck (`https://voicefirst.dev/slides/`) and two buttons (Next / Previous); each tap POSTs
 `{"direction":"next"|"previous"}` to `POST /api/chat/slide` with
-`Authorization: Bearer $PARLAY_SLIDE_TOKEN`. The route builds the same
+`Authorization: Bearer <token>`, where the token is `$PARLAY_SLIDE_TOKEN` if set, else the
+pairing token the server generated on first run (`<state>/pair-token`, 0600) and encodes into the
+QR printed at start — see [`quickstart.md`](quickstart.md). A loopback peer carrying a
+`Tailscale-User-Login` header (`tailscale serve`) is also accepted without a token. The Talon
+side of the actions ships in `examples/talon/` (`install.sh` links it into `~/.talon/user/`). The route builds the same
 action-mode `Submission` as `/remote-input/submit`, so it ends in the same
 `actions.user.slide_next()` / `slide_previous()` voice calls
 (`TestSlideTriggerReachesSameActionAsSubmit`). It fails closed: token
-unset → 503, wrong/missing → 401, anything but next/previous → 400. The
+unset and no pairing token → 503, wrong/missing → 401, anything but next/previous → 400. The
 token is a second layer; keep the server on loopback/tailnet (never
 Funnel). `"dryRun": true` is accepted.
 
