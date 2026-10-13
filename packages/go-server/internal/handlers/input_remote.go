@@ -31,6 +31,7 @@ const (
 	reasonMissingDevice    = "missing-device"
 	reasonEmptyTranscript  = "empty-transcript"
 	reasonUnknownMode      = "unknown-mode"
+	reasonActionNotAllowed = "action-not-allowed"
 	reasonInvalidStore     = "invalid-store"
 	reasonBeadTextTooLong  = "bead-text-too-long"
 	reasonNoTarget         = "no-target"

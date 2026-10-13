@@ -55,10 +55,12 @@ const (
 )
 
 // Submission modes: inject types the text via Talon (default);
-// bead captures it as a bead and types nothing.
+// bead captures it as a bead and types nothing; action runs one
+// allow-listed Talon user action and types nothing.
 const (
 	ModeInject = "inject"
 	ModeBead   = "bead"
+	ModeAction = "action"
 )
 
 // DefaultBeadStore is the capture queue every bead-mode submit lands
@@ -71,9 +73,10 @@ const DefaultBeadStore = "inbox"
 const MaxBeadTextLen = 2000
 
 // Submission is one accepted-input unit from Parlay. Text injects
-// literally (mode inject) or is captured as a bead (mode bead).
-// literally and multiline exactly as represented — no normalization,
-// no large-paste optimization in MVP (project-1ayr).
+// literally (mode inject), is captured as a bead (mode bead), or
+// names an allow-listed Talon action (mode action).
+// Inject text is literal and multiline exactly as represented — no
+// normalization, no large-paste optimization in MVP (project-1ayr).
 type Submission struct {
 	ID          string `json:"id"`
 	Device      string `json:"device"`
@@ -81,9 +84,12 @@ type Submission struct {
 	App         string `json:"app,omitempty"`
 	WindowTitle string `json:"windowTitle,omitempty"`
 	Trigger     string `json:"trigger,omitempty"`
-	// Mode selects inject (default) or bead. Empty normalizes to
-	// inject so every existing caller keeps working unchanged.
+	// Mode selects inject (default), bead, or action. Empty normalizes
+	// to inject so every existing caller keeps working unchanged.
 	Mode string `json:"mode,omitempty"`
+	// Action is the allow-listed Talon action name for mode action
+	// (slide_next or slide_previous). Ignored by inject and bead.
+	Action string `json:"action,omitempty"`
 	// Store names the bead-mode capture queue (default inbox).
 	// Ignored by the inject path.
 	Store string `json:"store,omitempty"`
@@ -119,11 +125,15 @@ type Outcome struct {
 	// the exact bytes that would have been inserted.
 	DryRun      bool   `json:"dryRun,omitempty"`
 	WouldInsert string `json:"wouldInsert,omitempty"`
+	// WouldRun is the exact Talon snippet an action-mode submit would
+	// run (dry run) or did run (live success). It is a constant from
+	// the allow-list, never a caller-supplied string.
+	WouldRun string `json:"wouldRun,omitempty"`
 	// AllowUnfocused echoes the submission mode: true means this
 	// outcome injected (or would inject, for dry runs) with no focus
 	// target because the caller explicitly allowed it.
 	AllowUnfocused bool `json:"allowUnfocused,omitempty"`
-	// Mode echoes the submission mode (inject or bead).
+	// Mode echoes the submission mode (inject, bead, or action).
 	Mode string `json:"mode,omitempty"`
 	// BeadID is the created bead (bead_created only — never set on
 	// failure; an unparsable id reports bead_failed, never a guess).
@@ -157,8 +167,12 @@ type SubmitRequest struct {
 	App         string `json:"app,omitempty"`
 	WindowTitle string `json:"windowTitle,omitempty"`
 	Trigger     string `json:"trigger,omitempty"`
-	// Mode selects inject (default) or bead (capture, type nothing).
+	// Mode selects inject (default), bead (capture, type nothing),
+	// or action (allow-listed Talon action, type nothing).
 	Mode string `json:"mode,omitempty"`
+	// Action is required for mode action. Only slide_next and
+	// slide_previous are accepted.
+	Action string `json:"action,omitempty"`
 	// Store names the bead-mode capture queue (default inbox).
 	Store string `json:"store,omitempty"`
 	// AllowUnfocused opts into injection with no focus target.

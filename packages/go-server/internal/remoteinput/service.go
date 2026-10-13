@@ -197,11 +197,15 @@ func (s *Service) process(sub Submission) {
 		s.processBead(sub)
 		return
 	}
+	if mode == ModeAction {
+		s.processAction(sub)
+		return
+	}
 	if mode != ModeInject {
 		s.setOutcome(Outcome{
 			ID: sub.ID, Device: sub.Device, Status: StatusInjectFailed,
 			Mode: mode, InjectAttempted: false, PreserveText: true,
-			Error: fmt.Sprintf("unknown mode %q: want %q or %q", sub.Mode, ModeInject, ModeBead),
+			Error: fmt.Sprintf("unknown mode %q: want %q, %q, or %q", sub.Mode, ModeInject, ModeBead, ModeAction),
 		})
 		return
 	}
@@ -325,6 +329,47 @@ var sleepSettle = func(d time.Duration) {
 	if d > 0 {
 		time.Sleep(d)
 	}
+}
+
+// processAction runs one allow-listed Talon user action. It does not
+// focus and it does not insert: the action (the same one voice uses)
+// does its own app switch. A name outside the allow-list never reaches
+// the adapter. A dry run reports the constant snippet in WouldRun and
+// calls nothing.
+func (s *Service) processAction(sub Submission) {
+	snip, ok := ActionSnippet(sub.Action)
+	if !ok {
+		s.setOutcome(Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusInjectFailed,
+			Mode: ModeAction, Focus: FocusNotRequired,
+			InjectAttempted: false, PreserveText: true,
+			Error: fmt.Sprintf("action %q not allowed", sub.Action),
+		})
+		return
+	}
+	if sub.DryRun {
+		s.setOutcome(Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusDryRunPassed,
+			Mode: ModeAction, Focus: FocusNotRequired,
+			InjectAttempted: false, PreserveText: true,
+			DryRun: true, WouldRun: snip,
+		})
+		return
+	}
+	s.setOutcome(Outcome{ID: sub.ID, Device: sub.Device, Status: StatusInjecting, Mode: ModeAction})
+	if err := s.talon.RunAction(sub.Action); err != nil {
+		s.setOutcome(Outcome{
+			ID: sub.ID, Device: sub.Device, Status: StatusInjectFailed,
+			Mode: ModeAction, Focus: FocusNotRequired,
+			InjectAttempted: true, PreserveText: true, Error: err.Error(),
+		})
+		return
+	}
+	s.setOutcome(Outcome{
+		ID: sub.ID, Device: sub.Device, Status: StatusInjected,
+		Mode: ModeAction, Focus: FocusNotRequired,
+		InjectAttempted: true, WouldRun: snip,
+	})
 }
 
 // processBead captures the submission text as a bead. The Talon path

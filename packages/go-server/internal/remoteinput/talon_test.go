@@ -8,6 +8,7 @@ package remoteinput
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,6 +77,34 @@ func TestFocusedWindowTitleStripsReprEcho(t *testing.T) {
 	}
 	if got != "notes - scratch" {
 		t.Fatalf("FocusedWindowTitle = %q, want %q", got, "notes - scratch")
+	}
+}
+
+func TestRunActionEmitsAllowlistedSnippetOnly(t *testing.T) {
+	dir := t.TempDir()
+	stdinPath := filepath.Join(dir, "stdin.txt")
+	script := "#!/bin/sh\ncat > " + shellQuote(stdinPath) + "\n"
+	path := filepath.Join(dir, "repl")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock repl: %v", err)
+	}
+	talon := &REPLTalon{path: path, timeout: 5 * time.Second}
+	if err := talon.RunAction("slide_next"); err != nil {
+		t.Fatalf("RunAction slide_next: %v", err)
+	}
+	got, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read stdin capture: %v", err)
+	}
+	if string(got) != "actions.user.slide_next()" {
+		t.Fatalf("snippet = %q, want actions.user.slide_next()", got)
+	}
+
+	// quit must fail closed before any REPL exists to run it.
+	missing := &REPLTalon{path: filepath.Join(dir, "missing-repl"), timeout: time.Second}
+	err = missing.RunAction("quit")
+	if err == nil || !strings.Contains(err.Error(), `action "quit" not allowed`) {
+		t.Fatalf("quit: got %v, want not-allowed before the REPL", err)
 	}
 }
 

@@ -4,6 +4,7 @@ package remoteinput
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -19,9 +20,10 @@ type FakeTalon struct {
 	TargetsList []Target
 
 	// Injected failures.
-	FocusAppErr error
-	InsertErr   error
-	TargetsErr  error
+	FocusAppErr  error
+	InsertErr    error
+	TargetsErr   error
+	RunActionErr error
 
 	// StickyActive disables FocusApp's cooperative effect (the named app
 	// becoming active), simulating a focus request the OS did not honor.
@@ -35,6 +37,7 @@ type FakeTalon struct {
 	FocusAppCalls    []string
 	FocusWindowCalls []string
 	Inserts          []string
+	RunActions       []string
 	ActiveAppReads   int
 	TargetsCalls     int
 }
@@ -96,6 +99,22 @@ func (f *FakeTalon) FocusedWindowTitle() (string, error) {
 		return "", f.FocusAppErr
 	}
 	return f.WindowTitle, nil
+}
+
+// RunAction records the action name. A name outside the allow-list
+// is still recorded, then rejected, so a test can tell a call that
+// should never have been made from one that was not made at all.
+func (f *FakeTalon) RunAction(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.RunActions = append(f.RunActions, name)
+	if f.RunActionErr != nil {
+		return f.RunActionErr
+	}
+	if _, ok := ActionSnippet(name); !ok {
+		return fmt.Errorf("action %q not allowed", name)
+	}
+	return nil
 }
 
 // Insert records the text byte-for-byte.

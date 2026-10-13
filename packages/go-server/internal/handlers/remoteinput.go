@@ -54,7 +54,8 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub, st *store.Store) {
 // handleRemoteInputSubmit implements POST /api/chat/remote-input/submit.
 // Mode selects the pipeline: empty/inject types via Talon (the
 // no-target rule applies); bead captures the text as a bead with no
-// target needed and nothing typed.
+// target needed and nothing typed; action runs one allow-listed Talon
+// slide action (slide_next / slide_previous) and types nothing.
 //
 // Every refusal below is recorded in the input ledger before the 4xx is
 // written. That is the point: a submission the intake declined previously
@@ -80,15 +81,9 @@ func handleRemoteInputSubmit(svc *remoteinput.Service, st *store.Store) http.Han
 			writeStatusError(w, http.StatusBadRequest, "device is required")
 			return
 		}
-		if req.Text == "" {
-			// Nothing was transcribed. That is a recogniser error, not a
-			// missing message: the input arrived and became nothing.
-			seam.recogniserError(inputID)
-			writeStatusError(w, http.StatusBadRequest, "text is required")
-			return
-		}
 		// ?dryRun=true forces a dry run without touching the body:
-		// real focus + real verification, nothing typed.
+		// real focus + real verification, nothing typed. Action mode
+		// dry runs call nothing and report the snippet in wouldRun.
 		dryRun := req.DryRun
 		if q := r.URL.Query().Get("dryRun"); q == "true" || q == "1" {
 			dryRun = true
@@ -105,10 +100,43 @@ func handleRemoteInputSubmit(svc *remoteinput.Service, st *store.Store) http.Han
 		if q := r.URL.Query().Get("mode"); q != "" && req.Mode == "" {
 			mode = remoteinput.NormalizeMode(q)
 		}
+		// Action mode runs one allow-listed Talon action. It types
+		// nothing, so an empty transcript is not a recogniser error
+		// and no focus target is required. The name is checked here
+		// before anything is queued.
+		if mode == remoteinput.ModeAction {
+			action := req.Action
+			if q := r.URL.Query().Get("action"); q != "" && req.Action == "" {
+				action = q
+			}
+			if _, ok := remoteinput.ActionSnippet(action); !ok {
+				seam.refused(inputID, reasonActionNotAllowed)
+				if action == "" {
+					writeStatusError(w, http.StatusBadRequest,
+						`action is required: want "slide_next" or "slide_previous"`)
+					return
+				}
+				writeStatusError(w, http.StatusBadRequest,
+					fmt.Sprintf(`action %q not allowed: want "slide_next" or "slide_previous"`, action))
+				return
+			}
+			acceptRemoteInput(w, svc, seam, remoteinput.Submission{
+				Device: req.Device, Text: req.Text, Mode: mode, Action: action,
+				Trigger: req.Trigger, DryRun: dryRun, Confidence: req.Confidence,
+			})
+			return
+		}
+		if req.Text == "" {
+			// Nothing was transcribed. That is a recogniser error, not a
+			// missing message: the input arrived and became nothing.
+			seam.recogniserError(inputID)
+			writeStatusError(w, http.StatusBadRequest, "text is required")
+			return
+		}
 		if mode != remoteinput.ModeInject && mode != remoteinput.ModeBead {
 			seam.refused(inputID, reasonUnknownMode)
 			writeStatusError(w, http.StatusBadRequest,
-				`unknown mode: want "inject" or "bead"`)
+				`unknown mode: want "inject", "bead", or "action"`)
 			return
 		}
 		store := remoteinput.NormalizeStore(req.Store)
