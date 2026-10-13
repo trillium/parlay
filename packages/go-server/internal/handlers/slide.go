@@ -17,13 +17,13 @@
 // The token is the second layer behind network reachability, so a Funnel or
 // LAN mistake still cannot move slides.
 //
-// Opt-in exception: with PARLAY_TRUST_TAILSCALE_HEADER=1, a loopback peer
-// carrying a Tailscale-User-Login header skips the token (`tailscale serve`
-// proxies from 127.0.0.1 and sets that header after authenticating the
-// tailnet user). The header is client-forgeable, so this is safe ONLY when
-// the server sits behind `tailscale serve` with Funnel off and no other
-// local proxy or tunnel (cloudflared, ngrok) that could forward it. Off by
-// default.
+// Tailnet exception: a loopback peer carrying a Tailscale-User-Login header
+// skips the token (`tailscale serve` proxies from 127.0.0.1 and sets that
+// header after authenticating the tailnet user), so the phone needs no token
+// on the tailnet. The header is client-forgeable, so this assumes the server
+// sits behind `tailscale serve` with Funnel off and no other local proxy or
+// tunnel (cloudflared, ngrok) that could forward it; set
+// PARLAY_TRUST_TAILSCALE_HEADER=0 to disable it.
 package handlers
 
 import (
@@ -42,7 +42,7 @@ import (
 // SlideTokenEnv names the env var holding the phone trigger's bearer token.
 const SlideTokenEnv = "PARLAY_SLIDE_TOKEN"
 
-// TrustTailscaleHeaderEnv opts in to the Tailscale-User-Login bypass.
+// TrustTailscaleHeaderEnv opts out of (=0) the Tailscale-User-Login bypass.
 const TrustTailscaleHeaderEnv = "PARLAY_TRUST_TAILSCALE_HEADER"
 
 // slideDevice is the device id phone-triggered submissions are recorded under.
@@ -208,9 +208,9 @@ func slideTokenFromEnv() string {
 
 // tailscaleIdentified reports whether the request came through a local
 // `tailscale serve` proxy that vouched for the caller: a loopback peer plus
-// the Tailscale-User-Login header, and only when TrustTailscaleHeaderEnv is 1.
+// the Tailscale-User-Login header, unless TrustTailscaleHeaderEnv is 0.
 func tailscaleIdentified(r *http.Request) bool {
-	if os.Getenv(TrustTailscaleHeaderEnv) != "1" {
+	if os.Getenv(TrustTailscaleHeaderEnv) == "0" {
 		return false
 	}
 	if r.Header.Get("Tailscale-User-Login") == "" {
