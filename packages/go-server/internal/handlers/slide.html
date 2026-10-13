@@ -29,6 +29,13 @@
 (function () {
   var tok = document.getElementById('token'), st = document.getElementById('status');
   try { tok.value = localStorage.getItem('slideToken') || ''; } catch (e) {}
+  // Pairing: the QR opens /slide#t=<token>. A fragment is never sent to the
+  // server or logged; keep it in localStorage and strip it from the URL.
+  var m = /[#&]t=([^&]+)/.exec(location.hash);
+  if (m) {
+    try { tok.value = decodeURIComponent(m[1]); localStorage.setItem('slideToken', tok.value); } catch (e) {}
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  }
   function send(direction) {
     try { localStorage.setItem('slideToken', tok.value); } catch (e) {}
     st.textContent = 'sending…';

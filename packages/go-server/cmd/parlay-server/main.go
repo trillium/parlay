@@ -31,6 +31,7 @@ import (
 	"parlay/go-server/internal/bus"
 	"parlay/go-server/internal/guard"
 	"parlay/go-server/internal/handlers"
+	"parlay/go-server/internal/pair"
 	"parlay/go-server/internal/static"
 	"parlay/go-server/internal/store"
 )
@@ -108,6 +109,14 @@ func main() {
 	handlers.RegisterTTS(mux, *paiDirFlag, hub)
 	handlers.RegisterPages(mux, hub)
 	handlers.RegisterPlugins(mux, hub)
+	// First-run phone pairing: mint (or reuse) the bearer token the /slide
+	// route accepts, so no hand-made PARLAY_SLIDE_TOKEN is needed.
+	pairToken, err := pair.LoadOrCreate(*dirFlag)
+	if err != nil {
+		log.Printf("pairing token unavailable (%v); /slide stays disabled unless %s is set", err, handlers.SlideTokenEnv)
+	} else {
+		handlers.SetPairToken(pairToken)
+	}
 	handlers.RegisterClient(mux, handlers.ClientInfo{Listen: *addrFlag, Exposure: exposure, StateDir: *dirFlag})
 	// Static file serving — registered last so /api/* routes are never shadowed.
 	// Serves index.html at / and falls back to it for any unknown path (SPA).
@@ -124,6 +133,8 @@ func main() {
 	// internal/guard/guard.go for the policy and for where it deliberately
 	// differs from packages/server/src/guard/.
 	srv := &http.Server{Addr: *addrFlag, Handler: guard.Wrap(mux)}
+
+	pair.Banner(os.Stderr, exposure, *addrFlag, pairToken, stderrIsTerminal(), systemIfaceAddrs)
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -320,4 +331,12 @@ func defaultPAIDir() string {
 		return filepath.Join(home, ".claude", "PAI")
 	}
 	return ".claude/PAI"
+}
+
+// stderrIsTerminal reports whether stderr is an interactive terminal — the
+// only place the token-bearing pairing QR may be printed; a launchd log file
+// or a pipe would persist the secret.
+func stderrIsTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

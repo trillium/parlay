@@ -52,6 +52,7 @@ examples/
 │   ├── settings.json         panel + voice preferences
 │   └── messages.jsonl        the message log
 ├── env.example       →  the environment variables, all of them optional
+├── talon/            →  Talon slide_next/slide_previous actions + install.sh (docs/quickstart.md)
 └── bootstrap-sandbox.sh
 ```
 
