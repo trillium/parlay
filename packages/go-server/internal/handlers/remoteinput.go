@@ -50,6 +50,11 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub, st *store.Store) {
 	mux.HandleFunc("/api/chat/remote-input/status", handleRemoteInputStatus(svc))
 	mux.HandleFunc("/api/chat/remote-input/targets", handleRemoteInputTargets(svc))
 	mux.HandleFunc("/slide", handleSlidePage)
+	mux.HandleFunc(slideManifestPath, handleSlideManifest)
+	mux.HandleFunc(slideWorkerPath, handleSlideWorker)
+	mux.HandleFunc(slideIcon180Path, handleSlideIcon180)
+	mux.HandleFunc(slideIcon192Path, handleSlideIcon192)
+	mux.HandleFunc(slideIcon512Path, handleSlideIcon512)
 	mux.HandleFunc("/api/chat/slide", handleSlideTrigger(svc, seam, slideTokenFromEnv))
 }
 

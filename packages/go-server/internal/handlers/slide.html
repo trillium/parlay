@@ -2,19 +2,27 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Slides">
+<link rel="manifest" href="/slide/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/slide/icon-180.png">
 <title>Slide remote</title>
 <style>
-  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --btn:#1f6feb; --btn-fg:#fff; --alt:#555; }
+  :root { color-scheme: light dark; --bg:#ffffff; --fg:#111; --btn:#1f6feb; --btn-fg:#fff; --alt:#555; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --alt:#6e7681; } }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:16px system-ui,sans-serif; }
-  main { display:flex; flex-direction:column; height:100%; gap:12px; padding:16px; box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:16px system-ui,sans-serif; touch-action:manipulation; -webkit-text-size-adjust:100%; }
+  main { display:flex; flex-direction:column; height:100%; gap:12px; padding:16px; padding-top:max(16px, env(safe-area-inset-top)); padding-bottom:max(16px, env(safe-area-inset-bottom)); box-sizing:border-box; }
+  button, a.deck, input { touch-action:manipulation; min-height:44px; }
   button { flex:1; font-size:2rem; border:0; border-radius:16px; background:var(--btn); color:var(--btn-fg); }
   button.prev { flex:.5; background:var(--alt); }
   button:disabled { opacity:.5; }
   #status { min-height:1.5em; text-align:center; }
-  input { font-size:1rem; padding:10px; border-radius:8px; border:1px solid var(--alt); background:transparent; color:inherit; }
-  a.deck { display:block; text-align:center; font-size:1.25rem; font-weight:700; color:var(--btn); padding:8px 0; }
+  input { font-size:1rem; padding:10px; border-radius:8px; border:1px solid var(--alt); background:transparent; color:inherit; box-sizing:border-box; }
+  a.deck { display:flex; align-items:center; justify-content:center; text-align:center; font-size:1.25rem; font-weight:700; color:var(--btn); padding:8px 0; box-sizing:border-box; }
 </style>
 </head>
 <body>
@@ -52,6 +60,11 @@
   ['next', 'previous'].forEach(function (d) {
     document.getElementById(d).addEventListener('click', function () { send(d); });
   });
+  // A service worker only installs in a secure context. The manifest and
+  // apple tags above still make the page a home-screen app over plain HTTP.
+  if (window.isSecureContext && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/slide/sw.js', { scope: '/slide' }).catch(function () {});
+  }
 })();
 </script>
 </body>
