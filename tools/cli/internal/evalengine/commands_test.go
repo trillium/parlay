@@ -266,6 +266,23 @@ func TestBuiltinNextTab(t *testing.T) {
 	wantVerb(t, r, "clear")
 }
 
+func TestBuiltinBareNextIsNextTab(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{"next", "Next", "  next  ", "next.", "NEXT!"} {
+		r := fireEval(t, in, nil)
+		if r.Fired != "next-tab" {
+			t.Errorf("%q: fired=%q want next-tab", in, r.Fired)
+			continue
+		}
+		wantVerb(t, r, "nextTab")
+	}
+	for _, in := range []string{"next steps", "what is next", "nextgen"} {
+		if r := fireEval(t, in, nil); r.Fired == "next-tab" {
+			t.Errorf("%q must not fire next-tab", in)
+		}
+	}
+}
+
 func TestBuiltinPrevTab(t *testing.T) {
 	t.Parallel()
 	r := fireEval(t, "previous tab", nil)

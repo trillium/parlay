@@ -125,7 +125,7 @@
     },
     {
       "id": "next-tab",
-      "phrases": ["next tab", "next agent"],
+      "phrases": ["next", "next tab", "next agent"],
       "mode": "whole",
       "priority": 20,
       "description": "Switch to the next agent tab",
