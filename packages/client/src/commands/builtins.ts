@@ -106,7 +106,7 @@ const goToPage: Command = {
 
 const nextTab: Command = {
   id: 'next-tab',
-  phrases: ['next tab', 'next agent'],
+  phrases: ['next', 'next tab', 'next agent'],
   matchMode: 'whole',
   priority: 20,
   description: 'Switch to the next agent tab',
