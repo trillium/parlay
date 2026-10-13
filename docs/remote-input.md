@@ -258,7 +258,11 @@ action-mode `Submission` as `/remote-input/submit`, so it ends in the same
 (`TestSlideTriggerReachesSameActionAsSubmit`). It fails closed: token
 unset and no pairing token → 503, wrong/missing → 401, anything but next/previous → 400. The
 token is a second layer; keep the server on loopback/tailnet (never
-Funnel). `"dryRun": true` is accepted.
+Funnel). `"dryRun": true` is accepted. The page is a standalone web app named
+`Slides`: `GET /slide/manifest.webmanifest`, `GET /slide/sw.js`, and
+`GET /slide/icon-180.png`, `/slide/icon-192.png`, and `/slide/icon-512.png`
+are static and carry no token. The service worker precaches that shell only
+and never caches `/api`.
 
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 

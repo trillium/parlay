@@ -18,6 +18,16 @@ Four steps. You need a Mac running [Talon Voice](https://talonvoice.com), Go
 
 Done: the phone now triggers an action on the laptop.
 
+## Home screen
+
+The slide page installs as an app named **Slides**. On an iPhone, in Safari:
+
+1. Open the slide URL from the QR in step 4.
+2. Tap the Share button.
+3. Tap **Add to Home Screen**.
+4. Leave the name as **Slides** and tap **Add**.
+5. Open **Slides** from the home screen. It launches full screen, without Safari's toolbar. Next and Previous work the same way.
+
 ## How it stays safe
 
 - The QR carries the token in the URL **fragment** (`#t=…`), which browsers never send to a server and the
