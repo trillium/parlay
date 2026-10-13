@@ -245,7 +245,7 @@ The service has no auth; keep it on a private network.
 
 ### Phone trigger (task-l6wjg.4)
 
-`GET /slide` serves a two-button page (Next / Previous); each tap POSTs
+`GET /slide` serves a phone page with an "Open slides" link to the deck (`https://voicefirst.dev/slides/`) and two buttons (Next / Previous); each tap POSTs
 `{"direction":"next"|"previous"}` to `POST /api/chat/slide` with
 `Authorization: Bearer $PARLAY_SLIDE_TOKEN`. The route builds the same
 action-mode `Submission` as `/remote-input/submit`, so it ends in the same
