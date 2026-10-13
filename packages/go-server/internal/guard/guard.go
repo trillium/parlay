@@ -218,6 +218,7 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/remote-input/submit":  true,
 	"/api/chat/remote-input/status":  true,
 	"/api/chat/remote-input/targets": true,
+	"/api/chat/slide":                true, // phone slide trigger (task-l6wjg.4): runs a Talon action; bearer-token gated
 
 	// Live-command registry (#91): three POST report routes the CLI calls to
 	// announce a running verb. Mutating by the file's own rule — each writes

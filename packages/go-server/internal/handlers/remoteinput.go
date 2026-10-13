@@ -49,6 +49,8 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub, st *store.Store) {
 	mux.HandleFunc("/api/chat/remote-input/submit", handleRemoteInputSubmit(svc, st))
 	mux.HandleFunc("/api/chat/remote-input/status", handleRemoteInputStatus(svc))
 	mux.HandleFunc("/api/chat/remote-input/targets", handleRemoteInputTargets(svc))
+	mux.HandleFunc("/slide", handleSlidePage)
+	mux.HandleFunc("/api/chat/slide", handleSlideTrigger(svc, seam, slideTokenFromEnv))
 }
 
 // handleRemoteInputSubmit implements POST /api/chat/remote-input/submit.
