@@ -261,8 +261,9 @@ token is a second layer; keep the server on loopback/tailnet (never
 Funnel). `"dryRun": true` is accepted. The page is a standalone web app named
 `Slides`: `GET /slide/manifest.webmanifest`, `GET /slide/sw.js`, and
 `GET /slide/icon-180.png`, `/slide/icon-192.png`, and `/slide/icon-512.png`
-are static and carry no token. The service worker precaches that shell only
-and never caches `/api`.
+are static and carry no token. The manifest and apple tags install the page
+over plain HTTP. The service worker registers only in a secure context, precaches
+that shell only, and never caches `/api`.
 
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 

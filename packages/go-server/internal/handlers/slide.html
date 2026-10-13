@@ -60,7 +60,9 @@
   ['next', 'previous'].forEach(function (d) {
     document.getElementById(d).addEventListener('click', function () { send(d); });
   });
-  if ('serviceWorker' in navigator) {
+  // A service worker only installs in a secure context. The manifest and
+  // apple tags above still make the page a home-screen app over plain HTTP.
+  if (window.isSecureContext && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register('/slide/sw.js', { scope: '/slide' }).catch(function () {});
   }
 })();

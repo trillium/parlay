@@ -132,6 +132,7 @@ func TestSlidePageIsInstallable(t *testing.T) {
 		`user-scalable=no`,
 		`touch-action:manipulation`,
 		`min-height:44px`,
+		`if (window.isSecureContext && 'serviceWorker' in navigator)`,
 		`serviceWorker.register('/slide/sw.js', { scope: '/slide' })`,
 		`content="#ffffff" media="(prefers-color-scheme: light)"`,
 		`content="#0d1117" media="(prefers-color-scheme: dark)"`,

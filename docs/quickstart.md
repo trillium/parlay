@@ -28,6 +28,8 @@ The slide page installs as an app named **Slides**. On an iPhone, in Safari:
 4. Leave the name as **Slides** and tap **Add**.
 5. Open **Slides** from the home screen. It launches full screen, without Safari's toolbar. Next and Previous work the same way.
 
+This works on the plain `http://` URL the QR prints. The service worker registers only on a secure origin (HTTPS or localhost); the home-screen install does not need it.
+
 ## How it stays safe
 
 - The QR carries the token in the URL **fragment** (`#t=…`), which browsers never send to a server and the

@@ -51,7 +51,7 @@ var TestUnguardedRoutes = map[string]string{
 	"/api/chat/commands":          "read: the live-command snapshot. Same class as /api/chat/agents; its three POST siblings ARE guarded",
 	"/api/chat/client":            "read: the onboarding document (listen address, admit list, client contract). Sends no CORS headers, so a foreign page cannot read it; the admit list is a CORS allowance, not access control, on a server that has no authentication",
 	"/api/chat/version":           "read: bundle version string, polled by every SSE client",
-	"/slide":                      "read: static HTML for the phone slide button; embeds no secret. On load it registers /slide/sw.js, which precaches that static shell and does not call /api. The POST it drives, /api/chat/slide, is guarded and bearer-token gated",
+	"/slide":                      "read: static HTML for the phone slide button; embeds no secret. On a secure origin it registers /slide/sw.js, which precaches that static shell and does not call /api. The POST it drives, /api/chat/slide, is guarded and bearer-token gated",
 	"/slide/manifest.webmanifest": "read: static web app manifest for the phone slide page; no secret and no token",
 	"/slide/sw.js":                "read: static service worker for the slide page shell; precaches that shell only and does not cache /api",
 	"/slide/icon-180.png":         "read: static PNG apple-touch icon for the slide page; no secret",
