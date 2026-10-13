@@ -147,23 +147,37 @@ func TestSlideTailscaleIdentity(t *testing.T) {
 	svc := remoteinput.NewService(&remoteinput.FakeTalon{}, 0, nil)
 	defer svc.Stop()
 	h := handleSlideTrigger(svc, remoteInputSeam{}, func() string { return "tok" })
-	do := func(remote, header string) int {
+	do := func(remote, header, bearer string) int {
 		req := httptest.NewRequest(http.MethodPost, "/api/chat/slide", strings.NewReader(`{"direction":"next","dryRun":true}`))
 		req.RemoteAddr = remote
 		if header != "" {
 			req.Header.Set("Tailscale-User-Login", header)
 		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
 		rec := httptest.NewRecorder()
 		h(rec, req)
 		return rec.Code
 	}
-	if c := do("127.0.0.1:5555", "me@example.com"); c != http.StatusAccepted {
-		t.Fatalf("loopback proxy with identity: got %d, want 202", c)
+	for _, flag := range []string{"", "1"} {
+		t.Setenv(TrustTailscaleHeaderEnv, flag)
+		if c := do("127.0.0.1:5555", "", "tok"); c != http.StatusAccepted {
+			t.Fatalf("flag=%q bearer: got %d, want 202", flag, c)
+		}
+		if c := do("192.168.1.9:5555", "me@example.com", ""); c != http.StatusUnauthorized {
+			t.Fatalf("flag=%q forged identity from LAN peer: got %d, want 401", flag, c)
+		}
+		if c := do("127.0.0.1:5555", "", ""); c != http.StatusUnauthorized {
+			t.Fatalf("flag=%q loopback without identity or token: got %d, want 401", flag, c)
+		}
 	}
-	if c := do("192.168.1.9:5555", "me@example.com"); c != http.StatusUnauthorized {
-		t.Fatalf("forged identity from LAN peer: got %d, want 401", c)
+	t.Setenv(TrustTailscaleHeaderEnv, "")
+	if c := do("127.0.0.1:5555", "me@example.com", ""); c != http.StatusUnauthorized {
+		t.Fatalf("default-off forged header from loopback: got %d, want 401", c)
 	}
-	if c := do("127.0.0.1:5555", ""); c != http.StatusUnauthorized {
-		t.Fatalf("loopback without identity or token: got %d, want 401", c)
+	t.Setenv(TrustTailscaleHeaderEnv, "1")
+	if c := do("127.0.0.1:5555", "me@example.com", ""); c != http.StatusAccepted {
+		t.Fatalf("flag-on loopback with identity: got %d, want 202", c)
 	}
 }

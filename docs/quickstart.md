@@ -24,9 +24,11 @@ Done: the phone now triggers an action on the laptop.
   server never logs. The page stores it in the phone's `localStorage` and strips it from the address bar.
 - The QR and token-bearing URL are printed **only when stderr is an interactive terminal** — never into a
   launchd/log file. Under launchd the banner prints the address and tells you to run the server from a terminal to scan.
-- `POST /api/chat/slide` always needs `Authorization: Bearer <token>`, unless the request comes from a
-  loopback peer carrying a `Tailscale-User-Login` header (what `tailscale serve` sets after authenticating the
-  tailnet user). That header from any other peer is ignored.
+- `POST /api/chat/slide` always needs `Authorization: Bearer <token>`.
+- Tailnet users who front the server with `tailscale serve` can skip the token by starting the server with
+  `PARLAY_TRUST_TAILSCALE_HEADER=1`: a loopback peer carrying `Tailscale-User-Login` is then accepted. Off by
+  default. Safe only with `tailscale serve`, Funnel off, and no other local proxy or tunnel (cloudflared, ngrok) —
+  the header is forgeable by anything that can reach the server from loopback.
 - `PARLAY_SLIDE_TOKEN` still overrides the generated token. To rotate, delete `~/.parlay/pair-token` and restart.
 - Never expose the server with Tailscale Funnel or any public tunnel.
 

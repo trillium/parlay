@@ -249,8 +249,9 @@ The service has no auth; keep it on a private network.
 `{"direction":"next"|"previous"}` to `POST /api/chat/slide` with
 `Authorization: Bearer <token>`, where the token is `$PARLAY_SLIDE_TOKEN` if set, else the
 pairing token the server generated on first run (`<state>/pair-token`, 0600) and encodes into the
-QR printed at start — see [`quickstart.md`](quickstart.md). A loopback peer carrying a
-`Tailscale-User-Login` header (`tailscale serve`) is also accepted without a token. The Talon
+QR printed at start — see [`quickstart.md`](quickstart.md). With `PARLAY_TRUST_TAILSCALE_HEADER=1` (off by
+default; safe only behind `tailscale serve` with Funnel off and no other local proxy or tunnel), a loopback
+peer carrying a `Tailscale-User-Login` header is also accepted without a token. The Talon
 side of the actions ships in `examples/talon/` (`install.sh` links it into `~/.talon/user/`). The route builds the same
 action-mode `Submission` as `/remote-input/submit`, so it ends in the same
 `actions.user.slide_next()` / `slide_previous()` voice calls
