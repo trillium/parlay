@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Slide remote</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#111; --btn:#1f6feb; --btn-fg:#fff; --alt:#555; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --alt:#6e7681; } }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:16px system-ui,sans-serif; }
+  main { display:flex; flex-direction:column; height:100%; gap:12px; padding:16px; box-sizing:border-box; }
+  button { flex:1; font-size:2rem; border:0; border-radius:16px; background:var(--btn); color:var(--btn-fg); }
+  button.prev { flex:.5; background:var(--alt); }
+  button:disabled { opacity:.5; }
+  #status { min-height:1.5em; text-align:center; }
+  input { font-size:1rem; padding:10px; border-radius:8px; border:1px solid var(--alt); background:transparent; color:inherit; }
+</style>
+</head>
+<body>
+<main>
+  <input id="token" type="password" placeholder="token" autocomplete="off">
+  <button id="next">Next &rarr;</button>
+  <button id="previous" class="prev">&larr; Previous</button>
+  <div id="status" role="status" aria-live="polite"></div>
+</main>
+<script>
+(function () {
+  var tok = document.getElementById('token'), st = document.getElementById('status');
+  try { tok.value = localStorage.getItem('slideToken') || ''; } catch (e) {}
+  function send(direction) {
+    try { localStorage.setItem('slideToken', tok.value); } catch (e) {}
+    st.textContent = 'sending…';
+    fetch('/api/chat/slide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok.value },
+      body: JSON.stringify({ direction: direction })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        st.textContent = r.ok ? direction + ' queued' : (r.status + ' ' + (b.error || 'failed'));
+      });
+    }).catch(function (e) { st.textContent = 'network error: ' + e.message; });
+  }
+  ['next', 'previous'].forEach(function (d) {
+    document.getElementById(d).addEventListener('click', function () { send(d); });
+  });
+})();
+</script>
+</body>
+</html>

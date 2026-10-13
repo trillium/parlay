@@ -51,6 +51,7 @@ var TestUnguardedRoutes = map[string]string{
 	"/api/chat/commands":     "read: the live-command snapshot. Same class as /api/chat/agents; its three POST siblings ARE guarded",
 	"/api/chat/client":       "read: the onboarding document (listen address, admit list, client contract). Sends no CORS headers, so a foreign page cannot read it; the admit list is a CORS allowance, not access control, on a server that has no authentication",
 	"/api/chat/version":      "read: bundle version string, polled by every SSE client",
+	"/slide":                 "read: static HTML for the phone slide button; embeds no secret and makes no call on load. The POST it drives, /api/chat/slide, is guarded and bearer-token gated",
 	"/api/chat/pages":        "read: the page manifest the panel's page picker renders",
 	"/api/chat/plugins":      "read: static plugin manifests. The mutating plugin subtree is guarded by the /api/chat/plugin/ prefix",
 	// The mux registers the UPLOAD SERVING SUBTREE under its prefix

@@ -243,6 +243,18 @@ The service has no auth; keep it on a private network.
 - A live run reports `injected` with `wouldRun` set to the snippet,
   `injectAttempted: true`, and `focus: "not_required"`.
 
+### Phone trigger (task-l6wjg.4)
+
+`GET /slide` serves a two-button page (Next / Previous); each tap POSTs
+`{"direction":"next"|"previous"}` to `POST /api/chat/slide` with
+`Authorization: Bearer $PARLAY_SLIDE_TOKEN`. The route builds the same
+action-mode `Submission` as `/remote-input/submit`, so it ends in the same
+`actions.user.slide_next()` / `slide_previous()` voice calls
+(`TestSlideTriggerReachesSameActionAsSubmit`). It fails closed: token
+unset → 503, wrong/missing → 401, anything but next/previous → 400. The
+token is a second layer; keep the server on loopback/tailnet (never
+Funnel). `"dryRun": true` is accepted.
+
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 
 | Item | Value |
