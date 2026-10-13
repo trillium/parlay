@@ -11,6 +11,25 @@ import (
 	"parlay/go-server/internal/remoteinput"
 )
 
+func TestSlidePageLinksToDeck(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/slide", nil)
+	rec := httptest.NewRecorder()
+	handleSlidePage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /slide: got %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	const link = `<a class="deck" href="https://voicefirst.dev/slides/" target="_blank" rel="noopener">Open slides</a>`
+	if !strings.Contains(body, link) {
+		t.Fatal("slide page missing Open slides link")
+	}
+	for _, id := range []string{`id="token"`, `id="next"`, `id="previous"`} {
+		if !strings.Contains(body, id) {
+			t.Fatalf("slide page missing %s", id)
+		}
+	}
+}
+
 func postSlide(t *testing.T, h http.HandlerFunc, auth, body string) (int, string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/slide", strings.NewReader(body))
