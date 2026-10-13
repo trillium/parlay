@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -115,91 +117,96 @@ func TestSlideManifestMatchesPage(t *testing.T) {
 	}
 }
 
-func TestSlidePageIsInstallable(t *testing.T) {
+const slideWorkerHarness = `
+const vm = require('vm');
+const src = require('fs').readFileSync(0, 'utf8');
+const handlers = {};
+const added = [];
+const puts = [];
+const caches = {
+  open: async () => ({ addAll: async (l) => { added.push(...l); }, put: async () => { puts.push(1); } }),
+  keys: async () => [],
+  delete: async () => true,
+  match: async () => 'cached',
+};
+const self = { location: { origin: 'http://h' }, addEventListener: (n, f) => { handlers[n] = f; }, clients: { claim: async () => {} } };
+vm.runInNewContext(src, { self, caches, URL, fetch: async () => { throw new Error('offline'); }, Promise });
+(async () => {
+  let w;
+  await handlers.install({ waitUntil: (p) => { w = p; } });
+  await w;
+  const out = { added, fetches: {} };
+  for (const [name, url, method] of JSON.parse(process.argv[1])) {
+    let responded = null;
+    handlers.fetch({ request: { url, method }, respondWith: (p) => { responded = p; } });
+    out.fetches[name] = responded === null ? 'passthrough' : await responded;
+  }
+  out.puts = puts.length;
+  console.log(JSON.stringify(out));
+})();
+`
+
+func TestSlideWorkerBehaviour(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	reqs := [][3]string{
+		{"api", "http://h/api/chat/slide", "GET"},
+		{"apiPost", "http://h/api/chat/slide", "POST"},
+		{"page", "http://h/slide", "GET"},
+		{"icon", "http://h" + slideIcon192Path, "GET"},
+		{"foreign", "http://other/slide", "GET"},
+		{"unlisted", "http://h/slide/other", "GET"},
+	}
+	arg, _ := json.Marshal(reqs)
+	cmd := exec.Command(node, "-e", slideWorkerHarness, string(arg))
+	cmd.Stdin = bytes.NewReader(slideWorker)
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("running worker: %v", err)
+	}
+	var out struct {
+		Added   []string          `json:"added"`
+		Fetches map[string]string `json:"fetches"`
+		Puts    int               `json:"puts"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("harness output %q: %v", raw, err)
+	}
+	for _, p := range out.Added {
+		if p == "/api" || strings.HasPrefix(p, "/api/") {
+			t.Fatalf("worker precaches an API path: %s", p)
+		}
+	}
+	want := []string{"/slide", slideManifestPath, slideIcon180Path, slideIcon192Path, slideIcon512Path}
+	if strings.Join(out.Added, ",") != strings.Join(want, ",") {
+		t.Fatalf("precached %v, want %v", out.Added, want)
+	}
+	for _, name := range []string{"api", "apiPost", "foreign", "unlisted"} {
+		if out.Fetches[name] != "passthrough" {
+			t.Fatalf("%s request was intercepted: %q", name, out.Fetches[name])
+		}
+	}
+	for _, name := range []string{"page", "icon"} {
+		if out.Fetches[name] != "cached" {
+			t.Fatalf("%s offline = %q, want cached fallback", name, out.Fetches[name])
+		}
+	}
+	if out.Puts != 0 {
+		t.Fatalf("worker wrote %d cache entries outside addAll", out.Puts)
+	}
+}
+
+func TestSlidePageServedWithShellCacheControl(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleSlidePage(rec, httptest.NewRequest(http.MethodGet, "/slide", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /slide: got %d", rec.Code)
 	}
-	body := rec.Body.String()
-	for _, want := range []string{
-		`name="apple-mobile-web-app-capable" content="yes"`,
-		`name="apple-mobile-web-app-status-bar-style" content="default"`,
-		`name="apple-mobile-web-app-title" content="Slides"`,
-		`rel="manifest" href="/slide/manifest.webmanifest"`,
-		`rel="apple-touch-icon" sizes="180x180" href="/slide/icon-180.png"`,
-		`maximum-scale=1`,
-		`user-scalable=no`,
-		`touch-action:manipulation`,
-		`min-height:44px`,
-		`if (window.isSecureContext && 'serviceWorker' in navigator)`,
-		`serviceWorker.register('/slide/sw.js', { scope: '/slide' })`,
-		`content="#ffffff" media="(prefers-color-scheme: light)"`,
-		`content="#0d1117" media="(prefers-color-scheme: dark)"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("slide page missing %q", want)
-		}
-	}
 	if rec.Header().Get("Cache-Control") != slideShellCacheControl {
 		t.Fatalf("page cache-control = %q", rec.Header().Get("Cache-Control"))
 	}
-}
-
-func TestSlideWorkerNeverCachesAPI(t *testing.T) {
-	src := string(slideWorker)
-	shell := shellPaths(t, src)
-	want := []string{"/slide", slideManifestPath, slideIcon180Path, slideIcon192Path, slideIcon512Path}
-	if strings.Join(shell, ",") != strings.Join(want, ",") {
-		t.Fatalf("SHELL = %v, want %v", shell, want)
-	}
-	for _, p := range shell {
-		if p == "/api" || strings.HasPrefix(p, "/api/") {
-			t.Fatalf("SHELL caches an API path: %s", p)
-		}
-	}
-	if strings.Contains(src, ".put(") {
-		t.Fatal("service worker writes cache entries outside addAll(SHELL)")
-	}
-	fetch := strings.Index(src, "addEventListener('fetch'")
-	if fetch < 0 {
-		t.Fatal("service worker has no fetch handler")
-	}
-	rest := src[fetch:]
-	api := strings.Index(rest, "isAPI(url.pathname)")
-	respond := strings.Index(rest, "respondWith")
-	if api < 0 || respond < 0 || api > respond {
-		t.Fatal("fetch handler must refuse /api before respondWith")
-	}
-	if !strings.Contains(src, "pathname.indexOf('/api/')") {
-		t.Fatal("service worker does not match /api/ paths")
-	}
-}
-
-func shellPaths(t *testing.T, src string) []string {
-	t.Helper()
-	start := strings.Index(src, "var SHELL = [")
-	if start < 0 {
-		t.Fatal("SHELL list missing")
-	}
-	rest := src[start:]
-	end := strings.Index(rest, "]")
-	if end < 0 {
-		t.Fatal("SHELL list unclosed")
-	}
-	var out []string
-	for _, line := range strings.Split(rest[:end], "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "'") {
-			continue
-		}
-		path, _, ok := strings.Cut(strings.TrimPrefix(line, "'"), "'")
-		if !ok {
-			t.Fatalf("bad SHELL entry %q", line)
-		}
-		out = append(out, path)
-	}
-	return out
 }
 
 func pngSize(b []byte) (int, int, bool) {

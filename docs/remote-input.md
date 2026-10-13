@@ -263,7 +263,9 @@ Funnel). `"dryRun": true` is accepted. The page is a standalone web app named
 `GET /slide/icon-180.png`, `/slide/icon-192.png`, and `/slide/icon-512.png`
 are static and carry no token. The manifest and apple tags install the page
 over plain HTTP. The service worker registers only in a secure context, precaches
-that shell only, and never caches `/api`.
+that shell only, and never caches `/api`. The installed app is for tailnet use: there
+the buttons need no token. The `#t=` pairing token applies only to Safari-in-browser use off
+the tailnet and is not carried into the home-screen app.
 
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 
