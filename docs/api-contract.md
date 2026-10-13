@@ -719,21 +719,24 @@ summary here).
 Enqueue accepted text for injection — or, with `"mode": "bead"`,
 capture it as a bead (no Talon path, no target needed; `bead_created` /
 `bead_failed` outcomes, `store` names the capture queue, default
-`inbox`). Request:
-`{ "device": "string (required)", "text": "string (required)",
+`inbox`) — or, with `"mode": "action"`, run one allow-listed Talon slide
+action (`slide_next` / `slide_previous`; no text, no focus target;
+`wouldRun` is the constant snippet). Request:
+`{ "device": "string (required)", "text": "string (required except mode action)",
 "app"?: "…", "windowTitle"?: "…", "trigger"?: "…",
-"mode"?: "inject"|"bead", "store"?: "…",
+"mode"?: "inject"|"bead"|"action", "action"?: "slide_next"|"slide_previous", "store"?: "…",
 "allowUnfocused"?: true, "dryRun"?: true, "confidence"?: 0.0..1.0 }`
-(`?dryRun=1` / `?allowUnfocused=1` / `?mode=bead` / `?store=…` force the same modes without touching
-the body; the body wins when both are set; dry-run runs the real focus + verification and reports
-`wouldInsert`, typing nothing). A live inject submit with no `app` and no
+(`?dryRun=1` / `?allowUnfocused=1` / `?mode=bead` / `?mode=action` / `?action=slide_next` / `?store=…` force the same modes without touching
+the body; the body wins when both are set; an inject dry-run runs the real focus + verification and reports
+`wouldInsert`, typing nothing; an action dry-run calls nothing and reports
+`wouldRun`). A live inject submit with no `app` and no
 `windowTitle` is refused (**400** naming `allowUnfocused`) unless the
 caller deliberately sets `allowUnfocused`, which surfaces on the outcome
 as `focus: "unfocused_allowed"` (target names come from `GET …/targets`
-below — Talon `ui.apps()` names, not OS process names). Bead text is capped at 2000 chars (rejected, never truncated). Response:
+below — Talon `ui.apps()` names, not OS process names). Bead text is capped at 2000 chars (rejected, never truncated). An action other than the two slide names is **400** (`action-not-allowed`) and the REPL is not invoked. Response:
 **202** `{ "id": "ri-N", "status": "queued" }` (queued, not
 done — the terminal outcome arrives via status poll or the
-`remote_input_result` SSE event). Errors: **400** `device`/`text` missing;
+`remote_input_result` SSE event). Errors: **400** `device` missing, `text` missing on inject/bead, unknown mode, or action not allow-listed;
 **405** non-POST. All three routes are in the guard's `GuardedPaths`.
 
 `confidence` is optional and additive: the recognition confidence the
@@ -760,7 +763,7 @@ Poll one submission's latest `Outcome` (200) or **404** unknown id
 (evicted or never submitted). Terminal `status`: `injected` |
 `focus_failed` | `inject_failed` | `dry_run_passed` (dry-run success:
 real focus + verification, nothing typed, `wouldInsert` carries the exact
-bytes) | `bead_created` (capture success: `beadId`/`beadStore`/`beadWrapper`/`capturedText`) |
+bytes; an action dry-run instead carries `wouldRun`, the constant snippet) | `bead_created` (capture success: `beadId`/`beadStore`/`beadWrapper`/`capturedText`) |
 `bead_failed` (typed `error`, text preserved, never an id) | `held` (a reported
 confidence fell below the configured threshold: nothing typed, text preserved);
 transient: `queued` | `injecting`.
@@ -1054,7 +1057,7 @@ implements the same contract for hosts without a shared subscription.
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `tts_event` | `{ "id", "role": "tts_event", "type", "device", …, "ts" }` | TTS lifecycle fan-out from `POST /tts-event`. |
-| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"?, "allowUnfocused"?, "mode"?, "beadId"?, "beadStore"?, "beadWrapper"?, "capturedText"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`/`bead_created`/`bead_failed`/`held`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
+| `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"?, "wouldRun"?, "allowUnfocused"?, "mode"?, "beadId"?, "beadStore"?, "beadWrapper"?, "capturedText"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`/`bead_created`/`bead_failed`/`held`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
 | `lavish_session` | `{ "key", "file", "proxyUrl", "status" }` | Embedded-workspace card upsert. **Producer routes not wired** — see below. |
 | `reload` | *(none)* | `location.reload()`. |
 | `navigate` | `{ "url", "openDrawer" }` | Workspace navigation. Gated by capability declarations. |

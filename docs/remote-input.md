@@ -141,9 +141,11 @@ input-mode selector (task-pf1n3) will drive this mode.
 {"device": "phone-1", "text": "call mom tomorrow", "mode": "bead"}
 ```
 
-- `mode` is `"inject"` (default) or `"bead"`. Empty/missing means
-  `inject`, so every existing caller and the current PWA keep working
-  unchanged. Anything else is 400 (`unknown mode`).
+- `mode` is `"inject"` (default), `"bead"`, or `"action"`. Empty/missing
+  means `inject`, so every existing caller and the current PWA keep
+  working unchanged. Anything else is 400 (`unknown mode`). Action mode
+  is the allow-listed slide path in the next section; it does not require
+  `text`.
 - Bead mode **bypasses the whole Talon path**: no focus resolution, no
   `actions.insert`, no target needed. A targetless bead submit is valid
   — the no-target refusal above is inject-only.
@@ -213,6 +215,33 @@ without creating anything. On a live submit, poll: the fleet wrapper's
 external-first routing can take seconds on first call (one observed
 `bead_created` settled ~6 s after submit), so the status reads
 `injecting` until the wrapper exits.
+
+## Action mode (task-l6wjg.4 — same Talon slide action as voice)
+
+`POST /api/chat/remote-input/submit` with `"mode": "action"` runs one
+allow-listed Talon user action. It does not type text, so `text` is not
+required and an empty body is not a recogniser error. No `app` or
+`windowTitle` is required: the action does its own focus, the same way
+the spoken command does. The route is the existing guarded submit path.
+The service has no auth; keep it on a private network.
+
+```json
+{"device": "phone-1", "mode": "action", "action": "slide_next"}
+```
+
+- `action` is exactly `"slide_next"` or `"slide_previous"`. Those map to
+  the constant snippets `actions.user.slide_next()` and
+  `actions.user.slide_previous()` — the same actions the local voice
+  commands call. The request name is looked up, never interpolated into
+  Python. Anything else (`quit`, a snippet, an empty action) is 400 at
+  the wire (`action-not-allowed`) and `inject_failed` in-process, and
+  the REPL is not invoked.
+- `?mode=action&action=slide_next` mirrors the body fields. The body
+  wins when both are set.
+- `dryRun: true` runs nothing and reports `dry_run_passed` with
+  `wouldRun` set to that exact snippet.
+- A live run reports `injected` with `wouldRun` set to the snippet,
+  `injectAttempted: true`, and `focus: "not_required"`.
 
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 

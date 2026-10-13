@@ -49,9 +49,28 @@ type TalonAdapter interface {
 	ActiveApp() (string, error)
 	FocusedWindowTitle() (string, error)
 	Insert(text string) error
+	// RunAction runs one allow-listed user action by name. The name
+	// selects a constant snippet; it is never interpolated into Python.
+	// Anything outside the allow-list is rejected before the REPL runs.
+	RunAction(name string) error
 	// Targets lists Talon's applications in Talon's own ordering.
 	// Read-only: no focus change, no keystroke (dry-run safe).
 	Targets() ([]Target, error)
+}
+
+// allowedActions is the closed set mode=action may run. Values are
+// constant snippets: a request name is looked up, never formatted in.
+var allowedActions = map[string]string{
+	"slide_next":     "actions.user.slide_next()",
+	"slide_previous": "actions.user.slide_previous()",
+}
+
+// ActionSnippet returns the constant Talon snippet for an allow-listed
+// action name. ok is false for anything else, including empty names and
+// snippet-shaped strings.
+func ActionSnippet(name string) (string, bool) {
+	snip, ok := allowedActions[name]
+	return snip, ok
 }
 
 // replPath mirrors ~/.talon/talon_mcp/tools/lib/repl.ts getReplPath.
@@ -156,6 +175,17 @@ func cleanReplString(s string) string {
 // normalization and there is no large-paste split in MVP.
 func (t *REPLTalon) Insert(text string) error {
 	_, err := t.runSnippet(insertSnippet(text))
+	return err
+}
+
+// RunAction runs one allow-listed user action. The snippet comes from
+// allowedActions; a name that is not in that map never reaches the REPL.
+func (t *REPLTalon) RunAction(name string) error {
+	snip, ok := allowedActions[name]
+	if !ok {
+		return fmt.Errorf("action %q not allowed", name)
+	}
+	_, err := t.runSnippet(snip)
 	return err
 }
 

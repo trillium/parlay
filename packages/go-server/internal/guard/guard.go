@@ -205,10 +205,13 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/tts-event":             true, // broadcasts a tts_event frame carrying a device uuid
 	"/api/chat/debug-log":             true, // appends client console errors to a log file on disk
 
-	// Remote-input intake (task-57ltl; targets + no-target rule task-46ys9):
+	// Remote-input intake (task-57ltl; targets + no-target rule task-46ys9;
+	// allow-listed slide actions task-l6wjg.4):
 	// POST enqueues accepted text for injection as real keystrokes on the
-	// target Mac via Talon; GET polls the per-submission outcome; GET
-	// targets lists Talon's apps in Talon's ordering (read-only).
+	// target Mac via Talon, or runs one allow-listed slide action
+	// (slide_next / slide_previous) when mode is "action" — same path, no
+	// new route. GET polls the per-submission outcome; GET targets lists
+	// Talon's apps in Talon's ordering (read-only).
 	// Mutating/identifier-aiming by the file's own rule — what the handler
 	// DOES, regardless of method — so all three land here. JSON bodies,
 	// so no jsonExemptPaths entry.

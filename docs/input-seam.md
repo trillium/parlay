@@ -216,10 +216,11 @@ exact submission the operator saw. Its hops today:
 | `delivered` + `ok` | The text was typed at the target, or captured as a bead. |
 | `delivered` + `refused` | The target was reached and the injection failed. |
 | `interpreted` + `recogniser_error` | The submit arrived with empty text: the dictation produced nothing. Previously a bare 400 that left no trace. |
-| `interpreted` + `refused` | The intake declined it before storing anything: missing `device`, unknown `mode`, invalid store, over-long bead text, or a targetless live inject. |
+| `interpreted` + `refused` | The intake declined it before storing anything: missing `device`, unknown `mode`, action not on the slide allow-list, invalid store, over-long bead text, or a targetless live inject. |
 
 Reason tokens are short names (`empty-transcript`, `missing-device`,
-`target-not-matched`, `inject-failed`, `bead-failed`, `no-target`, …), never the
+`target-not-matched`, `inject-failed`, `bead-failed`, `no-target`,
+`action-not-allowed`, …), never the
 backend's error string: a Talon or bead error can echo the text being typed, and
 this ledger must never become a second copy of the transcript. The full error
 stays on the submission's own status.
