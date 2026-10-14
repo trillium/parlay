@@ -104,6 +104,40 @@ func TestSlideTriggerAuth(t *testing.T) {
 	}
 }
 
+func TestSlideTriggerTailnetIdentity(t *testing.T) {
+	post := func(h http.HandlerFunc, hdr map[string]string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/chat/slide", strings.NewReader(`{"direction":"next","dryRun":true}`))
+		req.RemoteAddr = "127.0.0.1:5555"
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec.Code
+	}
+	svc := remoteinput.NewService(&remoteinput.FakeTalon{}, 0, nil)
+	defer svc.Stop()
+	withTok := handleSlideTrigger(svc, remoteInputSeam{}, func() string { return "s3cret" })
+	noTok := handleSlideTrigger(svc, remoteInputSeam{}, func() string { return "" })
+	id := map[string]string{"Tailscale-User-Login": "me@example.com"}
+
+	if c := post(withTok, id); c != http.StatusAccepted {
+		t.Fatalf("header only: got %d, want 202", c)
+	}
+	if c := post(noTok, id); c != http.StatusAccepted {
+		t.Fatalf("header, no token configured: got %d, want 202", c)
+	}
+	if c := post(withTok, map[string]string{"Authorization": "Bearer s3cret"}); c != http.StatusAccepted {
+		t.Fatalf("bearer only: got %d, want 202", c)
+	}
+	if c := post(withTok, nil); c != http.StatusUnauthorized {
+		t.Fatalf("neither: got %d, want 401", c)
+	}
+	if c := post(noTok, nil); c != http.StatusServiceUnavailable {
+		t.Fatalf("neither, no token configured: got %d, want 503", c)
+	}
+}
+
 // waitSvcID waits for the submission named in a 202 body to settle.
 func waitSvcID(t *testing.T, svc *remoteinput.Service, body string) {
 	t.Helper()
@@ -171,13 +205,12 @@ func TestSlideTailscaleIdentity(t *testing.T) {
 		if c := do("127.0.0.1:5555", "", ""); c != http.StatusUnauthorized {
 			t.Fatalf("flag=%q loopback without identity or token: got %d, want 401", flag, c)
 		}
+		if c := do("127.0.0.1:5555", "me@example.com", ""); c != http.StatusAccepted {
+			t.Fatalf("flag=%q loopback with identity: got %d, want 202", flag, c)
+		}
 	}
-	t.Setenv(TrustTailscaleHeaderEnv, "")
+	t.Setenv(TrustTailscaleHeaderEnv, "0")
 	if c := do("127.0.0.1:5555", "me@example.com", ""); c != http.StatusUnauthorized {
-		t.Fatalf("default-off forged header from loopback: got %d, want 401", c)
-	}
-	t.Setenv(TrustTailscaleHeaderEnv, "1")
-	if c := do("127.0.0.1:5555", "me@example.com", ""); c != http.StatusAccepted {
-		t.Fatalf("flag-on loopback with identity: got %d, want 202", c)
+		t.Fatalf("opted-out loopback with identity: got %d, want 401", c)
 	}
 }
