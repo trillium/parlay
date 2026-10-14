@@ -12,11 +12,13 @@ import (
 
 // ── The load path: file source, fs-watch, fail-closed hot-reload ────────────────
 //
-// The engine resolves its command set from three layers, highest wins (contract
-// §Loading precedence): per-request override > loaded file > embedded default. This
-// file owns the middle layer — a manifest file (PARLAY_COMMANDS env or a
-// commands.json next to the binary), watched for changes and hot-swapped ATOMICALLY
-// on a valid parse.
+// The engine resolves its command set from three layers (contract §Loading
+// precedence): a per-request override wholly replaces the set; a manifest file
+// (PARLAY_COMMANDS env or a commands.json next to the binary) is added onto the
+// embedded default; the embedded default is the fallback. This file owns the
+// middle layer. The file is watched and hot-swapped ATOMICALLY on a valid parse.
+// Each load merges against the embedded default, so a phrase removed from a later
+// file stops matching, and shipped phrases are never dropped.
 //
 // FAIL-CLOSED is the invariant: an invalid or unreadable manifest is rejected with
 // a logged reason and the PRIOR GOOD command set stays live. The engine never falls
@@ -108,7 +110,9 @@ func (w *manifestWatcher) check() (reloaded bool, err error) {
 	if perr != nil {
 		return false, perr // invalid — prior good set stays live (fail-closed)
 	}
-	w.engine.SetCommands(man)
+	if err := applyFileManifest(w.engine, man); err != nil {
+		return false, err // invalid merge — prior good set stays live
+	}
 	return true, nil
 }
 
@@ -138,7 +142,7 @@ func (w *manifestWatcher) run(interval time.Duration, stop <-chan struct{}) {
 }
 
 // installFileSource wires the file layer into an engine at startup: it loads the
-// configured manifest (if any), applies it over the embedded default on success,
+// configured manifest (if any), adds it onto the embedded default on success,
 // and starts the fs-watch goroutine. It returns the resolved path ("" if none).
 // Fail-closed: a first-load failure logs and leaves the embedded default live.
 func installFileSource(engine *Engine, stop <-chan struct{}) string {
@@ -147,12 +151,13 @@ func installFileSource(engine *Engine, stop <-chan struct{}) string {
 		return ""
 	}
 	applied := false
-	if man, err := loadManifestFile(path); err == nil {
-		engine.SetCommands(man)
+	if man, err := loadManifestFile(path); err != nil {
+		log.Printf("command manifest %s not loaded (embedded default stays live): %v", path, err)
+	} else if err := applyFileManifest(engine, man); err != nil {
+		log.Printf("command manifest %s not loaded (embedded default stays live): %v", path, err)
+	} else {
 		applied = true
 		log.Printf("loaded command manifest from %s", path)
-	} else {
-		log.Printf("command manifest %s not loaded (embedded default stays live): %v", path, err)
 	}
 	w := newManifestWatcher(engine, path, applied)
 	go w.run(watchInterval, stop)
@@ -160,9 +165,10 @@ func installFileSource(engine *Engine, stop <-chan struct{}) string {
 }
 
 // loadExtraEnders reads the user's own submit line-enders. $PARLAY_SUBMIT_ENDERS
-// (comma-separated) wins when set; otherwise $PARLAY_STATE_HOME/submit-enders is
-// read, one phrase per line, blank lines and #-comments ignored. Neither set ⇒ the
-// shipped defaults are the whole story.
+// (comma-separated) wins when set, even if empty; otherwise
+// $PARLAY_STATE_HOME/submit-enders is read, one phrase per line, blank lines and
+// #-comments ignored. Neither set leaves this list empty. The phrases are appended
+// to the submit command on top of the embedded defaults and any command file.
 func loadExtraEnders() []string {
 	if v, ok := os.LookupEnv("PARLAY_SUBMIT_ENDERS"); ok {
 		return parseEnders(strings.ReplaceAll(v, ",", "\n"))

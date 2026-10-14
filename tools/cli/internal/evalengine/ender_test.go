@@ -218,6 +218,154 @@ func TestEnderEndToEndSubmitNowViaTriggerPath(t *testing.T) {
 	}
 }
 
+// submitPhraseManifest is a command file that adds one phrase to the existing
+// submit command and appends one new command. The file layer must add both
+// without dropping the embedded set.
+func submitPhraseManifest(version, phrase string) string {
+	return `{
+  "schema": "parlay.commands/v1",
+  "version": "` + version + `",
+  "commands": [
+    { "id": "submit", "phrases": ["` + phrase + `"], "mode": "trailing", "priority": 30,
+      "platforms": ["parlay", "herdr"],
+      "emit": { "kind": "handler", "handler": "submit", "config": { "delayMs": 1000, "requireTail": true } } },
+    { "id": "note-mark", "phrases": ["mark this note"], "mode": "trailing", "priority": 40,
+      "platforms": ["parlay"],
+      "emit": { "kind": "sequence", "actions": [ { "verb": "clear" } ] } }
+  ]
+}`
+}
+
+func TestCommandFileAddsSubmitPhrase(t *testing.T) {
+	const ender = "zorbulate"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commands.json")
+	t.Setenv("PARLAY_COMMANDS", path)
+
+	e := NewEngine()
+	if r := eval(e, "deploy the branch "+ender, 1, nil); r.Fired == "submit" {
+		t.Fatalf("%q must not submit before a command file adds it", ender)
+	}
+
+	if err := os.WriteFile(path, []byte(submitPhraseManifest("user", ender)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var tails []string
+	e = NewEngine()
+	e.onSubmit = func(_ string, _, _ int64, tail, _, _ string) {
+		mu.Lock()
+		tails = append(tails, tail)
+		mu.Unlock()
+	}
+	stop := make(chan struct{})
+	defer close(stop)
+	if got := installFileSource(e, stop); got != path {
+		t.Fatalf("installFileSource returned %q, want %q", got, path)
+	}
+
+	r := e.Eval(EvalRequest{
+		StreamID: "ender-box", Version: 2, Text: "deploy the branch " + ender,
+		VoiceEnabled: true, Reason: "input", Platform: "parlay",
+	})
+	if r.Fired != "submit" || !hasVerb(r, "armTimer") {
+		t.Fatalf("command-file phrase should arm submit, got fired=%q verbs=%v", r.Fired, verbs(r))
+	}
+	time.Sleep(1300 * time.Millisecond)
+	mu.Lock()
+	if len(tails) != 1 || tails[0] != ender {
+		mu.Unlock()
+		t.Fatalf("expected one submit fire with tail %q, got %v", ender, tails)
+	}
+	mu.Unlock()
+
+	// Shipped phrases and shipped commands stay, and a new id is appended.
+	send := e.Eval(EvalRequest{
+		StreamID: "shipped-submit", Version: 1, Text: "take the trash out send it",
+		VoiceEnabled: true, Reason: "input",
+	})
+	if send.Fired != "submit" || !hasVerb(send, "armTimer") {
+		t.Fatalf("shipped %q must still arm submit, got fired=%q verbs=%v", "send it", send.Fired, verbs(send))
+	}
+	cleared := e.Eval(EvalRequest{
+		StreamID: "shipped-clear", Version: 1, Text: "change inside input",
+		VoiceEnabled: true, Reason: "input",
+	})
+	if cleared.Fired != "clear" {
+		t.Fatalf("shipped clear phrase must still fire, got %q", cleared.Fired)
+	}
+	marked := e.Eval(EvalRequest{
+		StreamID: "added-id", Version: 1, Text: "mark this note",
+		VoiceEnabled: true, Reason: "input",
+	})
+	if marked.Fired != "note-mark" {
+		t.Fatalf("new command id should fire, got %q", marked.Fired)
+	}
+}
+
+func TestExampleSubmitFileAddsOntoEmbedded(t *testing.T) {
+	data, err := os.ReadFile("../../../../examples/commands/submit-phrases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	man, err := parseManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := mergeManifest(embeddedManifest(), man)
+	if err := validateManifest(merged); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine()
+	e.SetCommands(merged)
+	for _, phrase := range []string{"send it", "submit", "submit that", "bravely", "gravely", "briefly", "lap"} {
+		r := e.Eval(EvalRequest{
+			StreamID: "ex-" + phrase, Version: 1, Text: "note " + phrase,
+			VoiceEnabled: true, Reason: "input",
+		})
+		if r.Fired != "submit" || !hasVerb(r, "armTimer") {
+			t.Fatalf("example phrase %q should arm submit, got fired=%q verbs=%v", phrase, r.Fired, verbs(r))
+		}
+	}
+	if got := eval(e, "change inside input", 1, nil).Fired; got != "clear" {
+		t.Fatalf("example file must keep the shipped clear command, got %q", got)
+	}
+}
+
+func TestCommandFileReloadDropsRemovedPhrase(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commands.json")
+	if err := os.WriteFile(path, []byte(submitPhraseManifest("a", "zorbulate")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine()
+	w := newManifestWatcher(e, path, false)
+	reloaded, err := w.check()
+	if err != nil || !reloaded {
+		t.Fatalf("first command file must load: reloaded=%v err=%v", reloaded, err)
+	}
+	if got := eval(e, "deploy the branch zorbulate", 1, nil).Fired; got != "submit" {
+		t.Fatalf("added phrase should arm submit, got %q", got)
+	}
+
+	if err := os.WriteFile(path, []byte(submitPhraseManifest("b", "quonk")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err = w.check()
+	if err != nil || !reloaded {
+		t.Fatalf("replacement command file must reload: reloaded=%v err=%v", reloaded, err)
+	}
+	if got := eval(e, "deploy the branch zorbulate", 2, nil).Fired; got != "" {
+		t.Fatalf("phrase removed from the command file must stop matching, got %q", got)
+	}
+	if got := eval(e, "deploy the branch quonk", 3, nil).Fired; got != "submit" {
+		t.Fatalf("phrase in the new file should arm submit, got %q", got)
+	}
+	if got := eval(e, "take the trash out send it", 4, nil).Fired; got != "submit" {
+		t.Fatalf("shipped submit phrase must survive the reload, got %q", got)
+	}
+}
+
 func TestUserSuppliedEnderRelaysSubmit(t *testing.T) {
 	const ender = "zorbulate"
 	dir := t.TempDir()
@@ -264,5 +412,33 @@ func TestEnderEnvOverridesFile(t *testing.T) {
 	got := loadExtraEnders()
 	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
 		t.Fatalf("env should override file, got %v", got)
+	}
+}
+
+func TestCommandFileAndEndersBothAdd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commands.json")
+	if err := os.WriteFile(path, []byte(submitPhraseManifest("user", "quonk")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PARLAY_COMMANDS", path)
+	t.Setenv("PARLAY_STATE_HOME", dir)
+	t.Setenv("PARLAY_SUBMIT_ENDERS", "zorbulate")
+
+	e := NewEngine()
+	e.SetExtraEnders(loadExtraEnders())
+	stop := make(chan struct{})
+	defer close(stop)
+	if got := installFileSource(e, stop); got != path {
+		t.Fatalf("installFileSource returned %q, want %q", got, path)
+	}
+	for _, phrase := range []string{"quonk", "zorbulate", "send it"} {
+		r := e.Eval(EvalRequest{
+			StreamID: "both-" + phrase, Version: 1, Text: "deploy the branch " + phrase,
+			VoiceEnabled: true, Reason: "input",
+		})
+		if r.Fired != "submit" || !hasVerb(r, "armTimer") {
+			t.Fatalf("phrase %q should arm submit from command file or enders, got fired=%q verbs=%v", phrase, r.Fired, verbs(r))
+		}
 	}
 }

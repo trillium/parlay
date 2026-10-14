@@ -1,0 +1,19 @@
+{
+  "schema": "parlay.commands/v1",
+  "version": "submit-phrases-example",
+  "commands": [
+    {
+      "id": "submit",
+      "phrases": ["bravely", "gravely", "briefly", "lap"],
+      "mode": "trailing",
+      "priority": 30,
+      "platforms": ["parlay", "herdr"],
+      "description": "Extra phrases for the shipped submit command. The engine keeps send it, submit, and submit that and adds these.",
+      "emit": {
+        "kind": "handler",
+        "handler": "submit",
+        "config": { "delayMs": 1000, "requireTail": true }
+      }
+    }
+  ]
+}
