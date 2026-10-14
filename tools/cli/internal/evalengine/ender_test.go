@@ -8,7 +8,8 @@ import (
 
 // ender_test.go — the voice line-ender evaluation for auto-submit (task-ev0ny).
 //
-// A dictated line-ender (`send it` / `submit` / `submit that`) at the TAIL of a
+// A dictated line-ender (`send it` / `submit` / `submit that`, and the Parlay
+// panel's `bravely` / `gravely` / `briefly` / `lap`) at the TAIL of a
 // voice box must arm the server-owned verify hold; when the hold elapses with
 // the tail intact, the engine fires a submitNow through the live trigger path
 // (engine onSubmit → relay eval-push → SSE input_action). Mid-dictation
@@ -21,7 +22,10 @@ func TestEnderPhrasesRegistered(t *testing.T) {
 		if c.ID != "submit" {
 			continue
 		}
-		want := map[string]bool{"send it": false, "submit": false, "submit that": false}
+		want := map[string]bool{
+			"send it": false, "submit": false, "submit that": false,
+			"bravely": false, "gravely": false, "briefly": false, "lap": false,
+		}
 		for _, p := range c.Phrases {
 			if _, ok := want[p]; ok {
 				want[p] = true
@@ -65,7 +69,14 @@ func TestEnderTrailingMatch(t *testing.T) {
 		{"send it trailing", "remind marcus about standup send it", true},
 		{"submit trailing", "remind marcus about standup submit", true},
 		{"submit that trailing", "remind marcus about standup submit that", true},
+		{"bravely trailing", "deploy the branch bravely", true},
+		{"gravely trailing", "deploy the branch gravely", true},
+		{"briefly trailing", "deploy the branch briefly", true},
+		{"lap trailing", "deploy the branch lap", true},
+		{"bravely case and punct", "DEPLOY THE BRANCH BRAVELY.", true},
 		{"send it mid buffer", "send it to marcus tomorrow", false},
+		{"bravely mid buffer", "bravely start the deploy please", false},
+		{"lap mid buffer", "sit on my lap please", false},
 		{"submit mid buffer", "submit the report by friday please", false},
 		{"submit that mid buffer", "please submit that form when ready", false},
 		{"ender then more dictation", "draft one submit and another thought", false},
@@ -212,5 +223,44 @@ func TestEnderEndToEndSubmitNowViaTriggerPath(t *testing.T) {
 	}
 	if len(seqs) != 1 || seqs[0] <= r.Seq {
 		t.Fatalf("fire seq %v must advance past sync seq %d", seqs, r.Seq)
+	}
+}
+
+func TestParlayBravelyEnderRelaysSubmit(t *testing.T) {
+	// The Parlay panel dictates into its own box and posts that buffer with
+	// voice on and no command override (packages/client postEval). The
+	// embedded submit command is therefore the only thing that can arm the
+	// hold. A trailing "bravely" — the panel's line-ender — must arm that
+	// hold and, once it elapses, fire submitNow with the tail intact. That
+	// fire is what the relay broadcasts as input_action; without it the
+	// dictated line stays in the box and Enter is never relayed. The
+	// omitted platform is the panel's: it must echo parlay, not herdr.
+	e := NewEngine()
+	var mu sync.Mutex
+	type fire struct{ tail, platform string }
+	var fires []fire
+	e.onSubmit = func(_ string, _, _ int64, tail, text, platform string) {
+		if text != "" {
+			t.Errorf("fire text must be empty (client strips the live buffer), got %q", text)
+		}
+		mu.Lock()
+		fires = append(fires, fire{tail, platform})
+		mu.Unlock()
+	}
+
+	r := eval(e, "deploy the branch bravely", 1, nil)
+	if r.Fired != "submit" || !hasVerb(r, "armTimer") {
+		t.Fatalf("parlay bravely ender should arm submit, got fired=%q verbs=%v", r.Fired, verbs(r))
+	}
+	if r.Platform != "parlay" {
+		t.Fatalf("omitted platform should echo parlay, got %q", r.Platform)
+	}
+
+	time.Sleep(1300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(fires) != 1 || fires[0].tail != "bravely" || fires[0].platform != "parlay" {
+		t.Fatalf("expected one submit fire tail=bravely platform=parlay, got %+v", fires)
 	}
 }
