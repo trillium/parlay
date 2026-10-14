@@ -25,7 +25,8 @@ func NewEngine() *Engine {
 	e := &Engine{
 		streams: map[string]*streamState{},
 	}
-	e.commands = compileManifest(embeddedManifest())
+	e.base = embeddedManifest()
+	e.commands = compileManifest(e.base)
 	return e
 }
 

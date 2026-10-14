@@ -32,10 +32,36 @@ func compileManifest(man *Manifest) []compiledCommand {
 // an empty set is impossible because validateManifest rejects zero commands (never
 // fall open to no commands).
 func (e *Engine) SetCommands(man *Manifest) {
-	cmds := compileManifest(man)
 	e.mu.Lock()
+	e.base = man
+	cmds := compileManifest(withEnders(man, e.extraEnders))
 	e.commands = cmds
 	e.mu.Unlock()
+}
+
+// SetExtraEnders adds user-supplied line-ender phrases to the submit command and
+// keeps them across SetCommands hot-reloads.
+func (e *Engine) SetExtraEnders(phrases []string) {
+	e.mu.Lock()
+	e.extraEnders = phrases
+	e.commands = compileManifest(withEnders(e.base, phrases))
+	e.mu.Unlock()
+}
+
+func withEnders(man *Manifest, extra []string) *Manifest {
+	if len(extra) == 0 {
+		return man
+	}
+	out := *man
+	out.Commands = make([]CommandManifest, len(man.Commands))
+	copy(out.Commands, man.Commands)
+	for i := range out.Commands {
+		if out.Commands[i].ID == "submit" {
+			merged := append([]string{}, out.Commands[i].Phrases...)
+			out.Commands[i].Phrases = append(merged, extra...)
+		}
+	}
+	return &out
 }
 
 // commandSet resolves which command set a request evaluates against, implementing

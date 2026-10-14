@@ -1,6 +1,9 @@
 package evalengine
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -212,5 +215,54 @@ func TestEnderEndToEndSubmitNowViaTriggerPath(t *testing.T) {
 	}
 	if len(seqs) != 1 || seqs[0] <= r.Seq {
 		t.Fatalf("fire seq %v must advance past sync seq %d", seqs, r.Seq)
+	}
+}
+
+func TestUserSuppliedEnderRelaysSubmit(t *testing.T) {
+	const ender = "zorbulate"
+	dir := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", dir)
+	t.Setenv("PARLAY_SUBMIT_ENDERS", "")
+	os.Unsetenv("PARLAY_SUBMIT_ENDERS")
+
+	e := NewEngine()
+	if r := eval(e, "deploy the branch "+ender, 1, nil); r.Fired == "submit" {
+		t.Fatalf("%q must not submit before it is configured", ender)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "submit-enders"), []byte("# mine\n\n"+strings.ToUpper(ender)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var tails []string
+	e = NewEngine()
+	e.onSubmit = func(_ string, _, _ int64, tail, _, _ string) {
+		mu.Lock()
+		tails = append(tails, tail)
+		mu.Unlock()
+	}
+	e.SetExtraEnders(loadExtraEnders())
+	e.SetCommands(embeddedManifest())
+
+	r := eval(e, "deploy the branch "+ender, 2, nil)
+	if r.Fired != "submit" || !hasVerb(r, "armTimer") {
+		t.Fatalf("configured ender should arm submit, got fired=%q verbs=%v", r.Fired, verbs(r))
+	}
+	time.Sleep(1300 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(tails) != 1 || tails[0] != ender {
+		t.Fatalf("expected one submit fire with tail %q, got %v", ender, tails)
+	}
+}
+
+func TestEnderEnvOverridesFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PARLAY_STATE_HOME", dir)
+	os.WriteFile(filepath.Join(dir, "submit-enders"), []byte("fileword\n"), 0o600)
+	t.Setenv("PARLAY_SUBMIT_ENDERS", "Alpha, beta")
+	got := loadExtraEnders()
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Fatalf("env should override file, got %v", got)
 	}
 }

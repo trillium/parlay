@@ -91,6 +91,7 @@ func Serve(addrFlag, pushURLFlag string) {
 
 	push := &PushClient{url: pushURL, http: &http.Client{Timeout: 3 * time.Second}}
 	engine := NewEngine()
+	engine.SetExtraEnders(loadExtraEnders())
 	engine.onSubmit = func(streamID string, seq, base int64, tail, text, platform string) {
 		push.pushSubmit(streamID, seq, base, tail, text, platform)
 	}

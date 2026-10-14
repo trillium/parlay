@@ -4,7 +4,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/trillium/parlay/tools/cli/internal/config"
 )
 
 // ── The load path: file source, fs-watch, fail-closed hot-reload ────────────────
@@ -154,4 +157,31 @@ func installFileSource(engine *Engine, stop <-chan struct{}) string {
 	w := newManifestWatcher(engine, path, applied)
 	go w.run(watchInterval, stop)
 	return path
+}
+
+// loadExtraEnders reads the user's own submit line-enders. $PARLAY_SUBMIT_ENDERS
+// (comma-separated) wins when set; otherwise $PARLAY_STATE_HOME/submit-enders is
+// read, one phrase per line, blank lines and #-comments ignored. Neither set ⇒ the
+// shipped defaults are the whole story.
+func loadExtraEnders() []string {
+	if v, ok := os.LookupEnv("PARLAY_SUBMIT_ENDERS"); ok {
+		return parseEnders(strings.ReplaceAll(v, ",", "\n"))
+	}
+	data, err := os.ReadFile(filepath.Join(config.StateHome(), "submit-enders"))
+	if err != nil {
+		return nil
+	}
+	return parseEnders(string(data))
+}
+
+func parseEnders(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, strings.ToLower(line))
+	}
+	return out
 }
