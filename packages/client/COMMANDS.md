@@ -37,7 +37,7 @@ live `agentInfo` via exact-id → exact-name → substring).
 | `clear` | change inside in input | anywhere | empty the whole box (+ draft hygiene) |
 | `switch-tab` | switch to {agent} / go to {agent} / show me {agent} | whole | activate that agent's tab |
 | `archive-tab` | archive {agent} | whole | archive that tab |
-| `next-tab` / `prev-tab` | next tab / previous tab | whole | cycle tabs |
+| `next-tab` / `prev-tab` | next, next tab, next agent / previous tab | whole | cycle tabs (next wraps after the last) |
 | `submit` | bravely, gravely, briefly, lap | trailing | 1s arm-and-verify, then send |
 
 ## Rebinding phrases
