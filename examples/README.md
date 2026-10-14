@@ -52,6 +52,9 @@ examples/
 │   ├── settings.json         panel + voice preferences
 │   └── messages.jsonl        the message log
 ├── env.example       →  the environment variables, all of them optional
+├── commands/         →  copy onto the eval-engine command file (not loaded until you do)
+│   ├── submit-phrases.json   extra submit phrases, merged onto the embedded command
+│   └── README.md
 ├── talon/            →  Talon slide_next/slide_previous actions + install.sh (docs/quickstart.md)
 └── bootstrap-sandbox.sh
 ```
@@ -75,6 +78,8 @@ against a scratch agent store at all.
 Each directory has its own README with a per-file table:
 [`parlay-state/README.md`](parlay-state/README.md),
 [`data-dir/README.md`](data-dir/README.md).
+The eval-engine command-file example is
+[`commands/README.md`](commands/README.md).
 
 ## Installing it for real
 

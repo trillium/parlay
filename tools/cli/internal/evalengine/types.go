@@ -102,8 +102,9 @@ type Engine struct {
 	// iterates. It comes from a Manifest (embedded default today; a loaded file or
 	// per-request override later), NEVER from a hardcoded switch.
 	commands []compiledCommand
-	// base is the manifest commands was compiled from; extraEnders are the
-	// user-supplied submit phrases merged into it on every (re)compile.
+	// base is the manifest commands was compiled from. extraEnders are
+	// user-supplied submit phrases appended on every (re)compile, including
+	// after a command file is merged onto the embedded default.
 	base        *Manifest
 	extraEnders []string
 

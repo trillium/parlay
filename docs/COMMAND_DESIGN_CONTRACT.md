@@ -177,7 +177,7 @@ vocabulary splits into per-surface subsets:
 | platform | implements |
 |----------|------------|
 | `parlay` | every action verb + every handler (the full visual surface) |
-| `herdr`  | the text-input verbs — `clear`, `setText`, `submitNow`, `noop`, `showHint`, `clearHint`, `replaceRange` — plus the `submit` handler, so dictated line-enders (`send it` / `submit` / `submit that`; extra enders via `PARLAY_SUBMIT_ENDERS` or `$PARLAY_STATE_HOME/submit-enders`) arm the same server-owned verify hold on Herdr voice boxes (task-ev0ny) |
+| `herdr`  | the text-input verbs — `clear`, `setText`, `submitNow`, `noop`, `showHint`, `clearHint`, `replaceRange` — plus the `submit` handler, so dictated line-enders (`send it` / `submit` / `submit that`, plus phrases from a command file or from `PARLAY_SUBMIT_ENDERS` / `$PARLAY_STATE_HOME/submit-enders`) arm the same server-owned verify hold on Herdr voice boxes (task-ev0ny) |
 
 Validation on every load: every platform a command targets must be registered, and
 every verb/handler it emits must be in that platform's set. A `herdr`-scoped command
@@ -200,13 +200,25 @@ commands run on them is data.
 
 The engine resolves its live command set from three layers, highest wins:
 
-1. **Per-request override** — `EvalRequest.commands` (optional). Lets the client
-   ship user-customized phrases (today's `voiceSubmitPhrases` etc. generalize to
-   this) without any server state. Validated per request; invalid ⇒ ignored, fall
+1. **Per-request override** — `EvalRequest.commands` (optional). When it
+   parses, it wholly replaces the command set for that request only. Lets the
+   client ship user-customized phrases (today's `voiceSubmitPhrases` etc.
+   generalize to this) without any server state. Invalid ⇒ ignored, fall
    through.
-2. **Loaded manifest** — a file at a configured path (`PARLAY_COMMANDS` env or a
-   default next to the binary), fs-watched and hot-swapped atomically on a valid
-   parse.
+2. **Loaded manifest** — `PARLAY_COMMANDS` if that env is set, otherwise
+   `commands.json` next to the eval-engine binary when the file exists. The
+   file is added onto the embedded default. A command id that already exists
+   keeps the embedded mode, priority, platforms, and emit, and its phrases are
+   the embedded phrases plus phrases from the file that are not already there
+   (comparison is case-insensitive; embedded order stays first). A new id is
+   appended whole. Shipped commands and shipped phrases stay. Each load merges
+   against the embedded default again, so a phrase dropped from a later file
+   stops matching. The file is fs-watched and hot-swapped atomically on a valid
+   parse; an invalid file leaves the prior good set live. A copy-in example
+   lives at [`examples/commands/`](../examples/commands/README.md).
+   Phrases in `PARLAY_SUBMIT_ENDERS` (comma-separated; an empty value still wins)
+   or `$PARLAY_STATE_HOME/submit-enders` (one phrase per line, `#` comments)
+   are appended to the `submit` command after that merge.
 3. **Embedded default** — a JSON `//go:embed`ed into the binary as the last-resort
    fallback, so a bare binary still works. This is the *only* place commands touch
    the binary, and it is a fallback, not the source of truth.

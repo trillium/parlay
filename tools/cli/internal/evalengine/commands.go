@@ -8,9 +8,10 @@ import (
 // ── Command matching helpers ────────────────────────────────────────────────────
 //
 // Command DEFINITIONS do not live in compiled Go. They are data: the embedded
-// default_commands.json, overridable by a manifest file (commands.json next to
-// the binary, or PARLAY_COMMANDS — fs-watched, hot-swapped fail-closed) and by
-// a per-request EvalRequest.Commands override. See manifest.go / loader.go.
+// default_commands.json. A manifest file (commands.json next to the binary, or
+// PARLAY_COMMANDS — fs-watched, hot-swapped fail-closed) adds onto that default.
+// A per-request EvalRequest.Commands override wholly replaces the set. See
+// manifest.go / loader.go.
 // This file keeps only the matching machinery those manifests compile against.
 //
 // The one stateful command — `submit` — owns a 1s arm/verify/strip/submit timer.

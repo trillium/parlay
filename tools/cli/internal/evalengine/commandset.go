@@ -3,7 +3,9 @@ package evalengine
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 )
 
 // compileManifest turns a validated Manifest into the engine's live command set:
@@ -34,13 +36,12 @@ func compileManifest(man *Manifest) []compiledCommand {
 func (e *Engine) SetCommands(man *Manifest) {
 	e.mu.Lock()
 	e.base = man
-	cmds := compileManifest(withEnders(man, e.extraEnders))
-	e.commands = cmds
+	e.commands = compileManifest(withEnders(man, e.extraEnders))
 	e.mu.Unlock()
 }
 
-// SetExtraEnders adds user-supplied line-ender phrases to the submit command and
-// keeps them across SetCommands hot-reloads.
+// SetExtraEnders appends user-supplied phrases to the submit command and keeps
+// them across SetCommands, including a command-file reload.
 func (e *Engine) SetExtraEnders(phrases []string) {
 	e.mu.Lock()
 	e.extraEnders = phrases
@@ -48,17 +49,81 @@ func (e *Engine) SetExtraEnders(phrases []string) {
 	e.mu.Unlock()
 }
 
+// withEnders appends extra phrases onto the submit command. Other commands are
+// unchanged. An empty extra list returns the manifest as-is.
 func withEnders(man *Manifest, extra []string) *Manifest {
-	if len(extra) == 0 {
+	if man == nil || len(extra) == 0 {
 		return man
 	}
 	out := *man
 	out.Commands = make([]CommandManifest, len(man.Commands))
 	copy(out.Commands, man.Commands)
 	for i := range out.Commands {
-		if out.Commands[i].ID == "submit" {
-			merged := append([]string{}, out.Commands[i].Phrases...)
-			out.Commands[i].Phrases = append(merged, extra...)
+		if out.Commands[i].ID != "submit" {
+			continue
+		}
+		merged := append([]string{}, out.Commands[i].Phrases...)
+		out.Commands[i].Phrases = append(merged, extra...)
+	}
+	return &out
+}
+
+// applyFileManifest merges a validated command file onto the embedded default
+// and installs that set. The file adds: it does not replace shipped commands.
+// An invalid merge leaves the live set untouched.
+func applyFileManifest(engine *Engine, man *Manifest) error {
+	merged := mergeManifest(embeddedManifest(), man)
+	if err := validateManifest(merged); err != nil {
+		return fmt.Errorf("merged command file: %w", err)
+	}
+	engine.SetCommands(merged)
+	return nil
+}
+
+// mergeManifest adds overlay onto base. An existing command id keeps the base
+// mode, priority, platforms, description, and emit; its phrases are the base
+// phrases followed by overlay phrases not already present (case-insensitive).
+// An id only in the overlay is appended whole. Base commands and base phrases
+// are never dropped. Each call starts from base, so a later overlay does not
+// keep phrases an earlier overlay added and then removed.
+func mergeManifest(base, overlay *Manifest) *Manifest {
+	if base == nil {
+		return overlay
+	}
+	if overlay == nil {
+		return base
+	}
+	out := *base
+	out.Commands = make([]CommandManifest, len(base.Commands))
+	index := make(map[string]int, len(base.Commands))
+	for i, c := range base.Commands {
+		cp := c
+		cp.Phrases = append([]string{}, c.Phrases...)
+		out.Commands[i] = cp
+		index[c.ID] = i
+	}
+	for _, oc := range overlay.Commands {
+		i, ok := index[oc.ID]
+		if !ok {
+			cp := oc
+			cp.Phrases = append([]string{}, oc.Phrases...)
+			if oc.Platforms != nil {
+				cp.Platforms = append([]string{}, oc.Platforms...)
+			}
+			out.Commands = append(out.Commands, cp)
+			continue
+		}
+		seen := make(map[string]bool, len(out.Commands[i].Phrases))
+		for _, p := range out.Commands[i].Phrases {
+			seen[strings.ToLower(strings.TrimSpace(p))] = true
+		}
+		for _, p := range oc.Phrases {
+			key := strings.ToLower(strings.TrimSpace(p))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			out.Commands[i].Phrases = append(out.Commands[i].Phrases, strings.TrimSpace(p))
 		}
 	}
 	return &out
