@@ -183,7 +183,7 @@
     },
     {
       "id": "submit",
-      "phrases": ["send it", "submit", "submit that", "bravely", "gravely", "briefly", "lap"],
+      "phrases": ["send it", "submit", "submit that"],
       "mode": "trailing",
       "priority": 30,
       "platforms": ["parlay", "herdr"],

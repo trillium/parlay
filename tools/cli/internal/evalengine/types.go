@@ -102,6 +102,10 @@ type Engine struct {
 	// iterates. It comes from a Manifest (embedded default today; a loaded file or
 	// per-request override later), NEVER from a hardcoded switch.
 	commands []compiledCommand
+	// base is the manifest commands was compiled from; extraEnders are the
+	// user-supplied submit phrases merged into it on every (re)compile.
+	base        *Manifest
+	extraEnders []string
 
 	// onSubmit carries the stream's platform so the fire lands on the right surface.
 	// onSubmit is called when a SERVER-OWNED timer fires and decides to submit.
