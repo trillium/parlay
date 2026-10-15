@@ -231,6 +231,8 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/demo/trigger": true,
 	"/api/chat/demo/reset":   true,
 	"/api/chat/slide":        true, // phone slide trigger (task-l6wjg.4): runs a Talon action; bearer-token or tailnet-identity gated
+	"/api/chat/talon/run":    true, // guarded Talon command (task-w8nwu): off by default; tailnet origin + token + allow-list
+	"/api/chat/talon/inject": true, // guarded Talon text injection (task-w8nwu): own flag; tailnet origin + token + app allow-list
 
 	// Live-command registry (#91): three POST report routes the CLI calls to
 	// announce a running verb. Mutating by the file's own rule — each writes
