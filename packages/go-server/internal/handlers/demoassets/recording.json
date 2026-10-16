@@ -1,0 +1,22 @@
+{
+  "label": "RECORDED",
+  "note": "Synthetic fixture authored by hand for the talk. It is not a capture of a real session and holds no real ids, paths, hosts or credentials.",
+  "channel": "talk-demo",
+  "frames": [
+    { "t": 0,    "from": "browser-demo",   "role": "user",  "text": "Hello from the browser: what is the state of the demo session?" },
+    { "t": 700,  "from": "system",         "role": "agent", "text": "queued on channel talk-demo (ledger hop: queued / ok)" },
+    { "t": 1500, "from": "demo-responder", "role": "agent", "text": "ack: received 62 characters on channel talk-demo (built-in demo responder, not a model)" }
+  ],
+  "event": {
+    "label": "RECORDED",
+    "id": "rec-0001",
+    "source": "browser /demo page -> POST /api/chat/demo/trigger (ledger source \"demo\")",
+    "destination": "channel \"talk-demo\"",
+    "payload": "Hello from the browser: what is the state of the demo session?",
+    "outcome": "queued, then answered by the built-in responder",
+    "hops": [
+      { "seq": 1, "ts": "2026-10-16T12:00:00.000Z", "inputId": "rec-0001", "stage": "queued", "class": "ok", "source": "demo" }
+    ],
+    "reply": { "id": "rec-0002", "ts": "2026-10-16T12:00:00.020Z", "role": "agent", "from": "demo-responder", "text": "ack: received 62 characters on channel talk-demo (built-in demo responder, not a model)" }
+  }
+}

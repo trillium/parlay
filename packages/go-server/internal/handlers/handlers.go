@@ -111,6 +111,9 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	registerPanel(mux, st, b, hub)
 	registerInputEvents(mux, st)
 
+	// Talk demo (inbox-syvg): one scoped channel view + event inspector.
+	registerDemo(mux, st, b)
+
 	return hub
 }
 
