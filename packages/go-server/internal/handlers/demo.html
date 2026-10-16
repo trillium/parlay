@@ -183,7 +183,8 @@
   };
   $("reset").onclick = function () {
     fetch("/api/chat/demo/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
-      .then(function () { poll(); });
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); poll(); })
+      .catch(function (e) { status("Reset failed (" + e.message + ").", true); });
   };
   document.addEventListener("keydown", function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
