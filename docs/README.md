@@ -80,6 +80,7 @@ one is named at the top of its doc.
 | [`interface-capabilities.md`](interface-capabilities.md) | Interface capability declaration and delivery gating — how a surface declares (via `?caps=`) which presentation commands it can accept, so state is never routed to a surface that cannot present it. |
 | [`quickstart.md`](quickstart.md) | The four-step phone-to-laptop path: Talon slide actions, server start, pairing QR, tap. Start here for the demo. |
 | [`remote-input.md`](remote-input.md) | The remote/voice input control plane: text parlay has accepted turned into real keystrokes on the target Mac, behind the `TalonAdapter` seam. |
+| [`talk-demo.md`](talk-demo.md) | The `/demo` page for the 2026-10-20 accessibility talk: a scoped, LIVE-or-RECORDED read-only view of one channel plus a one-event inspector (source / destination / payload / outcome), with start, reset and fallback steps. |
 
 ## Gas City adoption
 

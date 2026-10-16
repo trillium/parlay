@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parlay talk demo</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0d10; --fg:#f2f4f7; --dim:#b4bcc8; --line:#4a5361; --live:#0b3d1e; --live-fg:#7dffa8; --rec:#4a3500; --rec-fg:#ffd36b; --bad:#ff9d9d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:18px/1.45 system-ui,sans-serif; padding:16px; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:12px; }
+  h1 { font-size:1.1rem; margin:0; flex:1 1 auto; }
+  #badge { font:700 1.6rem/1 ui-monospace,Menlo,monospace; padding:10px 18px; border:3px solid currentColor; border-radius:6px; letter-spacing:.08em; }
+  body[data-mode="live"] #badge { background:var(--live); color:var(--live-fg); }
+  body[data-mode="recorded"] #badge { background:var(--rec); color:var(--rec-fg); }
+  button { font:inherit; min-height:44px; padding:6px 16px; background:#1b2129; color:var(--fg); border:2px solid var(--line); border-radius:6px; cursor:pointer; }
+  button[aria-pressed="true"] { border-color:var(--fg); font-weight:700; }
+  button:focus-visible, a:focus-visible { outline:3px solid #ffffff; outline-offset:2px; }
+  #scope { color:var(--dim); margin:0 0 12px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
+  section { border:2px solid var(--line); border-radius:8px; overflow:hidden; }
+  section > h2 { margin:0; padding:8px 12px; font-size:1rem; background:#161b22; border-bottom:2px solid var(--line); }
+  #terminal { margin:0; padding:12px; min-height:16rem; max-height:60vh; overflow:auto; font:1.05rem/1.5 ui-monospace,Menlo,monospace; white-space:pre-wrap; word-break:break-word; background:#000; }
+  #terminal .meta { color:var(--dim); }
+  #terminal .agent { color:var(--live-fg); }
+  body[data-mode="recorded"] #terminal .agent { color:var(--rec-fg); }
+  #status { padding:8px 12px; color:var(--dim); border-top:2px solid var(--line); min-height:2.4rem; }
+  #status.bad { color:var(--bad); }
+  .panel { padding:12px; }
+  dl { margin:12px 0 0; display:grid; grid-template-columns:max-content 1fr; gap:6px 14px; }
+  dt { font-weight:700; color:var(--dim); }
+  dd { margin:0; font-family:ui-monospace,Menlo,monospace; word-break:break-word; }
+  table { border-collapse:collapse; width:100%; margin-top:12px; font:0.95rem ui-monospace,Menlo,monospace; }
+  th, td { border:1px solid var(--line); padding:4px 8px; text-align:left; }
+  .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  @media (prefers-reduced-motion: no-preference) { #terminal { scroll-behavior:smooth; } }
+</style>
+</head>
+<body data-mode="live">
+<header>
+  <h1>Parlay talk demo</h1>
+  <div id="badge" role="status" aria-label="Data source">LIVE</div>
+  <div role="group" aria-label="Choose data source">
+    <button id="m-live" type="button" aria-pressed="true" aria-keyshortcuts="L">Live (L)</button>
+    <button id="m-rec" type="button" aria-pressed="false" aria-keyshortcuts="R">Recorded (R)</button>
+  </div>
+</header>
+<p id="scope"></p>
+<div class="grid">
+  <section aria-labelledby="t-h">
+    <h2 id="t-h">Read-only terminal view</h2>
+    <pre id="terminal" role="log" aria-live="polite" aria-label="Demo channel transcript, read only" tabindex="0"></pre>
+    <div id="status" aria-live="polite"></div>
+  </section>
+  <section aria-labelledby="e-h">
+    <h2 id="e-h">Event inspector</h2>
+    <div class="panel">
+      <button id="fire" type="button">Send one demo event</button>
+      <button id="reset" type="button">Reset demo channel</button>
+      <dl id="event" aria-live="polite" aria-label="Last event">
+        <dt>Source</dt><dd id="e-source">(nothing sent yet)</dd>
+        <dt>Destination</dt><dd id="e-dest">-</dd>
+        <dt>Payload</dt><dd id="e-payload">-</dd>
+        <dt>Outcome</dt><dd id="e-outcome">-</dd>
+      </dl>
+      <table aria-label="Input-seam ledger hops for this event">
+        <thead><tr><th>seq</th><th>stage</th><th>class</th><th>source</th></tr></thead>
+        <tbody id="hops"><tr><td colspan="4">-</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+<script id="recording" type="application/json">__DEMO_RECORDING__</script>
+<script>
+(function () {
+  "use strict";
+  var REC = JSON.parse(document.getElementById("recording").textContent);
+  var $ = function (id) { return document.getElementById(id); };
+  var mode = null, timer = null, failures = 0, replayTimers = [];
+
+  // Everything below writes with textContent: a message can never inject markup.
+  function line(m, extra) {
+    var d = document.createElement("div");
+    d.className = m.role === "agent" ? "agent" : "";
+    var t = (m.ts || "").slice(11, 19);
+    var meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = (t ? t + " " : "") + (m.from || m.role) + " > ";
+    d.appendChild(meta);
+    d.appendChild(document.createTextNode(m.text));
+    return d;
+  }
+  function renderLines(msgs) {
+    var term = $("terminal");
+    var stick = term.scrollTop + term.clientHeight >= term.scrollHeight - 8;
+    term.textContent = "";
+    msgs.forEach(function (m) { term.appendChild(line(m)); });
+    if (stick) term.scrollTop = term.scrollHeight;
+  }
+  function renderEvent(ev) {
+    $("e-source").textContent = ev.source;
+    $("e-dest").textContent = ev.destination;
+    $("e-payload").textContent = ev.payload;
+    $("e-outcome").textContent = "[" + ev.label + "] " + ev.outcome + (ev.reply ? " | reply: " + ev.reply.text : "");
+    var tb = $("hops");
+    tb.textContent = "";
+    (ev.hops.length ? ev.hops : [null]).forEach(function (h) {
+      var none = ev.id ? "no ledger hop recorded" : "-";
+      var tr = document.createElement("tr");
+      (h ? [h.seq, h.stage, h.class, h.source || ""] : [none]).forEach(function (c) {
+        var td = document.createElement("td");
+        if (!h) td.colSpan = 4;
+        td.textContent = c;
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+  }
+  function status(msg, bad) { var s = $("status"); s.textContent = msg; s.className = bad ? "bad" : ""; }
+  function clearTimers() { clearInterval(timer); timer = null; replayTimers.forEach(clearTimeout); replayTimers = []; }
+
+  function poll() {
+    fetch("/api/chat/demo/view", { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (v) {
+      if (mode !== "live") return;
+      failures = 0;
+      renderLines(v.messages);
+      status("LIVE: channel " + v.channel + ", " + v.messages.length + " message(s), updated " + new Date().toLocaleTimeString());
+    }).catch(function (e) {
+      if (mode !== "live") return;
+      failures++;
+      status("LIVE connection failed (" + e.message + "). Press R for the recorded replay.", true);
+    });
+  }
+
+  function replay() {
+    clearTimers();
+    $("terminal").textContent = "";
+    var shown = [];
+    status("RECORDED replay of a synthetic fixture. Not connected to any server data.");
+    REC.frames.forEach(function (f) {
+      replayTimers.push(setTimeout(function () {
+        shown.push(f);
+        renderLines(shown);
+      }, f.t));
+    });
+    replayTimers.push(setTimeout(function () { renderEvent(REC.event); }, REC.frames[REC.frames.length - 1].t + 200));
+  }
+
+  function setMode(next) {
+    if (next === mode) { if (next === "recorded") replay(); return; }
+    mode = next;
+    clearTimers();
+    document.body.dataset.mode = mode;
+    var live = mode === "live";
+    $("badge").textContent = live ? "LIVE" : "RECORDED";
+    document.title = (live ? "LIVE" : "RECORDED") + " - Parlay talk demo";
+    $("m-live").setAttribute("aria-pressed", live);
+    $("m-rec").setAttribute("aria-pressed", !live);
+    $("scope").textContent = live
+      ? "Showing only the channel \"talk-demo\" on this server. No other channel, terminal, environment or file is read."
+      : "Showing a synthetic recorded fixture inlined in this page. It makes no network request.";
+    $("fire").textContent = live ? "Send one demo event" : "Replay the recorded event";
+    $("reset").hidden = !live;
+    $("terminal").textContent = "";
+    renderEvent({ label: mode.toUpperCase(), source: "(nothing sent yet)", destination: "-", payload: "-", outcome: "-", hops: [], reply: null });
+    $("e-outcome").textContent = "-";
+    if (live) { status("LIVE: connecting..."); poll(); timer = setInterval(poll, 800); }
+    else replay();
+  }
+
+  $("m-live").onclick = function () { setMode("live"); };
+  $("m-rec").onclick = function () { setMode("recorded"); };
+  $("fire").onclick = function () {
+    if (mode === "recorded") { replay(); return; }
+    fetch("/api/chat/demo/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (ev) { renderEvent(ev); poll(); })
+      .catch(function (e) { status("Trigger failed (" + e.message + "). Press R for the recorded replay.", true); });
+  };
+  $("reset").onclick = function () {
+    fetch("/api/chat/demo/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); poll(); })
+      .catch(function (e) { status("Reset failed (" + e.message + ").", true); });
+  };
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "l" || e.key === "L") setMode("live");
+    if (e.key === "r" || e.key === "R") setMode("recorded");
+  });
+
+  setMode(new URLSearchParams(location.search).get("mode") === "recorded" ? "recorded" : "live");
+})();
+</script>
+</body>
+</html>

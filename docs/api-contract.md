@@ -708,6 +708,12 @@ implementation returns a placeholder evaluation (`verdict: "unknown"`,
 
 ---
 
+## Talk demo
+
+`GET /demo` (page), `GET /api/chat/demo/view`, `POST /api/chat/demo/trigger`, `POST /api/chat/demo/reset` serve one scoped channel (`talk-demo`) for a conference demo; the three API routes are guarded. Owned by [`docs/talk-demo.md`](./talk-demo.md).
+
+---
+
 ## Remote input
 
 The Mac-side injection control plane: accepted text → real keystrokes via
