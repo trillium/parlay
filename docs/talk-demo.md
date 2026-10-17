@@ -77,7 +77,7 @@ the real laptop and browser.
 
 1. **Tier 1, LIVE.** After 2 failed polls (about 2 s) the badge reads `LIVE - DISCONNECTED` and the terminal is prefixed `STALE since hh:mm:ss` (UTC, like the transcript). When the server answers again the badge returns to `LIVE`.
 2. **Tier 2, press `R`.** Switches to the `RECORDED` badge and replays the fixture with no network. Say aloud that it is a recording. The page never switches mode on its own.
-3. **Tier 3, static copy.** If the tab or server is gone, open `~/Desktop/demo-recorded.html?mode=recorded` (saved in Start step 3).
+3. **Tier 3, static copy.** If the tab or server is gone, open the saved `~/Desktop/demo-recorded.html` in the browser (Start step 3), then press `R` (or add `?mode=recorded` to its `file://` URL).
 
 **Out of scope on purpose:** a general observability view, a real terminal
 mirror, auth for the demo routes (the server has none; see the guard doc in

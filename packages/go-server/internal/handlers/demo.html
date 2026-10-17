@@ -61,7 +61,7 @@
     <h2 id="e-h">Event inspector</h2>
     <div class="panel">
       <button id="fire" type="button">Send one demo event</button>
-      <label id="resp-wrap"><input id="resp" type="checkbox"> Real agent answers (otherwise built-in responder)</label>
+      <label id="resp-wrap"><input id="resp" type="checkbox"> Real agent answers this event (unticked: the server default decides)</label>
       <button id="reset" type="button">Reset demo channel</button>
       <dl id="event" aria-live="polite" aria-label="Last event">
         <dt>Source</dt><dd id="e-source">(nothing sent yet)</dd>
@@ -145,7 +145,10 @@
     var ev = Object.assign({}, lastEvent);
     ev.hops = v.hops.filter(function (h) { return h.inputId === lastEvent.id; });
     var reply = null;
-    v.messages.slice(i + 1).forEach(function (m) { if (!reply && m.role === "agent") reply = m; });
+    // Replies carry no reply-to id, so only claim one that arrives before the
+    // next user message; with a newer event outstanding, attribution is unknown.
+    var rest = v.messages.slice(i + 1), stop = rest.findIndex(function (m) { return m.role === "user"; });
+    (stop < 0 ? rest : rest.slice(0, stop)).forEach(function (m) { if (!reply && m.role === "agent") reply = m; });
     if (reply) {
       ev.reply = reply;
       ev.outcome = "queued, then answered by " + (reply.from || reply.role);
