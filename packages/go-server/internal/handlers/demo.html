@@ -169,7 +169,7 @@
       if (mode !== "live") return;
       failures++;
       if (failures >= STALE_AFTER) {
-        if (!staleSince) { staleSince = new Date().toISOString().slice(11, 19); // UTC, same clock as the transcript setBadge("LIVE - DISCONNECTED"); }
+        if (!staleSince) { staleSince = new Date().toISOString().slice(11, 19); setBadge("LIVE - DISCONNECTED"); }
         renderLines(lastMessages);
       }
       status("LIVE connection failed (" + e.message + "). Press R for the recorded replay.", true);

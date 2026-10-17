@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -238,3 +242,25 @@ func TestDemoViewCarriesLaterRepliesAndHopsForTheInspector(t *testing.T) {
 }
 
 func itoaDemo(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// The page script is the whole demo; a syntax error kills mode switching,
+// polling and the recorded replay. Parse the script exactly as served.
+func TestDemoPageInlineScriptParses(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not available")
+	}
+	mux, _, _ := demoMux(t)
+	rec := demoDo(mux, http.MethodGet, "/demo", "")
+	m := regexp.MustCompile(`(?s)<script>(.*)</script>`).FindStringSubmatch(rec.Body.String())
+	if m == nil {
+		t.Fatal("served page has no inline script")
+	}
+	file := filepath.Join(t.TempDir(), "demo.js")
+	if err := os.WriteFile(file, []byte(m[1]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, "--check", file).CombinedOutput(); err != nil {
+		t.Fatalf("inline script does not parse: %v\n%s", err, out)
+	}
+}
