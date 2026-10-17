@@ -1,15 +1,10 @@
 package guard
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -63,28 +58,48 @@ var TestUnguardedRoutes = map[string]string{
 	// The mux registers the UPLOAD SERVING SUBTREE under its prefix
 	// constant; /api/chat/uploads/<name> is the URL shape it answers.
 	"/api/chat/uploads/": "read: serves an uploaded image by server-generated name, same class as /api/chat/agents",
+
+	// The three routes cmd/parlay-server/main.go puts on the same mux. They
+	// were invisible to this gate until the parse followed the registration
+	// call chain out of internal/handlers — see registeredRoutes below.
+	"/health": "read: GET-only liveness (every other method is 405). The body is {ok, messages, agents} where agents is a COUNT, not an id — so it neither mutates nor hands out an identifier a cross-origin page could aim a mutating route with. Checkable: registerHealth in cmd/parlay-server/main.go",
+	"/fleet/": "read: static file serving of the built webview bundle under <assets-dir>/fleet via internal/static.Handler (http.ServeFile, with a path-traversal check). It writes nothing and holds no server state. Registered at cmd/parlay-server/main.go",
+	"/":       "read: the SPA catch-all serving packages/client/dist through the same internal/static.Handler, falling back to index.html. It is mounted LAST so /api/* is never shadowed, and it neither mutates nor discloses an identifier",
 }
 
 // TestEveryRegisteredRouteIsGuardedOrExplained is the gate.
 //
-// It parses every non-test .go file in internal/handlers for the paths put on
-// the mux, then requires each one to be either guarded (exactly, or under a
-// guarded prefix) or to appear in TestUnguardedRoutes with a reason. Adding a
-// route therefore fails the build with a message that says which of the two
-// halves it failed, rather than shipping and being discovered later.
+// It scans every package the server binary imports — starting from its
+// `package main`, following the registration call chain rather than a
+// directory list — for the paths put on a mux, then requires each one to be
+// either guarded (exactly, or under a guarded prefix) or to appear in
+// TestUnguardedRoutes with a reason. Adding a route therefore fails the build
+// with a message that says which of the two halves it failed, rather than
+// shipping and being discovered later.
+//
+// A route registered on cmd/parlay-server's own mux counts like any other: the
+// gate does not care which file did the registering.
 func TestEveryRegisteredRouteIsGuardedOrExplained(t *testing.T) {
-	routes := registeredRoutes(t)
+	res := registeredRoutes(t)
 
-	if len(routes) == 0 {
-		// The vacuous-pass guard, and the reason this test parses source
-		// instead of calling Register: a refactor that renames mux.HandleFunc,
-		// moves registration behind a helper this parser cannot follow, or
-		// moves the package would otherwise turn the gate silently green.
-		t.Fatal("parsed zero routes from internal/handlers — the gate is no longer looking at anything; " +
-			"update registeredRoutes to follow the new registration shape")
+	for _, p := range res.problems {
+		t.Error(p)
 	}
 
-	for _, r := range routes {
+	if len(res.routes) == 0 {
+		// The vacuous-pass guard, and the reason this test parses source
+		// instead of calling Register: a refactor that renames mux.HandleFunc,
+		// moves registration behind a helper this scan cannot follow, or moves
+		// the package would otherwise turn the gate silently green. It covers
+		// the widened set now, not just internal/handlers — the seed closure
+		// starts at the server binary and the problems above have already
+		// reported any registration it could not read.
+		t.Fatal("parsed zero routes from the server binary's package closure " +
+			"(seeds: " + joinPaths(res.roots) + ") — the gate is no longer looking at anything; " +
+			"update route_scan_test.go to follow the new registration shape")
+	}
+
+	for _, r := range res.routes {
 		guarded := IsGuarded(r)
 		_, explained := TestUnguardedRoutes[r]
 		switch {
@@ -101,7 +116,7 @@ func TestEveryRegisteredRouteIsGuardedOrExplained(t *testing.T) {
 	// stale entry, and stale entries are how an allowlist quietly stops
 	// describing reality.
 	for path := range TestUnguardedRoutes {
-		if !contains(routes, path) {
+		if !contains(res.routes, path) {
 			t.Errorf("TestUnguardedRoutes explains %s but no handler registers it — stale entry, remove it", path)
 		}
 	}
@@ -133,107 +148,52 @@ func TestTheLiveCommandReportRoutesAreInsideTheGuard(t *testing.T) {
 	}
 }
 
-// registeredRoutes returns every path internal/handlers puts on an
-// http.ServeMux, by parsing the registrations rather than calling Register.
+// registeredRoutes scans the whole server binary for the paths it puts on a
+// mux, by parsing the source rather than calling Register.
 //
-// Calling Register would need a live Store and Hub and would only see routes
-// that package wires itself, missing RegisterData / RegisterPlugins (which
-// cmd/parlay-server calls separately) — so this reads the source. It
-// understands the two shapes registration takes here: a string literal, and a
-// package-level string constant (uploadURLPrefix). A constant this parser
-// cannot resolve fails the test loudly instead of silently dropping the route.
-func registeredRoutes(t *testing.T) []string {
+// Calling Register would need a live Store and Hub, would only see routes the
+// handlers package wires itself, and would miss the three routes
+// cmd/parlay-server registers on the mux it builds. scanRoutes (see
+// route_scan_test.go) therefore parses the first-party import closure of every
+// package main in this module. This wrapper only turns a scan error into a
+// test failure and hands the result to the gate.
+func registeredRoutes(t *testing.T) *scanResult {
 	t.Helper()
 
-	dir := filepath.Join("..", "handlers")
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	root := moduleRoot(t, ".")
+	res, err := scanRoutes(root)
 	if err != nil {
-		t.Fatalf("parse %s: %v", dir, err)
+		t.Fatalf("scan routes: %v", err)
 	}
+	return res
+}
 
-	consts := map[string]string{}
-	var out []string
-	add := func(expr ast.Expr) {
-		switch e := expr.(type) {
-		case *ast.BasicLit:
-			if e.Kind != token.STRING {
-				t.Errorf("route registered from a non-string literal: %s", e.Value)
-				return
-			}
-			v, err := strconv.Unquote(e.Value)
-			if err != nil {
-				t.Errorf("unquote route %s: %v", e.Value, err)
-				return
-			}
-			out = append(out, v)
-		case *ast.Ident:
-			v, ok := consts[e.Name]
-			if !ok {
-				t.Errorf("route registered from identifier %q, which this parser cannot resolve — "+
-					"a route just went unexamined; update registeredRoutes", e.Name)
-				return
-			}
-			out = append(out, v)
-		default:
-			t.Errorf("route registered from an expression this parser cannot resolve (%T) — "+
-				"a route just went unexamined; update registeredRoutes", expr)
-		}
+// moduleRoot walks up from start to the directory holding the go.mod this
+// package belongs to. Read from disk rather than counting "../"s out, so a
+// moved package does not silently make the gate scan some other module.
+func moduleRoot(t *testing.T, start string) string {
+	t.Helper()
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		t.Fatalf("abs %s: %v", start, err)
 	}
-
-	for _, pkg := range pkgs {
-		// Two passes over each file's AST: consts first, then registrations.
-		// ast.Inspect visits in source order and ParseDir hands back files in
-		// map order, so a single pass would resolve uploadURLPrefix only when
-		// upload.go happened to be visited before data.go — a gate that fails
-		// at random is worse than no gate.
-		for _, f := range pkg.Files {
-			ast.Inspect(f, func(n ast.Node) bool {
-				d, ok := n.(*ast.GenDecl)
-				if !ok || d.Tok != token.CONST {
-					return true
-				}
-				for _, s := range d.Specs {
-					vs, ok := s.(*ast.ValueSpec)
-					if !ok || len(vs.Values) != 1 || len(vs.Names) != 1 {
-						continue
-					}
-					if lit, ok := vs.Values[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						if v, err := strconv.Unquote(lit.Value); err == nil {
-							consts[vs.Names[0].Name] = v
-						}
-					}
-				}
-				return true
-			})
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
 		}
-		for _, f := range pkg.Files {
-			ast.Inspect(f, func(n ast.Node) bool {
-				d, ok := n.(*ast.CallExpr)
-				if !ok || len(d.Args) == 0 {
-					return true
-				}
-				sel, ok := d.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				recv, ok := sel.X.(*ast.Ident)
-				if !ok || recv.Name != "mux" {
-					return true
-				}
-				if sel.Sel.Name != "HandleFunc" && sel.Sel.Name != "Handle" {
-					return true
-				}
-				add(d.Args[0])
-				return true
-			})
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("no go.mod at or above %s — the route scan has no module to read", start)
 		}
+		dir = parent
 	}
+}
 
-	sort.Strings(out)
-	return out
+func joinPaths(in []string) string {
+	if len(in) == 0 {
+		return "(none)"
+	}
+	return strings.Join(in, ", ")
 }
 
 func contains(list []string, want string) bool {
