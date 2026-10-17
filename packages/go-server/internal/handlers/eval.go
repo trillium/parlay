@@ -55,6 +55,25 @@ type relayTiming struct {
 	ServerOwnedFire bool  `json:"serverOwnedFire,omitempty"`
 }
 
+// evalTab is the one tab shape the panel sends — the fields `evalTabs()` in
+// packages/client/src/input.ts emits, verbatim.
+//
+// It used to be `map[string]string`, which cannot decode a real panel POST:
+// `nicknames` is a string ARRAY, so unmarshalling `nicknames: []` failed the
+// whole body and the relay answered `400 {"error":"invalid JSON body"}`.
+// evalTabs() always emits the key and the built-in `system` agent is always
+// present, so every panel keystroke was refused, and the client swallows a
+// non-OK eval (dispatcher/up.ts logs and returns).
+//
+// The engine's consumer of this field is evalengine.Tab (id/name/nicknames).
+// go-server and tools/cli are separate Go modules and cannot share the type; if
+// the panel's tab shape changes, this is the second site to change.
+type evalTab struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Nicknames []string `json:"nicknames"`
+}
+
 // evalRequest is the request shape for POST /api/chat/eval.
 //
 // This is the text-change event shape every voice box posts on change
@@ -72,13 +91,13 @@ type evalRequest struct {
 		Anchor int `json:"anchor"`
 		Active int `json:"active"`
 	} `json:"cursor"`
-	Reason       string              `json:"reason"`
-	VoiceEnabled bool                `json:"voiceEnabled"`
-	Device       string              `json:"device"`
-	Tabs         []map[string]string `json:"tabs"`
-	Platform     string              `json:"platform,omitempty"`
-	Mode         string              `json:"mode,omitempty"`
-	Commands     json.RawMessage     `json:"commands,omitempty"`
+	Reason       string          `json:"reason"`
+	VoiceEnabled bool            `json:"voiceEnabled"`
+	Device       string          `json:"device"`
+	Tabs         []evalTab       `json:"tabs"`
+	Platform     string          `json:"platform,omitempty"`
+	Mode         string          `json:"mode,omitempty"`
+	Commands     json.RawMessage `json:"commands,omitempty"`
 }
 
 // streamDeviceMap holds streamId → deviceId mappings. This allows the eval-push
