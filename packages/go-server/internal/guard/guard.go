@@ -218,6 +218,13 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/remote-input/submit":  true,
 	"/api/chat/remote-input/status":  true,
 	"/api/chat/remote-input/targets": true,
+	// Parse-words (task-z0caa Stage 1): recognized words in, resolved Talon
+	// command out via speech_system.parse() — READ-ONLY, nothing is executed.
+	// It still hands the phone live desktop state (the Talon mode set and the
+	// grammar's command names) and spawns a Talon REPL call per request, so it
+	// is guarded on what it DOES; bearer-token or tailnet-identity gated like
+	// /api/chat/slide. JSON body, so no jsonExemptPaths entry.
+	"/api/chat/remote-input/parse-words": true,
 	// Talk demo (inbox-syvg): the view reads the demo channel's message text,
 	// trigger and reset write/delete messages on that one channel.
 	"/api/chat/demo/view":    true,

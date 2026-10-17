@@ -56,6 +56,9 @@ type TalonAdapter interface {
 	// Targets lists Talon's applications in Talon's own ordering.
 	// Read-only: no focus change, no keystroke (dry-run safe).
 	Targets() ([]Target, error)
+	// ParseWords resolves words to the command speech_system.parse would
+	// pick, plus Talon's mode set. Read-only: it executes nothing (task-z0caa).
+	ParseWords(words string) (ParseResult, error)
 }
 
 // allowedActions is the closed set mode=action may run. Values are

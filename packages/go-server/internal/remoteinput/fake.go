@@ -19,11 +19,17 @@ type FakeTalon struct {
 	// Scripted target list returned by Targets.
 	TargetsList []Target
 
+	// Scripted parse-words readout: ParseTable maps normalized words to the
+	// match parse() would resolve; ParseModes is the scripted Talon mode set.
+	ParseTable map[string]*MatchedCommand
+	ParseModes []string
+
 	// Injected failures.
 	FocusAppErr  error
 	InsertErr    error
 	TargetsErr   error
 	RunActionErr error
+	ParseErr     error
 
 	// StickyActive disables FocusApp's cooperative effect (the named app
 	// becoming active), simulating a focus request the OS did not honor.
@@ -40,6 +46,7 @@ type FakeTalon struct {
 	RunActions       []string
 	ActiveAppReads   int
 	TargetsCalls     int
+	ParseCalls       []string
 }
 
 // Verify FakeTalon implements TalonAdapter at compile time.
@@ -140,4 +147,17 @@ func (f *FakeTalon) Targets() ([]Target, error) {
 	out := make([]Target, len(f.TargetsList))
 	copy(out, f.TargetsList)
 	return out, nil
+}
+
+// ParseWords records the words and answers from ParseTable. Like the live
+// implementation it never focuses, inserts, or runs an action.
+func (f *FakeTalon) ParseWords(words string) (ParseResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ParseCalls = append(f.ParseCalls, words)
+	if f.ParseErr != nil {
+		return ParseResult{}, f.ParseErr
+	}
+	modes := append([]string{}, f.ParseModes...)
+	return ParseResult{Match: f.ParseTable[words], Modes: modes}, nil
 }

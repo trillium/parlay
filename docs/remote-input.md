@@ -274,11 +274,11 @@ the tailnet and is not carried into the home-screen app.
 listener (default `https://<host>.ts.net:8451`, upstream `127.0.0.1:4500`), alongside the
 existing `/slide` and `/api/chat/slide` rules: `POST /api/chat/remote-input/submit`,
 `GET /api/chat/remote-input/status`, `GET /api/chat/remote-input/targets`. Add `--parse-words`
-once that route exists. No Funnel, no `/` mount; run without `--apply` to preview, `--remove`
+to also mount `POST /api/chat/remote-input/parse-words` (below; same gate). No Funnel, no `/` mount; run without `--apply` to preview, `--remove`
 to take them back. **Order matters:** deploy a server containing the gate below *before*
 applying the rules.
 
-Auth: the three routes sit behind `requireTailnetAuth` (`handlers/remoteinput_auth.go`), the
+Auth: the routes sit behind `requireTailnetAuth` (`handlers/remoteinput_auth.go`), the
 same check as `/api/chat/slide`. A loopback request with no proxy markers (the panel, voice,
 curl on this Mac) passes unchanged. Anything else — a non-loopback peer or any
 `X-Forwarded-*`/`Forwarded`/`Tailscale-*` header — needs a loopback peer with
@@ -287,6 +287,66 @@ curl on this Mac) passes unchanged. Anything else — a non-loopback peer or any
 node has no user identity and needs the token. `PARLAY_TRUST_TAILSCALE_HEADER=0` disables the
 identity pass. What this exposes to any signed-in tailnet user: typing text into any Mac app
 (submit), creating beads, running the two slide actions, and listing open app/window titles.
+
+## Parse-words (task-z0caa — Talon-on-iPhone Stage 1, READ-ONLY)
+
+`POST /api/chat/remote-input/parse-words` takes the words a phone recognised
+and returns the command Talon resolves them to, through the same
+`speech_system.parse()` the desktop engine uses (one bounded repl call), so
+matching semantics are the desktop's by construction. **It executes nothing**:
+no `actions.mimic`, no `actions.insert`, no key injection, no focus change.
+Executing a resolved command is held under task-dhszn; a test pins that the
+snippet names no executing action and that the Fake records no insert, action
+or focus. The route is in `guard.GuardedPaths`.
+
+Auth is the shared remote-input gate (`requireTailnetAuth`, see "Tailnet exposure" above) —
+one helper for every remote-input route. A loopback request with no proxy markers (the panel,
+curl on this Mac) passes with no token; anything else needs a loopback peer with
+`Tailscale-User-Login` or `Authorization: Bearer <token>` (`$PARLAY_SLIDE_TOKEN`, else the
+pairing token). No token configured → 503; wrong/missing → 401.
+`PARLAY_TRUST_TAILSCALE_HEADER=0` disables the identity pass.
+
+Request (JSON): `{ "words": "string (required)", "commandId"?: "…",
+"grammarVersion"?: "…", "actionArgs"?: …, "text"?: "…" }`. `words` is
+lowercased and stripped of edge punctuation before parsing (iOS returns
+"Copy that."); the normalized form is echoed back. Empty after that, or over
+200 chars → 400 (never truncated). `actionArgs` and `text` are accepted and
+ignored: there is nothing to execute them with in Stage 1.
+
+Response (200 for every domain outcome): `{ "outcome", "words", "matchedCommand":
+{name, words, exactWords, dynamicLists?} | null, "noMatch", "modes": [...],
+"asleep", "grammarVersion"?, "reason"? }`.
+
+| `outcome` | Meaning |
+|---|---|
+| `matched` | parse() resolved the words; `matchedCommand.name` is Talon's rule key (what `commandId` is compared with). |
+| `no_match` | Nothing matched and Talon is awake: a genuine grammar miss. |
+| `talon_asleep` | Nothing matched **and Talon is asleep** (`sleep` mode, or neither `command` nor `dictation` active). The miss says nothing about the grammar. `modes` and `asleep: true` are the evidence. |
+| `parse_mismatch` | `commandId` was sent and is not what parse() resolved. |
+| `stale_grammar` | `grammarVersion` was sent and differs from the desktop's (`$PARLAY_TALON_GRAMMAR_VERSION`); outranks `parse_mismatch`. The check is off while that env var is unset (no grammar export exists to version yet) or the phone sends none. |
+
+`modes` is Talon's sorted active mode set on **every** outcome, so a sleeping
+Talon can never look like a silent no-match. A match found while asleep stays
+`matched` but carries `asleep: true` and a `reason`. An unreachable Talon is
+**502** `{error}`, never a no-match; non-POST is 405. A match can depend on live
+screen text (`dynamicLists` names the lists consulted, e.g.
+`user.onscreen_ocr_text`), which a static grammar snapshot cannot reproduce.
+
+```sh
+# local calls from this Mac need no token; through `tailscale serve` the identity header
+# authenticates, otherwise send $PARLAY_SLIDE_TOKEN (or `cat <state>/pair-token`). Needs a server
+# running this build; 127.0.0.1:4500 is the live remote-input listener.
+curl -s -X POST http://127.0.0.1:4500/api/chat/remote-input/parse-words \
+  -H 'Content-Type: application/json' \
+  -d '{"words":"Copy that."}'
+# → {"outcome":"matched","words":"copy that","matchedCommand":{"name":"__copy__that__",
+#    "words":["copy","that"],"exactWords":2},"noMatch":false,
+#    "modes":["all","command",...],"asleep":false}
+curl -s -X POST http://127.0.0.1:4500/api/chat/remote-input/parse-words \
+  -H 'Content-Type: application/json' \
+  -d '{"words":"flibberty gibbet"}'
+# → {"outcome":"no_match",...,"noMatch":true,"asleep":false,"reason":"no command matches these words"}
+```
 
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 
