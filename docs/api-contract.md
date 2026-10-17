@@ -743,7 +743,7 @@ below — Talon `ui.apps()` names, not OS process names). Bead text is capped at
 **202** `{ "id": "ri-N", "status": "queued" }` (queued, not
 done — the terminal outcome arrives via status poll or the
 `remote_input_result` SSE event). Errors: **400** `device` missing, `text` missing on inject/bead, unknown mode, or action not allow-listed;
-**405** non-POST. All three routes are in the guard's `GuardedPaths`.
+**405** non-POST. All routes here (including `parse-words`) are in the guard's `GuardedPaths`.
 
 `confidence` is optional and additive: the recognition confidence the
 submitting surface reported for `text`. Omitting it means *not reported*,
@@ -763,6 +763,21 @@ List Talon's applications in Talon's own `ui.apps()` ordering (200) or
 through focus verification), `focused`, relevant `windowTitle`,
 `windowCount`, `hasWindows` (windowless apps stay listed). Read-only —
 `?dryRun=1` is an accepted no-op echo. **405** non-GET.
+
+### `POST /api/chat/remote-input/parse-words`
+READ-ONLY (task-z0caa): recognized words in, the Talon command they resolve
+to out, via `speech_system.parse()`; nothing is executed. Bearer-token
+(`PARLAY_SLIDE_TOKEN` / pairing token) or Tailscale-identity auth for anything
+not originating locally, like the other remote-input routes (`requireTailnetAuth`);
+plain loopback needs no token. Request `{ "words": "string (required)", "commandId"?,
+"grammarVersion"?, "actionArgs"?, "text"? }`; response **200**
+`{ "outcome": "matched"|"no_match"|"talon_asleep"|"parse_mismatch"|"stale_grammar",
+"words", "matchedCommand": {name, words, exactWords, dynamicLists?}|null,
+"noMatch", "modes": [...], "asleep", "grammarVersion"?, "reason"? }`.
+`modes` is on every outcome, so a sleeping Talon is `talon_asleep`, not a
+silent no-match. Errors: **400** words missing/too long/bad JSON, **401**/**503**
+auth, **502** Talon unreachable, **405** non-POST. Full contract:
+[`remote-input.md`](./remote-input.md#parse-words-task-z0caa--talon-on-iphone-stage-1-read-only).
 
 ### `GET /api/chat/remote-input/status?id=ri-N`
 Poll one submission's latest `Outcome` (200) or **404** unknown id

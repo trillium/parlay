@@ -1,23 +1,26 @@
 // Remote-input HTTP surface (task-57ltl, targets + no-target rule task-46ys9):
 // Parlay's accepted-input intake for the Mac-side injection control plane.
-// Three routes:
+// Four routes:
 //
 //	POST /api/chat/remote-input/submit  enqueue text → 202 {id, queued}
 //	GET  /api/chat/remote-input/status?id=…  poll one Outcome (404 unknown)
 //	GET  /api/chat/remote-input/targets      list Talon's apps in Talon order
+//	POST /api/chat/remote-input/parse-words  words → resolved command (READ-ONLY)
 //
 // Terminal outcomes additionally fan out as the device-scoped SSE event
 // `remote_input_result` carrying the Outcome — that event is what lets
 // Parlay clear its shared input state only on confirmed injection
 // (status "injected") and preserve + strip the trigger on "focus_failed".
-// All three routes are mutating/identifier-aiming and live in GuardedPaths.
+// All four routes are mutating/identifier-aiming and live in GuardedPaths.
 // Targets is read-only (no focus change, no keystroke); ?dryRun=1 on it
 // is accepted as a no-op so a client can prove the read path explicitly.
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"parlay/go-server/internal/inputlog"
 	"parlay/go-server/internal/remoteinput"
@@ -49,6 +52,8 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub, st *store.Store) {
 	mux.HandleFunc("/api/chat/remote-input/submit", requireTailnetAuth(slideTokenFromEnv, handleRemoteInputSubmit(svc, st)))
 	mux.HandleFunc("/api/chat/remote-input/status", requireTailnetAuth(slideTokenFromEnv, handleRemoteInputStatus(svc)))
 	mux.HandleFunc("/api/chat/remote-input/targets", requireTailnetAuth(slideTokenFromEnv, handleRemoteInputTargets(svc)))
+	mux.HandleFunc("/api/chat/remote-input/parse-words",
+		requireTailnetAuth(slideTokenFromEnv, handleRemoteInputParseWords(svc, grammarVersionFromEnv)))
 	mux.HandleFunc("/slide", handleSlidePage)
 	mux.HandleFunc(slideManifestPath, handleSlideManifest)
 	mux.HandleFunc(slideWorkerPath, handleSlideWorker)
@@ -258,5 +263,53 @@ func handleRemoteInputStatus(svc *remoteinput.Service) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, o)
+	}
+}
+
+// GrammarVersionEnv names the env var holding the desktop's grammar version.
+// Unset, the stale_grammar check is off (no export exists to version yet).
+const GrammarVersionEnv = "PARLAY_TALON_GRAMMAR_VERSION"
+
+// grammarVersionFromEnv reads the desktop grammar version per request, so an
+// operator bumping it needs no restart of the reader.
+func grammarVersionFromEnv() string { return os.Getenv(GrammarVersionEnv) }
+
+// handleRemoteInputParseWords implements POST /api/chat/remote-input/parse-words
+// (task-z0caa Stage 1). READ-ONLY: it asks Talon what the words resolve to
+// and executes nothing: no mimic, no insert, no key, no focus. Auth is not
+// here: the registration wraps it in requireTailnetAuth, the one gate every
+// remote-input route shares.
+//
+// Domain outcomes (matched, no_match, parse_mismatch, stale_grammar,
+// talon_asleep) are all 200 with an `outcome`; only transport problems are
+// non-2xx. A sleeping Talon is its own outcome and carries `modes`, so it
+// cannot be mistaken for a grammar miss.
+func handleRemoteInputParseWords(svc *remoteinput.Service, versionFn remoteinput.GrammarVersionFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var req remoteinput.ParseWordsRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
+			writeStatusError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		req.Words = remoteinput.NormalizeWords(req.Words)
+		if req.Words == "" {
+			writeStatusError(w, http.StatusBadRequest, "words is required")
+			return
+		}
+		if n := len([]rune(req.Words)); n > remoteinput.MaxParseWordsLen {
+			writeStatusError(w, http.StatusBadRequest,
+				fmt.Sprintf("words exceeds %d chars: rejected, never truncated", remoteinput.MaxParseWordsLen))
+			return
+		}
+		resp, err := svc.ParseWords(req, versionFn)
+		if err != nil {
+			writeStatusError(w, http.StatusBadGateway, "talon parse failed: "+err.Error())
+			return
+		}
+		writeJSON(w, resp)
 	}
 }

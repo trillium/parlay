@@ -569,3 +569,34 @@ func TestPollStillWorksForItsRealCallers(t *testing.T) {
 		}
 	})
 }
+
+// task-z0caa: the Stage 1 parse-words route reads live desktop state (Talon's
+// mode set, the grammar's command names) and spawns a Talon REPL call, so it
+// is inside the boundary: a cross-origin page cannot make the laptop run it.
+func TestParseWordsIsGuarded(t *testing.T) {
+	const path = "/api/chat/remote-input/parse-words"
+	if !guard.GuardedPaths[path] {
+		t.Fatalf("%s is not in GuardedPaths", path)
+	}
+	reached := false
+	h := guard.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }))
+
+	cross := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"words":"copy that"}`))
+	cross.Host = "127.0.0.1:4500"
+	cross.Header.Set("Origin", "https://evil.example")
+	cross.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, cross)
+	if rec.Code != http.StatusForbidden || reached {
+		t.Fatalf("cross-origin POST: got %d (reached=%v), want 403", rec.Code, reached)
+	}
+
+	form := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`words=copy`))
+	form.Host = "127.0.0.1:4500"
+	form.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, form)
+	if rec.Code < 400 || reached {
+		t.Fatalf("non-JSON POST: got %d (reached=%v), want refusal", rec.Code, reached)
+	}
+}
