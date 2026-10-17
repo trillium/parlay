@@ -46,9 +46,9 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub, st *store.Store) {
 		},
 	)
 	svc.SetOnAccepted(seam.intake)
-	mux.HandleFunc("/api/chat/remote-input/submit", handleRemoteInputSubmit(svc, st))
-	mux.HandleFunc("/api/chat/remote-input/status", handleRemoteInputStatus(svc))
-	mux.HandleFunc("/api/chat/remote-input/targets", handleRemoteInputTargets(svc))
+	mux.HandleFunc("/api/chat/remote-input/submit", requireTailnetAuth(slideTokenFromEnv, handleRemoteInputSubmit(svc, st)))
+	mux.HandleFunc("/api/chat/remote-input/status", requireTailnetAuth(slideTokenFromEnv, handleRemoteInputStatus(svc)))
+	mux.HandleFunc("/api/chat/remote-input/targets", requireTailnetAuth(slideTokenFromEnv, handleRemoteInputTargets(svc)))
 	mux.HandleFunc("/slide", handleSlidePage)
 	mux.HandleFunc(slideManifestPath, handleSlideManifest)
 	mux.HandleFunc(slideWorkerPath, handleSlideWorker)

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Repeatable `tailscale serve` rules that expose the phone-facing parlay routes
+# on the tailnet (task-hyo0c). Prints the commands by default; --apply runs them.
+#
+#   bin/parlay-tailnet-serve                    # dry run: print what would change
+#   bin/parlay-tailnet-serve --apply            # add the rules (idempotent)
+#   bin/parlay-tailnet-serve --apply --parse-words   # also expose parse-words (after task-z0caa lands)
+#   bin/parlay-tailnet-serve --remove           # remove only the remote-input rules
+#
+# Env: PARLAY_SERVE_PORT (HTTPS port, default 8451 — the tailnet-only HTTPS
+# listener that already carries /slide), PARLAY_UPSTREAM (default 127.0.0.1:4500).
+# Never uses Funnel. Only exact paths are mounted, never "/".
+set -euo pipefail
+
+port="${PARLAY_SERVE_PORT:-8451}"
+upstream="${PARLAY_UPSTREAM:-127.0.0.1:4500}"
+mode=dry
+parse_words=0
+for a in "$@"; do
+  case "$a" in
+    --apply) mode=apply ;;
+    --remove) mode=remove ;;
+    --parse-words) parse_words=1 ;;
+    *) echo "usage: $0 [--apply|--remove] [--parse-words]" >&2; exit 2 ;;
+  esac
+done
+
+paths=(/api/chat/remote-input/submit /api/chat/remote-input/status /api/chat/remote-input/targets)
+[ "$parse_words" = 1 ] && paths+=(/api/chat/remote-input/parse-words)
+
+for p in "${paths[@]}"; do
+  if [ "$mode" = remove ]; then
+    cmd=(tailscale serve --https="$port" --set-path "$p" off)
+  else
+    cmd=(tailscale serve --bg --https="$port" --set-path "$p" "http://$upstream$p")
+  fi
+  if [ "$mode" = dry ]; then printf '%q ' "${cmd[@]}"; echo; else "${cmd[@]}"; fi
+done
+[ "$mode" = dry ] && echo "(dry run — pass --apply to run these)"
+exit 0

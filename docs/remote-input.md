@@ -268,6 +268,26 @@ that shell only, and never caches `/api`. The installed app is for tailnet use: 
 the buttons need no token. The `#t=` pairing token applies only to Safari-in-browser use off
 the tailnet and is not carried into the home-screen app.
 
+## Tailnet exposure for the phone (task-hyo0c)
+
+`bin/parlay-tailnet-serve --apply` mounts exactly these paths on the tailnet-only HTTPS
+listener (default `https://<host>.ts.net:8451`, upstream `127.0.0.1:4500`), alongside the
+existing `/slide` and `/api/chat/slide` rules: `POST /api/chat/remote-input/submit`,
+`GET /api/chat/remote-input/status`, `GET /api/chat/remote-input/targets`. Add `--parse-words`
+once that route exists. No Funnel, no `/` mount; run without `--apply` to preview, `--remove`
+to take them back. **Order matters:** deploy a server containing the gate below *before*
+applying the rules.
+
+Auth: the three routes sit behind `requireTailnetAuth` (`handlers/remoteinput_auth.go`), the
+same check as `/api/chat/slide`. A loopback request with no proxy markers (the panel, voice,
+curl on this Mac) passes unchanged. Anything else — a non-loopback peer or any
+`X-Forwarded-*`/`Forwarded`/`Tailscale-*` header — needs a loopback peer with
+`Tailscale-User-Login` (what `tailscale serve` sets for tailnet users) or the bearer token
+(`PARLAY_SLIDE_TOKEN`, else the pairing token); no token → 503, wrong → 401. A tagged tailnet
+node has no user identity and needs the token. `PARLAY_TRUST_TAILSCALE_HEADER=0` disables the
+identity pass. What this exposes to any signed-in tailnet user: typing text into any Mac app
+(submit), creating beads, running the two slide actions, and listing open app/window titles.
+
 ## Talon adapter contract (recorded live 2026-09-25, this Mac)
 
 | Item | Value |
