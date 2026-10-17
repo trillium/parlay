@@ -83,7 +83,7 @@
   var REC = JSON.parse(document.getElementById("recording").textContent);
   var $ = function (id) { return document.getElementById(id); };
   var mode = null, timer = null, failures = 0, replayTimers = [];
-  var lastEvent = null, staleSince = null, lastMessages = [];
+  var lastEvent = null, eventSeen = false, staleSince = null, lastMessages = [];
   var STALE_AFTER = 2; // failed polls before the badge stops saying LIVE
 
   // Everything below writes with textContent: a message can never inject markup.
@@ -137,7 +137,11 @@
     if (!lastEvent) return;
     var i = -1;
     v.messages.forEach(function (m, n) { if (m.id === lastEvent.id) i = n; });
-    if (i < 0) { lastEvent = null; renderEvent(blankEvent()); return; }
+    if (i < 0) {
+      if (eventSeen) { lastEvent = null; eventSeen = false; renderEvent(blankEvent()); }
+      return;
+    }
+    eventSeen = true;
     var ev = Object.assign({}, lastEvent);
     ev.hops = v.hops.filter(function (h) { return h.inputId === lastEvent.id; });
     var reply = null;
@@ -194,7 +198,7 @@
     if (next === mode) { if (next === "recorded") replay(); return; }
     mode = next;
     clearTimers();
-    lastEvent = null; staleSince = null; failures = 0; lastMessages = [];
+    lastEvent = null; eventSeen = false; staleSince = null; failures = 0; lastMessages = [];
     document.body.dataset.mode = mode;
     var live = mode === "live";
     setBadge(live ? "LIVE" : "RECORDED");
@@ -219,9 +223,9 @@
   $("m-rec").onclick = function () { setMode("recorded"); };
   $("fire").onclick = function () {
     if (mode === "recorded") { replay(); return; }
-    fetch("/api/chat/demo/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ responder: $("resp").checked ? "agent" : "builtin" }) })
+    fetch("/api/chat/demo/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify($("resp").checked ? { responder: "agent" } : {}) })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (ev) { lastEvent = ev; renderEvent(ev); poll(); })
+      .then(function (ev) { lastEvent = ev; eventSeen = false; renderEvent(ev); poll(); })
       .catch(function (e) { status("Trigger failed (" + e.message + "). Press R for the recorded replay.", true); });
   };
   $("reset").onclick = function () {
