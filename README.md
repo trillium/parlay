@@ -608,6 +608,12 @@ parlay actually needs, with notes on what to change. `examples/bootstrap-sandbox
 instantiates it in a throwaway sandbox and exercises it, leaving your own files and
 your running server alone — read its limits in [`examples/`](examples/) before you run it.
 
+### Talk demo rehearsal
+
+`bin/parlay-demo-rehearsal` is the one-command pre-talk check for `/demo` (server up, page
+served, iframe headers, a scripted fake-agent exchange, PASS/FAIL with a fix per step). See
+[`docs/talk-demo.md`](docs/talk-demo.md).
+
 ## Development
 
 ```sh

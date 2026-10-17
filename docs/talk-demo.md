@@ -60,13 +60,48 @@ relay is bound to this server (the relay is bound to one server for life).
 Keep the default loopback exposure: the demo routes have no auth, so never start
 the demo with `-exposure lan/tailnet`.
 
-## Iframe risk (R1): use a separate window by default
+## Embedding /demo in the deck (iframe)
 
-Embedding `http://127.0.0.1:<port>/demo` in an https deck (`<iframe src=... title="Parlay live demo">`)
-is **untested**: mixed-content and Private Network Access rules for a public https
-page embedding a loopback http page differ by browser and version. Default to a
-separate window. Use the iframe only if you rehearsed it from the real deck URL, on
-the real laptop and browser.
+Verified in real Chrome with a harness page on a different origin (https page, `iframe` at
+1280x720, 16:9 scaled 1920x1080 at 0.667, 960x540, 800x450): the page renders, polls, takes
+the event, and shows an external agent reply within a poll, all inside the frame.
+
+- **Headers.** `GET /demo` sends `Content-Security-Policy: frame-ancestors 'self' <origins>`
+  and nothing else frame-related: no `X-Frame-Options` (it cannot name several origins and
+  would fight the allowlist), no `Set-Cookie`, no frame-busting JS, no CORS headers. Before
+  this, `/demo` had no framing header at all, so any site could frame it.
+- **Allowed origins.** `https://macbook.hippo-tilapia.ts.net:4173` (the tailnet deck),
+  `https://voicefirst.dev`, `https://www.voicefirst.dev`, `http://127.0.0.1:4173`,
+  `http://localhost:4173`. Add more with `PARLAY_DEMO_FRAME_ANCESTORS` (space or comma
+  separated exact `http(s)://host[:port]` origins; `*`, paths and wildcards are dropped).
+  The page has no auth, so never widen this to `*`.
+- **Same-origin traffic.** The page only calls `/api/chat/demo/*` on its own origin (polling,
+  no WebSocket or SSE), so the guard's Origin check sees the server's own origin and passes,
+  whatever page frames it.
+- **Mixed content.** An https deck may frame `http://127.0.0.1:<port>/demo` (loopback is a
+  trustworthy origin) but NOT `http://macbook...ts.net:4242/demo`: `:4242` is a raw TCP
+  forward on the tailnet, so that is http and is blocked as mixed content. Present from the
+  laptop that runs the server and embed the loopback URL.
+- **Sizing.** 1280x720 and any 16:9 scale fit with no scrolling. Below 620px of height the
+  layout tightens (960x540 fits); at 800x450 or less it scrolls a little, so keep the frame
+  at 960x540 or larger.
+- **Focus.** Keys `L`/`R` only reach the page while the frame has focus (click it once);
+  the deck's arrow keys stop working until you click the deck again. The browser, not the
+  page, owns this.
+
+`bin/parlay-demo-rehearsal` checks the headers, the mixed-content rule and a live exchange in a
+few seconds (next section).
+
+## Rehearsal (one command)
+
+`bin/parlay-demo-rehearsal` (about 1 s; `--keep` leaves the exchange on screen). Env:
+`PARLAY_DEMO_URL` (default `http://127.0.0.1:4242`), `PARLAY_DEMO_DECK_ORIGIN`,
+`PARLAY_DEMO_DECK_URL`. It prints PASS/FAIL/WARN per step with the exact `fix:` and exits 1
+if anything blocks: (1) server up, (2) `/demo` is the real page, (3) iframe headers allow the
+deck origin and never `*`, (4) mixed content, (5) a scripted fake-agent exchange (event, reply
+from `rehearsal-agent`, ledger hop) so the inspector has live content, (6) the deck answers,
+(7) the demo channel is reset. Its only writes are `/api/chat/demo/*` and one reply on
+channel `talk-demo`. Harness: `bin/parlay-demo-rehearsal.test.sh`.
 
 ## Reset
 

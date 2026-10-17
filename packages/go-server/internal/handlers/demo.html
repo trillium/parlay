@@ -20,7 +20,20 @@
   button:focus-visible, a:focus-visible { outline:3px solid #ffffff; outline-offset:2px; }
   #scope { color:var(--dim); margin:0 0 12px; }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
+  @media (max-width:700px) { .grid { grid-template-columns:1fr; } }
+  /* Short viewports (a deck iframe at 960x540 or smaller): tighten so the whole page still fits without scrolling. */
+  @media (max-height:620px) {
+    body { padding:8px; font-size:16px; }
+    header { margin-bottom:6px; gap:8px; }
+    #badge { font-size:1.3rem; padding:6px 12px; }
+    button { min-height:40px; padding:4px 12px; }
+    #scope { margin-bottom:6px; }
+    .grid { gap:10px; }
+    #terminal { min-height:6rem; max-height:none; height:calc(100vh - 14rem); font-size:.95rem; }
+    .panel { padding:8px; }
+    dl { margin-top:8px; gap:4px 10px; }
+    table { margin-top:8px; }
+  }
   section { border:2px solid var(--line); border-radius:8px; overflow:hidden; }
   section > h2 { margin:0; padding:8px 12px; font-size:1rem; background:#161b22; border-bottom:2px solid var(--line); }
   #terminal { margin:0; padding:12px; min-height:16rem; max-height:60vh; overflow:auto; font:1.05rem/1.5 ui-monospace,Menlo,monospace; white-space:pre-wrap; word-break:break-word; background:#000; }

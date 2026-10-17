@@ -355,3 +355,34 @@ func TestDemoPageBehaviorInNode(t *testing.T) {
 		t.Errorf("hop table must re-render from the poll: %d rows", got.HopRows)
 	}
 }
+
+// /demo may be embedded by the captain's deck and by nobody else: the page has
+// no auth, so framing is an allowlist of exact origins, never a wildcard.
+func TestDemoPageFramingIsAnAllowlistNeverAWildcard(t *testing.T) {
+	t.Setenv(DemoFrameAncestorsEnv, "https://deck.example:8443, http://localhost:5000 * https://*.evil.test javascript:alert(1) http://x.test/path")
+	mux, _, _ := demoMux(t)
+	rec := demoDo(mux, http.MethodGet, "/demo", "")
+	if rec.Code != 200 {
+		t.Fatalf("page: %d", rec.Code)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.HasPrefix(csp, "frame-ancestors 'self' ") {
+		t.Fatalf("csp = %q", csp)
+	}
+	for _, want := range []string{"https://macbook.hippo-tilapia.ts.net:4173", "https://voicefirst.dev", "https://deck.example:8443", "http://localhost:5000"} {
+		if !strings.Contains(csp, " "+want) {
+			t.Errorf("csp missing %s: %q", want, csp)
+		}
+	}
+	for _, bad := range []string{"*", "evil", "javascript", "/path"} {
+		if strings.Contains(csp, bad) {
+			t.Errorf("csp must not contain %q: %q", bad, csp)
+		}
+	}
+	if rec.Header().Get("X-Frame-Options") != "" {
+		t.Error("X-Frame-Options would override the allowlist in some browsers")
+	}
+	if rec.Header().Get("Set-Cookie") != "" {
+		t.Error("/demo must not set cookies")
+	}
+}

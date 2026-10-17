@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# One-command rehearsal for the talk demo (/demo). Run it a few minutes before
+# going on stage; it takes a few seconds, prints PASS/FAIL/WARN per step with the
+# exact fix for each failure, and exits 1 if anything is blocking.
+#
+#   bin/parlay-demo-rehearsal                       # against http://127.0.0.1:4242
+#   bin/parlay-demo-rehearsal --keep                # leave the exchange on screen
+#   PARLAY_DEMO_URL=http://127.0.0.1:4577 bin/parlay-demo-rehearsal
+#   PARLAY_DEMO_DECK_ORIGIN=https://voicefirst.dev bin/parlay-demo-rehearsal
+#
+# Safety: the only writes are POST /api/chat/demo/trigger|reset and one
+# POST /api/chat/reply addressed to the channel "talk-demo" (the demo session).
+# No other channel, agent, file or state is touched. By default the demo channel
+# is reset at the end so the stage starts empty; --keep skips that.
+set -uo pipefail
+
+BASE="${PARLAY_DEMO_URL:-http://127.0.0.1:4242}"
+BASE="${BASE%/}"
+DECK_ORIGIN="${PARLAY_DEMO_DECK_ORIGIN:-https://macbook.hippo-tilapia.ts.net:4173}"
+DECK_URL="${PARLAY_DEMO_DECK_URL:-${DECK_ORIGIN}/slides/openclaw-la-2026-10-14/}"
+KEEP=0
+for a in "$@"; do
+  case "$a" in
+    --keep) KEEP=1 ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: $0 [--keep]" >&2; exit 2 ;;
+  esac
+done
+
+command -v curl >/dev/null 2>&1 || { echo "FAIL curl is required"; exit 1; }
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/parlay-demo-rehearsal.XXXXXX")" || exit 1
+trap 'rm -rf "$TMP"' EXIT
+
+pass=0; fail=0; warn=0
+PASS() { pass=$((pass + 1)); printf 'PASS  %s\n' "$1"; }
+FAIL() { fail=$((fail + 1)); printf 'FAIL  %s\n      fix: %s\n' "$1" "$2"; }
+WARN() { warn=$((warn + 1)); printf 'WARN  %s\n      fix: %s\n' "$1" "$2"; }
+JSON=(-H 'Content-Type: application/json')
+
+printf 'parlay demo rehearsal: server %s, deck origin %s\n' "$BASE" "$DECK_ORIGIN"
+
+# 1. Server up.
+code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$BASE/demo" 2>/dev/null)" || code=000
+if [ "$code" = 000 ]; then
+  FAIL "1 server up: nothing answers at $BASE" \
+       "launchctl kickstart -k gui/\$(id -u)/com.parlay.go-server   (or start the dedicated instance: docs/talk-demo.md, Start)"
+  printf '\n%d PASS, %d FAIL, %d WARN: nothing else can run without a server.\n' "$pass" "$fail" "$warn"
+  exit 1
+fi
+PASS "1 server up ($BASE answered HTTP $code)"
+
+# 2. /demo is the real page, not the 544-byte generic shell an old build serves.
+curl -s -m 5 -D "$TMP/hdr" -o "$TMP/page" "$BASE/demo" 2>/dev/null
+size="$(wc -c <"$TMP/page" | tr -d ' ')"
+if [ "$code" = 200 ] && grep -q 'Parlay talk demo' "$TMP/page" && ! grep -q '__DEMO_RECORDING__' "$TMP/page" && [ "$size" -gt 5000 ]; then
+  PASS "2 /demo serves the talk page ($size bytes, recorded fixture inlined)"
+else
+  FAIL "2 /demo is not the talk page (HTTP $code, $size bytes; the stale-build shell is 544 bytes)" \
+       "deploy a build that includes /demo: cd packages/go-server && go build -o <new> ./cmd/parlay-server, swap it into com.parlay.go-server, kickstart"
+fi
+
+# 3. Embeddable from the deck: frame-ancestors names the deck origin, never "*".
+csp="$(tr -d '\r' <"$TMP/hdr" | grep -i '^content-security-policy:' | head -1)"
+xfo="$(tr -d '\r' <"$TMP/hdr" | grep -i '^x-frame-options:' | head -1)"
+if [ -n "$xfo" ]; then
+  FAIL "3 iframe headers: $xfo blocks (or ignores) the frame-ancestors allowlist" \
+       "remove X-Frame-Options from the /demo response (a proxy in front of the server may add it)"
+elif ! printf '%s' "$csp" | grep -qi 'frame-ancestors'; then
+  FAIL "3 iframe headers: no frame-ancestors, so ANY site can frame /demo" \
+       "deploy a build with the /demo frame-ancestors CSP (this PR), then re-run"
+elif printf '%s' "$csp" | grep -q '[ ]\*\([ ;]\|$\)'; then
+  FAIL "3 iframe headers: frame-ancestors contains a wildcard: $csp" \
+       "unset PARLAY_DEMO_FRAME_ANCESTORS wildcards; list exact origins only"
+elif ! printf '%s' "$csp" | grep -qF "$DECK_ORIGIN"; then
+  FAIL "3 iframe headers: deck origin $DECK_ORIGIN is not allowed to frame /demo ($csp)" \
+       "set PARLAY_DEMO_FRAME_ANCESTORS=\"$DECK_ORIGIN\" in the server's environment (launchd plist EnvironmentVariables), then kickstart the server"
+else
+  PASS "3 iframe headers: ${csp#*: } (no X-Frame-Options)"
+fi
+if grep -qi '^set-cookie:' "$TMP/hdr"; then
+  WARN "3b /demo sets a cookie; third-party-cookie blocking can break it in an iframe" "the demo needs no cookies: remove whatever sets them"
+fi
+
+# 4. Mixed content: an https deck cannot frame a plain-http, non-loopback page.
+case "$DECK_ORIGIN:$BASE" in
+  https://*:http://127.0.0.1*|https://*:http://localhost*|https://*:http://\[::1\]*)
+    PASS "4 mixed content: $BASE is loopback http (browsers allow it inside an https deck, on this laptop only)" ;;
+  https://*:http://*)
+    FAIL "4 mixed content: the https deck cannot frame $BASE (blocked as mixed content)" \
+         "present from the laptop that runs the server and embed http://127.0.0.1:4242/demo, or expose /demo over tailscale https (docs/talk-demo.md, Iframe)" ;;
+  *) PASS "4 mixed content: not applicable ($BASE is not plain http under an https deck)" ;;
+esac
+
+# 5. Scripted fake-agent exchange in the demo channel: the inspector shows live content.
+post() { curl -s -m 5 -o "$TMP/out" -w '%{http_code}' "${JSON[@]}" -X POST -d "$2" "$BASE$1" 2>/dev/null || echo 000; }
+c="$(post /api/chat/demo/reset '{}')"
+[ "$c" = 200 ] || FAIL "5a reset demo channel: HTTP $c" "check the server log; POST $BASE/api/chat/demo/reset must return 200"
+c="$(post /api/chat/demo/trigger '{"text":"Rehearsal: what is the state of the demo session?","responder":"agent"}')"
+if [ "$c" = 200 ] && grep -q 'waiting for a real agent' "$TMP/out"; then
+  PASS "5a event sent to channel talk-demo (queued, waiting for an agent)"
+else
+  FAIL "5a trigger: HTTP $c $(head -c 120 "$TMP/out")" "POST $BASE/api/chat/demo/trigger must return 200; see docs/talk-demo.md"
+fi
+c="$(post /api/chat/reply '{"agent":"talk-demo","name":"rehearsal-agent","text":"ack: rehearsal agent received the event (scripted reply, not a model)"}')"
+[ "$c" = 200 ] && PASS "5b scripted fake agent replied on channel talk-demo" \
+               || FAIL "5b fake-agent reply: HTTP $c" "POST $BASE/api/chat/reply {\"agent\":\"talk-demo\"} must return 200"
+ok=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s -m 5 "$BASE/api/chat/demo/view" >"$TMP/view" 2>/dev/null
+  if grep -q 'rehearsal agent received the event' "$TMP/view" && grep -q 'Rehearsal: what is the state' "$TMP/view"; then ok=1; break; fi
+  sleep 0.3
+done
+if [ "$ok" = 1 ] && grep -Eq '"stage": ?"queued"' "$TMP/view"; then
+  PASS "5c live view shows the event, the agent reply and the ledger hop (inspector content is real)"
+elif [ "$ok" = 1 ]; then
+  WARN "5c live view shows the exchange but no ledger hop yet" "the input ledger writes asynchronously; re-run, and check GET $BASE/api/chat/demo/view"
+else
+  FAIL "5c live view does not show the exchange" "GET $BASE/api/chat/demo/view must list both messages; check that the server is the build with /demo"
+fi
+
+# 6. Deck reachable and embedding /demo (warning only: the deck is another repo).
+dcode="$(curl -s -m 5 -o "$TMP/deck" -w '%{http_code}' "$DECK_URL" 2>/dev/null)" || dcode=000
+if [ "$dcode" != 200 ]; then
+  WARN "6 deck not reachable at $DECK_URL (HTTP $dcode)" "start the deck server (voicefirst-landing: bun run serve) or set PARLAY_DEMO_DECK_URL"
+elif grep -qE '<iframe[^>]*/demo|/demo' "$TMP/deck"; then
+  PASS "6 deck at $DECK_URL references /demo"
+else
+  WARN "6 deck is up but its page does not mention /demo (slides may be built into the JS bundle)" "open the deck and confirm the demo slide shows the page; that is a visual check"
+fi
+
+# 7. Leave the stage empty.
+if [ "$KEEP" = 1 ]; then
+  PASS "7 left the exchange on screen (--keep); reset later: curl -X POST -H 'Content-Type: application/json' -d '{}' $BASE/api/chat/demo/reset"
+else
+  c="$(post /api/chat/demo/reset '{}')"
+  curl -s -m 5 "$BASE/api/chat/demo/view" >"$TMP/view" 2>/dev/null
+  if [ "$c" = 200 ] && ! grep -q 'rehearsal agent' "$TMP/view"; then
+    PASS "7 demo channel reset, stage is empty"
+  else
+    FAIL "7 reset did not clear the demo channel (HTTP $c)" "click Reset demo channel on the page, or POST $BASE/api/chat/demo/reset"
+  fi
+fi
+
+printf '\n%d PASS, %d FAIL, %d WARN\n' "$pass" "$fail" "$warn"
+if [ "$fail" -gt 0 ]; then
+  echo "NOT READY: fix the FAIL lines above and re-run."
+  exit 1
+fi
+cat <<EOF
+READY. Manual 30-second check (a script cannot see your screen):
+  1. Open the deck slide that embeds /demo; badge reads LIVE.
+  2. Click once inside the frame, press R (RECORDED) then L (LIVE); click the deck again so its arrow keys work.
+  3. Click Send one demo event; Source/Destination/Payload/Outcome fill in.
+EOF
+exit 0

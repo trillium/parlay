@@ -50,6 +50,12 @@ const (
 
 	inputSourceDemo = "demo" // POST /api/chat/demo/trigger
 
+	// DemoFrameAncestorsEnv adds exact origins (space or comma separated) that
+	// may embed /demo in an iframe, on top of demoFrameAncestorsDefault. A
+	// wildcard or anything that is not a bare http(s) origin is ignored: the
+	// page has no auth, so framing is never opened to "*".
+	DemoFrameAncestorsEnv = "PARLAY_DEMO_FRAME_ANCESTORS"
+
 	demoViewPath    = "/api/chat/demo/view"
 	demoTriggerPath = "/api/chat/demo/trigger"
 	demoResetPath   = "/api/chat/demo/reset"
@@ -60,6 +66,36 @@ var demoPage []byte
 
 //go:embed demoassets/recording.json
 var demoRecording []byte
+
+// demoFrameAncestorsDefault are the origins the captain's slide deck is served
+// from (tailnet HTTPS, the public site, the local `bun run serve` ports). 'self'
+// is always allowed so the harness page can sit on the same origin.
+var demoFrameAncestorsDefault = []string{
+	"https://macbook.hippo-tilapia.ts.net:4173",
+	"https://voicefirst.dev",
+	"https://www.voicefirst.dev",
+	"http://127.0.0.1:4173",
+	"http://localhost:4173",
+}
+
+var demoOriginRe = regexp.MustCompile(`^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+
+// demoFrameAncestors builds the frame-ancestors CSP for GET /demo. It replaces
+// X-Frame-Options (which cannot name several origins).
+func demoFrameAncestors() string {
+	seen := map[string]bool{}
+	parts := []string{"'self'"}
+	extra := strings.FieldsFunc(os.Getenv(DemoFrameAncestorsEnv), func(r rune) bool { return r == ',' || r == ' ' })
+	for _, o := range append(append([]string{}, demoFrameAncestorsDefault...), extra...) {
+		o = strings.TrimRight(o, "/")
+		if !demoOriginRe.MatchString(o) || seen[o] {
+			continue
+		}
+		seen[o] = true
+		parts = append(parts, o)
+	}
+	return "frame-ancestors " + strings.Join(parts, " ")
+}
 
 // demoRecordingMarker is where the fixture is inlined into the page, so the
 // RECORDED path needs no second request and works while the API is down.
@@ -162,6 +198,7 @@ func handleDemoPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", demoFrameAncestors())
 	_, _ = w.Write(page)
 }
 

@@ -322,6 +322,7 @@ jobs:
           git config --global user.name  "parlay ci"
           for t in bin/parlay-treehouse-guard.test.sh \
                    bin/parlay-preflight.test.sh \
+                   bin/parlay-demo-rehearsal.test.sh \
                    bin/context-reset.test.sh \
                    tools/mechanic-dispatch/mechanic-dispatch.test.sh \
                    tools/hooks/hooks.test.sh \
