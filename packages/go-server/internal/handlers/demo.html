@@ -13,6 +13,8 @@
   #badge { font:700 1.6rem/1 ui-monospace,Menlo,monospace; padding:10px 18px; border:3px solid currentColor; border-radius:6px; letter-spacing:.08em; }
   body[data-mode="live"] #badge { background:var(--live); color:var(--live-fg); }
   body[data-mode="recorded"] #badge { background:var(--rec); color:var(--rec-fg); }
+  body[data-mode="live"][data-stale="true"] #badge { background:var(--rec); color:var(--bad); }
+  #terminal .stale { color:var(--bad); font-weight:700; }
   button { font:inherit; min-height:44px; padding:6px 16px; background:#1b2129; color:var(--fg); border:2px solid var(--line); border-radius:6px; cursor:pointer; }
   button[aria-pressed="true"] { border-color:var(--fg); font-weight:700; }
   button:focus-visible, a:focus-visible { outline:3px solid #ffffff; outline-offset:2px; }
@@ -33,6 +35,8 @@
   dd { margin:0; font-family:ui-monospace,Menlo,monospace; word-break:break-word; }
   table { border-collapse:collapse; width:100%; margin-top:12px; font:0.95rem ui-monospace,Menlo,monospace; }
   th, td { border:1px solid var(--line); padding:4px 8px; text-align:left; }
+  #resp-wrap { display:block; margin-top:10px; }
+  #resp { width:22px; height:22px; vertical-align:middle; }
   .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
   @media (prefers-reduced-motion: no-preference) { #terminal { scroll-behavior:smooth; } }
 </style>
@@ -40,7 +44,7 @@
 <body data-mode="live">
 <header>
   <h1>Parlay talk demo</h1>
-  <div id="badge" role="status" aria-label="Data source">LIVE</div>
+  <div id="badge" role="status" aria-live="assertive" aria-label="Data source">LIVE</div>
   <div role="group" aria-label="Choose data source">
     <button id="m-live" type="button" aria-pressed="true" aria-keyshortcuts="L">Live (L)</button>
     <button id="m-rec" type="button" aria-pressed="false" aria-keyshortcuts="R">Recorded (R)</button>
@@ -57,6 +61,7 @@
     <h2 id="e-h">Event inspector</h2>
     <div class="panel">
       <button id="fire" type="button">Send one demo event</button>
+      <label id="resp-wrap"><input id="resp" type="checkbox"> Real agent answers this event (unticked: the server default decides)</label>
       <button id="reset" type="button">Reset demo channel</button>
       <dl id="event" aria-live="polite" aria-label="Last event">
         <dt>Source</dt><dd id="e-source">(nothing sent yet)</dd>
@@ -78,6 +83,8 @@
   var REC = JSON.parse(document.getElementById("recording").textContent);
   var $ = function (id) { return document.getElementById(id); };
   var mode = null, timer = null, failures = 0, replayTimers = [];
+  var lastEvent = null, eventSeen = false, staleSince = null, lastMessages = [];
+  var STALE_AFTER = 2; // failed polls before the badge stops saying LIVE
 
   // Everything below writes with textContent: a message can never inject markup.
   function line(m, extra) {
@@ -95,6 +102,12 @@
     var term = $("terminal");
     var stick = term.scrollTop + term.clientHeight >= term.scrollHeight - 8;
     term.textContent = "";
+    if (staleSince) {
+      var banner = document.createElement("div");
+      banner.className = "stale";
+      banner.textContent = "STALE since " + staleSince + " - the server is not answering; this is the last data received.";
+      term.appendChild(banner);
+    }
     msgs.forEach(function (m) { term.appendChild(line(m)); });
     if (stick) term.scrollTop = term.scrollHeight;
   }
@@ -117,6 +130,33 @@
       tb.appendChild(tr);
     });
   }
+  // Recompute the inspector from one poll's view: the event is found by id, so
+  // a later reply updates Outcome and the hop table, and a reset (event gone)
+  // empties it.
+  function followEvent(v) {
+    if (!lastEvent) return;
+    var i = -1;
+    v.messages.forEach(function (m, n) { if (m.id === lastEvent.id) i = n; });
+    if (i < 0) {
+      if (eventSeen) { lastEvent = null; eventSeen = false; renderEvent(blankEvent()); }
+      return;
+    }
+    eventSeen = true;
+    var ev = Object.assign({}, lastEvent);
+    ev.hops = v.hops.filter(function (h) { return h.inputId === lastEvent.id; });
+    var reply = null;
+    // Replies carry no reply-to id, so only claim one that arrives before the
+    // next user message; with a newer event outstanding, attribution is unknown.
+    var rest = v.messages.slice(i + 1), stop = rest.findIndex(function (m) { return m.role === "user"; });
+    (stop < 0 ? rest : rest.slice(0, stop)).forEach(function (m) { if (!reply && m.role === "agent") reply = m; });
+    if (reply) {
+      ev.reply = reply;
+      ev.outcome = "queued, then answered by " + (reply.from || reply.role);
+    }
+    renderEvent(ev);
+  }
+  function blankEvent() { return { label: mode.toUpperCase(), source: "(nothing sent yet)", destination: "-", payload: "-", outcome: "-", hops: [], reply: null }; }
+  function setBadge(text) { $("badge").textContent = text; document.body.dataset.stale = text === "LIVE" ? "false" : "true"; }
   function status(msg, bad) { var s = $("status"); s.textContent = msg; s.className = bad ? "bad" : ""; }
   function clearTimers() { clearInterval(timer); timer = null; replayTimers.forEach(clearTimeout); replayTimers = []; }
 
@@ -127,11 +167,18 @@
     }).then(function (v) {
       if (mode !== "live") return;
       failures = 0;
+      if (staleSince) { staleSince = null; setBadge("LIVE"); }
+      lastMessages = v.messages;
       renderLines(v.messages);
+      followEvent(v);
       status("LIVE: channel " + v.channel + ", " + v.messages.length + " message(s), updated " + new Date().toLocaleTimeString());
     }).catch(function (e) {
       if (mode !== "live") return;
       failures++;
+      if (failures >= STALE_AFTER) {
+        if (!staleSince) { staleSince = new Date().toISOString().slice(11, 19); setBadge("LIVE - DISCONNECTED"); }
+        renderLines(lastMessages);
+      }
       status("LIVE connection failed (" + e.message + "). Press R for the recorded replay.", true);
     });
   }
@@ -154,9 +201,11 @@
     if (next === mode) { if (next === "recorded") replay(); return; }
     mode = next;
     clearTimers();
+    lastEvent = null; eventSeen = false; staleSince = null; failures = 0; lastMessages = [];
     document.body.dataset.mode = mode;
     var live = mode === "live";
-    $("badge").textContent = live ? "LIVE" : "RECORDED";
+    setBadge(live ? "LIVE" : "RECORDED");
+    document.body.dataset.stale = "false";
     document.title = (live ? "LIVE" : "RECORDED") + " - Parlay talk demo";
     $("m-live").setAttribute("aria-pressed", live);
     $("m-rec").setAttribute("aria-pressed", !live);
@@ -165,8 +214,9 @@
       : "Showing a synthetic recorded fixture inlined in this page. It makes no network request.";
     $("fire").textContent = live ? "Send one demo event" : "Replay the recorded event";
     $("reset").hidden = !live;
+    $("resp-wrap").hidden = !live;
     $("terminal").textContent = "";
-    renderEvent({ label: mode.toUpperCase(), source: "(nothing sent yet)", destination: "-", payload: "-", outcome: "-", hops: [], reply: null });
+    renderEvent(blankEvent());
     $("e-outcome").textContent = "-";
     if (live) { status("LIVE: connecting..."); poll(); timer = setInterval(poll, 800); }
     else replay();
@@ -176,9 +226,9 @@
   $("m-rec").onclick = function () { setMode("recorded"); };
   $("fire").onclick = function () {
     if (mode === "recorded") { replay(); return; }
-    fetch("/api/chat/demo/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+    fetch("/api/chat/demo/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify($("resp").checked ? { responder: "agent" } : {}) })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (ev) { renderEvent(ev); poll(); })
+      .then(function (ev) { lastEvent = ev; eventSeen = false; renderEvent(ev); poll(); })
       .catch(function (e) { status("Trigger failed (" + e.message + "). Press R for the recorded replay.", true); });
   };
   $("reset").onclick = function () {
