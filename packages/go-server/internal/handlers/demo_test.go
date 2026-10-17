@@ -232,13 +232,6 @@ func TestDemoViewCarriesLaterRepliesAndHopsForTheInspector(t *testing.T) {
 	if last.Role != "agent" || last.From != demoChannel || last.Text != "real answer" {
 		t.Errorf("unexpected reply line: %+v", last)
 	}
-
-	page := demoDo(mux, http.MethodGet, "/demo", "").Body.String()
-	for _, want := range []string{"followEvent(v)", "LIVE - DISCONNECTED", "STALE since", "STALE_AFTER = 2", `aria-live="assertive"`} {
-		if !strings.Contains(page, want) {
-			t.Errorf("page missing %q", want)
-		}
-	}
 }
 
 func itoaDemo(n int) string { b, _ := json.Marshal(n); return string(b) }
@@ -262,5 +255,103 @@ func TestDemoPageInlineScriptParses(t *testing.T) {
 	}
 	if out, err := exec.Command(node, "--check", file).CombinedOutput(); err != nil {
 		t.Fatalf("inline script does not parse: %v\n%s", err, out)
+	}
+}
+
+const demoPageHarness = `
+const vm = require("vm"), fs = require("fs");
+const script = fs.readFileSync(process.argv[2], "utf8");
+class El {
+  constructor(id) { this.id = id; this.kids = []; this.own = ""; this.dataset = {}; this.attrs = {}; this.scrollTop = 0; this.clientHeight = 0; this.scrollHeight = 0; }
+  get textContent() { return this.own + this.kids.map(k => k.textContent).join(""); }
+  set textContent(v) { this.kids = []; this.own = String(v); }
+  appendChild(k) { this.kids.push(k); return k; }
+  setAttribute(k, v) { this.attrs[k] = v; }
+}
+const els = {};
+const get = id => els[id] || (els[id] = new El(id));
+get("recording").textContent = JSON.stringify({ frames: [{ t: 0, text: "x", role: "agent" }], event: { label: "RECORDED", source: "s", destination: "d", payload: "p", outcome: "o", hops: [], reply: null } });
+let interval = null, view = null, failing = false;
+const msg = (id, role, text, from) => ({ id, role, text, from, ts: "2026-10-20T10:00:00Z" });
+const sandbox = {
+  document: { getElementById: get, createElement: () => new El(), createTextNode: t => ({ textContent: t }), body: new El("body"), title: "", addEventListener() {} },
+  location: { search: "" }, URLSearchParams,
+  setInterval: f => { interval = f; return 1; }, clearInterval() {}, setTimeout: () => 1, clearTimeout() {},
+  fetch: (url, opts) => {
+    if (url.endsWith("/trigger")) return Promise.resolve({ ok: true, json: async () => ({ id: "e1", label: "LIVE", source: "s", destination: "d", payload: "p", outcome: "queued", hops: [], reply: null }) });
+    if (failing) return Promise.reject(new Error("down"));
+    return Promise.resolve({ ok: true, json: async () => view });
+  },
+};
+const tick = () => new Promise(r => setImmediate(r));
+const snap = () => ({ badge: get("badge").textContent, terminal: get("terminal").textContent, outcome: get("e-outcome").textContent });
+(async () => {
+  view = { channel: "talk-demo", messages: [], hops: [] };
+  vm.runInNewContext(script, sandbox);
+  await tick();
+  const out = { start: snap() };
+  view = { channel: "talk-demo", messages: [msg("e1", "user", "hello", "me")], hops: [] };
+  get("fire").onclick(); await tick(); await tick();
+  out.queued = snap();
+  failing = true;
+  interval(); await tick();
+  out.oneFail = snap();
+  interval(); await tick();
+  out.twoFail = snap();
+  failing = false;
+  view = { channel: "talk-demo", messages: [msg("e1", "user", "hello", "me"), msg("a1", "agent", "real answer", "talk-demo")], hops: [{ inputId: "e1", seq: 1, stage: "delivered", class: "c", source: "x" }] };
+  interval(); await tick();
+  out.recovered = snap();
+  out.hopRows = get("hops").kids.length;
+  console.log(JSON.stringify(out));
+})();
+`
+
+// Runs the served page script under node with a stubbed DOM and fetch and
+// checks what the audience would see: B2 disconnect/recovery, B1 follow-up.
+func TestDemoPageBehaviorInNode(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not available")
+	}
+	mux, _, _ := demoMux(t)
+	m := regexp.MustCompile(`(?s)<script>(.*)</script>`).FindStringSubmatch(demoDo(mux, http.MethodGet, "/demo", "").Body.String())
+	if m == nil {
+		t.Fatal("served page has no inline script")
+	}
+	dir := t.TempDir()
+	page, harness := filepath.Join(dir, "page.js"), filepath.Join(dir, "harness.js")
+	if err := os.WriteFile(page, []byte(m[1]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(harness, []byte(demoPageHarness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := exec.Command(node, harness, page).CombinedOutput()
+	if err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, raw)
+	}
+	type snap struct{ Badge, Terminal, Outcome string }
+	var got struct {
+		Start, Queued, OneFail, TwoFail, Recovered snap
+		HopRows                                    int
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("harness output %q: %v", raw, err)
+	}
+	if got.Start.Badge != "LIVE" || got.OneFail.Badge != "LIVE" {
+		t.Errorf("badge must stay LIVE until 2 failed polls: %+v %+v", got.Start, got.OneFail)
+	}
+	if got.TwoFail.Badge != "LIVE - DISCONNECTED" || !strings.HasPrefix(got.TwoFail.Terminal, "STALE since ") {
+		t.Errorf("after 2 failed polls: %+v", got.TwoFail)
+	}
+	if got.Recovered.Badge != "LIVE" || strings.Contains(got.Recovered.Terminal, "STALE since") {
+		t.Errorf("recovery must restore LIVE: %+v", got.Recovered)
+	}
+	if strings.Contains(got.Queued.Outcome, "answered by") || !strings.Contains(got.Recovered.Outcome, "answered by talk-demo") || !strings.Contains(got.Recovered.Outcome, "real answer") {
+		t.Errorf("outcome must follow the later agent reply: queued=%q recovered=%q", got.Queued.Outcome, got.Recovered.Outcome)
+	}
+	if got.HopRows != 1 {
+		t.Errorf("hop table must re-render from the poll: %d rows", got.HopRows)
 	}
 }
