@@ -123,7 +123,16 @@ type demoEvent struct {
 }
 
 func toDemoMessage(m store.ChatMessage) demoMessage {
-	return demoMessage{ID: m.ID, Ts: m.Ts, Role: m.Role, From: m.From, Text: redactDemo(m.Text)}
+	from := m.From
+	// /api/chat/reply stores no sender; name the line after its channel so the
+	// audience reads "talk-demo >" instead of the bare role.
+	if from == "" && m.Role == "agent" {
+		from = m.Channel
+		if from == "" {
+			from = demoChannel
+		}
+	}
+	return demoMessage{ID: m.ID, Ts: m.Ts, Role: m.Role, From: from, Text: redactDemo(m.Text)}
 }
 
 func toDemoHops(events []inputlog.Event) []demoHop {
@@ -179,6 +188,9 @@ func handleDemoView(st *store.Store) http.HandlerFunc {
 
 type demoTriggerRequest struct {
 	Text string `json:"text"`
+	// Responder picks who answers this one event: "builtin", "agent" (leave it
+	// to a real listener on the channel), or "" for the PARLAY_DEMO_RESPONDER default.
+	Responder string `json:"responder"`
 }
 
 func handleDemoTrigger(st *store.Store, b *broker) http.HandlerFunc {
@@ -189,6 +201,10 @@ func handleDemoTrigger(st *store.Store, b *broker) http.HandlerFunc {
 		}
 		var req demoTriggerRequest
 		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Responder != "" && req.Responder != "agent" && req.Responder != "builtin" {
+			writeStatusError(w, http.StatusBadRequest, "responder must be \"builtin\" or \"agent\"")
 			return
 		}
 		text := strings.TrimSpace(req.Text)
@@ -217,7 +233,14 @@ func handleDemoTrigger(st *store.Store, b *broker) http.HandlerFunc {
 			Outcome:     "queued, no reply yet",
 		}
 
-		if strings.EqualFold(os.Getenv(DemoResponderEnv), "off") {
+		useAgent := strings.EqualFold(os.Getenv(DemoResponderEnv), "off")
+		switch req.Responder {
+		case "agent":
+			useAgent = true
+		case "builtin":
+			useAgent = false
+		}
+		if useAgent {
 			ev.Outcome = "queued; waiting for a real agent on channel \"" + demoChannel + "\""
 		} else {
 			reply, _, err := appendAndPublish(st, b, store.ChatMessage{

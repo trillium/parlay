@@ -37,6 +37,7 @@ func TestDemoViewIsScopedToTheDemoChannel(t *testing.T) {
 		{Role: "user", Text: "private work message", Channel: "some-other-agent", From: "captain"},
 		{Role: "agent", Text: "another agent's reply", Channel: "yet-another", From: "x"},
 		{Role: "user", Text: "visible to audience", Channel: demoChannel, From: "browser-demo"},
+		{Role: "agent", Text: "anonymous reply", Channel: demoChannel},
 	} {
 		stored, _, err := appendAndPublish(st, b, m)
 		if err != nil {
@@ -60,8 +61,11 @@ func TestDemoViewIsScopedToTheDemoChannel(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatal(err)
 	}
-	if v.Label != "LIVE" || len(v.Messages) != 1 || v.Messages[0].Text != "visible to audience" {
+	if v.Label != "LIVE" || len(v.Messages) != 2 || v.Messages[0].Text != "visible to audience" {
 		t.Fatalf("unexpected view: %+v", v)
+	}
+	if v.Messages[1].From != demoChannel {
+		t.Errorf("agent line with no sender must be named after the channel, got %q", v.Messages[1].From)
 	}
 	if len(v.Hops) != 1 || v.Hops[0].InputID != v.Messages[0].ID {
 		t.Fatalf("hops must join only on demo message ids: %+v", v.Hops)
@@ -109,6 +113,25 @@ func TestDemoTriggerWithoutResponderWaitsForARealAgent(t *testing.T) {
 	_ = json.Unmarshal(demoDo(mux, http.MethodPost, demoTriggerPath, `{}`).Body.Bytes(), &ev)
 	if ev.Reply != nil || !strings.Contains(ev.Outcome, "waiting for a real agent") || ev.Payload != demoDefaultText {
 		t.Fatalf("unexpected: %+v", ev)
+	}
+}
+
+func TestDemoTriggerResponderChoicePerRequest(t *testing.T) {
+	t.Setenv(DemoResponderEnv, "")
+	mux, _, _ := demoMux(t)
+	var ev demoEvent
+	_ = json.Unmarshal(demoDo(mux, http.MethodPost, demoTriggerPath, `{"responder":"agent"}`).Body.Bytes(), &ev)
+	if ev.Reply != nil || !strings.Contains(ev.Outcome, "waiting for a real agent") {
+		t.Errorf("agent choice must skip the built-in reply: %+v", ev)
+	}
+	t.Setenv(DemoResponderEnv, "off")
+	ev = demoEvent{}
+	_ = json.Unmarshal(demoDo(mux, http.MethodPost, demoTriggerPath, `{"responder":"builtin"}`).Body.Bytes(), &ev)
+	if ev.Reply == nil {
+		t.Errorf("builtin choice must answer even when env says off: %+v", ev)
+	}
+	if rec := demoDo(mux, http.MethodPost, demoTriggerPath, `{"responder":"x"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad responder: %d", rec.Code)
 	}
 }
 
@@ -173,6 +196,44 @@ func TestDemoPageInlinesAValidRecordedFixture(t *testing.T) {
 	want := "received " + itoaDemo(utf8.RuneCountInString(fx.Event.Payload)) + " characters"
 	if !strings.Contains(fx.Event.Reply.Text, want) {
 		t.Errorf("fixture reply %q does not state %q", fx.Event.Reply.Text, want)
+	}
+}
+
+// The inspector must follow the event: with the responder off, a later agent
+// reply and its delivered hop have to be visible in the same /view the page
+// polls, keyed by the event id, and the page must re-render from each poll.
+func TestDemoViewCarriesLaterRepliesAndHopsForTheInspector(t *testing.T) {
+	t.Setenv(DemoResponderEnv, "off")
+	mux, st, b := demoMux(t)
+	var ev demoEvent
+	_ = json.Unmarshal(demoDo(mux, http.MethodPost, demoTriggerPath, `{}`).Body.Bytes(), &ev)
+	sent := st.Messages.History(0)[0]
+	recordDelivered(st, sent, inputSourcePollWake)
+	if _, _, err := appendAndPublish(st, b, store.ChatMessage{Role: "agent", Text: "real answer", Channel: demoChannel}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // ledger writer is async
+	var v demoViewResponse
+	_ = json.Unmarshal(demoDo(mux, http.MethodGet, demoViewPath, "").Body.Bytes(), &v)
+	stages := map[string]bool{}
+	for _, h := range v.Hops {
+		if h.InputID == ev.ID {
+			stages[h.Stage] = true
+		}
+	}
+	if !stages["queued"] || !stages["delivered"] {
+		t.Errorf("view must carry queued and delivered hops for %s: %+v", ev.ID, v.Hops)
+	}
+	last := v.Messages[len(v.Messages)-1]
+	if last.Role != "agent" || last.From != demoChannel || last.Text != "real answer" {
+		t.Errorf("unexpected reply line: %+v", last)
+	}
+
+	page := demoDo(mux, http.MethodGet, "/demo", "").Body.String()
+	for _, want := range []string{"followEvent(v)", "LIVE - DISCONNECTED", "STALE since", "STALE_AFTER = 2", `aria-live="assertive"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page missing %q", want)
+		}
 	}
 }
 
