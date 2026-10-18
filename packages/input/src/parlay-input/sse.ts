@@ -41,22 +41,33 @@ export function openOwnedSse(cfg: OwnedSseConfig): Unsubscribe {
       `${base}/api/chat/events?device=${encodeURIComponent(device)}` +
       `&url=${encodeURIComponent(pageUrl())}`
     if (lastMessageId) url += `&after=${encodeURIComponent(lastMessageId)}`
-    es = new EventSourceImpl(url)
+    const thisEs: EventSource = new EventSourceImpl(url)
+    es = thisEs
     // Reset backoff once a connection is actually established.
-    es.addEventListener('open', () => { delay = initialMs })
-    es.addEventListener('message', (e: MessageEvent) => {
+    thisEs.addEventListener('open', () => { if (es === thisEs) delay = initialMs })
+    thisEs.addEventListener('message', (e: MessageEvent) => {
+      if (es !== thisEs) return
       try {
         const id = (JSON.parse((e as MessageEvent).data) as { id?: unknown }).id
         if (typeof id === 'string' && id) lastMessageId = id
       } catch { /* malformed frame: cursor stays where it was */ }
     })
-    es.addEventListener('input_action', (e: MessageEvent) => {
+    thisEs.addEventListener('input_action', (e: MessageEvent) => {
+      if (es !== thisEs) return
       try { onEnvelope(JSON.parse(e.data)) } catch (err) { onError?.(err) }
     })
-    es.onerror = () => {
-      try { es?.close() } catch { /* already closed */ }
+    // This handler closes ITS OWN connection, never the module-level `es`.
+    // A handler bound to `es` closes whatever is current, so one late `error`
+    // from a superseded instance tears down the live stream that replaced it.
+    // Two guards: (1) only the live instance may act, and (2) at most ONE
+    // reconnect timer is ever outstanding — a second error before the first
+    // timer fires would otherwise stack a second connection.
+    thisEs.onerror = () => {
+      if (es !== thisEs) return
+      try { thisEs.close() } catch { /* already closed */ }
       if (stopped) return
-      reconnectTimer = setTimeout(connect, delay)
+      if (reconnectTimer != null) return
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connect() }, delay)
       delay = Math.min(delay * 2, maxMs)
     }
   }
@@ -64,7 +75,11 @@ export function openOwnedSse(cfg: OwnedSseConfig): Unsubscribe {
 
   return () => {
     stopped = true
-    if (reconnectTimer) clearTimeout(reconnectTimer)
-    try { es?.close() } catch { /* already closed */ }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    // Drop the reference BEFORE closing, so any handler still queued on the
+    // instance fails its `es !== thisEs` liveness check and does nothing.
+    const last = es
+    es = null
+    try { last?.close() } catch { /* already closed */ }
   }
 }

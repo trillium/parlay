@@ -1,4 +1,4 @@
-import { esc } from './config'
+import { esc, cssColor } from './config'
 import { agentInfo, activeChannel, unreadByChannel, channelStatus, lastActivityByChannel } from './state'
 import { archived, unarchiveChannel, switchChannel, statusOf } from './tabs'
 import { sendDebugSnapshot } from './settings-modal/debug'
@@ -28,7 +28,7 @@ export function renderSheet() {
   for (const [id, info] of entries) {
     const row = document.createElement('button')
     row.className = 'pa-sheet-row' + (activeChannel === id ? ' active' : '')
-    row.style.setProperty('--tab-color', info.color || 'var(--pa-green)')
+    row.style.setProperty('--tab-color', cssColor(info.color, 'var(--pa-green)'))
     const count = unreadByChannel[id] || 0
     row.innerHTML = `<span class="pa-tab-pip ${statusOf(id)}"></span><span class="pa-sheet-name">${esc(info.name)}</span><span class="pa-sheet-id">${esc(id)}${archived.has(id) ? ' · archived' : ''}</span>${count ? `<span class="pa-tab-unread visible" style="position:static">${count}</span>` : ''}`
     row.addEventListener('click', () => {

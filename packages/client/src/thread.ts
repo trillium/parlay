@@ -1,4 +1,4 @@
-import { esc, linkify, fmtTime } from './config'
+import { esc, linkify, fmtTime, cssColor, firstByAttr } from './config'
 import { msgs, agentInfo, activeChannel, thinking, setThinkingState, lastActivityByChannel } from './state'
 import { thread, emptyEl } from './dom'
 import { scrollBottom } from './thread-scroll'
@@ -20,8 +20,8 @@ export function addThinkEl() {
   // treatment as _appendMsgEl. Generic AG only in the zero-agent state.
   const info  = activeChannel ? agentInfo.get(activeChannel) : null
   const label = info ? (info.nicknames?.[0] ?? info.name) : null
-  const init  = label ? label.slice(0, 2).toUpperCase() : 'AG'
-  const color = info ? info.color : 'var(--pa-green)'
+  const init  = esc(label ? label.slice(0, 2).toUpperCase() : 'AG')
+  const color = cssColor(info?.color, 'var(--pa-green)')
   d.innerHTML = `<div class="pa-av agent" style="background:color-mix(in srgb,${color} 14%,var(--pa-ink));color:${color};border-color:color-mix(in srgb,${color} 22%,transparent)">${init}</div><div class="pa-thinking-dots"><b></b><b></b><b></b></div>`
   thread.appendChild(d)
   scrollBottom(true)
@@ -53,8 +53,8 @@ export function _appendMsgEl(m: any, skipScroll = false) {
   const info = (cls === 'agent' && m.channel) ? agentInfo.get(m.channel) : null
   const agentLabel = info ? (info.nicknames?.[0] ?? info.name) : null
   const agentName  = agentLabel ? esc(agentLabel) : 'Agent'
-  const agentColor = info ? info.color : 'var(--pa-green)'
-  const agentInit  = agentLabel ? agentLabel.slice(0, 2).toUpperCase() : 'AG'
+  const agentColor = cssColor(info?.color, 'var(--pa-green)')
+  const agentInit  = esc(agentLabel ? agentLabel.slice(0, 2).toUpperCase() : 'AG')
 
   // ── Debug-snapshot attachment ─────────────────────────────────────────────
   // User messages that are purely `[debug-snapshot]` content are not intended
@@ -212,7 +212,7 @@ export function appendMsg(m: any) {
 export function markMsgReceived(id: string) {
   const cached = msgs.find((m: any) => m.id === id)
   if (cached) (cached as any).received = true
-  const pip = thread.querySelector(`[data-pa-id="${id}"] .pa-msg-status`)
+  const pip = firstByAttr(thread, 'data-pa-id', id)?.querySelector('.pa-msg-status')
   if (pip) { pip.textContent = '✓'; pip.className = 'pa-msg-status received'; (pip as HTMLElement).title = 'Received by agent' }
 }
 
@@ -233,7 +233,7 @@ export function renderThread() {
 
 export function loadHistory(history: any[]) {
   history.forEach((m: any) => {
-    if (document.querySelector(`[data-pa-id="${m.id}"]`)) return
+    if (firstByAttr(document, 'data-pa-id', m.id)) return
     msgs.push(m)
     // setLastId is in state but imported there; direct mutation here is fine for lastId
     ;(window as any).__paLastId = m.id

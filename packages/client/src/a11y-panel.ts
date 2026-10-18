@@ -11,22 +11,48 @@ const STORAGE_KEY = 'pa-a11y-settings'
 const DEFAULT_SETTINGS: A11ySettings = { drawerScale: 100, pageScale: 100 }
 const SCALE_STEPS = [100, 125, 150, 175, 200]
 
-let currentSettings: A11ySettings = DEFAULT_SETTINGS
+let currentSettings: A11ySettings = { ...DEFAULT_SETTINGS }
 let panelEl: HTMLElement | null = null
+// The backdrop-click handler is module state, not a closure inside openPanel:
+// openPanel runs again on every reset click, so a per-open listener that
+// closePanel could not see leaked one document listener per open.
+let backdropHandler: ((e: MouseEvent) => void) | null = null
+
+// Snap any number onto the nearest step the sliders can actually show. Guards
+// against hand-edited / stale storage landing on a value the UI can't display.
+function clampScale(v: unknown, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(v)
+  if (!Number.isFinite(n)) return fallback
+  return SCALE_STEPS.reduce((best, s) =>
+    Math.abs(s - n) < Math.abs(best - n) ? s : best, SCALE_STEPS[0])
+}
+
+// localStorage is untrusted input: it can hold `null`, a bare number, a string,
+// an object missing either key, or NaN-producing junk (all of which reached the
+// CSS custom properties verbatim before). Anything unusable falls back to the
+// default for that slider alone — one bad field never discards the other.
+function sanitize(raw: unknown): A11ySettings {
+  const o = (raw && typeof raw === 'object') ? raw as Partial<A11ySettings> : {}
+  return {
+    drawerScale: clampScale(o.drawerScale, DEFAULT_SETTINGS.drawerScale),
+    pageScale: clampScale(o.pageScale, DEFAULT_SETTINGS.pageScale),
+  }
+}
 
 function loadSettings(): A11ySettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? JSON.parse(stored) : DEFAULT_SETTINGS
+    return stored ? sanitize(JSON.parse(stored)) : { ...DEFAULT_SETTINGS }
   } catch {
-    return DEFAULT_SETTINGS
+    return { ...DEFAULT_SETTINGS }
   }
 }
 
 function saveSettings(settings: A11ySettings) {
-  currentSettings = settings
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
-  applySettings(settings)
+  currentSettings = sanitize(settings)
+  applySettings(currentSettings)
+  // Storage can throw (private mode, quota); the live scaling must still apply.
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(currentSettings)) } catch { /* not persistable */ }
 }
 
 function applySettings(settings: A11ySettings) {
@@ -149,12 +175,15 @@ function openPanel() {
   document.body.appendChild(panelEl)
 
   // Close on backdrop click
-  document.addEventListener('click', (e) => {
-    if (e.target === panelEl) closePanel()
-  })
+  backdropHandler = (e: MouseEvent) => { if (e.target === panelEl) closePanel() }
+  document.addEventListener('click', backdropHandler)
 }
 
 function closePanel() {
+  if (backdropHandler) {
+    document.removeEventListener('click', backdropHandler)
+    backdropHandler = null
+  }
   if (panelEl) {
     panelEl.remove()
     panelEl = null

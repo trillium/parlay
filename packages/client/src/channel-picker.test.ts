@@ -134,6 +134,50 @@ describe('pickerHint + close', () => {
   })
 })
 
+// ── Keyboard containment (aria-modal is one-sided) ──────────────────────────
+describe('openChannelPicker — focus stays inside the modal', () => {
+  const focusableIds = () => {
+    const panel = $('#pa-picker-panel') as HTMLElement
+    return [...panel.querySelectorAll<HTMLElement>('button,input')].map(el => el.id)
+  }
+
+  test('every focusable in the modal is reachable and the input has an accessible name', () => {
+    openChannelPicker('pick', CHANNELS)
+    expect(focusableIds()).toEqual(['pa-picker-close', 'pa-picker-input'])
+    // A placeholder is not an accessible name (axe: form elements must have one).
+    expect($('#pa-picker-input')?.getAttribute('aria-label')).toBe('Channel name, nickname, or number')
+  })
+
+  test('Tab on the last focusable wraps to the first instead of leaving the modal', () => {
+    openChannelPicker('pick', CHANNELS)
+    const input = $('#pa-picker-input') as HTMLInputElement
+    input.focus()
+    const e = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    input.dispatchEvent(e)
+    expect(e.defaultPrevented).toBe(true)
+    expect(document.activeElement?.id).toBe('pa-picker-close')
+  })
+
+  test('Shift+Tab on the first focusable wraps to the last', () => {
+    openChannelPicker('pick', CHANNELS)
+    const close = $('#pa-picker-close') as HTMLButtonElement
+    close.focus()
+    const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+    close.dispatchEvent(e)
+    expect(e.defaultPrevented).toBe(true)
+    expect(document.activeElement?.id).toBe('pa-picker-input')
+  })
+
+  test('reopening installs exactly one trap (no stacked handlers)', () => {
+    openChannelPicker('a', CHANNELS)
+    openChannelPicker('b', CHANNELS)
+    const input = $('#pa-picker-input') as HTMLInputElement
+    input.focus()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
+    expect(document.activeElement?.id).toBe('pa-picker-close')
+  })
+})
+
 // ── Hands-free mode (noKeyboardMode) ─────────────────────────────────────────
 describe('closeChannelPicker — hands-free mode', () => {
   let origFetch: typeof fetch

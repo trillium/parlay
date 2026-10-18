@@ -1,4 +1,4 @@
-import { esc, linkify, CHAT_BASE } from './config'
+import { esc, linkify, CHAT_BASE, byAttr, firstByAttr } from './config'
 import { splitBlocksRaw, linkRanges, type RawBlock } from './speech-segment'
 
 // Re-export the pure segmentation core (unit-tested in speech-segment.test.ts).
@@ -35,7 +35,7 @@ export function blocksHtml(text: string): string {
 // Spans already rendered for this message (render-time structure)
 export function spansFor(msgId?: string): HTMLElement[] | null {
   if (!msgId) return null
-  const list = [...document.querySelectorAll(`[data-pa-id="${msgId}"] .pa-sb`)] as HTMLElement[]
+  const list = byAttr(document, 'data-pa-id', msgId).flatMap(el => [...el.querySelectorAll('.pa-sb')]) as HTMLElement[]
   return list.length ? list : null
 }
 
@@ -43,7 +43,7 @@ export function spansFor(msgId?: string): HTMLElement[] | null {
 export function setPlayButton(msgId: string | undefined, playing: boolean) {
   document.querySelectorAll('.pa-playpause').forEach(b => { b.textContent = '▶' })
   if (playing && msgId) {
-    const b = document.querySelector(`[data-pa-id="${msgId}"] .pa-playpause`)
+    const b = firstByAttr(document, 'data-pa-id', msgId)?.querySelector('.pa-playpause')
     if (b) b.textContent = '⏸'
   }
 }
@@ -57,7 +57,7 @@ export function noteSpoken(sentence: string, msgId?: string, blockIdx?: number) 
 export function getLastSpoken() { return lastSpoken }
 
 export function wrapBlocks(msgId: string | undefined, blocks: RawBlock[]): HTMLElement[] | null {
-  const bubble = msgId ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`) : null
+  const bubble = msgId ? firstByAttr(document, 'data-pa-id', msgId)?.querySelector('.pa-bubble') : null
   if (!bubble) return null
   bubble.classList.add('pa-speaking')
   // Fallback path (only when render-time .pa-sb spans are absent). Keep the same

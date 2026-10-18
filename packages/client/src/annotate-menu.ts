@@ -103,7 +103,10 @@ let _keydown: ((e: KeyboardEvent) => void) | null = null
 export function closeAnnotateMenu(): void {
   const m = document.getElementById(MENU_ID)
   if (m) m.classList.remove('visible')
-  if (_dismiss) { document.removeEventListener('pointerdown', _dismiss, true); _dismiss = null }
+  // Teardown MUST mirror registration exactly (event type + capture): a
+  // removeEventListener that names a different event or capture flag silently
+  // no-ops, leaving one live document handler per open behind for the session.
+  if (_dismiss) { document.removeEventListener('click', _dismiss, false); _dismiss = null }
   if (_keydown) { document.removeEventListener('keydown', _keydown, true); _keydown = null }
 }
 

@@ -4,6 +4,7 @@ import { bumpInputVersion, currentInputVersion } from './commands'
 import type { PickerChannel } from './commands/dispatcher/types'
 import { PA_VERSION } from './version'
 import { getSettings } from './settings-modal'
+import { trapTabKey } from './focus-trap'
 
 // ── Voice-driven channel picker (full-screen modal) ───────────────────────────
 //
@@ -23,6 +24,7 @@ const _pickerEpoch: string = (crypto as any).randomUUID?.() ?? `p-${Date.now()}`
 let _pickerSeq = 0
 
 let _settleTimer: ReturnType<typeof setTimeout> | null = null
+let _releaseTrap: (() => void) | null = null
 
 // ── Open ──────────────────────────────────────────────────────────────────────
 
@@ -40,11 +42,13 @@ export function openChannelPicker(prompt: string, channels: PickerChannel[]): vo
       <ol id="pa-picker-list">${renderRows(channels)}</ol>
       <div id="pa-picker-hint" aria-live="polite"></div>
       <input id="${INPUT_ID}" type="text" autocomplete="off" autocapitalize="off"
-             autocorrect="off" spellcheck="false"
+             autocorrect="off" spellcheck="false" aria-label="Channel name, nickname, or number"
              placeholder="Say a name, nickname, or number…" />
       <div id="pa-picker-esc"><strong>Enter</strong> to select  •  Esc / tap ✕ to cancel</div>
     </div>`
   document.body.appendChild(overlay)
+  _releaseTrap?.()                      // never leave a handler on a replaced overlay
+  _releaseTrap = trapTabKey(overlay)
 
   // Visible close affordance — a tap target so the modal is dismissable without a
   // keyboard or knowing the spoken cancel words (the phone had NO visible exit).
@@ -146,6 +150,7 @@ export function pickerHint(text: string): void {
 
 export function closeChannelPicker(): void {
   if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null }
+  _releaseTrap?.(); _releaseTrap = null
   const overlay = document.getElementById(OVERLAY_ID)
   if (overlay) overlay.remove()
   // Return focus to the main composer so the next utterance targets the thread.

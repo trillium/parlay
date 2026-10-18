@@ -41,7 +41,7 @@ function renderPopupAttachments() {
   }
   if (!attachStrip) return
   attachStrip.innerHTML = _popupAttachments.map((url, i) =>
-    `<div class="pa-popup-chip" style="position:relative;display:inline-block;max-width:80px"><img src="${url.replace(/"/g, '%22')}" alt="" style="max-width:80px;max-height:60px;border-radius:4px"><button class="pa-popup-chip-x" data-i="${i}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;padding:0;border-radius:50%;background:#f00;color:#fff;border:none;cursor:pointer;font-size:12px">✕</button></div>`
+    `<div class="pa-popup-chip" style="position:relative;display:inline-block;max-width:80px"><img src="${esc(url)}" alt="" style="max-width:80px;max-height:60px;border-radius:4px"><button class="pa-popup-chip-x" data-i="${i}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;padding:0;border-radius:50%;background:#f00;color:#fff;border:none;cursor:pointer;font-size:12px">✕</button></div>`
   ).join('')
   attachStrip.querySelectorAll('.pa-popup-chip-x').forEach(btn => btn.addEventListener('click', () => {
     _popupAttachments.splice(Number((btn as HTMLElement).dataset.i), 1)

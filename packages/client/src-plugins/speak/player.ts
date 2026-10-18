@@ -2,6 +2,7 @@ import { getClip, clipKey, cacheHas } from './cache'
 import { reportTtsEvent } from './events'
 import { isAudioMuted } from './audio-mute'
 import { playBlob, stopBlobPlayback } from './playback'
+import { firstByAttr } from './lookup'
 
 // ── Speak plugin: playback engine ────────────────────────────────────────────
 // Talks to core ONLY through window.__parlay.speechUi (block spans, highlight,
@@ -17,12 +18,12 @@ let session = 0
 let _resolveLocal: (() => void) | null = null
 
 const ttsAudio = () => document.getElementById('pa-tts-audio') as HTMLAudioElement | null
-const bubbleOf = (msgId?: string) => msgId ? document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble`) : null
+const bubbleOf = (msgId?: string) => msgId ? firstByAttr(document, 'data-pa-id', msgId)?.querySelector('.pa-bubble') ?? null : null
 
 // Dot readiness (#20): grey until the block's WAV is available, green when ready
 export function markReady(msgId: string | undefined, i: number, ready: boolean) {
   if (!msgId) return
-  const dot = document.querySelector(`[data-pa-id="${msgId}"] .pa-replay-dot[data-bi="${i}"]`)
+  const dot = firstByAttr(document, 'data-pa-id', msgId)?.querySelector(`.pa-replay-dot[data-bi="${i}"]`)
   dot?.classList.toggle('ready', ready)
 }
 export async function probeReadiness(msgId: string, text: string) {
@@ -184,7 +185,7 @@ export function speakFrom(text: string, msgId: string | undefined, startIdx: num
 
 let currentPlayMsg: string | undefined
 export function playPause(text: string, msgId?: string) {
-  const playingThis = currentPlayMsg === msgId && !!document.querySelector(`[data-pa-id="${msgId}"] .pa-bubble.pa-speaking`)
+  const playingThis = currentPlayMsg === msgId && !!firstByAttr(document, 'data-pa-id', msgId)?.querySelector('.pa-bubble.pa-speaking')
   if (playingThis) { stopSpeak(); currentPlayMsg = undefined; return }
   currentPlayMsg = msgId
   speakFrom(text, msgId, 0)

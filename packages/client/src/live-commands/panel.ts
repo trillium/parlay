@@ -45,10 +45,9 @@ export function applyCommandUpdate(rec: CommandInvocation, now = Date.now()) {
 
 /**
  * One row. `state` becomes a class on the dot via classList rather than being
- * interpolated into a `class="…"` attribute: esc() escapes `<` and `&` for text
- * content and does not escape the quote that would end an attribute, so an
- * attribute is not a context it can make safe. A state carrying whitespace is
- * not a class token and is left off entirely.
+ * interpolated into a `class="…"`: the value is a single class TOKEN, not text,
+ * so it is applied through the DOM API even though esc() is attribute-safe. A
+ * state carrying whitespace is not one class token and is left off entirely.
  */
 export function commandRowEl(rec: CommandInvocation, now = Date.now()): HTMLElement {
   const el = document.createElement('div')
