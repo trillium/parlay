@@ -64,12 +64,12 @@ func isolateBeadsEnv(t *testing.T) {
 		k, v, _ := strings.Cut(kv, "=")
 		if strings.HasPrefix(k, "BEADS_") || strings.HasPrefix(k, "BD_") || strings.HasPrefix(k, "BRAIN_") {
 			saved[k] = v
-			os.Unsetenv(k)
+			_ = os.Unsetenv(k)
 		}
 	}
 	t.Cleanup(func() {
 		for k, v := range saved {
-			os.Setenv(k, v)
+			_ = os.Setenv(k, v)
 		}
 	})
 	t.Setenv("HOME", t.TempDir())
