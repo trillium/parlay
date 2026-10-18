@@ -262,6 +262,9 @@ func TestATunnelledPanelStillWorks(t *testing.T) {
 	origin := "http://panel.tunnel.test:" + u.Port()
 	host := "panel.tunnel.test:" + u.Port()
 	foreign := "other.tunnel.test:" + u.Port()
+	// A tunnelled Host is no longer implicitly trusted (DNS rebinding): the
+	// operator names it.
+	t.Setenv("PARLAY_ALLOWED_HOSTS", host+","+foreign)
 
 	t.Run("guarded PUT on its own forwarded Host reaches the handler", func(t *testing.T) {
 		resp := doHost(t, http.MethodPut, base+"/api/chat/draft", origin, host, "application/json", `{"text":"tunnelled draft"}`)
