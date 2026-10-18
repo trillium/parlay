@@ -146,7 +146,7 @@ func Launch(argv []string) {
 		// pipeline refuses without one when beads-required mode is on, and
 		// `parlay launch` never supplied it — so every ghost/offline
 		// relaunch died with exit 2. Precedence: explicit --bead wins;
-		// otherwise an still-OPEN bound item is reused (no duplicate
+		// otherwise a still-OPEN bound item is reused (no duplicate
 		// tracking bead); otherwise a fresh tracking bead is minted in the
 		// default (task) store. --force skips all of this and is forwarded
 		// so the pipeline's own gate stands down too.
