@@ -28,6 +28,9 @@
 //     the request's Host), or a loopback / .local / private-LAN literal, or
 //     listed in PARLAY_ALLOWED_ORIGINS. Anything else is 403 with no CORS
 //     headers at all, so the calling page cannot read the outcome either.
+//   - Every request's Host must pass HostAllowed first (DNS rebinding: a
+//     rebound page sends Host == Origin == its own name). A tunnel or public
+//     name is admitted via the admit list or PARLAY_ALLOWED_HOSTS; else 421.
 //   - Origin "null" (sandboxed iframe, file://, some redirects) is refused.
 //   - PARLAY_ALLOWED_ORIGINS is a comma-separated list of exact origins; the
 //     single value "*" opts out of the origin check entirely.
@@ -522,6 +525,35 @@ func AllowedOriginList() []string {
 	return append(append([]string(nil), env...), file...)
 }
 
+// HostAllowed vets the request's Host header against an allowlist: loopback,
+// .local, private-LAN and tailnet literals, *.ts.net, bare single-label names
+// (isNetworkHostname), the host of every admit-list origin, and each name in
+// PARLAY_ALLOWED_HOSTS (comma-separated hostnames or host:port). An admit list
+// holding "*" turns the check off. An empty Host (HTTP/1.0, in-process tests)
+// is allowed: a browser always sends one.
+func HostAllowed(host string) bool {
+	if host == "" {
+		return true
+	}
+	if isNetworkHostname(hostnameOf(host)) {
+		return true
+	}
+	for _, a := range AllowedOriginList() {
+		if a == "*" {
+			return true
+		}
+		if _, hp, ok := splitOrigin(a); ok && strings.EqualFold(hp, host) {
+			return true
+		}
+	}
+	for _, h := range ParseOriginList(os.Getenv("PARLAY_ALLOWED_HOSTS")) {
+		if strings.EqualFold(h, host) || strings.EqualFold(h, hostnameOf(host)) {
+			return true
+		}
+	}
+	return false
+}
+
 // OriginAllowed is the port of guard/origin.ts's originAllowed.
 func OriginAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
@@ -717,6 +749,14 @@ func networkOriginRoute(path, method string) bool {
 // which route is guarded is then decided by GuardedPaths alone.
 func Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// DNS rebinding: a page on evil.example rebound to this machine sends
+		// Host == Origin == evil.example, which the same-origin comparison
+		// below would accept, and a same-origin GET carries no Origin at all.
+		// So the Host itself is vetted first, on every route.
+		if !HostAllowed(r.Host) {
+			deny(w, http.StatusMisdirectedRequest, "host not allowed")
+			return
+		}
 		path := r.URL.Path
 		if !IsGuarded(path) {
 			// Unguarded (read/SSE) routes: unchanged behavior, and

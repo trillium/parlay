@@ -356,6 +356,7 @@ func TestEventsStreamCORSIsListedOrNetworkOrigins(t *testing.T) {
 	// Same-Host on a public name is let through the guard but is not a network
 	// origin and is not listed: stream, no ACAO.
 	rr := httptest.NewRecorder()
+	t.Setenv("PARLAY_ALLOWED_HOSTS", "tunnel.example.com")
 	same := req(t, http.MethodGet, "/api/chat/events", "https://tunnel.example.com", "")
 	same.Host = "tunnel.example.com"
 	Wrap(pass()).ServeHTTP(rr, same)
