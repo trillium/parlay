@@ -70,7 +70,7 @@ func Send(argv []string) {
 
 	var target, fromOverride string
 	var positionals []string
-	force := false
+	force, allowStale := false, false
 	for i := 0; i < len(argv); i++ {
 		a := argv[i]
 		switch {
@@ -89,6 +89,12 @@ func Send(argv []string) {
 			}
 		case a == "--force":
 			force = true
+		case a == "--allow-stale":
+			// Waives ONLY the stale-window check. For a persistent worker that is
+			// re-tasked in place by design (the pi-inbox poke): its finished-looking
+			// state is its resting state, not a spent pane. The registry check
+			// still runs, so a typo'd channel is still refused.
+			allowStale = true
 		case strings.HasPrefix(a, "--"):
 			// Any other unrecognized --flag is the target agent id.
 			target = a[2:]
@@ -127,7 +133,9 @@ func Send(argv []string) {
 
 	if !force {
 		requireRegisteredTarget(target)
-		refuseStaleWindow(target)
+		if !allowStale {
+			refuseStaleWindow(target)
+		}
 	}
 
 	from := strings.TrimSpace(fromOverride)

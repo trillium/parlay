@@ -276,14 +276,22 @@ func handleRequestClosed(ev RouteEvent, bead Bead, verbose bool) {
 	// item is inspected only after the current item has completed.
 	if ev.Store == "inbox" && inboxIsPiZone(bead.Labels) && !inboxDispatchOff() {
 		poke := "INBOX_POKE v1: an inbox item completed; inspect the inbox for the next eligible item."
-		cmd := exec.Command("parlay", "send", "--pi-inbox", poke)
+		cmd := exec.Command("parlay", "send", "--pi-inbox", "--allow-stale", poke)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		if runErr := cmd.Run(); runErr != nil {
 			var exitErr *exec.ExitError
 			if errors.As(runErr, &exitErr) {
-				fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s exited %d: %s\n", ev.ID, exitErr.ExitCode(), strings.TrimSpace(stdout.String()+stderr.String()))
+				out := strings.TrimSpace(stdout.String() + stderr.String())
+				if strings.Contains(out, "Cannot reach Parlay server") {
+					// Handled outcome: the server was down or too slow. The next
+					// inbox close pokes again, and the worker also polls, so this
+					// is a missed wake hint rather than lost work.
+					fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s NOT DELIVERED (parlay server unreachable; worker wakes on its next poke): %s\n", ev.ID, out)
+				} else {
+					fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s exited %d: %s\n", ev.ID, exitErr.ExitCode(), out)
+				}
 			} else {
 				fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s failed: %s\n", ev.ID, runErr)
 			}

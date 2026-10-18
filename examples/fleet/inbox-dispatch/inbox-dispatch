@@ -162,7 +162,7 @@ if [ "$ZONE" = pi ]; then
   # This is a wake hint, not a ticket delivery. The worker reads its store and
   # atomically claims the oldest available item. Repeated pokes are
   # intentionally harmless and are coalesced by the Pi bridge.
-  exec "$PARLAY_BIN" send --"$CHANNEL" "$POKE_PREFIX v1: new $STORE work may be available. Run the serial $STORE worker ($BIN); claim and process exactly one next available item, then continue until the $STORE is exhausted."
+  exec "$PARLAY_BIN" send --"$CHANNEL" --allow-stale "$POKE_PREFIX v1: new $STORE work may be available. Run the serial $STORE worker ($BIN); claim and process exactly one next available item, then continue until the $STORE is exhausted."
 fi
 
 # --- worktree isolation decision ---------------------------------------------
