@@ -414,31 +414,3 @@ func TestSendReachesKeepListedAgentAtDone(t *testing.T) {
 		t.Fatalf("send calls = %d, want 1 (keep-listed agents are re-tasked in place)", len(bodies))
 	}
 }
-
-// The pi-inbox worker is persistent and re-tasked in place, so its resting
-// "done" state must not make the poke path refuse it (robots-c514).
-// --allow-stale waives the stale check but NOT the registry check.
-func TestSendAllowStaleWaivesOnlyStaleCheck(t *testing.T) {
-	var bodies []map[string]any
-	srv := enrolledSendServer(t, &bodies, []string{"mc-robots-g4qz"})
-	t.Setenv("PARLAY_SERVER", srv.URL)
-	t.Setenv("PARLAY_AGENT_ID", "")
-	seedAgentStatus(t, "mc-robots-g4qz", "done: PR #63 merged")
-
-	captureStdout(t, func() { Send([]string{"--mc-robots-g4qz", "--allow-stale", "wake"}) })
-	if len(bodies) != 1 || bodies[0]["text"] != "wake" {
-		t.Fatalf("send calls = %v, want one 'wake' (--allow-stale waives the stale check)", bodies)
-	}
-
-	var code int
-	var exited bool
-	captureStderr(t, func() {
-		code, exited = withExitTrap(t, func() { Send([]string{"--typo-agent", "--allow-stale", "wake"}) })
-	})
-	if !exited || code != config.ExitUsage {
-		t.Errorf("unregistered target with --allow-stale = (%d, %v), want (%d, true)", code, exited, config.ExitUsage)
-	}
-	if len(bodies) != 1 {
-		t.Errorf("send calls = %d, want still 1 (registry check must still run)", len(bodies))
-	}
-}

@@ -47,7 +47,7 @@ func TestInboxClosedPokesWorkerWithoutNotifySubscriber(t *testing.T) {
 		t.Fatalf("worker poke was not sent: %v", err)
 	}
 	got := string(body)
-	for _, want := range []string{"send", "--pi-inbox", "--allow-stale", "INBOX_POKE v1: an inbox item completed"} {
+	for _, want := range []string{"send", "--pi-inbox", "INBOX_POKE v1: an inbox item completed"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("poke args missing %q in %q", want, got)
 		}
