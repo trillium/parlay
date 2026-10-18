@@ -154,18 +154,16 @@ func Launch(argv []string) {
 			spawnArgs = append(spawnArgs, "--bead", strings.TrimSpace(bead))
 		} else if r.Bool("--force") {
 			spawnArgs = append(spawnArgs, "--force")
-		} else {
+		} else if launchBeadsRequired() {
 			if item, closed := boundWorkItemClosed(target.identityFile); item != "" && !closed {
 				fmt.Fprintf(os.Stderr, "parlay launch: reusing open bound work item %s for %s …\n", item, target.id)
 				spawnArgs = append(spawnArgs, "--bead", item)
-			} else if launchBeadsRequired() {
-				if newID, err := launchCreateBead(target.id, target.name); err != nil {
-					fmt.Fprintf(os.Stderr, "parlay launch: WARNING — could not mint a tracking bead for %s: %v.\n", target.id, err)
-					fmt.Fprintln(os.Stderr, "  Proceeding without one; the spawn may refuse — pass --bead <id> explicitly, or --force to bypass.")
-				} else {
-					fmt.Fprintf(os.Stderr, "parlay launch: minted tracking bead %s for %s …\n", newID, target.id)
-					spawnArgs = append(spawnArgs, "--bead", newID)
-				}
+			} else if newID, err := launchCreateBead(target.id, target.name); err != nil {
+				fmt.Fprintf(os.Stderr, "parlay launch: WARNING — could not mint a tracking bead for %s: %v.\n", target.id, err)
+				fmt.Fprintln(os.Stderr, "  Proceeding without one; the spawn may refuse — pass --bead <id> explicitly, or --force to bypass.")
+			} else {
+				fmt.Fprintf(os.Stderr, "parlay launch: minted tracking bead %s for %s …\n", newID, target.id)
+				spawnArgs = append(spawnArgs, "--bead", newID)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "parlay launch: spawning %s via parlay spawn …\n", target.id)
