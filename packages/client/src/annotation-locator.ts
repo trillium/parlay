@@ -13,7 +13,8 @@
 //      path's leaf and whose trimmed text starts with the saved elementText. A
 //      second, weaker pass accepts a candidate whose text is a *prefix* of the
 //      saved label (live text can shrink — streaming output, a removed child),
-//      but only for a substantial prefix: see MIN_PREFIX_MATCH below.
+//      but only for a substantial prefix: see MIN_PREFIX_MATCH/MIN_PREFIX_RATIO
+//      below.
 //
 // Parlay's own injected UI (#pa-*) is never an annotation target, but the
 // resolver still rejects any match inside it so a moved/rebuilt page can never
@@ -103,6 +104,13 @@ export function resolveLocator(locator: string, elementText: string): HTMLElemen
 // element.
 const MIN_PREFIX_MATCH = 4
 
+// ...and the candidate must also cover a substantial FRACTION of the saved
+// label. The absolute floor alone still lets a shorter unrelated element steal
+// the note: a saved "Logout account" vs a brand link reading "Logo" clears four
+// chars and shares the prefix. The fraction keeps the intended shrink case (a
+// first word such as "Logout" is well over it) while rejecting a fragment.
+const MIN_PREFIX_RATIO = 2 / 5
+
 // Find a replacement target by text among elements of `leafTag` (or any element
 // when the leaf was an id segment and carries no tag). Two ordered passes:
 //
@@ -128,7 +136,8 @@ function scanByText(leafTag: string, wanted: string): HTMLElement | null {
   }
   for (const node of candidates) {
     const text = (node.textContent || '').trim()
-    if (text.length >= MIN_PREFIX_MATCH && wanted.startsWith(text)) return node
+    if (text.length >= MIN_PREFIX_MATCH && text.length >= wanted.length * MIN_PREFIX_RATIO
+        && wanted.startsWith(text)) return node
   }
   return null
 }

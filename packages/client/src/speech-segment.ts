@@ -4,9 +4,10 @@
 
 export interface RawBlock { synth: string; raw: string }
 
-// Character ranges of links in RAW text (same grammar linkify uses on escaped
-// text — escaping never moves where a link starts/ends). Used to keep passage
-// boundaries off the middle of an anchor.
+// Character ranges of links in RAW text (the same boundaries linkify finds on
+// escaped text: esc() turns `"`/`'` into entities that terminate its bare-URL
+// match, so escaping never moves where a link starts or ends). Used to keep
+// passage boundaries off the middle of an anchor.
 export function linkRanges(text: string): { start: number; end: number }[] {
   const re = /\[[^\]]+\]\((?:https?:\/\/[^\s)]+)\)|(?:https?:\/\/[^\s"']+)/g
   const ranges: { start: number; end: number }[] = []

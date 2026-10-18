@@ -68,11 +68,13 @@ export function cssColor(value: unknown, fallback: string): string {
 
 // Linkify an ALREADY-ESCAPED string: markdown [label](url) and bare http(s) URLs.
 // Escape-first ordering is load-bearing — raw HTML in messages stays inert and
-// only these generated anchors survive. http/https only; a quote in a URL is
-// already an entity from esc(), and any stray one is %-encoded here, so nothing
-// can break out of the href attribute.
+// only these generated anchors survive. http/https only. esc() encodes `"` and
+// `'` as `&quot;`/`&#39;`, so the bare-URL match terminates on those entities
+// exactly where it used to terminate on the raw quotes: a URL written inside
+// prose quotes links without absorbing the closing quote. Any quote that still
+// reaches here is %-encoded, so nothing can break out of the href attribute.
 export function linkify(escaped: string): string {
-  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s"']+)/g
+  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/(?:(?!&quot;|&#39;)[^\s"'])+)/g
   return escaped.replace(re, (_match, label: string | undefined, mdUrl: string | undefined, bareUrl: string | undefined) => {
     const url = (mdUrl ?? bareUrl ?? '').replace(/"/g, '%22')
     return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label ?? bareUrl}</a>`
@@ -82,12 +84,14 @@ export function linkify(escaped: string): string {
 // Locate elements by an ATTRIBUTE VALUE without building a selector from it.
 // Ids are interpolated from server data, and `[data-pa-id="${id}"]` was the
 // pattern: a quote/bracket in an id turned the lookup into a DIFFERENT selector
-// (silently matching the wrong message) or an unparseable one (a DOMException
-// thrown straight out of the SSE message handler, killing the live stream).
-// Message ids come off a JSONL log whose entries are only mostly server-shaped —
-// ids that do not parse are ignored on load, not rewritten — so the value is
-// compared instead of spliced. Escape in CSS and you still owe the DOM a
-// hand-rolled escape; comparing is the whole fix.
+// (silently matching the wrong message) or an unparseable one. The DOMException
+// did not close the stream — it aborted that one listener frame: for the SSE
+// handler the message was never pushed, rendered, or persisted, and
+// loadHistory skipped the remaining history entries of that load. Message ids
+// come off a JSONL log whose entries are only mostly server-shaped — ids that do
+// not parse are ignored on load, not rewritten — so the value is compared
+// instead of spliced. Escape in CSS and you still owe the DOM a hand-rolled
+// escape; comparing is the whole fix.
 export function byAttr(root: ParentNode, attr: string, value: unknown): HTMLElement[] {
   const out: HTMLElement[] = []
   for (const el of root.querySelectorAll<HTMLElement>(`[${attr}]`)) {
@@ -97,7 +101,11 @@ export function byAttr(root: ParentNode, attr: string, value: unknown): HTMLElem
 }
 
 export function firstByAttr(root: ParentNode, attr: string, value: unknown): HTMLElement | null {
-  return byAttr(root, attr, value)[0] ?? null
+  const want = String(value)
+  for (const el of root.querySelectorAll<HTMLElement>(`[${attr}]`)) {
+    if (el.getAttribute(attr) === want) return el
+  }
+  return null
 }
 
 export function fmtTime(iso: string): string {

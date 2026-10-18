@@ -3,6 +3,8 @@
 // an inline corrector: a simple substitution fix (persisted server-side,
 // effective immediately) or an escalation to the active agent.
 
+import { firstByAttr } from './lookup'
+
 const ui = () => (window as any).__parlay.speechUi
 
 export function injectCorrectorStyles(api: any) {
@@ -27,8 +29,8 @@ export function openCorrector(api: any) {
   // are inline `.pa-sb` spans in ONE `.pa-para` block now, so there is no per-block
   // element to anchor to — attach the corrector below the whole paragraph.
   const anchor = (last.msgId
-    ? document.querySelector(`[data-pa-id="${last.msgId}"] .pa-para`)
-    : null) ?? (last.msgId ? document.querySelector(`[data-pa-id="${last.msgId}"] .pa-bubble`) : null)
+    ? firstByAttr(document, 'data-pa-id', last.msgId)?.querySelector('.pa-para')
+    : null) ?? (last.msgId ? firstByAttr(document, 'data-pa-id', last.msgId)?.querySelector('.pa-bubble') : null)
   if (!anchor) return
 
   const box = document.createElement('div')
@@ -69,7 +71,7 @@ export function openCorrector(api: any) {
   // so the splitter can be tuned against real cases.
   box.querySelector('.pa-corr-split')!.addEventListener('click', async () => {
     const blocks = last.msgId
-      ? [...document.querySelectorAll(`[data-pa-id="${last.msgId}"] .pa-sb`)].map(s => s.textContent ?? '')
+      ? [...(firstByAttr(document, 'data-pa-id', last.msgId)?.querySelectorAll('.pa-sb') ?? [])].map(s => s.textContent ?? '')
       : []
     const i = last.blockIdx ?? blocks.findIndex(b => b.includes(last.sentence.slice(0, 40)))
     try {

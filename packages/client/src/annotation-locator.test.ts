@@ -30,6 +30,14 @@ describe('resolveLocator text fallback', () => {
     expect(resolved?.textContent).toBe('Logout')
   })
 
+  test('does not anchor onto a short unrelated element that shares a prefix', () => {
+    // Only "Logo" exists here, so the forward pass finds nothing and the
+    // reverse pass must reject the 4-char brand link as too small a fraction of
+    // the saved label — a markerless note beats a marker on the wrong element.
+    document.body.innerHTML = `<nav><a>Logo</a></nav>`
+    expect(resolveLocator(STALE, 'Logout account')).toBeNull()
+  })
+
   test('resolves onto a candidate whose live text has shrunk, if the prefix is substantial', () => {
     // Streaming output stopped early: the element's text is now a prefix of
     // the label captured when the annotation was made.

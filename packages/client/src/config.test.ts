@@ -85,9 +85,32 @@ describe('linkify', () => {
     expect(injectedAttrs(html)).toEqual([])
   })
 
-  test('a URL carrying an apostrophe is still linked whole', () => {
-    // esc() encodes ' as &#39;, so the bare-URL matcher no longer truncates.
-    expect(linkify(esc("https://example.com/it's"))).toContain("href=\"https://example.com/it&#39;s\"")
+  test('a URL inside double prose quotes links without the closing quote', () => {
+    const html = linkify(esc('see "https://example.com/x" here'))
+    expect(html).toContain('href="https://example.com/x"')
+    expect(html).toContain('>https://example.com/x</a>')
+    expect(html).not.toContain('example.com/x&quot;')
+  })
+
+  test('a URL inside single prose quotes links without the closing quote', () => {
+    const html = linkify(esc("see 'https://example.com/x' here"))
+    expect(html).toContain('href="https://example.com/x"')
+    expect(html).toContain('>https://example.com/x</a>')
+    expect(html).not.toContain('example.com/x&#39;')
+  })
+
+  test('an escaped ampersand stays inside the URL', () => {
+    const html = linkify(esc('https://x/?a=1&b=2'))
+    expect(html).toContain('href="https://x/?a=1&amp;b=2"')
+    const host = document.createElement('div')
+    host.innerHTML = html
+    expect(host.querySelector('a')!.getAttribute('href')).toBe('https://x/?a=1&b=2')
+  })
+
+  test('an escaped quote entity ends the link, as a raw quote did', () => {
+    expect(linkify(esc("https://example.com/it's"))).toBe(
+      '<a href="https://example.com/it" target="_blank" rel="noopener noreferrer">https://example.com/it</a>&#39;s',
+    )
   })
 })
 
