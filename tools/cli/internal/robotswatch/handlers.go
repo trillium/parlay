@@ -283,7 +283,7 @@ func handleRequestClosed(ev RouteEvent, bead Bead, verbose bool) {
 		if runErr := cmd.Run(); runErr != nil {
 			var exitErr *exec.ExitError
 			if errors.As(runErr, &exitErr) {
-				fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s exited %d: %s\n", ev.ID, exitErr.ExitCode(), strings.TrimSpace(stdout.String()+stderr.String()))
+				fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s NOT DELIVERED (parlay send exited %d): %s\n", ev.ID, exitErr.ExitCode(), strings.TrimSpace(stdout.String()+stderr.String()))
 			} else {
 				fmt.Fprintf(os.Stderr, "robots-watch: inbox worker poke after %s failed: %s\n", ev.ID, runErr)
 			}

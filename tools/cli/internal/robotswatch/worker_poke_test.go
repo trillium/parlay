@@ -53,3 +53,26 @@ func TestInboxClosedPokesWorkerWithoutNotifySubscriber(t *testing.T) {
 		}
 	}
 }
+
+func TestInboxPokeServerUnreachableIsReportedAsUndelivered(t *testing.T) {
+	t.Setenv("PARLAY_STATE_HOME", t.TempDir())
+	t.Setenv("PARLAY_INBOX_DISPATCH", "")
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho 'Cannot reach Parlay server at http://localhost:4242 — refused' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "parlay"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r, w, _ := os.Pipe()
+	old := os.Stderr
+	os.Stderr = w
+	handleRequestClosed(RouteEvent{Store: "inbox", Kind: EventClosed, ID: "inbox-x"}, Bead{ID: "inbox-x", Status: "closed"}, false)
+	_ = w.Close()
+	os.Stderr = old
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	if !strings.Contains(string(buf[:n]), "NOT DELIVERED") {
+		t.Errorf("want a handled NOT DELIVERED outcome, got %q", buf[:n])
+	}
+}

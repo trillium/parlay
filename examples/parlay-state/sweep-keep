@@ -15,3 +15,8 @@
 # The long-lived general-purpose agent from this example. It is never "done", so
 # without this line a sweep could still collect it after a terminal status line.
 helm
+
+# The pi-inbox worker is re-tasked in place by inbox-dispatch pokes (robots-c514).
+# It sits at `done` between items, so without this line `parlay send --pi-inbox`
+# is refused as a STALE WINDOW and the poke is never delivered.
+pi-inbox
