@@ -68,7 +68,7 @@ func TestInboxPokeServerUnreachableIsReportedAsUndelivered(t *testing.T) {
 	old := os.Stderr
 	os.Stderr = w
 	handleRequestClosed(RouteEvent{Store: "inbox", Kind: EventClosed, ID: "inbox-x"}, Bead{ID: "inbox-x", Status: "closed"}, false)
-	w.Close()
+	_ = w.Close()
 	os.Stderr = old
 	buf := make([]byte, 4096)
 	n, _ := r.Read(buf)
