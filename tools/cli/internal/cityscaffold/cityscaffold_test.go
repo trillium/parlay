@@ -120,15 +120,11 @@ func TestMaterializeSeedsSiteIdentityCreateOnly(t *testing.T) {
 	}
 }
 
-// TestAuthoredSourceIsWarningFreeShaped guards, without a gc binary, the two
-// properties that keep the scaffold warning-free against the pinned gc
-// (task-u4uc6): no workspace identity fields in city.toml (deprecated — they
-// live in .gc/site.toml), and required builtin pack imports core and bd
-// declared in pack.toml WITHOUT a version pin (versionless bundled sources
-// resolve the running binary's embedded pin offline; a committed sha would
-// go network-only once gc's canonical pin moves). The real bar is the gated
+// TestAuthoredCityOmitsWorkspaceIdentity guards, without a gc binary, the
+// city.toml half of the authored tree's shape: no workspace identity fields
+// (deprecated — they live in .gc/site.toml). The real bar is the gated
 // TestScaffoldConfigShowWarningFree below.
-func TestAuthoredSourceIsWarningFreeShaped(t *testing.T) {
+func TestAuthoredCityOmitsWorkspaceIdentity(t *testing.T) {
 	cityToml, err := sourceFS.ReadFile("city/city.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +136,17 @@ func TestAuthoredSourceIsWarningFreeShaped(t *testing.T) {
 			}
 		}
 	}
+}
 
+// TestAuthoredPackDeclaresNoBuiltinImports guards the robots-wdbvx fix without
+// a gc binary: the root pack imports ONLY the parlay pack. Declaring
+// [imports.core] and/or [imports.bd] broke every `gc session new` on the gc
+// that actually runs `parlay spawn` (0.15.1.trillium) — neither bundled source
+// resolves there, so config composition failed before the session was created —
+// and [imports.core] is additionally a hard shadow error anywhere gc's legacy
+// implicit-import bookkeeping still lists `core`. See city/README.md
+// ("Builtin packs") for the full rationale and the pinned-ref trade-off.
+func TestAuthoredPackDeclaresNoBuiltinImports(t *testing.T) {
 	packToml, err := sourceFS.ReadFile("city/pack.toml")
 	if err != nil {
 		t.Fatal(err)
@@ -155,23 +161,37 @@ func TestAuthoredSourceIsWarningFreeShaped(t *testing.T) {
 		t.Fatalf("parsing embedded pack.toml: %v", err)
 	}
 	for _, name := range []string{"core", "bd"} {
-		imp, ok := manifest.Imports[name]
-		if !ok {
-			t.Errorf("pack.toml missing required builtin import %q — the pinned gc warns on every load without it", name)
-			continue
+		if _, ok := manifest.Imports[name]; ok {
+			t.Errorf("pack.toml declares [imports.%s] again — it does not resolve on the gc that runs `parlay spawn` (0.15.1.trillium) and `core` is a bootstrap-managed implicit import name gc hard-stops on; see city/README.md (\"Builtin packs\") before re-adding it", name)
 		}
-		if imp.Version != "" {
-			t.Errorf("imports.%s pins version = %q — bundled imports must stay versionless so they track the running binary's embedded pin", name, imp.Version)
-		}
+	}
+	parlay, ok := manifest.Imports["parlay"]
+	if !ok {
+		t.Fatal("pack.toml must import the parlay pack — it is the city's only authored import")
+	}
+	if parlay.Source != "packs/parlay" {
+		t.Errorf("imports.parlay.source = %q, want the in-tree pack dir \"packs/parlay\"", parlay.Source)
 	}
 }
 
 // TestScaffoldConfigShowWarningFree is the task-u4uc6 verification bar: the
-// pinned gc loads the fresh scaffold without either scaffold-attributable
-// warning (missing builtin pack imports, deprecated workspace identity). The
-// core.control-dispatcher singleton advisory is upstream noise from gc's own
-// builtin core pack (a bare `gc init` city gets it too) and is deliberately
-// not asserted on. Gated exactly like TestScaffoldAnswersGCSessionList.
+// pinned gc loads the fresh scaffold, exit 0, without either
+// scaffold-attributable *error*. The core.control-dispatcher singleton
+// advisory is upstream noise from gc's own builtin core pack (a bare `gc init`
+// city gets it too) and is deliberately not asserted on.
+//
+// The missing-builtin-import warning ("does not import required builtin
+// pack(s) core, bd") is likewise expected here and is deliberately tolerated —
+// robots-wdbvx. Its fix (declaring [imports.core]/[imports.bd] versionless)
+// works at pinned refs but makes the city fail to load entirely on
+// 0.15.1.trillium, the gc that actually runs `parlay spawn`, which predates
+// bundled V2 import resolution. A warning on a gc the fleet does not run is
+// preferable to an exit-1 load on the gc it does. city/README.md ("Builtin
+// packs") owns the full trade-off; re-tighten this assertion together with
+// the gc upgrade. It is written to run against EITHER binary — the pinned ref
+// and 0.15.1.trillium both load the scaffold cleanly now, they just disagree
+// about whether the composed config carries the seeded workspace identity.
+// Gated exactly like TestScaffoldAnswersGCSessionList.
 func TestScaffoldConfigShowWarningFree(t *testing.T) {
 	if os.Getenv("PARLAY_GC_INTEGRATION") != "1" {
 		t.Skip("integration probe — set PARLAY_GC_INTEGRATION=1 and PARLAY_GC=<pinned gc> to run")
@@ -191,15 +211,25 @@ func TestScaffoldConfigShowWarningFree(t *testing.T) {
 		t.Fatalf("gc --city %s config show exited %d:\n%s", res.Dir, code, out)
 	}
 	for _, fragment := range []string{
-		"does not import required builtin pack",
+		// The robots-wdbvx failure: a shadowed bootstrap implicit import is
+		// a hard error, not a warning.
+		"shadows the bootstrap implicit import",
+		"is not cached at",
 		"workspace identity fields are deprecated",
 	} {
 		if strings.Contains(out, fragment) {
 			t.Errorf("scaffold still trips %q:\n%s", fragment, out)
 		}
 	}
-	if !strings.Contains(out, "name = \"parlay\"") {
-		t.Errorf("composed config lost the seeded workspace identity (want name = \"parlay\"):\n%s", out)
+	// The seeded workspace identity is honoured by gc refs that read
+	// .gc/site.toml (the pinned ref prints name = "parlay"); a ref that predates
+	// that read (0.15.1.trillium, the production binary) composes an empty name
+	// and derives a display name elsewhere. Either is fine here — what must not
+	// happen is an identity arriving from city.toml (the deprecated path, a
+	// separate error) or some other stale value. The strict seed contract is
+	// asserted ungated by TestMaterializeSeedsSiteIdentityCreateOnly.
+	if !strings.Contains(out, "name = \"parlay\"") && !strings.Contains(out, "name = \"\"") {
+		t.Errorf("composed config carries an unexpected workspace identity (want the seeded name = \"parlay\" or no identity at all):\n%s", out)
 	}
 }
 

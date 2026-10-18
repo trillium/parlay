@@ -32,6 +32,27 @@ func writeSpawnFakeGC(t *testing.T, stdout string, exitCode int) (bin, recordDir
 	return bin, dir
 }
 
+// writeSilentSpawnFakeGC stands in for a gc whose typed-JSON path fails
+// silently — exit 1 with NOTHING on stdout or stderr — while its read-only
+// `config show` still reports the real config-composition error. That is the
+// exact 0.15.1.trillium behaviour behind robots-wdbvx: --json routes the
+// error to io.Discard, so gc_spawn could only report an empty failure.
+func writeSilentSpawnFakeGC(t *testing.T, configShowOutput string, configShowExit int) (bin, recordDir string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin = filepath.Join(dir, "gc")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" >> \"" + dir + "/argv\"\n" +
+		"case \"$*\" in\n" +
+		"  *'config show'*) printf '%s\\n' \"" + configShowOutput + "\" >&2; exit " + strconv.Itoa(configShowExit) + ";;\n" +
+		"esac\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, dir
+}
+
 const fakeSessionNewOK = `{"schema_version":"1","ok":true,"session_id":"pa-123","session_name":"parlay-probe-x","template":"parlay.probe-x"}`
 
 func TestGCSpawnRunHappyPath(t *testing.T) {
@@ -158,6 +179,49 @@ func TestGCSpawnRunSurfacesNonJSONFailure(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should contain %q, got: %v", want, err)
 		}
+	}
+}
+
+// TestGCSpawnRunRecoversGCSilentConfigError guards the second half of
+// robots-wdbvx: gc's typed-JSON path can fail with empty stdout AND stderr,
+// and reporting only "did not emit typed JSON" left the operator with nothing.
+// A silent exit must be re-read through the read-only config verb.
+func TestGCSpawnRunRecoversGCSilentConfigError(t *testing.T) {
+	testsupport.TempStateHome(t)
+	const configErr = `gc config show: city import "bd": remote include https://github.com/gastownhall/gascity.git#main is not cached`
+	bin, _ := writeSilentSpawnFakeGC(t, configErr, 1)
+	t.Setenv("PARLAY_GC", bin)
+	_, _ = fakeBDEnv(t, fakeUpstreamVersion, "0")
+
+	_, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
+	if err == nil {
+		t.Fatal("expected an error when gc exits 1 with empty stdout and stderr")
+	}
+	for _, want := range []string{"typed JSON", "config show says", "is not cached"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should contain %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestGCSpawnRunWithoutDiagnosisStaysHonest pins the other half: when the
+// read-only probe cannot name the failure either (it succeeds, or is just as
+// silent), the report says exactly that instead of inventing a cause.
+func TestGCSpawnRunWithoutDiagnosisStaysHonest(t *testing.T) {
+	testsupport.TempStateHome(t)
+	bin, _ := writeSilentSpawnFakeGC(t, "this line is ignored", 0)
+	t.Setenv("PARLAY_GC", bin)
+	_, _ = fakeBDEnv(t, fakeUpstreamVersion, "0")
+
+	_, err := gcSpawnRun(gctemplate.LaunchSpec{ID: "probe-x"})
+	if err == nil {
+		t.Fatal("expected an error for a silent non-JSON gc exit")
+	}
+	if !strings.Contains(err.Error(), `stdout "", stderr ""`) {
+		t.Errorf("error must still report the empty streams, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "config show says") {
+		t.Errorf("a successful config show adds nothing and must not be reported as a cause, got: %v", err)
 	}
 }
 

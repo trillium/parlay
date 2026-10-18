@@ -22,11 +22,15 @@ into a running city; no earlier unit runs `gc supervisor install`.
 - Belt and braces: `city.toml` sets `suspended_on_start = true`, so even a
   mistakenly started city spawns no agents until the spawn seam
   (task-4cfpv.9) deliberately flips it.
-- The `gc` first on `PATH` is a stale fork build (`0.15.1.trillium`); the
-  integration target is the pinned ref `7c817e064` built from source
-  (contract §2). Validate config changes against a pinned-ref build, not the
-  installed binary. Note the captain's interactive shell aliases `gc` to
-  `git commit`; scripts are unaffected.
+- The `gc` first on `PATH` is a fork build (`0.15.1.trillium`); the pinned
+  integration target is the ref in `third_party/gascity/PIN`, built from
+  source (contract §2). A pinned-ref build is the right tool for *authoring*
+  questions, but it is **not sufficient validation**: `0.15.1.trillium`
+  predates the bundled-import resolution the pinned ref has, so a config that
+  is clean at the pin can still fail to load in production. Validate against
+  **both**, and treat the running binary as the deciding vote (robots-wdbvx).
+  Note the captain's interactive shell aliases `gc` to `git commit`; scripts
+  are unaffected.
 
 ## How `gc` consumes this tree
 
@@ -50,28 +54,67 @@ Build the pinned ref per contract §1 (`tools/gc-build/build-gc.sh`), copy
 read-only config verbs — `gc config show` resolving with exit 0 and **no
 scaffold-attributable warnings** is the bar (task-u4uc6; the gated test
 `TestScaffoldConfigShowWarningFree` in `tools/cli/internal/cityscaffold`
-asserts it). Two warnings this source used to trip are fixed at source:
+asserts it). Validate against **both** gc binaries: the pinned ref the tests
+name, and the `gc` the spawn path actually resolves off `PATH`
+(`0.15.1.trillium` on this box) — they disagree about builtin imports, and the
+running one wins. Two warnings this source used to trip are fixed at source:
 
-- *"does not import required builtin pack(s) core, bd"* — `pack.toml` now
-  declares `[imports.core]` and `[imports.bd]` with **no `version` pin**. A
-  versionless bundled source resolves to the *running* binary's embedded
-  canonical pin, offline, so there is no skew against whatever binary P12
-  installs (a committed sha would degrade to a network-only import once gc's
-  pin moves). The `bd` import matches the provider default ("bd" when no
-  `[beads]` table is declared); it follows Q4 (task-4cfpv.20) if that ruling
-  changes the provider.
 - *"workspace identity fields are deprecated in v2; move them to
   .gc/site.toml"* — `workspace.name` is gone from `city.toml`. The authored
   identity (`parlay`) is seeded into `.gc/site.toml` (machine-local, never
   committed) by `cityscaffold.Materialize` when absent; `gc init` at install
   owns it thereafter. A bare copy of `city/` without that seed simply has no
   declared identity (gc falls back to the directory basename) — still
-  warning-free.
+  warning-free. NOTE: only a gc that reads `.gc/site.toml` picks the seed up;
+  `0.15.1.trillium` ignores it and derives the name from the directory.
+- *"city pack declares [imports.core] which shadows the bootstrap implicit
+  import(s) with the same name"* — `pack.toml` no longer declares any builtin
+  import. See the next section; this one is fixed by omission, not by
+  rewriting.
 
-One warning **remains expected and is not scaffold-attributable**: the
+## Builtin packs (core, bd) are deliberately not imported
+
+`pack.toml` used to declare `[imports.core]` and `[imports.bd]` as versionless
+bundled sources, on the task-u4uc6 reasoning that a versionless bundled source
+resolves the *running* binary's embedded canonical pin offline
+(`config.resolveBundledSourceWithoutLock`). That reasoning holds at the pinned
+ref. It does **not** hold at `0.15.1.trillium`, the fork build on `PATH` that
+`parlay spawn` resolves — and that binary is the one that runs. Two failures,
+both reproduced with the real binary (`robots-wdbvx`):
+
+1. `[imports.bd]` (and `[imports.core]`) never resolve. `0.15.1.trillium`
+   predates `resolveBundledSourceWithoutLock`, so a bundled V2 import falls
+   through to the git-include cache and dies with `city import "bd": remote
+   include https://github.com/gastownhall/gascity.git#main is not cached at
+   <city>/.gc/cache/includes/…`. `gc config show` exits 1 and every `gc
+   session new` fails on it.
+2. `[imports.core]` additionally hard-stops any host whose `GC_HOME` carries
+   gc's legacy implicit-import bookkeeping (`implicit-import.toml`), because
+   `core` is a *bootstrap-managed* implicit import name there: *"city pack
+   declares [imports.core] which shadows the bootstrap implicit import(s) with
+   the same name; rename one side"*. Renaming the binding does not help — the
+   collision gate compares binding names against gc's bootstrap set, and the
+   same binaries that carry that set supply `core` implicitly anyway, so
+   declaring it is redundant as well as illegal.
+
+Consequence to keep in view: a gc new enough to resolve bundled V2 imports
+(the pinned ref) warns *"does not import required builtin pack(s) core, bd"*
+on this city and offers `gc doctor --fix`. That warning is **accepted, not
+fixed**, until the running gc is that gc: the two refs cannot both be
+satisfied, and a city that fails to load on the binary in production is a
+fleet outage while a missing-content warning is not. Re-add both imports (with
+`gc doctor --fix`, or by deleting the comment block in `pack.toml`) at the same
+time as the gc upgrade, and re-check `TestAuthoredPackDeclaresNoBuiltinImports`
+and `TestScaffoldConfigShowWarningFree`.
+
+One further warning **remains expected and is not scaffold-attributable**: the
 `core.control-dispatcher` `max_active_sessions=1` singleton advisory comes
 from gc's own builtin core pack and fires for every city that imports it
 (including a bare `gc init` city). Upstream noise; do not author around it.
+The production binary adds one more of its own: *"unknown field
+`workspace.suspended_on_start`"* — `0.15.1.trillium` predates that field. The
+field is the deliberate safety default `city.toml` documents, it costs exit 0
+only, and moving it is the spawn seam's call, not this file's.
 
 ## What is deliberately absent, and who owns filling it in
 
