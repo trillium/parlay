@@ -8,6 +8,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/trillium/parlay/tools/cli/internal/httpc"
 	"github.com/trillium/parlay/tools/cli/internal/identity"
 	"github.com/trillium/parlay/tools/cli/internal/monitor"
+	"github.com/trillium/parlay/tools/cli/internal/spawn"
 	"github.com/trillium/parlay/tools/cli/internal/wire"
 )
 
@@ -92,11 +94,12 @@ func Launch(argv []string) {
 	if helpWanted("launch", argv) {
 		return
 	}
-	// --force is deliberately absent from the usage text: `parlay launch` has a
-	// TS twin whose usage the parity harness diffs (robots-xaxt), and the only
-	// place this override is ever needed is the closed-bead refusal below,
-	// which names it in full.
-	r := args.Parse("launch", argv, []string{"--force"}, nil)
+	// --bead threads a beads work item through to the spawn pipeline;
+	// --force bypasses both the closed-bead refusal below and the pipeline's
+	// beads-required gate (forwarded, not just consulted here — robots-94ce
+	// found launch parsing --force but never forwarding it, so a forced
+	// relaunch still died in beadGate).
+	r := args.Parse("launch", argv, []string{"--force"}, []string{"--bead"})
 	known, unlaunchable := knownAgents()
 
 	if len(r.Positionals) > 0 {
@@ -139,6 +142,30 @@ func Launch(argv []string) {
 			spawnArgs = append(spawnArgs, "--model", target.model)
 		}
 		spawnArgs = append(spawnArgs, identity.SpawnAccountArgs(target.account)...)
+		// Thread the bead through the launch path (robots-94ce): the spawn
+		// pipeline refuses without one when beads-required mode is on, and
+		// `parlay launch` never supplied it — so every ghost/offline
+		// relaunch died with exit 2. Precedence: explicit --bead wins;
+		// otherwise a still-OPEN bound item is reused (no duplicate
+		// tracking bead); otherwise a fresh tracking bead is minted in the
+		// default (task) store. --force skips all of this and is forwarded
+		// so the pipeline's own gate stands down too.
+		if bead, ok := r.String("--bead"); ok && strings.TrimSpace(bead) != "" {
+			spawnArgs = append(spawnArgs, "--bead", strings.TrimSpace(bead))
+		} else if r.Bool("--force") {
+			spawnArgs = append(spawnArgs, "--force")
+		} else if launchBeadsRequired() {
+			if item, closed := boundWorkItemClosed(target.identityFile); item != "" && !closed {
+				fmt.Fprintf(os.Stderr, "parlay launch: reusing open bound work item %s for %s …\n", item, target.id)
+				spawnArgs = append(spawnArgs, "--bead", item)
+			} else if newID, err := launchCreateBead(target.id, target.name); err != nil {
+				fmt.Fprintf(os.Stderr, "parlay launch: WARNING — could not mint a tracking bead for %s: %v.\n", target.id, err)
+				fmt.Fprintln(os.Stderr, "  Proceeding without one; the spawn may refuse — pass --bead <id> explicitly, or --force to bypass.")
+			} else {
+				fmt.Fprintf(os.Stderr, "parlay launch: minted tracking bead %s for %s …\n", newID, target.id)
+				spawnArgs = append(spawnArgs, "--bead", newID)
+			}
+		}
 		fmt.Fprintf(os.Stderr, "parlay launch: spawning %s via parlay spawn …\n", target.id)
 		// Same dispatch as `parlay spawn` itself (spawn.go), in-process.
 		// A failed spawn propagates its real exit code via
@@ -218,6 +245,46 @@ var liveListeners = monitor.LiveListenerAgents
 // liveListeners is: the real one shells out to a federation store CLI, which a
 // unit test has no business requiring on the box.
 var boundWorkItemClosed = identity.BoundWorkItemClosed
+
+// launchBeadsRequired reports whether the spawn pipeline will demand a bead.
+// Injectable so tests can drive the mint/reuse branches without a real
+// config.toml on the box.
+var launchBeadsRequired = spawn.BeadsRequired
+
+// launchCreateBead mints the relaunch tracking bead. Injectable so tests can
+// observe the mint without a real beads store on the box.
+var launchCreateBead = createLaunchTrackingBead
+
+// createLaunchTrackingBead mints a tracking bead for a `parlay launch`
+// relaunch in the default (task) store, returning the new bead id (e.g.
+// "task-xxxx"). The bead's lifecycle governs the relaunched agent — the same
+// contract a hand-passed --bead carries — so the documented ghost-recovery
+// path (`parlay launch <id>`) works under beads-required mode with no extra
+// flags (robots-94ce fix direction (a)).
+//
+// A creation failure is returned, never fatal here: the caller warns and
+// dispatches without a bead, letting the spawn pipeline's own beadGate emit
+// the authoritative refusal (with its --bead/--force guidance) rather than
+// this verb inventing a second, divergent one.
+func createLaunchTrackingBead(agentID, name string) (string, error) {
+	bin, err := exec.LookPath("task")
+	if err != nil {
+		return "", fmt.Errorf("no 'task' store CLI on PATH: %w", err)
+	}
+	title := fmt.Sprintf("Relaunch agent %s (%s) — recovery", agentID, name)
+	desc := fmt.Sprintf("Tracking bead auto-created by `parlay launch %s` (robots-94ce): binds the relaunched agent's lifecycle under beads-required mode.", agentID)
+	cmd := exec.Command(bin, "create", title, "--description", desc, "--silent")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("task create failed: %w", err)
+	}
+	id := strings.TrimSpace(string(out))
+	// --silent prints just the id; guard against a wrapper that chats anyway.
+	if fields := strings.Fields(id); len(fields) == 1 && strings.Contains(fields[0], "-") {
+		return fields[0], nil
+	}
+	return "", fmt.Errorf("task create returned an unparsable id: %q", string(out))
+}
 
 // The three states `parlay launch` can report, padded to one column width.
 const (

@@ -74,6 +74,13 @@ func resolveLauncher(cfg spawnConfig) string {
 	return resolved
 }
 
+// BeadsRequired reports whether beads-required mode is currently on for this
+// process (env PARLAY_SPAWN_BEADS_REQUIRED wins, else config.toml's
+// [spawn].beads_required). Exported so `parlay launch` can decide whether a
+// relaunch needs a tracking bead before dispatching to the spawn pipeline
+// (robots-94ce) — the resolution itself stays here, single-sourced.
+func BeadsRequired() bool { return resolveBeadsRequired(loadSpawnConfig()) }
+
 // resolveBeadsRequired mirrors bash lines 107–133: PARLAY_SPAWN_BEADS_REQUIRED
 // env wins, else config.toml's [spawn].beads_required (a TOML bool or one of
 // the string spellings "1"/"true"/"yes"/"on", case-insensitive), else off.
