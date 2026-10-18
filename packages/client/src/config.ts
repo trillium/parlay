@@ -41,10 +41,12 @@ export function panelCapsQuery(instance: string): string {
 
 // Attribute-safe escape: &, <, >, " and ' are all encoded, so esc() output is
 // safe inside a double- OR single-quoted attribute as well as in text. That used
-// to be false — quotes passed through, and every caller that interpolated esc()
-// into an attribute (rich-text's data-lang, tabs' url pills, thread-lavish's
-// href) had to hand-roll a `.replace(/"/g, '%22')` after it. Don't add another
-// hand-rolled escape: fix esc() here instead. Config/URL/agent text is
+// to be false — quotes passed through — leaving two workarounds, both now gone:
+// four callers hand-rolled a `.replace(/"/g, '%22')` where an attribute-safe
+// value was needed (annotation's popup chip, attachments' chip, lightbox,
+// thread-images), while the attribute interpolations that skipped it (rich-text's
+// `data-lang`, tabs' url pills, thread-lavish's href) were live breakout vectors.
+// Don't spawn a third — fix esc() here instead. Config/URL/agent text is
 // attacker-influenced (WebFetch output, a file an agent Read), so an unescaped
 // quote is an HTML-attribute breakout, not a cosmetic issue.
 export function esc(s: unknown): string {
