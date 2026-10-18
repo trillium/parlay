@@ -48,23 +48,31 @@ func mustExec(t *testing.T, name string, args []string, dir string, env []string
 
 // storeEnv returns an environment that pins bd to the given store.
 func storeEnv(beadsDir, name string) []string {
-	env := hermeticEnv(os.Environ())
-	env = append(env, "BD_NAME="+name, "BEADS_DIR="+beadsDir)
-	return env
+	return append(os.Environ(), "BD_NAME="+name, "BEADS_DIR="+beadsDir)
 }
 
-// hermeticEnv drops every ambient variable that could point bd at the live
-// federation (BEADS_*, BD_*, BRAIN_*), so a scratch store can never resolve to
-// the shared Dolt server on 127.0.0.1:3307.
-func hermeticEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "BEADS_") || strings.HasPrefix(kv, "BD_") || strings.HasPrefix(kv, "BRAIN_") {
-			continue
+// isolateBeadsEnv makes the whole test process hermetic: every ambient variable
+// that could point bd at the live federation (BEADS_*, BD_*, BRAIN_*) is removed
+// and HOME is replaced with a private directory, so a scratch store can never
+// resolve to the shared Dolt server on 127.0.0.1:3307 or to the user's global
+// beads config. Everything the test spawns (bd, the store stub, the in-process
+// poll) inherits this environment.
+func isolateBeadsEnv(t *testing.T) {
+	t.Helper()
+	saved := map[string]string{}
+	for _, kv := range os.Environ() {
+		k, v, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(k, "BEADS_") || strings.HasPrefix(k, "BD_") || strings.HasPrefix(k, "BRAIN_") {
+			saved[k] = v
+			os.Unsetenv(k)
 		}
-		out = append(out, kv)
 	}
-	return out
+	t.Cleanup(func() {
+		for k, v := range saved {
+			os.Setenv(k, v)
+		}
+	})
+	t.Setenv("HOME", t.TempDir())
 }
 
 // bdOnPath reports whether the real beads CLI is available on PATH. The
@@ -83,10 +91,7 @@ func initScratchStore(t *testing.T, dir, prefix string) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A private HOME keeps bd from reading the user's global beads config; the
-	// scrubbed env keeps it in embedded mode instead of the live Dolt server.
-	env := append(hermeticEnv(os.Environ()), "HOME="+t.TempDir(), "BD_NON_INTERACTIVE=1")
-	mustExec(t, "bd", []string{"init", "-p", prefix}, dir, env)
+	mustExec(t, "bd", []string{"init", "-p", prefix}, dir, append(os.Environ(), "BD_NON_INTERACTIVE=1"))
 	return filepath.Join(dir, ".beads")
 }
 
@@ -94,7 +99,7 @@ func initScratchStore(t *testing.T, dir, prefix string) string {
 // call to the real `bd` pinned to the given scratch store.
 func writeStoreStub(t *testing.T, binDir, name, beadsDir string) {
 	t.Helper()
-	script := fmt.Sprintf("#!/bin/sh\nunset BRAIN_KNOWLEDGE_ROOT BRAIN_EXFIL_FLAT\nexport BEADS_DIR=%q\nexport BD_NAME=%q\nexec bd \"$@\"\n", beadsDir, name)
+	script := fmt.Sprintf("#!/bin/sh\nexport BEADS_DIR=%q\nexport BD_NAME=%q\nexec bd \"$@\"\n", beadsDir, name)
 	if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -246,6 +251,7 @@ func TestScratchStoreClosedBeadFiresNotifyPath(t *testing.T) {
 	if !bdOnPath() {
 		t.Skip("bd CLI not on PATH — integration drives the real beads binary through the poll loop")
 	}
+	isolateBeadsEnv(t)
 
 	stateHome := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", stateHome)
