@@ -11,7 +11,9 @@
 //  2. reconcile the city scaffold (internal/cityscaffold — inert files);
 //  3. synthesise the agent template from the spec (internal/gctemplate);
 //  4. run `gc --city <dir> session new parlay.<id> --json --no-attach` and
-//     parse its typed JSON.
+//     parse its typed JSON. gc's --json mode discards config-load diagnostics,
+//     so a silent exit 1 (empty stdout AND stderr) is re-diagnosed with a
+//     read-only `config show` probe — see gcDiagnoseSilentFailure.
 //
 // Isolation discipline (docs/gascity-integration-contract.md §9.1): every gc
 // invocation gets a parlay-owned GC_HOME ($PARLAY_STATE_HOME/gascity/home)
@@ -120,6 +122,49 @@ func gcSpawnEnvWithBD(home, bdPath string) []string {
 	return withBDOnPath(gcSpawnEnv(home), bdPath, nil)
 }
 
+// gcDiagnoseTimeout bounds the read-only config probe below. Config
+// composition is local work (cache lookups, pack reads); a gc that needs
+// longer than this is not going to name its own error usefully anyway.
+const gcDiagnoseTimeout = 30 * time.Second
+
+// gcDiagnoseSilentFailure recovers gc's real error when a typed-JSON call
+// fails without saying anything.
+//
+// gc's --json mode discards config-load diagnostics
+// (cmd/gc cmd_agent.go: configWarnWriter returns io.Discard for json output),
+// so `gc session new <template> --json --no-attach` can exit 1 with BOTH
+// stdout and stderr empty — the failure robots-wdbvx filed, where every
+// mechanic launch surfaced only "did not emit typed JSON" with nothing to act
+// on. Re-running the READ-ONLY `gc --city <dir> config show` in the same
+// child environment (same GC_HOME, same PATH, same cwd) reproduces the same
+// config-composition error in human-readable form, because that verb does not
+// silence itself. It creates no session, starts no city, and writes no city
+// state, so it is safe to run on a failure path.
+//
+// Returns "" when the probe also has nothing to say — either it failed
+// silently too, or it succeeded (the failure was downstream of composition,
+// and the caller's generic message is the honest report).
+//
+// Known limit: composition is the failure this probe explains, not every
+// silent gc failure. `--json` also swallows a downstream refusal such as an
+// unknown session template, and there is no READ-ONLY verb that resolves a
+// template the way `session new` does — re-running `session new` without
+// `--json` would create a second session on the success path, so it is not a
+// diagnosis. The probe stays read-only on purpose; extend it only with a verb
+// that cannot act.
+func gcDiagnoseSilentFailure(bin, cityDir, home string, env []string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), gcDiagnoseTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "--city", cityDir, "config", "show")
+	cmd.Dir = home
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // gcSpawnRun is the testable core: synthesise, then start. Returns the
 // result envelope or an error that already names the fix.
 func gcSpawnRun(spec gctemplate.LaunchSpec) (gcSpawnResult, error) {
@@ -179,7 +224,18 @@ func gcSpawnRun(spec gctemplate.LaunchSpec) (gcSpawnResult, error) {
 		Error       string `json:"error"`
 	}
 	if jsonErr := json.Unmarshal(out, &created); jsonErr != nil {
-		return res, fmt.Errorf("gc session new (%s, from %s) did not emit typed JSON (run err: %v): stdout %q, stderr %q — if the city's bead store is not bootstrapped yet, see the recipe in tools/cli/internal/gctemplate/integration_test.go (brain bd required — check the brain binary/PARLAY_BD; upstream-build fallback: docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md)", bin, source, runErr, strings.TrimSpace(string(out)), strings.TrimSpace(stderr.String()))
+		stdoutText, stderrText := strings.TrimSpace(string(out)), strings.TrimSpace(stderr.String())
+		// Both streams empty is the --json black hole: ask the read-only
+		// config verb what is actually wrong before reporting.
+		diagnosis := ""
+		if stdoutText == "" && stderrText == "" {
+			diagnosis = gcDiagnoseSilentFailure(bin, scaffold.Dir, home, gcEnv)
+		}
+		detail := fmt.Sprintf("stdout %q, stderr %q", stdoutText, stderrText)
+		if diagnosis != "" {
+			detail += fmt.Sprintf("; gc --city %s config show says: %s", scaffold.Dir, diagnosis)
+		}
+		return res, fmt.Errorf("gc session new (%s, from %s) did not emit typed JSON (run err: %v): %s — if the city's bead store is not bootstrapped yet, see the recipe in tools/cli/internal/gctemplate/integration_test.go (brain bd required — check the brain binary/PARLAY_BD; upstream-build fallback: docs/agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md)", bin, source, runErr, detail)
 	}
 	res.SessionID = created.SessionID
 	res.SessionName = created.SessionName
@@ -188,6 +244,12 @@ func gcSpawnRun(spec gctemplate.LaunchSpec) (gcSpawnResult, error) {
 		detail := created.Error
 		if detail == "" {
 			detail = strings.TrimSpace(stderr.String())
+		}
+		if detail == "" {
+			detail = gcDiagnoseSilentFailure(bin, scaffold.Dir, home, gcEnv)
+		}
+		if detail == "" {
+			detail = "gc said nothing on stdout or stderr"
 		}
 		return res, fmt.Errorf("gc session new parlay.%s failed (err: %v): %s", spec.ID, runErr, detail)
 	}

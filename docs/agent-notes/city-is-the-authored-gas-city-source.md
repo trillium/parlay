@@ -35,21 +35,29 @@ well-known location without restructuring.
   grill Q2b). Imports live in the root `pack.toml`, not `city.toml`, per
   pack-spec: city.toml is the deployment layer.
 
-**Validation recipe that actually works:** build the pinned ref (currently
-`ac6c9c685`; `tools/gc-build/build-gc.sh`, or contract §1's four ICU env vars /
+**Validation recipe that actually works:** build the pinned ref (`third_party/gascity/PIN`;
+`tools/gc-build/build-gc.sh`, or contract §1's four ICU env vars /
 `CGO_ENABLED=0`), copy `city/` to a scratch dir, `GC_HOME=<scratch>` and run
 read-only config verbs there. The `gc` binaries already on `PATH` are the
-wrong artifact (contract §2).
+wrong artifact **for authoring questions** (contract §2) — but they are the
+right artifact for one question the pinned ref cannot answer: *does this city
+still load on the binary that runs `parlay spawn`?* Validate `gc config show`
+against **both**, because they disagree (robots-wdbvx — see below).
 
-**The scaffold is warning-free at the pinned gc, by design** (task-u4uc6;
-details in `city/README.md`). The two warnings this source used to trip are
-fixed at source: `pack.toml` declares `[imports.core]`/`[imports.bd]`
-**versionless** — a versionless bundled source resolves the *running*
-binary's embedded pin offline, so there is no committed-sha skew — and
-`workspace.name` is gone from `city.toml`; the authored identity is seeded
-into machine-local `.gc/site.toml` by `cityscaffold.Materialize`
-(create-only). Guarded by `TestAuthoredSourceIsWarningFreeShaped` (CI) and
-`TestScaffoldConfigShowWarningFree` (gated, needs a pinned gc). The
-`core.control-dispatcher` singleton advisory that remains is gc's own core
-pack warning about itself — every city importing core gets it; don't author
-around it.
+**The scaffold imports no builtin packs, on purpose** (robots-wdbvx; details in
+`city/README.md`, "Builtin packs"). It used to declare `[imports.core]` and
+`[imports.bd]` versionless, on the task-u4uc6 reasoning that a versionless
+bundled source resolves the *running* binary's embedded pin offline. That
+holds at the pinned ref and fails at `0.15.1.trillium`, whose V2 imports fall
+through to the git-include cache (`remote include … is not cached`) — so
+`config show` exited 1 and every `parlay spawn` mechanic launch died. The
+`core` binding is additionally a hard *shadow* error wherever gc's legacy
+implicit-import bookkeeping still lists `core`, and those binaries supply core
+implicitly anyway. Missing-builtin-import is a *warning* at refs that want the
+imports; an unloadable city is an outage. The identity seed still holds: a gc
+that reads `.gc/site.toml` composes `name = "parlay"`, `0.15.1.trillium`
+composes an empty name and derives a display name elsewhere. Guarded by
+`TestAuthoredPackDeclaresNoBuiltinImports` and `TestAuthoredCityOmitsWorkspaceIdentity`
+(CI) and `TestScaffoldConfigShowWarningFree` (gated, runs against either binary).
+The `core.control-dispatcher` singleton advisory is gc's own core pack warning
+about itself — every city importing core gets it; don't author around it.

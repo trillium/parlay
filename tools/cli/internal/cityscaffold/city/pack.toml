@@ -18,21 +18,25 @@ description = "Root city pack for the parlay city. Deployment glue; all parlay d
 [imports.parlay]
 source = "packs/parlay"
 
-# Required builtin packs. The pinned gc warns ("does not import required
-# builtin pack(s) core, bd") on any city whose composed config does not reach
-# these; gc init writes the same imports with a `version = "sha:…"` pin copied
-# from the installing binary. `version` is deliberately OMITTED here: for a
-# recognized bundled source with no declared version, gc resolves the running
-# binary's own embedded canonical pin from its synthetic cache — offline, and
-# never skewed against whatever binary is actually running
-# (config.resolveBundledSourceWithoutLock at the pinned ref). A committed sha
-# would instead degrade to a network-only remote import the moment gc's
-# canonical pin moves past it.
-[imports.core]
-source = "https://github.com/gastownhall/gascity/tree/main/internal/bootstrap/packs/core"
-
-# bd is required because the city's beads provider defaults to "bd" when no
-# [beads] table is declared (and city.toml deliberately declares none — Q4,
-# task-4cfpv.20). If Q4 rules a non-bd provider in, drop this import with it.
-[imports.bd]
-source = "https://github.com/gastownhall/gascity/tree/main/examples/bd"
+# The builtin packs (core, bd) are deliberately NOT imported here. Both of
+# the declarations this file used to carry broke the city for the gc that
+# actually runs `parlay spawn` (robots-wdbvx), each in its own way:
+#
+#   * [imports.core] is a hard stop on any host whose GC_HOME carries gc's
+#     legacy implicit-import bookkeeping — "city pack declares [imports.core]
+#     which shadows the bootstrap implicit import(s) with the same name;
+#     rename one side" — and those binaries supply core implicitly anyway, so
+#     declaring it is both illegal and redundant;
+#   * neither source resolves at all on 0.15.1.trillium, the fork build on
+#     PATH: it predates config.resolveBundledSourceWithoutLock, so a bundled
+#     V2 import falls through to the git-include cache and dies with "remote
+#     include https://github.com/gastownhall/gascity.git#main is not cached at
+#     <city>/.gc/cache/includes/…". `gc config show` and every `gc session
+#     new` failed on that, which is what broke mechanic launches.
+#
+# gc init at a ref that supports bundled V2 imports writes these two imports
+# and warns ("does not import required builtin pack(s) core, bd") when a city
+# omits them; re-adding them is correct only together with a gc that resolves
+# them offline. See city/README.md ("Builtin packs") for the full trade-off —
+# the pinned ref and the production ref disagree here, and this file serves
+# the one that runs.

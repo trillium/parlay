@@ -226,7 +226,10 @@ Needed to run parlay: none of it. This is the record's archaeology and its opt-i
   [server drafts](agent-notes/go-server-ticket-c3-drafts-uploads.md) ·
   [launchd deploy](agent-notes/go-server-ticket-c6-parlay-server.md)
 - **`city/` is parlay's authored Gas City source, not a live city** — never run city-mutating `gc` verbs against it
-  with the default `GC_HOME`. → [city](agent-notes/city-is-the-authored-gas-city-source.md) ·
+  with the default `GC_HOME`, and validate `gc config show` against the pinned ref *and* the binary that runs
+  (`0.15.1.trillium`): they disagree about builtin-pack imports, and the running one decides. →
+  [city](agent-notes/city-is-the-authored-gas-city-source.md) ·
+  [a gc that fails silently](agent-notes/gc-json-swallows-config-errors-robots-wdbvx.md) ·
   [pinned gc](agent-notes/pinned-gc-speaks-upstream-bd-not-the-fork.md) ·
   [the brain probe](agent-notes/gc-main-brain-probe.md)
 - **`parlay mechanic on|off|status` is the kill switch** for the robots→mechanic auto-spawner — a sentinel file, not
