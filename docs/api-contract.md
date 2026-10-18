@@ -77,6 +77,13 @@ because it discloses identifiers, the second defense-in-depth (it still
 returns message content and drives presence bookkeeping) even though polling
 no longer registers the channel (task-1t0m). On those routes:
 
+- **The `Host` header is vetted first, on every route** (DNS rebinding: a
+  rebound page sends `Host` == `Origin` == its own name, which the same-origin
+  comparison would accept). Allowed: loopback / `.local` / private-LAN /
+  tailnet literals, `*.ts.net`, bare single-label names, the host of any admit
+  list origin, and each name in `PARLAY_ALLOWED_HOSTS` (comma-separated
+  hostnames or `host:port`). An admit list holding `*` disables the check; an
+  empty `Host` is allowed. Otherwise **421**, handler never reached.
 - A request with **no `Origin` header is allowed.** That is every CLI, curl,
   hook and server-to-server caller, and a browser cannot omit `Origin` on a
   cross-site request. Nothing in this document changes for those callers.
