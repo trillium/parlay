@@ -48,9 +48,31 @@ func mustExec(t *testing.T, name string, args []string, dir string, env []string
 
 // storeEnv returns an environment that pins bd to the given store.
 func storeEnv(beadsDir, name string) []string {
-	env := os.Environ()
-	env = append(env, "BD_NAME="+name, "BEADS_DIR="+beadsDir)
-	return env
+	return append(os.Environ(), "BD_NAME="+name, "BEADS_DIR="+beadsDir)
+}
+
+// isolateBeadsEnv makes the whole test process hermetic: every ambient variable
+// that could point bd at the live federation (BEADS_*, BD_*, BRAIN_*) is removed
+// and HOME is replaced with a private directory, so a scratch store can never
+// resolve to the shared Dolt server on 127.0.0.1:3307 or to the user's global
+// beads config. Everything the test spawns (bd, the store stub, the in-process
+// poll) inherits this environment.
+func isolateBeadsEnv(t *testing.T) {
+	t.Helper()
+	saved := map[string]string{}
+	for _, kv := range os.Environ() {
+		k, v, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(k, "BEADS_") || strings.HasPrefix(k, "BD_") || strings.HasPrefix(k, "BRAIN_") {
+			saved[k] = v
+			_ = os.Unsetenv(k)
+		}
+	}
+	t.Cleanup(func() {
+		for k, v := range saved {
+			_ = os.Setenv(k, v)
+		}
+	})
+	t.Setenv("HOME", t.TempDir())
 }
 
 // bdOnPath reports whether the real beads CLI is available on PATH. The
@@ -69,7 +91,7 @@ func initScratchStore(t *testing.T, dir, prefix string) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, "bd", []string{"init", "-p", prefix}, dir, os.Environ())
+	mustExec(t, "bd", []string{"init", "-p", prefix}, dir, append(os.Environ(), "BD_NON_INTERACTIVE=1"))
 	return filepath.Join(dir, ".beads")
 }
 
@@ -229,6 +251,7 @@ func TestScratchStoreClosedBeadFiresNotifyPath(t *testing.T) {
 	if !bdOnPath() {
 		t.Skip("bd CLI not on PATH — integration drives the real beads binary through the poll loop")
 	}
+	isolateBeadsEnv(t)
 
 	stateHome := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", stateHome)
