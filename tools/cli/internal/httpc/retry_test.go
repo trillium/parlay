@@ -58,7 +58,7 @@ func stallingServer(t *testing.T, stallFirst int) *atomic.Int32 {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"ok":true}`))
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	t.Cleanup(func() { close(release) })
 	return &hits
