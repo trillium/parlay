@@ -457,3 +457,15 @@ appear at the TextEdit cursor, byte-for-byte; the status poll ends at
 `injected`. NOTE: `$FRONT` is the *process* name (e.g. `wezterm-gui`)
 while Talon matches the *app* name (e.g. `WezTerm`) — use the Talon
 `ui.apps()` name for `"app"`, not the osascript name.
+
+### Talon-control guardrails (task-w8nwu)
+
+Two routes sit behind an allow-list gate and are the only way a caller names a Talon command or injects text outside the phone/voice flows above: `POST /api/chat/talon/run` (`{"command":"slide_next","dryRun":false}`) and `POST /api/chat/talon/inject` (`{"text":"…","app":"Keynote"}`). Policy lives in `remoteinput.Guardrails`; handlers in `handlers/talon_control.go`.
+
+- **Both paths are off by default**, each with its own flag: `PARLAY_TALON_RUN=1`, `PARLAY_TALON_INJECT=1`. Enabling one does not enable the other.
+- **Allow-list, closed**: `PARLAY_TALON_COMMANDS` (comma list; unset = `DefaultCommands`, empty = none) selects from the compiled-in catalogue (`allowedActions`); a name outside it is a startup config error and the paths stay disabled. Config can never supply a snippet, so nothing becomes Python or shell. `PARLAY_TALON_APPS` lists the apps text may be injected into (exact name, case-insensitive; unset = none, so injection is unusable until configured). Injection with no app is refused.
+- **Caller gate, no bypass**: peer address (`RemoteAddr`, never a forwarded header) must be loopback or Tailscale (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) → else 403; then `Authorization: Bearer $PARLAY_TALON_TOKEN` → 401 (503 when the token is unset: there is no tokenless mode). Unlike `/api/chat/slide`, the `Tailscale-User-Login` header does not skip the token. The token is separate from the slide/pairing token on purpose.
+- Order: origin → token → path enabled → body, so an unauthenticated caller learns nothing about config.
+- **Widening needs captain review**: adding to `DefaultCommands` or to `allowedActions` (or defaulting an app) hands every install a new capability. The repo has no CODEOWNERS file, so flag it in the PR. `TestEveryAllowListedCommandHasATest` (handlers) fails the build if any allow-listed command lacks an entry in `commandPassCases`, and `TestAllowedCommandPasses` runs each one.
+
+Not here: voice features and any words-to-Talon route.

@@ -7,6 +7,9 @@
 //	GET  /api/chat/remote-input/targets      list Talon's apps in Talon order
 //	POST /api/chat/remote-input/parse-words  words → resolved command (READ-ONLY)
 //
+// Two more routes (task-w8nwu) sit behind the allow-list gate in
+// talon_control.go: POST /api/chat/talon/run and /api/chat/talon/inject.
+//
 // Terminal outcomes additionally fan out as the device-scoped SSE event
 // `remote_input_result` carrying the Outcome — that event is what lets
 // Parlay clear its shared input state only on confirmed injection
@@ -54,6 +57,9 @@ func registerRemoteInput(mux *http.ServeMux, hub *Hub, st *store.Store) {
 	mux.HandleFunc("/api/chat/remote-input/targets", requireTailnetAuth(slideTokenFromEnv, handleRemoteInputTargets(svc)))
 	mux.HandleFunc("/api/chat/remote-input/parse-words",
 		requireTailnetAuth(slideTokenFromEnv, handleRemoteInputParseWords(svc, grammarVersionFromEnv)))
+	g := talonGuardrailsFromEnv()
+	mux.HandleFunc(talonRunPath, handleTalonRun(svc, seam, g))
+	mux.HandleFunc(talonInjectPath, handleTalonInject(svc, seam, g))
 	mux.HandleFunc("/slide", handleSlidePage)
 	mux.HandleFunc(slideManifestPath, handleSlideManifest)
 	mux.HandleFunc(slideWorkerPath, handleSlideWorker)
