@@ -59,6 +59,33 @@ shape for the same reason: it now reads `preflight OK — canonical relay is up
 for 'X' and polling <url>`, because "the relay is up" was never the whole
 precondition.
 
+**The two enrollment POSTs retry a transport failure under a bounded policy,
+and the final error says whether the server was slow or unreachable**
+(robots-wsv8a, 2026-10-19). `register-agent` and the "listening" announce used
+to be one 10s shot each through `httpc.PostJSON`, so an enrollment that landed
+while the server was momentarily busy died with `Cannot reach Parlay server …
+context deadline exceeded` — against a relay that was up, a preflight that had
+just passed, and a server that answered the same POST in under 50ms a minute
+later — and the agent came up with no reply channel. Go's HTTP client reports
+a dial timeout and an awaiting-headers timeout with that same text, so the old
+message could not even say which it was. Both POSTs now go through
+`httpc.PostJSONRetry` under `httpc.EnrollRetry`: up to 6 attempts, each with
+the same 10s wait a one-shot got, doubling pauses (0.5s → 4s), a 30s
+wall-clock budget that clips the last attempt, and one stderr line per failed
+attempt (`parlay: POST /api/chat/register-agent attempt 1/6 — … ; retrying in
+500ms`) so a watcher can tell a retry sequence from a hang. A slow server gets
+~3 attempts inside the budget; a refused connection (server restarting under
+launchd's 10s throttle) burns all 6 in ~11.5s. The exhausted message keeps the
+`Cannot reach Parlay server at <base>` prefix and then classifies: **SLOW, not
+down** (a connection was obtained — an `httptrace` hook records it — but no
+answer came), **UNREACHABLE** (connection refused, or nothing answered the
+dial), or **UNSTABLE** (connected, then dropped). A server *answer* is never
+retried: a non-2xx or an undecodable body dies at once exactly as before. Both
+POSTs are safe to repeat — `register-agent` is an idempotent upsert, and a
+duplicate "listening" line on the agent's own channel is cosmetic next to a
+dead channel. `claim`'s enrollment (`internal/commands/claim.go`) and the
+re-register in `identity --rename` still use the one-shot `PostJSON`.
+
 `singleton.go` enforces one live poll loop per agent id (an "arming a
 listener is a takeover" guard — a second `listen` for the same agent
 supersedes rather than duplicates); `watchdog.go` is the post-spawn liveness
