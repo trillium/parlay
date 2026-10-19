@@ -7,12 +7,12 @@ import (
 	"parlay/go-server/internal/sourcecontracts"
 )
 
-// TestDerivedAllowlistIsExactlyToolEvent pins the byte-identical property this
-// change rides on: deriving from the enrolled contracts must reproduce the
-// hand-written allowlist it replaced — tool_event, and nothing else.
-func TestDerivedAllowlistIsExactlyToolEvent(t *testing.T) {
-	if len(ingressEvents) != 1 || !ingressEvents["tool_event"] {
-		t.Fatalf("derived ingressEvents = %v, want exactly {tool_event}", ingressEvents)
+// TestDerivedAllowlistIsExactlyTheEnrolledProducers pins the allowlist to the
+// two real producers the canonical tree enrolls: the tool tailer's tool_event
+// and the RODE battery reader's rode_status — and nothing else.
+func TestDerivedAllowlistIsExactlyTheEnrolledProducers(t *testing.T) {
+	if len(ingressEvents) != 2 || !ingressEvents["tool_event"] || !ingressEvents["rode_status"] {
+		t.Fatalf("derived ingressEvents = %v, want exactly {rode_status, tool_event}", ingressEvents)
 	}
 }
 

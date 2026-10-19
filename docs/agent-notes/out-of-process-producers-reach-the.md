@@ -12,9 +12,11 @@ server had no way to put a frame on the panel. `POST /api/chat/events`
 `json.RawMessage` and reaches the wire untouched — the panel must not be able
 to tell an ingress frame from an internal one.
 
-The allowlist is **one name per real producer**: `tool_event` alone today, for
-the TS tool tailer. Widen it when something in this repo actually produces a
-name, and record the producer next to the entry. The tempting larger set —
+The allowlist is **one name per real producer**: `tool_event` for the tool
+tailer and `rode_status` for the RODE Connect battery reader (whose latest
+frame also backs `GET /api/rode`, `handlers/rode.go`). It is derived from the
+enrolled source contracts — widen it by enrolling a contract for a real
+producer under `contracts/sources/`, never by editing the map. The tempting larger set —
 every `docs/api-contract.md` SSE name with a first-party client subscriber and
 no producer inside this server (events.go's "not live" column) — is
 deliberately *not* the rule, because it sweeps in the panel-aiming events

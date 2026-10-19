@@ -29,8 +29,10 @@ import (
 // from the enrolled source contracts (docs/source-contracts.md — the
 // canonical contracts/sources/ tree at the repo root, embedded here via
 // internal/sourcecontracts) as the union of `emits` across every contract
-// with the observability trust posture. Today that is tool_event alone — the
-// TS tool tailer, enrolled as contracts/sources/tool-tailer.json. The hook
+// with the observability trust posture. Today that is two names: tool_event
+// (the tool tailer, enrolled as contracts/sources/tool-tailer.json) and
+// rode_status (the RODE Connect battery reader, contracts/sources/rode-battery.json,
+// whose latest frame is also kept for GET /api/rode — see rode.go). The hook
 // tailer, the only other caller this seam was built for, does not come through
 // here at all: it posts to /api/chat/message, which persists first and
 // broadcasts as a consequence.
@@ -158,7 +160,12 @@ type eventIngressResponse struct {
 // server-side producers whose only sensible response to a rejection is to log
 // and continue, and a status code is what an HTTP client checks without
 // parsing a body.
-func handleEventsIngress(hub *Hub) http.HandlerFunc {
+//
+// rode is the one exception to the never-reshape rule above, and only half
+// of one: a rode_status frame is decoded so the latest reading can be served
+// by GET /api/rode, but what reaches the SSE wire is still the producer's
+// bytes, untouched.
+func handleEventsIngress(hub *Hub, rode *rodeStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req eventIngressRequest
 		if !decodeJSON(w, r, &req) {
@@ -171,6 +178,14 @@ func handleEventsIngress(hub *Hub) http.HandlerFunc {
 		if !ingressEvents[req.Event] {
 			writeStatusError(w, http.StatusBadRequest, "event not accepted from an external producer: "+req.Event)
 			return
+		}
+		if req.Event == rodeEvent {
+			reading, problem := parseRodeStatus(req.Data)
+			if problem != "" {
+				writeStatusError(w, http.StatusBadRequest, problem)
+				return
+			}
+			rode.set(reading)
 		}
 
 		// An absent payload broadcasts `{}`, matching how this package already
@@ -192,9 +207,9 @@ func handleEventsIngress(hub *Hub) http.HandlerFunc {
 // panics on a duplicate pattern, so a path serving two methods needs a single
 // registration that switches — the same shape handleDraft and handleSettings
 // already use for their GET/PUT pairs.
-func handleEventsRoute(st *store.Store, hub *Hub) http.HandlerFunc {
+func handleEventsRoute(st *store.Store, hub *Hub, rode *rodeStore) http.HandlerFunc {
 	stream := handleEvents(st, hub)
-	ingress := handleEventsIngress(hub)
+	ingress := handleEventsIngress(hub, rode)
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:

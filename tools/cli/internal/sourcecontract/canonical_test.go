@@ -47,7 +47,17 @@ func TestCanonicalTreeLoads(t *testing.T) {
 	if c.Trust != TrustObservability {
 		t.Fatalf("tool-tailer trust = %q, want observability", c.Trust)
 	}
-	if got := r.IngressEventNames(); !reflect.DeepEqual(got, []string{"tool_event"}) {
-		t.Fatalf("derived ingress allowlist = %v, want exactly [tool_event]", got)
+	// The RODE Connect battery reader is the second real producer: its
+	// enrollment is what admits rode_status to the ingress, sorted ahead of
+	// tool_event because the derived list is alphabetical.
+	rb, ok := r.ByName("rode-battery")
+	if !ok {
+		t.Fatalf("rode-battery is not enrolled; canonical tree has %v", r.Names())
+	}
+	if rb.Trust != TrustObservability {
+		t.Fatalf("rode-battery trust = %q, want observability", rb.Trust)
+	}
+	if got := r.IngressEventNames(); !reflect.DeepEqual(got, []string{"rode_status", "tool_event"}) {
+		t.Fatalf("derived ingress allowlist = %v, want exactly [rode_status tool_event]", got)
 	}
 }

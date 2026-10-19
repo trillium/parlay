@@ -9,13 +9,21 @@ import (
 	"time"
 )
 
-// postIngress drives POST /api/chat/events with a raw JSON body.
+// postIngress drives POST /api/chat/events with a raw JSON body against a
+// throwaway RODE store; tests that care about the store use postIngressRode.
 func postIngress(t *testing.T, hub *Hub, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return postIngressRode(t, hub, newRodeStore(), body)
+}
+
+// postIngressRode drives POST /api/chat/events with a raw JSON body against
+// the given RODE store.
+func postIngressRode(t *testing.T, hub *Hub, rode *rodeStore, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/events", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	handleEventsIngress(hub)(rec, req)
+	handleEventsIngress(hub, rode)(rec, req)
 	return rec
 }
 
@@ -132,7 +140,7 @@ func TestEventsRouteDispatchesByMethod(t *testing.T) {
 	st := newTestStore(t)
 	hub := newHub(newBroker())
 	t.Cleanup(hub.Stop)
-	route := handleEventsRoute(st, hub)
+	route := handleEventsRoute(st, hub, newRodeStore())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/events", strings.NewReader(`{"event":"tool_event","data":{}}`))
