@@ -10,6 +10,9 @@
 //  1. add-self-to-agent-registry: POST /api/chat/register-agent (identity +
 //     optional --caps), so the tab/registry entry exists under this id.
 //  2. Announce "listening" on the agent's own channel via /api/chat/reply.
+//     Steps 1–2 retry a transport failure under httpc.EnrollRetry (bounded,
+//     narrated, robots-wsv8a) and die saying whether the server was slow or
+//     unreachable; a server ANSWER is never retried.
 //  3. Hand off into the poll loop — the SAME relay-backed monitor as
 //     `parlay monitor`, reused (not duplicated) via runMonitor.
 package monitor
@@ -53,6 +56,18 @@ var setSpawnAccount = config.SetSpawnAccount
 // table and the actual relay — nothing a unit test may run. Tests stub it to
 // simulate a ready (0) or missing (non-zero) relay.
 var preflightRelay = PreflightRelay
+
+// enrollRetry bounds the two enrollment POSTs below (robots-wsv8a). They arm
+// the agent's ONLY reply channel, so a transient server stall there — one
+// 10s shot that happened to land while the server was busy — used to cost
+// the agent every steer for the rest of its session, with an error that
+// could not say whether the server was down or merely slow. Both POSTs are
+// safe to repeat: register-agent is an idempotent upsert, and a repeated
+// "listening" announce is a cosmetic duplicate on the agent's own channel,
+// whereas a dead channel is the failure this command exists to prevent.
+// Package-level so tests can shrink the waits; production uses the shared
+// policy so every enrolling verb degrades the same way.
+var enrollRetry = httpc.EnrollRetry
 
 type registerAgentResponse struct {
 	OK    bool   `json:"ok,omitempty"`
@@ -147,7 +162,7 @@ func CmdListen(argv []string) {
 
 	// 3. add-self-to-agent-registry — identity + capabilities.
 	fmt.Fprintf(os.Stderr, "parlay listen: registering '%s' …\n", agent)
-	reg := httpc.PostJSON[registerAgentResponse]("/api/chat/register-agent", body)
+	reg := httpc.PostJSONRetry[registerAgentResponse]("/api/chat/register-agent", body, enrollRetry)
 	if reg.Error != "" {
 		httpc.Die(fmt.Sprintf("parlay listen: register-agent failed: %s", reg.Error), config.ExitRuntime)
 		return
@@ -158,9 +173,9 @@ func CmdListen(argv []string) {
 	handoffRegisteredAgent = agent
 
 	// 4. Announce presence on the agent's own channel.
-	reply := httpc.PostJSON[listenReplyResponse]("/api/chat/reply", map[string]string{
+	reply := httpc.PostJSONRetry[listenReplyResponse]("/api/chat/reply", map[string]string{
 		"text": "listening — monitor armed, ready for messages.", "agent": agent,
-	})
+	}, enrollRetry)
 	if reply.Error != "" {
 		httpc.Die(fmt.Sprintf("parlay listen: reply failed: %s", reply.Error), config.ExitRuntime)
 		return
