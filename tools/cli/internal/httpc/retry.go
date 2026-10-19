@@ -143,18 +143,18 @@ func describeAttempt(k reachKind, waited time.Duration, base string) string {
 // every caller already greps for — and then says, in capitals a human scans
 // for, whether the server was SLOW, UNREACHABLE or UNSTABLE, with the attempt
 // count, the elapsed time and the one remedy that fits.
-func describeExhausted(base, path string, k reachKind, attempts int, elapsed, perAttempt time.Duration) string {
+func describeExhausted(base, path string, k reachKind, attempts int, elapsed, lastWait time.Duration) string {
 	tally := fmt.Sprintf("%d attempt%s over %s", attempts, plural(attempts), elapsed.Round(100*time.Millisecond))
 	prefix := fmt.Sprintf("Cannot reach Parlay server at %s — ", base)
 	switch k {
 	case reachSlow:
 		return prefix + fmt.Sprintf("SLOW, not down: it accepted every connection but never answered POST %s within %s (%s). "+
 			"It is probably busy; re-run in a moment. If this keeps happening the server is wedged — check 'parlay health', then restart it.",
-			path, perAttempt, tally)
+			path, lastWait, tally)
 	case reachDialTimeout:
 		return prefix + fmt.Sprintf("UNREACHABLE: could not even connect within %s (%s) — nothing answered the dial "+
 			"(wrong address, a firewall, or the server is bound to a different interface). Check PARLAY_SERVER / 'parlay remote'.",
-			perAttempt, tally)
+			lastWait, tally)
 	case reachRefused:
 		return prefix + fmt.Sprintf("UNREACHABLE: connection refused (%s) — nothing is listening there "+
 			"(server down, wrong port, or bound to another interface). Start the server, or check PARLAY_SERVER / 'parlay remote'.",
@@ -201,6 +201,7 @@ func PostJSONRetry[T any](path string, body any, r Retry) T {
 	start := time.Now()
 	pause := r.Backoff
 	var last reachKind
+	var lastWait time.Duration
 	attempt := 0
 	for {
 		attempt++
@@ -225,6 +226,7 @@ func PostJSONRetry[T any](path string, body any, r Retry) T {
 		}
 
 		last = classifyTransport(err, connected)
+		lastWait = wait
 		if !last.transient() {
 			Die(fmt.Sprintf("Cannot reach Parlay server at %s — %v", base, err), config.ExitRuntime)
 		}
@@ -244,7 +246,7 @@ func PostJSONRetry[T any](path string, body any, r Retry) T {
 		pause *= 2
 	}
 
-	Die(describeExhausted(base, path, last, attempt, time.Since(start), r.PerAttempt), config.ExitRuntime)
+	Die(describeExhausted(base, path, last, attempt, time.Since(start), lastWait), config.ExitRuntime)
 	panic("unreachable")
 }
 
