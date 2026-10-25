@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# MANUAL ONLY: a developer-run pre-demo check (runbook runbooks-v84). CI does not
+# run this harness; it needs a Go toolchain because it builds both binaries.
+#
 # Non-voice round trip for the herdr web page: the synthetic equivalent of saying
 # a dictated line that ends in "send it". It builds the real Go server and the
 # real eval engine (one `parlay` binary), runs them in a throwaway sandbox on
