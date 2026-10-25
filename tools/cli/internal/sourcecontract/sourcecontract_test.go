@@ -157,6 +157,12 @@ func TestValidateOriginFields(t *testing.T) {
 	c = observability()
 	c.Origin.Fields[0].Type = "uuid"
 	wantErr(t, c, `"uuid"`)
+
+	c = observability()
+	c.Origin.Fields = append(c.Origin.Fields, MetadataField{Name: "channels", Type: FieldArray})
+	if err := Validate(c); err != nil {
+		t.Fatalf("array field type must validate: %v", err)
+	}
 }
 
 func TestValidateDeliveryVocabulary(t *testing.T) {

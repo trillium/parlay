@@ -844,6 +844,30 @@ rpcId was unknown/expired.
 Bundle version, polled on every SSE `connected` so a stale PWA tab
 self-upgrades. Response: `{ "version": "string" }` (`"unknown"` = no-op).
 
+### `GET /api/rode`
+The latest RODE Connect microphone reading, for consumers that are not SSE
+clients (Talon Voice, status bars, shell scripts). Fed by `rode_status` frames
+on `POST /api/chat/events`; held in memory only, so a restarted server has no
+reading until the producer's next capture. The response is the last accepted
+producer frame: `ts` is the producer's capture timestamp, the server never
+ages the frame out, and consumers judge freshness from `ts`. Response is the
+producer's own shape (identical to rode-battery's `state/latest.json`), with
+nothing wrapped around it:
+```jsonc
+{
+  "status": "ok",                  // ok | permission-denied | app-not-running | window-missing | read-error
+  "ts": "2026-10-19T04:17:15.511Z",
+  "channels": [                    // present only when status is "ok"
+    { "mic": "tx1", "label": "Wireless GO II TX1", "connected": true,  "pct": 72,   "color": "green",   "confidence": 0.9 },
+    { "mic": "tx2", "label": "Wireless GO II TX2", "connected": false, "pct": null, "color": "unknown", "confidence": 0.9 }
+  ],
+  "detail": "…"                    // optional, non-ok states
+}
+```
+**404** `{"error": "no RODE reading received yet"}` before the first frame;
+**405** (`Allow: GET`) on other methods. Unguarded read: no identifiers, no
+device uuid, nothing writable (same class as `/api/chat/version`).
+
 ---
 
 ## Live commands
@@ -1084,6 +1108,7 @@ implements the same contract for hosts without a shared subscription.
 | `draft` | `{ "text", "clientId"? }` | Cross-device draft sync; self-echoes ignored via `clientId`. |
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
+| `rode_status` | `{ "status", "ts", "channels"?: [{ "mic", "label", "connected", "pct", "color", "confidence" }], "detail"? }` | One RODE Connect battery capture; fed through the ingress (below) by the rode-battery producer. The latest one is also served by `GET /api/rode`. |
 | `tts_event` | `{ "id", "role": "tts_event", "type", "device", …, "ts" }` | TTS lifecycle fan-out from `POST /tts-event`. |
 | `remote_input_result` | `Outcome` (`{ "id", "device", "status", "focus"?, "injectAttempted", "preserveText"?, "stripTrigger"?, "error"?, "dryRun"?, "wouldInsert"?, "wouldRun"?, "allowUnfocused"?, "mode"?, "beadId"?, "beadStore"?, "beadWrapper"?, "capturedText"? }`) | Terminal remote-input outcomes (`injected`/`focus_failed`/`inject_failed`/`dry_run_passed`/`bead_created`/`bead_failed`/`held`), device-scoped. See [`docs/remote-input.md`](./remote-input.md). |
 | `lavish_session` | `{ "key", "file", "proxyUrl", "status" }` | Embedded-workspace card upsert. **Producer routes not wired** — see below. |
@@ -1108,7 +1133,9 @@ the path serves both.
 
 Callers: the hook/tool tailer (Go), pushing `tool_event` against
 `PARLAY_HUB_URL` (default `http://127.0.0.1:4242`, 5s timeout, per-route
-ordered delivery chains that shed at 256 queued posts).
+ordered delivery chains that shed at 256 queued posts); the rode-battery
+reader (`~/code/rode-battery`, outside this repo), pushing `rode_status` once
+per capture.
 
 Request body:
 ```jsonc
@@ -1122,7 +1149,15 @@ broadcasts `{}`); **400** `{"error": "event is required"}` /
 `{"error": "event not accepted from an external producer: X"}`; **405**
 (`Allow: GET, POST`) on other methods.
 
-**The allowlist is one name per real producer** — `tool_event` alone today.
+`rode_status` is the one name whose payload is also inspected: it must be a
+reading (a JSON object with non-empty `status` and `ts`; `channels`, when
+present, an array of channel objects), because the server keeps the latest
+one for `GET /api/rode`. A frame that is not a reading is **400** and is
+neither stored nor broadcast. What reaches the SSE wire is still the
+producer's bytes, untouched.
+
+**The allowlist is one name per real producer** — `tool_event` (tool tailer)
+and `rode_status` (rode-battery reader) today.
 Since PR #164 it is no longer hand-written: at init it is derived from the
 enrolled source contracts (`contracts/sources/`, embedded via
 `internal/sourcecontracts`) as the union of `emits` across contracts with the

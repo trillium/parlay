@@ -766,8 +766,9 @@ SSE contract, and this registry) and the status seam inherits all four.
 
 `POST /api/chat/events` is parlay's **out-of-process ingress seam**
 (`packages/go-server/internal/handlers/events_ingress.go`). Its allowlist is
-**one name per real producer**, and today that is exactly one entry: `tool_event`. That
-producer is the PAI tool tailer, which is **not in this repository** — it was
+**one name per real producer**, and today that is two entries: `tool_event` and
+`rode_status` (the RODE Connect battery reader, `contracts/sources/rode-battery.json`, whose
+latest frame also backs `GET /api/rode`). The `tool_event` producer is the PAI tool tailer, which is **not in this repository** — it was
 `packages/server/src/tool-tailer.ts`, deleted with the TypeScript server, and the tailers now
 run outside the tree and post over HTTP.
 
@@ -780,7 +781,8 @@ var ingressEvents = deriveIngressEvents(sourcecontracts.Enrolled())   // events_
 
 The canonical contracts are `contracts/sources/*.json` at the repo root, mirrored into the
 server as `packages/go-server/internal/sourcecontracts`; the set is the union of `emits`
-across contracts with the `observability` trust posture, which today is `tool_event` alone.
+across contracts with the `observability` trust posture, which today is `tool_event` and
+`rode_status`.
 **Enroll a contract, never hand-edit the allowlist** (`docs/source-contracts.md`).
 
 > **BINDING: no Gas City unit may widen `POST /api/chat/events` to carry the panel-aiming

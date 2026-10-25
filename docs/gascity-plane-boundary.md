@@ -172,7 +172,8 @@ Each capability: **Owner** / **Why** / **parlay seam obligation** / **Evidence a
 
 - **Owner:** parlay.
 - **Why:** `POST /api/chat/events` is parlay's **out-of-process ingress seam**, allowlisted
-  one name per real producer, default one entry (`tool_event`) — §8.5 HARD BOUNDARY. The
+  one name per real producer, derived from the enrolled `contracts/sources/` (see
+  [source-contracts.md](source-contracts.md)) — §8.5 HARD BOUNDARY. The
   `GuardedPaths` registry (`packages/go-server/internal/guard`) and the no-auth chat API
   rule are parlay's. No execution
   runtime is responsible for parlay's ingress security.

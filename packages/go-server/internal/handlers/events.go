@@ -44,9 +44,11 @@ import (
 //	                  points a queued message is handed to a waiting agent.
 //	tool_event        live, but produced OUTSIDE this process: the TS tool
 //	                  tailer POSTs it to the external-producer ingress on
-//	                  POST /api/chat/events, the only name that ingress
-//	                  accepts today. See events_ingress.go, which owns the
-//	                  allowlist and the rule for widening it.
+//	                  POST /api/chat/events. See events_ingress.go, which
+//	                  owns the allowlist and the rule for widening it.
+//	rode_status       live, produced OUTSIDE this process: the rode-battery
+//	                  reader POSTs one per capture to the same ingress; the
+//	                  latest is also served by GET /api/rode (rode.go).
 //	agent_presence    live (added after C2, for TS parity) — sent once per
 //	                  connection on open with the current {active} value,
 //	                  and broadcast on the 0↔1 parked-long-poll-waiter flips

@@ -89,8 +89,11 @@ func Register(mux *http.ServeMux, st *store.Store) *Hub {
 	mux.HandleFunc("/api/chat/poll", handlePoll(st, b, hub, defaultPollTimeout))
 
 	// One registration, two methods: GET is the SSE stream, POST the
-	// external-producer ingress. See events_ingress.go.
-	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub))
+	// external-producer ingress. See events_ingress.go. The ingress also
+	// feeds the latest RODE microphone reading that GET /api/rode serves.
+	rode := newRodeStore()
+	mux.HandleFunc("/api/chat/events", handleEventsRoute(st, hub, rode))
+	registerRode(mux, rode)
 
 	// Eval relay routes (ticket C4). Both take the store: they own the off
 	// switch and the command log for every evaluation.

@@ -65,11 +65,12 @@ const (
 	FieldBool      FieldType = "bool"
 	FieldTimestamp FieldType = "timestamp"
 	FieldID        FieldType = "id"
+	FieldArray     FieldType = "array"
 )
 
 var fieldTypes = map[FieldType]bool{
 	FieldString: true, FieldInt: true, FieldBool: true,
-	FieldTimestamp: true, FieldID: true,
+	FieldTimestamp: true, FieldID: true, FieldArray: true,
 }
 
 // MetadataField is one origin-metadata field the surface supplies with every
@@ -310,7 +311,7 @@ func Validate(c Contract) error {
 		}
 		seenField[f.Name] = true
 		if !fieldTypes[f.Type] {
-			return e("origin field %q: type %q is not one of string, int, bool, timestamp, id", f.Name, f.Type)
+			return e("origin field %q: type %q is not one of string, int, bool, timestamp, id, array", f.Name, f.Type)
 		}
 	}
 

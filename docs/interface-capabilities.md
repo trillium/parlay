@@ -138,7 +138,7 @@ Every SSE event name falls in exactly one class:
 | Class | Names (today) | Gate |
 |---|---|---|
 | Connection lifecycle | `connected` | never gated |
-| State reports — the server reporting its own persisted/derived state | `history`, `message`, `message_received`, `agents`, `agent_register`, `agent_unregister`, `agent_presence`, `presence`, `presence_map`, `tool_event`, `lavish_session`, `pages_patch`, `commands`, `command_update` | never gated in v1 — rendering a report it does not care about is a surface's own no-op |
+| State reports — the server reporting its own persisted/derived state | `history`, `message`, `message_received`, `agents`, `agent_register`, `agent_unregister`, `agent_presence`, `presence`, `presence_map`, `tool_event`, `rode_status`, `lavish_session`, `pages_patch`, `commands`, `command_update` | never gated in v1 — rendering a report it does not care about is a surface's own no-op |
 | **Presentation commands** — the server aiming an action at a surface | `navigate`, `reload`, `device_cmd`, `input_action`, `draft` | **gated** |
 
 The gate, applied per client at the three broadcast choke points in

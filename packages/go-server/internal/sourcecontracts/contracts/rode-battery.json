@@ -1,0 +1,22 @@
+{
+  "name": "rode-battery",
+  "version": "1.0.0",
+  "title": "RODE Connect battery reader",
+  "description": "The rode-battery app (~/code/rode-battery, outside this repository) screen-reads the RODE Connect window and posts each capture — per microphone: connected, battery percent, pill color — as a non-persisted rode_status frame via POST /api/chat/events. The server keeps only the latest reading and serves it at GET /api/rode for Talon Voice and other local consumers.",
+  "trust": "observability",
+  "origin": {
+    "fields": [
+      { "name": "status", "type": "string", "required": true, "description": "capture state: ok, permission-denied, app-not-running, window-missing or read-error — never conflate an error with a real 0%" },
+      { "name": "ts", "type": "timestamp", "required": true, "description": "ISO timestamp of the capture" },
+      { "name": "channels", "type": "array", "description": "per-microphone readings, present only when status is ok: an array of {mic, label, connected, pct, color, confidence}; mic is the channel id (tx1, tx2), pct is 0..100 or null when disconnected or unreadable, color is green, amber, red or unknown, confidence is 0..1" },
+      { "name": "detail", "type": "string", "description": "optional human-readable detail for non-ok states" }
+    ]
+  },
+  "delivery": {
+    "mode": "push",
+    "route": "POST /api/chat/events",
+    "ordering": "ordered",
+    "guarantee": "at-most-once"
+  },
+  "emits": ["rode_status"]
+}

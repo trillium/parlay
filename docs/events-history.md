@@ -78,8 +78,8 @@ repository, and reach the panel over HTTP to `PARLAY_HUB_URL` (default
 - **Tool activity → `POST /api/chat/events`** as a `tool_event` frame, which
   is *not* persisted. That route's event-name allowlist is derived from the
   enrolled source contracts in `contracts/sources/*.json`
-  ([`source-contracts.md`](source-contracts.md)); `tool_event` is the only
-  name enrolled today. See the rule in [`AGENTS.md`](../AGENTS.md): **one name
+  ([`source-contracts.md`](source-contracts.md)); `tool_event` and the
+  RODE battery reader's `rode_status` are the names enrolled today. See the rule in [`AGENTS.md`](../AGENTS.md): **one name
   per real producer**, never widen it to the documented-but-unproduced names.
 
 Routing a hook firing to the right agent's tab is a separate, explicit step:

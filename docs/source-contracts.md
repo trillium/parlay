@@ -64,7 +64,8 @@ declares".)
 | Web panel composer | `POST /api/chat/send`, `PUT /draft` | the *unmarked default*: no `from`, no `source` — absence is the captain's identity (`packages/go-server/internal/handlers/messaging.go`) | `control` |
 | Voice dictation (Talon → composer) | `POST /api/chat/eval` / `eval-push` | hard-coded phrase manifest (`tools/cli/internal/evalengine/default_commands.json`), device-keyed stream map | `control` |
 | Cursorless plugin RPC (Talon) | `POST /api/chat/plugin/cursorless/rpc` | plugin id `"cursorless"` hard-coded in the manifest list, the path switch, and the guard entry | `control` |
-| PAI **tool** tailer | `POST /api/chat/events` | `"tool_event"` sole member of the ingress allowlist (`events_ingress.go`) *and* of the Gas City bus dual-write list (`events.go` `busEmitEvents`); `tool_name === "Monitor"` special case for session enrollment | `observability` |
+| PAI **tool** tailer | `POST /api/chat/events` | `"tool_event"` in the ingress allowlist (`events_ingress.go`) *and* the Gas City bus dual-write list (`events.go` `busEmitEvents`); `tool_name === "Monitor"` special case for session enrollment | `observability` |
+| RODE battery reader (`~/code/rode-battery`) | `POST /api/chat/events` | `"rode_status"` in the ingress allowlist via `contracts/sources/rode-battery.json`; the one ingress payload the server also decodes, to serve the latest reading at `GET /api/rode` (`handlers/rode.go`) | `observability` |
 | PAI **hook** tailer | `POST /api/chat/message` | free-form `source` (verbatim from an out-of-repo JSONL, ≤60 chars, `"hook"` fallback); `source: "turn"` drives a bespoke length cap | `content` |
 | Hooks / system lines | `POST /api/chat/system` | free-form `source`; TS stores it top-level, Go stores it in `meta` — an undocumented divergence | `content` |
 | `parlay` CLI verbs | `/send`, `/reply`, `/message`, `/alert` | identity is an env var copied into a body field; no session auth | `content` / `control` |
@@ -111,7 +112,7 @@ another." (#128 §71).
   "description": "Apple Notes note identifier" }
 ```
 
-Types are a closed set: `string`, `int`, `bool`, `timestamp`, `id`. The
+Types are a closed set: `string`, `int`, `bool`, `timestamp`, `id`, `array`. The
 origin travels with the bead forever — later edits through other surfaces
 land in edit history and never replace it (#128 §32).
 
