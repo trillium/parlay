@@ -60,7 +60,11 @@ Four things worth knowing before editing it:
   fixture, and is run by hand as the "copy this into your sandbox" first step;
   it has also not been trial-run to the bar stated at the end of this bullet),
   `packages/go-server/parity/capture-sse-golden.sh` (a diagnosis tool that
-  boots a real server and compares its SSE frames to the frozen golden), and
+  boots a real server and compares its SSE frames to the frozen golden),
+  `bin/parlay-voice-roundtrip.test.sh` (the developer-run pre-demo check for
+  the herdr-web voice round trip, runbook runbooks-v84; it builds both Go
+  binaries, which the shell job has no toolchain for — kept manual by decision,
+  with CI enforcement filed as a separate follow-up), and
   `packages/client`'s `bun run build` (its `build.ts` POSTs to the configured
   local server). Also not enforced:
   `tools/hooks/pre-commit`'s 250-line ceiling on staged `.ts` files — it is a
