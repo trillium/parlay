@@ -1575,8 +1575,10 @@ paths:
       description: >
         The most recent rode_status frame posted through POST /api/chat/events,
         in the producer's own shape (rode-battery's state/latest.json). Held in
-        memory; a restarted server has no reading until the next capture.
-        Unguarded read: no identifiers, nothing writable.
+        memory; a restarted server has no reading until the next capture. The
+        body is the last accepted producer frame: ts is the producer's capture
+        timestamp, the server never ages the frame out, and consumers judge
+        freshness from ts. Unguarded read: no identifiers, nothing writable.
       responses:
         "200":
           content:
@@ -1606,6 +1608,7 @@ paths:
         "404":
           description: No reading received since the server started.
           content: { application/json: { schema: { $ref: "#/components/schemas/AppError" } } }
+        "405": { description: "Non-GET (Allow: GET)." }
 
   /health:
     get:
