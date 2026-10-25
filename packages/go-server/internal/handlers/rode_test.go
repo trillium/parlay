@@ -159,7 +159,7 @@ func TestRodeStatusIngressRefusesANonReading(t *testing.T) {
 			t.Errorf("%s: status = %d, want 400; body: %s", name, rec.Code, rec.Body.String())
 		}
 	}
-	if _, seen := rode.get(); seen {
+	if rode.get() != nil {
 		t.Error("a refused frame was stored")
 	}
 	select {

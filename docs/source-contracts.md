@@ -112,7 +112,7 @@ another." (#128 §71).
   "description": "Apple Notes note identifier" }
 ```
 
-Types are a closed set: `string`, `int`, `bool`, `timestamp`, `id`. The
+Types are a closed set: `string`, `int`, `bool`, `timestamp`, `id`, `array`. The
 origin travels with the bead forever — later edits through other surfaces
 land in edit history and never replace it (#128 §32).
 

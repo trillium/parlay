@@ -65,11 +65,10 @@ type RodeChannel struct {
 }
 
 // rodeStore holds the latest reading. One value, replaced whole on every
-// accepted rode_status frame; readers get a copy.
+// accepted rode_status frame; nil until the first one arrives.
 type rodeStore struct {
 	mu     sync.RWMutex
-	latest RodeStatus
-	seen   bool
+	latest *RodeStatus
 }
 
 func newRodeStore() *rodeStore { return &rodeStore{} }
@@ -78,15 +77,14 @@ func newRodeStore() *rodeStore { return &rodeStore{} }
 func (s *rodeStore) set(r RodeStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.latest = r
-	s.seen = true
+	s.latest = &r
 }
 
-// get returns the latest reading and whether one has been received at all.
-func (s *rodeStore) get() (RodeStatus, bool) {
+// get returns the latest reading, or nil when none has been received.
+func (s *rodeStore) get() *RodeStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.latest, s.seen
+	return s.latest
 }
 
 // parseRodeStatus decodes a rode_status ingress payload. The ingress forwards
@@ -109,10 +107,6 @@ func parseRodeStatus(raw json.RawMessage) (RodeStatus, string) {
 	return r, ""
 }
 
-// rodeStatusResponse is the GET /api/rode body: the reading itself, in the
-// producer's shape, with nothing wrapped around it.
-type rodeStatusResponse = RodeStatus
-
 // handleRode implements GET /api/rode. 404 {"error": ...} until the first
 // reading arrives, so a consumer can tell "no producer has reported" from a
 // producer reporting that the app is not running.
@@ -122,12 +116,12 @@ func handleRode(rode *rodeStore) http.HandlerFunc {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		latest, ok := rode.get()
-		if !ok {
+		latest := rode.get()
+		if latest == nil {
 			writeStatusError(w, http.StatusNotFound, "no RODE reading received yet")
 			return
 		}
-		writeJSON(w, rodeStatusResponse(latest))
+		writeJSON(w, latest)
 	}
 }
 

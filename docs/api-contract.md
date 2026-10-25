@@ -848,9 +848,11 @@ self-upgrades. Response: `{ "version": "string" }` (`"unknown"` = no-op).
 The latest RODE Connect microphone reading, for consumers that are not SSE
 clients (Talon Voice, status bars, shell scripts). Fed by `rode_status` frames
 on `POST /api/chat/events`; held in memory only, so a restarted server has no
-reading until the producer's next capture. Response is the producer's own
-shape (identical to rode-battery's `state/latest.json`), with nothing wrapped
-around it:
+reading until the producer's next capture. The response is the last accepted
+producer frame: `ts` is the producer's capture timestamp, the server never
+ages the frame out, and consumers judge freshness from `ts`. Response is the
+producer's own shape (identical to rode-battery's `state/latest.json`), with
+nothing wrapped around it:
 ```jsonc
 {
   "status": "ok",                  // ok | permission-denied | app-not-running | window-missing | read-error
