@@ -106,12 +106,36 @@ Per target: `name` (the exact Talon `ui.apps()` name — the same string
 focus verification compares, so a picked target round-trips by
 construction), `focused` (Talon's active app), the relevant window
 title (first window in Talon's per-app ordering) and open-window
-count, in Talon's own `ui.apps()` ordering (the spec's
+count, `bundle` (the app's bundle id, omitted when Talon has none —
+launch uses it), in Talon's own `ui.apps()` ordering (the spec's
 cycling/recently-used behaviour needs the computer's ordering, not
 ours). Apps without windows stay listed (the launchable-apps row needs
 them) with `"hasWindows": false`. One bounded repl call, read-only —
 no focus change, no keystroke — so `?dryRun=1` is an accepted no-op
 echoed back (`"dryRun": true) for callers that want the mode visible.
+
+## Launch (task-2cp06 — start an app from the phone's launchable row)
+
+`POST /api/chat/remote-input/launch` starts an app GET targets lists with
+`hasWindows: false`, then makes one best-effort focus of it. It types nothing.
+
+```json
+{"device": "phone-1", "app": "Notes", "dryRun": false}
+```
+
+`app` must match a name from GET targets (case-insensitive; the answer
+carries the canonical Talon name). Synchronous, same tailnet auth as the
+other routes. Launch is `open -b <bundle>` using the bundle id GET targets
+reports (`"bundle"`, omitted when Talon has none), else `open -a <app>`
+(Talon has no launch action). Launch and focus run on the same FIFO worker
+as submits, so they never interleave with an inject's focus check.
+
+- `200 {"device","app","status"}` — `status` is `focused` (Talon verified
+  the app active), `launched` (started; focus unverified or failed — still
+  success), or `dry_run_passed` (with `dryRun: true` and `wouldRun`;
+  nothing launched or focused). Only the body `dryRun` field selects a dry run.
+- `400` missing `device`/`app` · `404` app not in targets · `500` launch
+  failed · `502` Talon unreachable. All errors are `{"error": "…"}`.
 
 ## No-target rule (task-46ys9 — never inject blind)
 

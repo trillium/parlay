@@ -49,7 +49,8 @@ are kept so a caller can tell a retained-forever quirk from a regression.
     `POST /message` (400), `poll` (410), `eval` engine failures (502),
     `eval-push` (400/404), invalid `?caps=` (400), `tts/validate-splits`
     (400/502), `remote-input/submit` (400), `remote-input/status`
-    (400/404), and `remote-input/targets` (502 Talon unreachable) return a **non-2xx with `{"error": "…"}`**.
+    (400/404), `remote-input/targets` (502 Talon unreachable), and
+    `remote-input/launch` (400/404/500/502) return a **non-2xx with `{"error": "…"}`**.
 - **Malformed JSON body**: the Go server returns **400
   `{"error": "invalid JSON body"}`** on every JSON route uniformly
   (`decodeJSON`).
@@ -775,8 +776,18 @@ cannot report one. Every submit, refusal and outcome is recorded in
 List Talon's applications in Talon's own `ui.apps()` ordering (200) or
 **502** Talon unreachable. Per target: exact Talon `name` (round-trips
 through focus verification), `focused`, relevant `windowTitle`,
-`windowCount`, `hasWindows` (windowless apps stay listed). Read-only —
-`?dryRun=1` is an accepted no-op echo. **405** non-GET.
+`windowCount`, `hasWindows` (windowless apps stay listed), `bundle`
+(omitted when unknown). Read-only — `?dryRun=1` is an accepted no-op echo.
+**405** non-GET.
+
+### `POST /api/chat/remote-input/launch`
+Start a target (task-2cp06, the phone's launchable row) and make one
+best-effort focus; types nothing. Request `{ "device", "app" (both required;
+`app` a name from GET targets), "dryRun"?: true }` — body only, no query alias.
+Response **200** `{ "device", "app", "status": "focused"|"launched"|"dry_run_passed" }`.
+Errors: **400** missing field, **404** app not in targets, **500** launch
+failed, **502** Talon unreachable, **405** non-POST. Full contract:
+[`remote-input.md`](./remote-input.md#launch-task-2cp06--start-an-app-from-the-phones-launchable-row).
 
 ### `POST /api/chat/remote-input/parse-words`
 READ-ONLY (task-z0caa): recognized words in, the Talon command they resolve

@@ -2,7 +2,7 @@
 // focus first, inject only on focus success, report every outcome.
 //
 // Concurrency contract: exactly one worker goroutine processes submissions
-// in arrival order, so concurrent Submit calls can neither interleave nor
+// (and app launches, which also move focus) in arrival order, so concurrent Submit calls can neither interleave nor
 // drop text. The worker parks on a channel while idle — there is no poll
 // loop and no busy-wait anywhere (brain-15l95). The post-focus settle
 // delay sleeps in OUR process; Talon's main thread is never held.
@@ -28,12 +28,13 @@ const maxOutcomes = 1024
 type Service struct {
 	talon       TalonAdapter
 	bead        BeadCreator
+	launcher    AppLauncher
 	settleDelay time.Duration
 	onSettled   func(Outcome)
 
 	mu         sync.Mutex
 	nextID     uint64
-	pending    []Submission
+	pending    []job
 	outcomes   map[string]Outcome
 	order      []string
 	onAccepted func(Submission)
@@ -93,7 +94,7 @@ func (s *Service) Submit(sub Submission) string {
 	if s.onAccepted != nil {
 		s.onAccepted(sub)
 	}
-	s.pending = append(s.pending, sub)
+	s.pending = append(s.pending, job{sub: sub})
 	s.remember(Outcome{ID: sub.ID, Device: sub.Device, Status: StatusQueued})
 	s.mu.Unlock()
 	select {
@@ -180,10 +181,14 @@ func (s *Service) work() {
 				s.mu.Unlock()
 				break
 			}
-			sub := s.pending[0]
+			j := s.pending[0]
 			s.pending = s.pending[1:]
 			s.mu.Unlock()
-			s.process(sub)
+			if j.launch != nil {
+				j.launch.done <- s.launchAndFocus(j.launch)
+				continue
+			}
+			s.process(j.sub)
 		}
 	}
 }
