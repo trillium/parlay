@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- feat(server): push the stored draft once on SSE connect as a non-mutating `draft` snapshot frame (`{text, clientId, updatedAt}`, `text: ""` when none is stored) to connections that declare `accepts.draft`; documents `GET /api/chat/draft` and the new connect-only frame.
+- feat(server): push the stored draft once on SSE connect as a non-mutating `draft_snapshot` frame (`{text, clientId, updatedAt}`, `text: ""` when none is stored) to connections that declare `accepts.draft_snapshot` (opt-in by that exact type, so the panel, which accepts `draft`, is unaffected); documents `GET /api/chat/draft` and the new connect-only frame.
 
 ## 2026-08-26 — session 8ca540c1
 

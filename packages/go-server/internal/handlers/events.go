@@ -76,11 +76,12 @@ import (
 // Two names were ADDED after that table, by the live-command registry
 // (commands.go, docs/live-commands.md):
 //
-//	draft (connect snapshot)
-//	                  live — sent once per connection, on open, ONLY to a
-//	                  connection whose ?caps= declaration lists draft under
-//	                  accepts: the stored draft as {text, clientId, updatedAt}
-//	                  (text "" when none is stored). See draftSnapshot.
+//	draft_snapshot    live — sent once per connection, on open, ONLY to a
+//	                  connection whose ?caps= declaration names
+//	                  draft_snapshot under accepts: the stored draft as
+//	                  {text, clientId, updatedAt} (text "" when none is
+//	                  stored). Opt-in by that exact type; accepting draft does
+//	                  not enroll a connection. See draftSnapshot.
 //	commands          live — sent once per connection, on open: the full
 //	                  CommandRegistry snapshot, the same array GET
 //	                  /api/chat/commands returns.
@@ -105,22 +106,23 @@ const (
 	eventMessageReceived = "message_received"
 	eventCommands        = "commands"
 	eventCommandUpdate   = "command_update"
-	eventDraft           = "draft"
+	eventDraftSnapshot   = "draft_snapshot"
 )
 
-// acceptsDraftSnapshot reports whether a connection explicitly declared it
-// consumes draft frames. Legacy (undeclared) connections are excluded on
-// purpose: the panel's draft handler writes the text into an unfocused input,
-// so an unasked snapshot on reconnect could overwrite unsaved typing.
+// acceptsDraftSnapshot reports whether a connection's declaration names
+// draft_snapshot under accepts. It is a distinct type from the live draft
+// push so the panel, which accepts draft and writes it into an unfocused
+// input, never receives a connect snapshot that could overwrite unsaved
+// typing. Legacy (undeclared) connections get nothing.
 func acceptsDraftSnapshot(decl *capability.Declaration) bool {
 	if decl == nil {
 		return false
 	}
-	_, ok := decl.Accepts[eventDraft]
+	_, ok := decl.Accepts[eventDraftSnapshot]
 	return ok
 }
 
-// draftSnapshot renders the stored draft as a connect-only draft frame. It is
+// draftSnapshot renders the stored draft as a connect-only draft_snapshot frame. It is
 // a report of server state, never an input_action envelope, so parlay-input
 // does not apply it to the buffer; the client's reconnect reconciliation owns
 // what to do with it. All three fields are always present so "server is
@@ -670,7 +672,7 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 		writeSSE(w, eventPresenceMap, presenceMapPayload(st))
 		writeSSE(w, eventCommands, st.Commands.List())
 		if acceptsDraftSnapshot(decl) {
-			writeSSE(w, eventDraft, draftSnapshot(st.Drafts.Get()))
+			writeSSE(w, eventDraftSnapshot, draftSnapshot(st.Drafts.Get()))
 		}
 		flusher.Flush()
 
