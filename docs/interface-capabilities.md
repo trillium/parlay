@@ -149,7 +149,7 @@ because `busEmitEvents` holds no presentation command, and the code says so):
 
 | Client | Presentation command | Everything else |
 |---|---|---|
-| No declaration (legacy) | delivered (grandfathered) | delivered |
+| No declaration (legacy) | delivered (grandfathered), except `draft_snapshot` — opt-in only (gap-fill 1) | delivered |
 | Declared, name in `accepts` | delivered | delivered |
 | Declared, name not in `accepts` | **suppressed** for that client | delivered |
 
@@ -255,7 +255,8 @@ change later:
    fallback. Chosen because fail-open widens delivery against declared
    intent; flagged because it makes a client-side encoding bug loud.
 4. **Legacy grandfathering.** An undeclared client receives everything,
-   indefinitely — the five names predate this contract and their existing
+   indefinitely (except `draft_snapshot`, which postdates it and is opt-in
+   only — gap-fill 1) — the five names predate this contract and their existing
    consumers (Talon scripts, hooks, plugins) must not break at the
    switch. Retiring grandfathering is the Q2d aliasing-window decision,
    already reserved for the captain's explicit sign-off
