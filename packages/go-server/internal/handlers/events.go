@@ -76,11 +76,11 @@ import (
 // Two names were ADDED after that table, by the live-command registry
 // (commands.go, docs/live-commands.md):
 //
-//	input_action (draft snapshot)
+//	draft (connect snapshot)
 //	                  live — sent once per connection, on open, ONLY to a
-//	                  connection whose ?caps= declaration lists input_action
-//	                  under accepts: the stored draft as a setText envelope
-//	                  (clear when empty). See draftSnapshotEnvelope.
+//	                  connection whose ?caps= declaration lists draft under
+//	                  accepts: the stored draft as {text, clientId, updatedAt}
+//	                  (text "" when none is stored). See draftSnapshot.
 //	commands          live — sent once per connection, on open: the full
 //	                  CommandRegistry snapshot, the same array GET
 //	                  /api/chat/commands returns.
@@ -105,53 +105,31 @@ const (
 	eventMessageReceived = "message_received"
 	eventCommands        = "commands"
 	eventCommandUpdate   = "command_update"
-	eventInputAction     = "input_action"
-)
-
-// draftSnapshotStreamID / draftSnapshotBaseVersion shape the connect-time draft
-// envelope. The stream id is its own (never an eval-<device>-… stream, so the
-// client's per-stream seq tracking is untouched). baseVersion must clear
-// parlay-input's staleness check (baseVersion < buffer version drops a
-// mutating envelope), and the server cannot know the client's buffer version,
-// so it is far above any real one (packages/input's own harness uses the same
-// 1_000_000 convention); the PWA's reconnect reconciliation owns what to do
-// with the text.
-const (
-	draftSnapshotStreamID    = "draft"
-	draftSnapshotBaseVersion = 1_000_000_000
+	eventDraft           = "draft"
 )
 
 // acceptsDraftSnapshot reports whether a connection explicitly declared it
-// consumes input_action envelopes. Legacy (undeclared) connections are
-// excluded on purpose: they receive every input_action broadcast, but a
-// setText arriving unasked on a legacy panel would overwrite what the user is
-// typing, so the snapshot is opt-in.
+// consumes draft frames. Legacy (undeclared) connections are excluded on
+// purpose: the panel's draft handler writes the text into an unfocused input,
+// so an unasked snapshot on reconnect could overwrite unsaved typing.
 func acceptsDraftSnapshot(decl *capability.Declaration) bool {
 	if decl == nil {
 		return false
 	}
-	_, ok := decl.Accepts[eventInputAction]
+	_, ok := decl.Accepts[eventDraft]
 	return ok
 }
 
-// draftSnapshotEnvelope renders the stored draft as an input_action envelope:
-// setText with the text, or an explicit clear when the draft is empty so a
-// client can tell "server is blank" from "server unknown". The draft's writer
-// (ClientID) is not suppressed: this server does not broadcast draft on PUT
-// today, so there is no existing self-echo rule, and an equal-text push is a
-// no-op for the client.
-func draftSnapshotEnvelope(d store.Draft) map[string]any {
-	action := map[string]any{"verb": "clear"}
-	if d.Text != "" {
-		action = map[string]any{"verb": "setText", "args": map[string]any{"text": d.Text}}
-	}
+// draftSnapshot renders the stored draft as a connect-only draft frame. It is
+// a report of server state, never an input_action envelope, so parlay-input
+// does not apply it to the buffer; the client's reconnect reconciliation owns
+// what to do with it. All three fields are always present so "server is
+// blank" (text "") is distinguishable from an absent frame.
+func draftSnapshot(d store.Draft) map[string]any {
 	return map[string]any{
-		"v":           1,
-		"streamId":    draftSnapshotStreamID,
-		"seq":         0,
-		"baseVersion": draftSnapshotBaseVersion,
-		"actions":     []any{action},
-		"timing":      map[string]any{"connectSnapshot": true},
+		"text":      d.Text,
+		"clientId":  d.ClientID,
+		"updatedAt": d.UpdatedAt,
 	}
 }
 
@@ -692,7 +670,7 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 		writeSSE(w, eventPresenceMap, presenceMapPayload(st))
 		writeSSE(w, eventCommands, st.Commands.List())
 		if acceptsDraftSnapshot(decl) {
-			writeSSE(w, eventInputAction, draftSnapshotEnvelope(st.Drafts.Get()))
+			writeSSE(w, eventDraft, draftSnapshot(st.Drafts.Get()))
 		}
 		flusher.Flush()
 

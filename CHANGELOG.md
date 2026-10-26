@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- feat(server): push the stored draft once on SSE connect, as an `input_action` setText (or explicit clear when empty), to connections that declare `accepts.input_action`; documents `GET /api/chat/draft` and the new connect-only frame.
+- feat(server): push the stored draft once on SSE connect as a non-mutating `draft` snapshot frame (`{text, clientId, updatedAt}`, `text: ""` when none is stored) to connections that declare `accepts.draft`; documents `GET /api/chat/draft` and the new connect-only frame.
 
 ## 2026-08-26 — session 8ca540c1
 

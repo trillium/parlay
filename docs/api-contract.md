@@ -561,7 +561,7 @@ tailnet/origin gate as the other `/api/chat` reads of in-progress text. Other
 methods than GET/PUT answer 405.
 
 The same text is pushed once on every SSE connect to surfaces that declared
-`accepts.input_action` — see the connect-time draft snapshot under SSE Events.
+`accepts.draft` — see the connect-time draft snapshot under SSE Events.
 
 ### `PUT /api/chat/draft`
 Save (or clear, with `text: ""`) the shared input draft.
@@ -1113,7 +1113,7 @@ implements the same contract for hosts without a shared subscription.
 | `message_received` | `{ "id" }` | Delivery ack: a queued user message was polled → ◌→✓ pip. |
 | `presence` | `{ "status": "string" }` | Thinking-dots indicator (`"thinking"`/`"idle"`). |
 | `draft` | `{ "text", "clientId"? }` | Cross-device draft sync; self-echoes ignored via `clientId`. |
-| `input_action` (draft snapshot) | `{ "v": 1, "streamId": "draft", "seq": 0, "baseVersion": 1000000000, "actions": [{"verb":"setText","args":{"text":"…"}}], "timing": {"connectSnapshot": true} }` | **Connect-only, per-connection** (never broadcast, never on the bus), written right after `commands` to a connection whose `?caps=` declaration lists `input_action` under `accepts`; legacy/undeclared connections and declarations without it get nothing (an unasked `setText` would overwrite a legacy panel's typing). An empty stored draft is sent as `"actions": [{"verb":"clear"}]` so a client can tell "server is blank" from "unknown". `baseVersion` is deliberately far above any client buffer version so parlay-input's staleness check does not drop it. The writer is not excluded (this server does not broadcast `draft` on PUT, so there is no self-echo rule to follow); an equal-text push is a client no-op. |
+| `draft` (connect snapshot) | `{ "text", "clientId", "updatedAt" }` | **Connect-only, per-connection** (never broadcast, never on the bus), written right after `commands` to a connection whose `?caps=` declaration lists `draft` under `accepts`; legacy/undeclared connections and declarations without it get nothing (the panel's `draft` handler writes into an unfocused input, so an unasked snapshot could overwrite unsaved typing). A report of server state, not an `input_action` envelope: parlay-input never applies it to the buffer, so the client's reconnect reconciliation decides what to do. All three fields are always present; with no stored draft they are `""`, so "server is blank" is distinguishable from "no frame". The writer is not excluded (this server does not broadcast `draft` on PUT, so there is no self-echo rule to follow). |
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `rode_status` | `{ "status", "ts", "channels"?: [{ "mic", "label", "connected", "pct", "color", "confidence" }], "detail"? }` | One RODE Connect battery capture; fed through the ingress (below) by the rode-battery producer. The latest one is also served by `GET /api/rode`. |

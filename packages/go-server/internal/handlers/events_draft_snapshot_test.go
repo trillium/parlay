@@ -7,38 +7,42 @@ import (
 )
 
 const (
-	capsAcceptsInputAction = `{"schema": "1.0.0", "surface": {"kind": "pwa"}, "accepts": {"input_action": {}}}`
-	capsAcceptsNavigate    = `{"schema": "1.0.0", "surface": {"kind": "pwa"}, "accepts": {"navigate": {}}}`
+	capsAcceptsDraft    = `{"schema": "1.0.0", "surface": {"kind": "pwa"}, "accepts": {"draft": {}}}`
+	capsAcceptsNavigate = `{"schema": "1.0.0", "surface": {"kind": "pwa"}, "accepts": {"navigate": {}}}`
 )
 
-func TestConnectSendsStoredDraftAsSetText(t *testing.T) {
+func TestConnectSendsStoredDraftSnapshot(t *testing.T) {
 	st := newTestStore(t)
-	if _, err := st.Drafts.Set("hello draft", "writer-1"); err != nil {
+	d, err := st.Drafts.Set("hello draft", "writer-1")
+	if err != nil {
 		t.Fatal(err)
 	}
-	rec, stop := runEventsTarget(t, st, newHub(newBroker()), capsTarget(capsAcceptsInputAction))
+	rec, stop := runEventsTarget(t, st, newHub(newBroker()), capsTarget(capsAcceptsDraft))
 	time.Sleep(50 * time.Millisecond)
 	stop()
 
 	body := rec.Body.String()
-	want := `event: input_action` + "\n" + `data: {"actions":[{"args":{"text":"hello draft"},"verb":"setText"}],"baseVersion":1000000000,"seq":0,"streamId":"draft","timing":{"connectSnapshot":true},"v":1}` + "\n\n"
+	want := `event: draft` + "\n" + `data: {"clientId":"writer-1","text":"hello draft","updatedAt":"` + d.UpdatedAt + `"}` + "\n\n"
 	if !strings.Contains(body, want) {
-		t.Errorf("connect burst missing the draft setText frame; want %q in:\n%s", want, body)
+		t.Errorf("connect burst missing the draft snapshot frame; want %q in:\n%s", want, body)
+	}
+	if strings.Contains(body, "event: input_action") {
+		t.Errorf("draft snapshot must not ride the input_action envelope path; got:\n%s", body)
 	}
 	// It rides the connect burst: after commands, before any live traffic.
-	if strings.Index(body, "event: commands") > strings.Index(body, "event: input_action") {
+	if strings.Index(body, "event: commands") > strings.Index(body, "event: draft") {
 		t.Errorf("draft snapshot must follow the commands frame; got:\n%s", body)
 	}
 }
 
-func TestConnectSendsExplicitClearWhenDraftEmpty(t *testing.T) {
-	rec, stop := runEventsTarget(t, newTestStore(t), newHub(newBroker()), capsTarget(capsAcceptsInputAction))
+func TestConnectSendsEmptyTextWhenNoDraftStored(t *testing.T) {
+	rec, stop := runEventsTarget(t, newTestStore(t), newHub(newBroker()), capsTarget(capsAcceptsDraft))
 	time.Sleep(50 * time.Millisecond)
 	stop()
 
-	want := `"actions":[{"verb":"clear"}]`
-	if body := rec.Body.String(); !strings.Contains(body, "event: input_action") || !strings.Contains(body, want) {
-		t.Errorf("empty draft must be an explicit clear (%s); got:\n%s", want, body)
+	want := `event: draft` + "\n" + `data: {"clientId":"","text":"","updatedAt":""}` + "\n\n"
+	if body := rec.Body.String(); !strings.Contains(body, want) {
+		t.Errorf("no stored draft must still send an empty-text snapshot (%q); got:\n%s", want, body)
 	}
 }
 
@@ -48,13 +52,13 @@ func TestDraftSnapshotNotSentWithoutInputActionCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, target := range map[string]string{
-		"legacy (no caps)":          "/api/chat/events",
-		"declared, no input_action": capsTarget(capsAcceptsNavigate),
+		"legacy (no caps)":   "/api/chat/events",
+		"declared, no draft": capsTarget(capsAcceptsNavigate),
 	} {
 		rec, stop := runEventsTarget(t, st, newHub(newBroker()), target)
 		time.Sleep(50 * time.Millisecond)
 		stop()
-		if body := rec.Body.String(); strings.Contains(body, "event: input_action") || strings.Contains(body, "secret") {
+		if body := rec.Body.String(); strings.Contains(body, "event: draft") || strings.Contains(body, "secret") {
 			t.Errorf("%s: draft snapshot leaked; got:\n%s", name, body)
 		}
 	}
@@ -70,12 +74,12 @@ func TestDraftSnapshotIsPerConnectionNotBroadcast(t *testing.T) {
 
 	// An already-connected declared client sees nothing when a second client
 	// connects: the snapshot is written to the new connection, not fanned out.
-	first, cancel, err := hub.subscribeDeclared("", mustDeclaration(t, capsAcceptsInputAction))
+	first, cancel, err := hub.subscribeDeclared("", mustDeclaration(t, capsAcceptsDraft))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cancel()
-	_, stop := runEventsTarget(t, st, hub, capsTarget(capsAcceptsInputAction)+"&device=d2")
+	_, stop := runEventsTarget(t, st, hub, capsTarget(capsAcceptsDraft)+"&device=d2")
 	time.Sleep(50 * time.Millisecond)
 	stop()
 
@@ -103,13 +107,13 @@ func TestDraftSnapshotScopedToConnectingDevice(t *testing.T) {
 	}
 	hub := newHub(newBroker())
 	t.Cleanup(hub.Stop)
-	other, cancel, err := hub.subscribeDeclared("device-a", mustDeclaration(t, capsAcceptsInputAction))
+	other, cancel, err := hub.subscribeDeclared("device-a", mustDeclaration(t, capsAcceptsDraft))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cancel()
 
-	rec, stop := runEventsTarget(t, st, hub, capsTarget(capsAcceptsInputAction)+"&device=device-b")
+	rec, stop := runEventsTarget(t, st, hub, capsTarget(capsAcceptsDraft)+"&device=device-b")
 	time.Sleep(50 * time.Millisecond)
 	stop()
 

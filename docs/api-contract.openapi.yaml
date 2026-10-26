@@ -1289,9 +1289,9 @@ paths:
       description: >
         Connect burst in order — TS: connected, history, agents,
         agent_presence, presence_map; Go adds commands, then (only for a
-        connection whose caps declaration accepts input_action) one
-        input_action draft snapshot — setText of the stored draft, or clear
-        when empty (docs/api-contract.md § SSE Events). Keepalive comment
+        connection whose caps declaration accepts draft) one non-mutating
+        draft snapshot {text, clientId, updatedAt} — text "" when none is
+        stored (docs/api-contract.md § SSE Events). Keepalive comment
         every 25s. Event names and payloads: see docs/api-contract.md § SSE
         Events (the x-sse-events list below enumerates the names). Guarded on
         Go, unguarded on TS (x-parlay-divergence 28).
