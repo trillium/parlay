@@ -106,7 +106,8 @@ Per target: `name` (the exact Talon `ui.apps()` name — the same string
 focus verification compares, so a picked target round-trips by
 construction), `focused` (Talon's active app), the relevant window
 title (first window in Talon's per-app ordering) and open-window
-count, in Talon's own `ui.apps()` ordering (the spec's
+count, `bundle` (the app's bundle id, omitted when Talon has none —
+launch uses it), in Talon's own `ui.apps()` ordering (the spec's
 cycling/recently-used behaviour needs the computer's ordering, not
 ours). Apps without windows stay listed (the launchable-apps row needs
 them) with `"hasWindows": false`. One bounded repl call, read-only —
