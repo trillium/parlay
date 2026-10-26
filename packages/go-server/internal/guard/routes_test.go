@@ -603,3 +603,33 @@ func TestParseWordsIsGuarded(t *testing.T) {
 		t.Fatalf("non-JSON POST: got %d (reached=%v), want refusal", rec.Code, reached)
 	}
 }
+
+// task-2cp06: launch starts an application on the laptop, so it is inside
+// the boundary: a cross-origin page cannot make the laptop open an app.
+func TestRemoteInputLaunchIsGuarded(t *testing.T) {
+	const path = "/api/chat/remote-input/launch"
+	if !guard.GuardedPaths[path] {
+		t.Fatalf("%s is not in GuardedPaths", path)
+	}
+	reached := false
+	h := guard.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }))
+
+	cross := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"device":"d","app":"Notes"}`))
+	cross.Host = "127.0.0.1:4500"
+	cross.Header.Set("Origin", "https://evil.example")
+	cross.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, cross)
+	if rec.Code != http.StatusForbidden || reached {
+		t.Fatalf("cross-origin POST: got %d (reached=%v), want 403", rec.Code, reached)
+	}
+
+	form := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`app=Notes`))
+	form.Host = "127.0.0.1:4500"
+	form.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, form)
+	if rec.Code < 400 || reached {
+		t.Fatalf("non-JSON POST: got %d (reached=%v), want refusal", rec.Code, reached)
+	}
+}

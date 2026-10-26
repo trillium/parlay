@@ -221,6 +221,9 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/remote-input/submit":  true,
 	"/api/chat/remote-input/status":  true,
 	"/api/chat/remote-input/targets": true,
+	// Launch (task-2cp06): starts a named app on the Mac (`open -a`) and
+	// focuses it once. Mutating, JSON body, so no jsonExemptPaths entry.
+	"/api/chat/remote-input/launch": true,
 	// Parse-words (task-z0caa Stage 1): recognized words in, resolved Talon
 	// command out via speech_system.parse() — READ-ONLY, nothing is executed.
 	// It still hands the phone live desktop state (the Talon mode set and the

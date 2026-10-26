@@ -28,6 +28,7 @@ const maxOutcomes = 1024
 type Service struct {
 	talon       TalonAdapter
 	bead        BeadCreator
+	launcher    AppLauncher
 	settleDelay time.Duration
 	onSettled   func(Outcome)
 

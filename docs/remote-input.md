@@ -113,6 +113,26 @@ them) with `"hasWindows": false`. One bounded repl call, read-only —
 no focus change, no keystroke — so `?dryRun=1` is an accepted no-op
 echoed back (`"dryRun": true) for callers that want the mode visible.
 
+## Launch (task-2cp06 — start an app from the phone's launchable row)
+
+`POST /api/chat/remote-input/launch` starts an app GET targets lists with
+`hasWindows: false`, then makes one best-effort focus of it. It types nothing.
+
+```json
+{"device": "phone-1", "app": "Notes", "dryRun": false}
+```
+
+`app` must match a name from GET targets (case-insensitive; the answer
+carries the canonical Talon name). Synchronous, same tailnet auth as the
+other routes. Launch is `open -a <app>` (Talon has no launch action).
+
+- `200 {"device","app","status"}` — `status` is `focused` (Talon verified
+  the app active), `launched` (started; focus unverified or failed — still
+  success), or `dry_run_passed` (with `dryRun: true` and `wouldRun`;
+  nothing launched or focused). `?dryRun=1` also forces a dry run.
+- `400` missing `device`/`app` · `404` app not in targets · `500` launch
+  failed · `502` Talon unreachable. All errors are `{"error": "…"}`.
+
 ## No-target rule (task-46ys9 — never inject blind)
 
 Measured live: `POST /submit` with no `app` field used to yield
