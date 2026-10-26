@@ -33,6 +33,9 @@ type Target struct {
 	// HasWindows distinguishes apps with windows from launchable apps
 	// without any (the launchable-apps row needs them listed too).
 	HasWindows bool `json:"hasWindows"`
+	// Bundle is the app's bundle id from Talon (empty when unknown); launch
+	// prefers it because LaunchServices resolves `open -a` by bundle name.
+	Bundle string `json:"bundle,omitempty"`
 }
 
 // TargetsResponse is the GET targets wire shape. Targets is read-only —
@@ -48,16 +51,17 @@ type talonTargetsWire struct {
 	Active string `json:"active"`
 	Apps   []struct {
 		Name    string   `json:"name"`
+		Bundle  string   `json:"bundle"`
 		Windows []string `json:"windows"`
 	} `json:"apps"`
 }
 
 // targetsSnippet is the one-statement Talon program behind Targets: a
-// single print of a JSON dump over ui.apps() with each app's window
-// titles plus the active app name. Pure function so tests prove the
+// single print of a JSON dump over ui.apps() with each app's bundle id and
+// window titles plus the active app name. Pure function so tests prove the
 // single-statement shape without a live Talon.
 func targetsSnippet() string {
-	return `print(__import__("json").dumps({"active": (ui.active_app().name if ui.active_app() else ""), "apps": [{"name": a.name, "windows": [w.title for w in a.windows()]} for a in ui.apps()]}))`
+	return `print(__import__("json").dumps({"active": (ui.active_app().name if ui.active_app() else ""), "apps": [{"name": a.name, "bundle": (a.bundle or ""), "windows": [w.title for w in a.windows()]} for a in ui.apps()]}))`
 }
 
 // parseTargetsJSON converts one repl readout into Targets, preserving
@@ -76,6 +80,7 @@ func parseTargetsJSON(out string) ([]Target, error) {
 			Focused:     matchName(app.Name, wire.Active),
 			WindowCount: len(app.Windows),
 			HasWindows:  len(app.Windows) > 0,
+			Bundle:      app.Bundle,
 		}
 		if len(app.Windows) > 0 {
 			t.WindowTitle = app.Windows[0]

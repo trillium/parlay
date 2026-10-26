@@ -124,12 +124,15 @@ echoed back (`"dryRun": true) for callers that want the mode visible.
 
 `app` must match a name from GET targets (case-insensitive; the answer
 carries the canonical Talon name). Synchronous, same tailnet auth as the
-other routes. Launch is `open -a <app>` (Talon has no launch action).
+other routes. Launch is `open -b <bundle>` using the bundle id GET targets
+reports (`"bundle"`, omitted when Talon has none), else `open -a <app>`
+(Talon has no launch action). Launch and focus run on the same FIFO worker
+as submits, so they never interleave with an inject's focus check.
 
 - `200 {"device","app","status"}` — `status` is `focused` (Talon verified
   the app active), `launched` (started; focus unverified or failed — still
   success), or `dry_run_passed` (with `dryRun: true` and `wouldRun`;
-  nothing launched or focused). `?dryRun=1` also forces a dry run.
+  nothing launched or focused). Only the body `dryRun` field selects a dry run.
 - `400` missing `device`/`app` · `404` app not in targets · `500` launch
   failed · `502` Talon unreachable. All errors are `{"error": "…"}`.
 

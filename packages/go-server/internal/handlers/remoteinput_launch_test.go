@@ -46,18 +46,8 @@ func TestRemoteInputLaunchHappyPath(t *testing.T) {
 
 func TestRemoteInputLaunchDryRunPerformsNothing(t *testing.T) {
 	h, ft, fl := launchHarness(t)
-	for _, target := range []string{"/api/chat/remote-input/launch", "/api/chat/remote-input/launch?dryRun=1"} {
-		body := `{"device":"d","app":"Notes","dryRun":true}`
-		if strings.Contains(target, "?") {
-			body = `{"device":"d","app":"Notes"}`
-		}
-		req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		h(w, req)
-		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"dry_run_passed"`) {
-			t.Fatalf("%s: got %d: %s", target, w.Code, w.Body)
-		}
+	if w := postLaunch(h, `{"device":"d","app":"Notes","dryRun":true}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"dry_run_passed"`) {
+		t.Fatalf("got %d: %s", w.Code, w.Body)
 	}
 	if len(fl.Calls)+len(ft.FocusAppCalls) != 0 {
 		t.Fatal("dry run performed an action")
@@ -88,5 +78,16 @@ func TestRemoteInputLaunchErrors(t *testing.T) {
 	h(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET: got %d, want 405", w.Code)
+	}
+}
+
+func TestRemoteInputLaunchIgnoresDryRunQuery(t *testing.T) {
+	h, _, fl := launchHarness(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/remote-input/launch?dryRun=1", strings.NewReader(`{"device":"d","app":"Notes"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h(w, req)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"dry_run_passed"`) || len(fl.Calls) != 1 {
+		t.Fatalf("got %d %s launches=%v; body dryRun is the only dry-run switch", w.Code, w.Body, fl.Calls)
 	}
 }

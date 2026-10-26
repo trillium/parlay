@@ -2,7 +2,9 @@ package remoteinput
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 func launchSvc(t *testing.T, ft *FakeTalon, fl *FakeLauncher) *Service {
@@ -23,7 +25,7 @@ func TestLaunchHappyPathVerifiedFocus(t *testing.T) {
 	if resp.Status != StatusLaunchFocused || resp.App != "Notes" {
 		t.Fatalf("resp = %+v", resp)
 	}
-	if len(fl.Calls) != 1 || fl.Calls[0] != "Notes" || len(ft.FocusAppCalls) != 1 {
+	if len(fl.Calls) != 1 || fl.Calls[0].Name != "Notes" || len(ft.FocusAppCalls) != 1 {
 		t.Fatalf("calls: launch=%v focus=%v", fl.Calls, ft.FocusAppCalls)
 	}
 	if len(ft.Inserts) != 0 || len(ft.FocusWindowCalls) != 0 {
@@ -79,4 +81,77 @@ func TestLaunchUnknownAppAndFailure(t *testing.T) {
 	if len(ft.FocusAppCalls) != 0 {
 		t.Fatal("no focus after failed launch")
 	}
+}
+
+func TestLaunchUsesBundleIDWhenTalonHasOne(t *testing.T) {
+	cases := []struct {
+		name   string
+		target Target
+		want   []string
+	}{
+		{"bundle present", Target{Name: "Code", Bundle: "com.microsoft.VSCode"}, []string{"-b", "com.microsoft.VSCode"}},
+		{"bundle absent", Target{Name: "Notes"}, []string{"-a", "Notes"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			l := &ExecLauncher{run: func(args ...string) error { got = args; return nil }}
+			s := NewService(&FakeTalon{TargetsList: []Target{tc.target}}, 0, nil)
+			t.Cleanup(s.Stop)
+			s.SetLauncher(l)
+			if _, err := s.Launch(LaunchRequest{Device: "d", App: tc.target.Name}); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Fatalf("open args = %v, want %v", got, tc.want)
+			}
+			dry, err := s.Launch(LaunchRequest{Device: "d", App: tc.target.Name, DryRun: true})
+			if err != nil || dry.WouldRun != "open "+strings.Join(tc.want, " ") {
+				t.Fatalf("dry run = %+v err=%v", dry, err)
+			}
+		})
+	}
+}
+
+func TestLaunchRunsBehindQueuedInject(t *testing.T) {
+	ft := &FakeTalon{TargetsList: []Target{{Name: "Notes"}, {Name: "Safari"}}}
+	s := NewService(ft, 0, nil)
+	t.Cleanup(s.Stop)
+	release := make(chan struct{})
+	order := make(chan string, 2)
+	s.SetLauncher(launcherFunc(func(Target) error { order <- "launch"; return nil }))
+	s.SetBeadCreator(&blockingBead{release: release, order: order})
+	id := s.Submit(Submission{Device: "d", Text: "hi", Mode: ModeBead, Store: "inbox"})
+	launched := make(chan error, 1)
+	go func() { _, err := s.Launch(LaunchRequest{Device: "d", App: "Safari"}); launched <- err }()
+	select {
+	case <-launched:
+		t.Fatal("launch ran while a queued submission was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-launched; err != nil {
+		t.Fatal(err)
+	}
+	waitOutcome(t, s, id)
+	if first, second := <-order, <-order; first != "bead" || second != "launch" {
+		t.Fatalf("order = %s, %s; want bead then launch", first, second)
+	}
+}
+
+type launcherFunc func(Target) error
+
+func (f launcherFunc) Launch(t Target) error { return f(t) }
+
+type blockingBead struct {
+	release chan struct{}
+	order   chan string
+}
+
+func (b *blockingBead) Resolve(store string) (string, error) { return store, nil }
+
+func (b *blockingBead) Create(store, text string) (string, string, error) {
+	<-b.release
+	b.order <- "bead"
+	return "inbox-1", store, nil
 }

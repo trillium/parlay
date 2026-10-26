@@ -14,7 +14,7 @@ import (
 const mockTargetsJSON = `{"active": "WezTerm", "apps": [` +
 	`{"name": "WezTerm", "windows": ["macbookpro: coder"]}, ` +
 	`{"name": "Terminal", "windows": ["first — 80×24", "second — 120×40"]}, ` +
-	`{"name": "Raycast", "windows": []}]}`
+	`{"name": "Raycast", "bundle": "com.raycast.macos", "windows": []}]}`
 
 func TestParseTargetsJSON(t *testing.T) {
 	targets, err := parseTargetsJSON(mockTargetsJSON)
@@ -45,6 +45,9 @@ func TestParseTargetsJSON(t *testing.T) {
 	}
 	if targets[2].WindowTitle != "" {
 		t.Fatalf("windowless app must have no title: %+v", targets[2])
+	}
+	if targets[2].Bundle != "com.raycast.macos" || targets[0].Bundle != "" {
+		t.Fatalf("bundle ids wrong: %+v", targets)
 	}
 }
 

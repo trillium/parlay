@@ -341,9 +341,6 @@ func handleRemoteInputLaunch(svc *remoteinput.Service) http.HandlerFunc {
 			writeStatusError(w, http.StatusBadRequest, "app is required")
 			return
 		}
-		if q := r.URL.Query().Get("dryRun"); q == "true" || q == "1" {
-			req.DryRun = true
-		}
 		resp, err := svc.Launch(req)
 		switch {
 		case errors.Is(err, remoteinput.ErrUnknownApp):
