@@ -139,7 +139,7 @@ Every SSE event name falls in exactly one class:
 |---|---|---|
 | Connection lifecycle | `connected` | never gated |
 | State reports — the server reporting its own persisted/derived state | `history`, `message`, `message_received`, `agents`, `agent_register`, `agent_unregister`, `agent_presence`, `presence`, `presence_map`, `tool_event`, `rode_status`, `lavish_session`, `pages_patch`, `commands`, `command_update` | never gated in v1 — rendering a report it does not care about is a surface's own no-op |
-| **Presentation commands** — the server aiming an action at a surface | `navigate`, `reload`, `device_cmd`, `input_action`, `draft` | **gated** |
+| **Presentation commands** — the server aiming an action at a surface | `navigate`, `reload`, `device_cmd`, `input_action`, `draft`, `draft_snapshot` | **gated** |
 
 The gate, applied per client at the three broadcast choke points in
 `events.go` — `broadcast` (every connected client), `broadcastToDevice` (one
@@ -149,7 +149,7 @@ because `busEmitEvents` holds no presentation command, and the code says so):
 
 | Client | Presentation command | Everything else |
 |---|---|---|
-| No declaration (legacy) | delivered (grandfathered) | delivered |
+| No declaration (legacy) | delivered (grandfathered), except `draft_snapshot` — opt-in only (gap-fill 1) | delivered |
 | Declared, name in `accepts` | delivered | delivered |
 | Declared, name not in `accepts` | **suppressed** for that client | delivered |
 
@@ -242,7 +242,7 @@ declaration decides who *receives*, never who may *send*.
 #128 defers these; v1 chooses, records here, and none are load-bearing to
 change later:
 
-1. **The gated class is exactly the five Q2d names.** `tts_event` (a
+1. **The gated class is the five Q2d names plus `draft_snapshot`** (the connect-only draft frame, sent only to a declaration that names it, so the connected-echo lists it under `recognized`). `tts_event` (a
    speak-this aim) and plugin RPC names (`cursorless_rpc`) are candidates
    for the class; admitting either is a minor schema bump plus a class
    table row, and deliberately not done ahead of a declaring consumer.
@@ -255,7 +255,8 @@ change later:
    fallback. Chosen because fail-open widens delivery against declared
    intent; flagged because it makes a client-side encoding bug loud.
 4. **Legacy grandfathering.** An undeclared client receives everything,
-   indefinitely — the five names predate this contract and their existing
+   indefinitely (except `draft_snapshot`, which postdates it and is opt-in
+   only — gap-fill 1) — the five names predate this contract and their existing
    consumers (Talon scripts, hooks, plugins) must not break at the
    switch. Retiring grandfathering is the Q2d aliasing-window decision,
    already reserved for the captain's explicit sign-off

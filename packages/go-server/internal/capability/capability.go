@@ -45,17 +45,19 @@ const (
 	ClassPresentationCommand Class = "presentation-command"
 )
 
-// presentationCommands is the gated class — exactly the five bespoke
-// panel-aiming names grill Q2d generalizes (07_ARCHITECTURE-GRILL.md).
+// presentationCommands is the gated class — the five bespoke panel-aiming
+// names grill Q2d generalizes (07_ARCHITECTURE-GRILL.md), plus
+// draft_snapshot, the connect-only draft frame a surface opts into by name.
 // Admitting a new name (tts_event and plugin RPC names are the known
 // candidates) is a minor schema bump plus an entry here, deliberately not
 // done ahead of a declaring consumer (gap-fill 1 in the doc).
 var presentationCommands = map[string]bool{
-	"navigate":     true,
-	"reload":       true,
-	"device_cmd":   true,
-	"input_action": true,
-	"draft":        true,
+	"navigate":       true,
+	"reload":         true,
+	"device_cmd":     true,
+	"input_action":   true,
+	"draft":          true,
+	"draft_snapshot": true,
 }
 
 // Classify buckets one SSE event name. Unknown names are state reports by

@@ -659,10 +659,10 @@ paths:
   /api/chat/draft:
     get:
       operationId: getDraft
-      summary: Read the shared input draft
+      summary: Read the shared input draft (empty draft is {text:""}; guarded route)
       responses:
         "200":
-          description: "TS: {text}; Go adds clientId/updatedAt (x-parlay-divergence 16)."
+          description: "TS: {text}; Go adds clientId/updatedAt once a PUT has happened (x-parlay-divergence 16)."
           content:
             application/json:
               schema:
@@ -1288,7 +1288,10 @@ paths:
       summary: The SSE stream (one EventSource per tab)
       description: >
         Connect burst in order — TS: connected, history, agents,
-        agent_presence, presence_map; Go adds commands. Keepalive comment
+        agent_presence, presence_map; Go adds commands, then (only for a
+        connection whose caps declaration accepts draft_snapshot) one
+        non-mutating draft_snapshot {text, clientId, updatedAt} — text "" when none is
+        stored (docs/api-contract.md § SSE Events). Keepalive comment
         every 25s. Event names and payloads: see docs/api-contract.md § SSE
         Events (the x-sse-events list below enumerates the names). Guarded on
         Go, unguarded on TS (x-parlay-divergence 28).
@@ -1317,6 +1320,7 @@ paths:
         - cursorless_rpc
         - commands
         - command_update
+        - draft_snapshot
       parameters:
         - name: device
           in: query

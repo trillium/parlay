@@ -552,9 +552,16 @@ Response (200): `{ "ok": true, "cmd": "…", "sent": N }` or
 ## Drafts
 
 ### `GET /api/chat/draft`
-Response: `{ "text": "string" }`. The server returns the whole stored draft:
-`{ "text", "clientId"?, "updatedAt"? }` — extra fields are harmless to the
-one consumer, which reads `text`.
+Response (200): `{ "text": "string" }`. The server returns the whole stored
+draft: `{ "text", "clientId"?, "updatedAt"? }` — extra fields are harmless to
+the one consumer, which reads `text`. An empty (never-set or cleared) draft is
+`{ "text": "" }` — `clientId`/`updatedAt` are omitted until the first PUT, and
+present after a clear. Guarded route (`internal/guard.GuardedPaths`): same
+tailnet/origin gate as the other `/api/chat` reads of in-progress text. Other
+methods than GET/PUT answer 405.
+
+The same text is pushed once on every SSE connect to surfaces that declared
+`accepts.draft_snapshot` — see `draft_snapshot` under SSE Events.
 
 ### `PUT /api/chat/draft`
 Save (or clear, with `text: ""`) the shared input draft.
@@ -1106,6 +1113,7 @@ implements the same contract for hosts without a shared subscription.
 | `message_received` | `{ "id" }` | Delivery ack: a queued user message was polled → ◌→✓ pip. |
 | `presence` | `{ "status": "string" }` | Thinking-dots indicator (`"thinking"`/`"idle"`). |
 | `draft` | `{ "text", "clientId"? }` | Cross-device draft sync; self-echoes ignored via `clientId`. |
+| `draft_snapshot` | `{ "text", "clientId", "updatedAt" }` | **Connect-only, per-connection** (never broadcast, never on the bus), written right after `commands` to a connection whose `?caps=` declaration names `draft_snapshot` under `accepts` — opt-in by that exact type. Legacy/undeclared connections and declarations without it get nothing; accepting `draft` does not enroll a connection, so the panel (whose `draft` handler writes into an unfocused input) never receives it. A report of server state, not an `input_action` envelope: parlay-input never applies it to the buffer, so the client's reconnect reconciliation decides what to do. All three fields are always present; with no stored draft they are `""`, so "server is blank" is distinguishable from "no frame". The writer is not excluded (this server does not broadcast `draft` on PUT, so there is no self-echo rule to follow). |
 | `agent_presence` | `{ "active": boolean }` | ≥1 long-poll waiter connected — "agent away" banner. |
 | `tool_event` | *(opaque producer payload)* | Tool-activity line; fed through the ingress (below) by the tool tailer. |
 | `rode_status` | `{ "status", "ts", "channels"?: [{ "mic", "label", "connected", "pct", "color", "confidence" }], "detail"? }` | One RODE Connect battery capture; fed through the ingress (below) by the rode-battery producer. The latest one is also served by `GET /api/rode`. |

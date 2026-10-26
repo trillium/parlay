@@ -76,6 +76,12 @@ import (
 // Two names were ADDED after that table, by the live-command registry
 // (commands.go, docs/live-commands.md):
 //
+//	draft_snapshot    live — sent once per connection, on open, ONLY to a
+//	                  connection whose ?caps= declaration names
+//	                  draft_snapshot under accepts: the stored draft as
+//	                  {text, clientId, updatedAt} (text "" when none is
+//	                  stored). Opt-in by that exact type; accepting draft does
+//	                  not enroll a connection. See draftSnapshot.
 //	commands          live — sent once per connection, on open: the full
 //	                  CommandRegistry snapshot, the same array GET
 //	                  /api/chat/commands returns.
@@ -100,7 +106,34 @@ const (
 	eventMessageReceived = "message_received"
 	eventCommands        = "commands"
 	eventCommandUpdate   = "command_update"
+	eventDraftSnapshot   = "draft_snapshot"
 )
+
+// acceptsDraftSnapshot reports whether a connection's declaration names
+// draft_snapshot under accepts. It is a distinct type from the live draft
+// push so the panel, which accepts draft and writes it into an unfocused
+// input, never receives a connect snapshot that could overwrite unsaved
+// typing. Legacy (undeclared) connections get nothing.
+func acceptsDraftSnapshot(decl *capability.Declaration) bool {
+	if decl == nil {
+		return false
+	}
+	_, ok := decl.Accepts[eventDraftSnapshot]
+	return ok
+}
+
+// draftSnapshot renders the stored draft as a connect-only draft_snapshot frame. It is
+// a report of server state, never an input_action envelope, so parlay-input
+// does not apply it to the buffer; the client's reconnect reconciliation owns
+// what to do with it. All three fields are always present so "server is
+// blank" (text "") is distinguishable from an absent frame.
+func draftSnapshot(d store.Draft) map[string]any {
+	return map[string]any{
+		"text":      d.Text,
+		"clientId":  d.ClientID,
+		"updatedAt": d.UpdatedAt,
+	}
+}
 
 // busEmitEvents is the allowlist of event names Hub.broadcast forwards to
 // the Gas City bus sink when dual-write is enabled (events-lift U1). Same
@@ -638,6 +671,9 @@ func handleEvents(st *store.Store, hub *Hub) http.HandlerFunc {
 		writeSSE(w, eventAgentPresence, agentPresencePayload{Active: hub.agentActive()})
 		writeSSE(w, eventPresenceMap, presenceMapPayload(st))
 		writeSSE(w, eventCommands, st.Commands.List())
+		if acceptsDraftSnapshot(decl) {
+			writeSSE(w, eventDraftSnapshot, draftSnapshot(st.Drafts.Get()))
+		}
 		flusher.Flush()
 
 		heartbeat := time.NewTicker(sseHeartbeatInterval)
