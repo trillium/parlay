@@ -22,16 +22,17 @@ func declare(t *testing.T, accepts ...string) *Declaration {
 
 func TestClassify(t *testing.T) {
 	cases := map[string]Class{
-		"connected":    ClassLifecycle,
-		"navigate":     ClassPresentationCommand,
-		"reload":       ClassPresentationCommand,
-		"device_cmd":   ClassPresentationCommand,
-		"input_action": ClassPresentationCommand,
-		"draft":        ClassPresentationCommand,
-		"message":      ClassStateReport,
-		"history":      ClassStateReport,
-		"presence_map": ClassStateReport,
-		"tool_event":   ClassStateReport,
+		"connected":      ClassLifecycle,
+		"navigate":       ClassPresentationCommand,
+		"reload":         ClassPresentationCommand,
+		"device_cmd":     ClassPresentationCommand,
+		"input_action":   ClassPresentationCommand,
+		"draft":          ClassPresentationCommand,
+		"draft_snapshot": ClassPresentationCommand,
+		"message":        ClassStateReport,
+		"history":        ClassStateReport,
+		"presence_map":   ClassStateReport,
+		"tool_event":     ClassStateReport,
 		// Unknown names are state reports by construction: a new event is
 		// deliverable-to-everyone until deliberately admitted to the gated
 		// class.
@@ -44,8 +45,8 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestPresentationCommandsRosterIsTheFiveQ2dNames(t *testing.T) {
-	want := []string{"device_cmd", "draft", "input_action", "navigate", "reload"}
+func TestPresentationCommandsRoster(t *testing.T) {
+	want := []string{"device_cmd", "draft", "draft_snapshot", "input_action", "navigate", "reload"}
 	if got := PresentationCommands(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("PresentationCommands() = %v, want %v", got, want)
 	}

@@ -139,7 +139,7 @@ Every SSE event name falls in exactly one class:
 |---|---|---|
 | Connection lifecycle | `connected` | never gated |
 | State reports — the server reporting its own persisted/derived state | `history`, `message`, `message_received`, `agents`, `agent_register`, `agent_unregister`, `agent_presence`, `presence`, `presence_map`, `tool_event`, `rode_status`, `lavish_session`, `pages_patch`, `commands`, `command_update` | never gated in v1 — rendering a report it does not care about is a surface's own no-op |
-| **Presentation commands** — the server aiming an action at a surface | `navigate`, `reload`, `device_cmd`, `input_action`, `draft` | **gated** |
+| **Presentation commands** — the server aiming an action at a surface | `navigate`, `reload`, `device_cmd`, `input_action`, `draft`, `draft_snapshot` | **gated** |
 
 The gate, applied per client at the three broadcast choke points in
 `events.go` — `broadcast` (every connected client), `broadcastToDevice` (one
@@ -242,7 +242,7 @@ declaration decides who *receives*, never who may *send*.
 #128 defers these; v1 chooses, records here, and none are load-bearing to
 change later:
 
-1. **The gated class is exactly the five Q2d names.** `tts_event` (a
+1. **The gated class is the five Q2d names plus `draft_snapshot`** (the connect-only draft frame, sent only to a declaration that names it, so the connected-echo lists it under `recognized`). `tts_event` (a
    speak-this aim) and plugin RPC names (`cursorless_rpc`) are candidates
    for the class; admitting either is a minor schema bump plus a class
    table row, and deliberately not done ahead of a declaring consumer.

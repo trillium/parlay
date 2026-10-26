@@ -128,3 +128,23 @@ func TestDraftSnapshotScopedToConnectingDevice(t *testing.T) {
 	default:
 	}
 }
+
+func TestDraftSnapshotEchoedAsRecognizedThenSent(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.Drafts.Set("echoed", ""); err != nil {
+		t.Fatal(err)
+	}
+	rec, stop := runEventsTarget(t, st, newHub(newBroker()), capsTarget(capsAcceptsDraftSnapshot))
+	time.Sleep(50 * time.Millisecond)
+	stop()
+
+	body := rec.Body.String()
+	echo := `"capabilities":{"schema":"1.0.0","recognized":["draft_snapshot"],"unknown":[]}`
+	echoAt, frameAt := strings.Index(body, echo), strings.Index(body, "event: draft_snapshot\ndata: {\"clientId\":\"\",\"text\":\"echoed\"")
+	if echoAt < 0 {
+		t.Fatalf("connected echo must list draft_snapshot as recognized (%s); got:\n%s", echo, body)
+	}
+	if frameAt < echoAt {
+		t.Errorf("draft_snapshot frame must follow the recognizing echo; got:\n%s", body)
+	}
+}
