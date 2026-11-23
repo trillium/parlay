@@ -7,6 +7,7 @@ import {
   reconnectDelay, setChannelStatuses,
 } from './state'
 import { connBanner, dot, drawer, badge, inputEl } from './dom'
+import { guarded } from './sse-guard'
 import { appendMsg, loadHistory as loadHistoryFn, setThinking, markMsgReceived } from './thread'
 import { storeMessages } from './idb'
 import { insertLavishCard } from './thread-lavish'
@@ -116,7 +117,7 @@ export function connect() {
     }).catch(() => {})
   })
 
-  es.addEventListener('history', (e: MessageEvent) => {
+  es.addEventListener('history', guarded((e: MessageEvent) => {
     const history = JSON.parse(e.data)
     storeMessages(history)   // persist to IDB for next cold-load
     loadHistoryFn(history)
@@ -127,26 +128,26 @@ export function connect() {
     if ((window as any).__paRestoreScroll) {
       requestAnimationFrame(() => (window as any).__paRestoreScroll())
     }
-  })
+  }))
 
-  es.addEventListener('agents', (e: MessageEvent) => {
+  es.addEventListener('agents', guarded((e: MessageEvent) => {
     const list = JSON.parse(e.data)
     for (const info of list) agentInfo.set(info.id, info)
     renderTabs()
-  })
+  }))
 
-  es.addEventListener('agent_register', (e: MessageEvent) => {
+  es.addEventListener('agent_register', guarded((e: MessageEvent) => {
     const info = JSON.parse(e.data)
     agentInfo.set(info.id, info)
     renderTabs()
-  })
+  }))
 
-  es.addEventListener('presence_map', (e: MessageEvent) => {
+  es.addEventListener('presence_map', guarded((e: MessageEvent) => {
     setChannelStatuses(JSON.parse(e.data))
     renderTabs()
-  })
+  }))
 
-  es.addEventListener('message', (e: MessageEvent) => {
+  es.addEventListener('message', guarded((e: MessageEvent) => {
     const m = JSON.parse(e.data)
     if (firstByAttr(document, 'data-pa-id', m.id)) return
     msgs.push(m)
@@ -183,19 +184,18 @@ export function connect() {
         }
       }
     }
-  })
+  }))
 
-  // Delivery ack: the agent polled a queued message → flip its pip to received.
   es.addEventListener('message_received', (e: MessageEvent) => {
     try { markMsgReceived(JSON.parse(e.data).id) } catch {}
   })
 
-  es.addEventListener('presence', (e: MessageEvent) => {
+  es.addEventListener('presence', guarded((e: MessageEvent) => {
     const { status } = JSON.parse(e.data)
     setThinking(status === 'thinking')
-  })
+  }))
 
-  es.addEventListener('draft', (e: MessageEvent) => {
+  es.addEventListener('draft', guarded((e: MessageEvent) => {
     const { text, clientId } = JSON.parse(e.data)
     // Self-echoes refilled a just-sent input on mobile (bug #4): ignore our own
     // PUTs and anything in the 3s post-send window. Other devices' drafts
@@ -206,37 +206,37 @@ export function connect() {
       inputEl.value = text
       if ((window as any).__paAutoResize) (window as any).__paAutoResize()
     }
-  })
+  }))
 
-  es.addEventListener('agent_presence', (e: MessageEvent) => {
+  es.addEventListener('agent_presence', guarded((e: MessageEvent) => {
     const { active } = JSON.parse(e.data)
     drawer.classList.toggle('agent-away', !active)
-  })
+  }))
 
-  es.addEventListener('tool_event', (e: MessageEvent) => {
+  es.addEventListener('tool_event', guarded((e: MessageEvent) => {
     const ev = JSON.parse(e.data)
     appendToolEntry(ev)
     // Tool activity proves the agent is working, not compacting — clear any
     // false "compacting" banner and push the deadline out another window.
     // Only while a reply is pending (timer armed); never arm from scratch here.
     if (compactTimer) { clearCompactTimer(); armCompactTimer() }
-  })
+  }))
 
-  es.addEventListener('lavish_session', (e: MessageEvent) => {
+  es.addEventListener('lavish_session', guarded((e: MessageEvent) => {
     const { key, file, proxyUrl, status } = JSON.parse(e.data)
     insertLavishCard(key, file, proxyUrl, status)
     if (status === 'open' && !open) openDrawerFn()
-  })
+  }))
 
   es.addEventListener('reload', () => location.reload())
 
-  es.addEventListener('navigate', (e: MessageEvent) => {
+  es.addEventListener('navigate', guarded((e: MessageEvent) => {
     const { url, openDrawer: od } = JSON.parse(e.data)
     if (od && !open) openDrawerFn()
     // Parlay-as-shell (#16): on chat-app the workspace iframe absorbs the
     // navigation and the chat survives; elsewhere this is a full navigation
     if (url) navigateWorkspace(url)
-  })
+  }))
 
   es.onerror = () => {
     dot.classList.add('offline')
