@@ -1,0 +1,40 @@
+$ go test (tools/cli: monitor, spawn, testsupport)
+--- PASS: TestPollOnceSurvivesAHoldLongerThanTheOneShotTimeout (0.40s)
+PASS
+ok  	github.com/trillium/parlay/tools/cli/internal/monitor	0.697s
+--- PASS: TestResolveLauncher (0.00s)
+--- PASS: TestSpawnOneSubprocessLauncherNeverTouchesHerdr (0.08s)
+--- PASS: TestSpawnOneGCLauncherRejectsUnsupportedKind (0.00s)
+--- PASS: TestSpawnOneGCLauncherForwardsPiKind (0.36s)
+--- PASS: TestSpawnOneGCLauncherRefusesPane (0.00s)
+--- PASS: TestSpawnOneNormalizesEmptyKindBeforeLauncherDispatch (0.07s)
+--- PASS: TestSpawnOneRefusesAnUnknownLauncherBeforeRegistering (0.00s)
+--- PASS: TestSpawnOneArmsWatchdogForSubprocessLauncher (0.08s)
+PASS
+ok  	github.com/trillium/parlay/tools/cli/internal/spawn	1.123s
+--- PASS: TestIsolatedEnvPinsPathAndScrubsAmbientVariables (0.00s)
+--- PASS: TestIsolatedEnvKeepsTheDirectoryOfNamedTools (0.36s)
+--- PASS: TestIsolatedEnvRestoresOnCleanup (0.00s)
+PASS
+ok  	github.com/trillium/parlay/tools/cli/internal/testsupport	1.100s
+
+$ go test (go-server: store, static, handlers)
+--- PASS: TestIDsAreNeverReissuedAfterClearAndRestart (0.02s)
+--- PASS: TestIDsAreNeverReissuedAfterRemoveByChannelAndRestart (0.02s)
+--- PASS: TestCompareStampsOrdersByInstantNotByString (0.00s)
+--- PASS: TestCompareStampsFallsBackToLexicalForGarbage (0.00s)
+ok  	parlay/go-server/internal/store	0.302s
+ok  	parlay/go-server/internal/static	0.456s [no tests to run]
+--- PASS: TestRelayRejectsOversizedEngineResponse (0.00s)
+--- PASS: TestDecodeJSONRefusesAnOversizedBody (0.03s)
+ok  	parlay/go-server/internal/handlers	0.637s
+
+$ bun test (packages/client, webview)
+ 226 pass
+ 0 fail
+ 497 expect() calls
+Ran 226 tests across 26 files. [598.00ms]
+ 9 pass
+ 0 fail
+ 37 expect() calls
+Ran 9 tests across 2 files. [10.00ms]
