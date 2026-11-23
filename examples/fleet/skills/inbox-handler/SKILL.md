@@ -60,10 +60,11 @@ This registers the store channel, announces, and blocks in the poll loop. The Pi
 bridge turns only poke messages into wakes — that store's `<STORE>_POKE v1` selects the store worker prompt, while `MAIL_POKE v1:` mail wakes select the separate agent-mail prompt (see `examples/fleet/agent-mail-runbook.md`); ordinary chat and
 close notifications are not work assignments.
 
-Relay/server scoping: there is one canonical server and the CLI resolves it
-itself, so callers set no port or `PARLAY_SERVER`. The relay is bound to that
-one server and `parlay listen` preflights it; if preflight complains, fix the
-relay rather than bypassing the check.
+Relay/server scoping: by default the CLI resolves the canonical server itself,
+so callers set no port. Set `PARLAY_SERVER` only when deliberately targeting an
+isolated or other non-default instance. The relay is bound to the resolved
+server and `parlay listen` preflights it; if preflight complains, fix the relay
+rather than bypassing the check.
 
 Re-arming is a takeover, not an addition: one live poll loop per channel. If
 the loop dies, `send` still succeeds but nobody reads — re-run `listen`

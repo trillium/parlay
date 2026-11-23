@@ -863,8 +863,8 @@ wrong-server relay in it is a fleet outage (robots-93xu).
 > hand-rolling the isolation.
 >
 > **Never target the live serving port from a test** — use an isolated instance
-> (`examples/bootstrap-sandbox.sh`). There is exactly one canonical server; the retired
-> second server no longer exists.
+> (`examples/bootstrap-sandbox.sh`). The retired second server implementation no
+> longer exists; tests needing a server must start their own isolated instance.
 
 The probe run for §5 of this document redirected `GC_HOME` to a scratch directory and the
 supervisor port to `18372`, and invoked only `version`, `--help`, `config show --json`, and
