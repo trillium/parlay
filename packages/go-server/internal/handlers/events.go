@@ -457,8 +457,8 @@ type capabilityDeclarationEntry struct {
 }
 
 // capabilityDeclarations lists every currently declared connection, in
-// connection order (connectedAt is RFC3339Nano, so the lexicographic sort is
-// chronological — the map iteration itself is unordered).
+// connection order (connectedAt is RFC3339Nano, so it is compared by instant,
+// never as a string — the map iteration itself is unordered).
 func (h *Hub) capabilityDeclarations() []capabilityDeclarationEntry {
 	out := []capabilityDeclarationEntry{}
 	if h == nil {
@@ -488,8 +488,8 @@ func (h *Hub) capabilityDeclarations() []capabilityDeclarationEntry {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].ConnectedAt != out[j].ConnectedAt {
-			return out[i].ConnectedAt < out[j].ConnectedAt
+		if c := store.CompareStamps(out[i].ConnectedAt, out[j].ConnectedAt); c != 0 {
+			return c < 0
 		}
 		return out[i].Device < out[j].Device
 	})

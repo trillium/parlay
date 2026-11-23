@@ -17,14 +17,16 @@ func (al *ActionLog) List(f ActionLogFilter) []ActionRecord {
 	snapshot := append([]ActionRecord(nil), al.records...)
 	al.mu.RUnlock()
 
+	// Walk the ring newest-appended first so records stamped in the same
+	// instant keep arrival order (the stable sort below preserves it).
 	out := make([]ActionRecord, 0, len(snapshot))
-	for _, rec := range snapshot {
-		if !f.matches(rec) {
+	for i := len(snapshot) - 1; i >= 0; i-- {
+		if !f.matches(snapshot[i]) {
 			continue
 		}
-		out = append(out, rec)
+		out = append(out, snapshot[i])
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At > out[j].At })
+	sort.SliceStable(out, func(i, j int) bool { return CompareStamps(out[i].At, out[j].At) > 0 })
 	return out
 }
 
