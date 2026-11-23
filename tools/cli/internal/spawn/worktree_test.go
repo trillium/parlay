@@ -6,11 +6,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
 
 // initRepo makes a real git repo with one commit at dir and returns it.
 func initRepo(t *testing.T, dir string) string {
 	t.Helper()
+	// A developer's PATH shims and a hook's ambient GIT_* must not steer the
+	// fixture's git calls.
+	testsupport.IsolatedEnv(t, "git")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}

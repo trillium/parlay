@@ -28,6 +28,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
 
 // ── Shared scaffolding ────────────────────────────────────────────────────────
@@ -59,6 +61,9 @@ func storeEnv(beadsDir, name string) []string {
 // poll) inherits this environment.
 func isolateBeadsEnv(t *testing.T) {
 	t.Helper()
+	// Pin PATH to the system dirs plus the beads toolchain, and scrub the
+	// GIT_*/PARLAY_* families a developer shell leaks into the bd subprocesses.
+	testsupport.IsolatedEnv(t, "bd", "dolt", "git")
 	saved := map[string]string{}
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
