@@ -59,7 +59,7 @@ export async function fetchSubscribers(): Promise<{ clients: number; channels: S
 
 export function openEventStream(onEvent: (type: string, data: unknown) => void): () => void {
   const es = new EventSource(`${BASE}/events`)
-  const names = ['message', 'tool_event', 'agent_register', 'commands', 'command_update', 'presence_map', 'connected', 'history', 'agents']
+  const names = ['message', 'tool_event', 'agent_register', 'commands', 'command_update', 'presence_map', 'connected', 'history', 'agents', 'input_action']
   const handlers: [string, (e: MessageEvent) => void][] = names.map(name => {
     const h = (e: MessageEvent) => {
       try { onEvent(name, JSON.parse(e.data)) } catch { /* skip malformed */ }
