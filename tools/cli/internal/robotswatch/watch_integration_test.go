@@ -81,27 +81,43 @@ func isolateBeadsEnv(t *testing.T, approvedTools ...string) {
 }
 
 func beadsTools() (string, string, bool) {
-	bd, err := exec.LookPath("bd")
-	if err != nil {
-		return "", "", false
-	}
-	dolt, err := exec.LookPath("dolt")
-	if err != nil {
-		return "", "", false
-	}
-	bd, err = filepath.Abs(bd)
-	if err != nil {
-		return "", "", false
-	}
-	dolt, err = filepath.Abs(dolt)
-	if err != nil {
-		return "", "", false
+	bd, dolt := os.Getenv("PARLAY_ROBOTSWATCH_BD"), os.Getenv("PARLAY_ROBOTSWATCH_DOLT")
+	for _, tool := range []string{bd, dolt} {
+		if !filepath.IsAbs(tool) {
+			return "", "", false
+		}
+		info, err := os.Stat(tool)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			return "", "", false
+		}
 	}
 	return bd, dolt, true
 }
 
 // initScratchStore creates a fresh bd disk store at dir with the given issue
 // prefix and returns the path to its .beads dir.
+func TestBeadsToolsRequiresExplicitPaths(t *testing.T) {
+	bin := t.TempDir()
+	bd, dolt := filepath.Join(bin, "bd"), filepath.Join(bin, "dolt")
+	for _, tool := range []string{bd, dolt} {
+		if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PARLAY_ROBOTSWATCH_BD", "")
+	t.Setenv("PARLAY_ROBOTSWATCH_DOLT", "")
+	if _, _, ok := beadsTools(); ok {
+		t.Fatal("ambient PATH tools were accepted")
+	}
+	t.Setenv("PARLAY_ROBOTSWATCH_BD", bd)
+	t.Setenv("PARLAY_ROBOTSWATCH_DOLT", dolt)
+	gotBD, gotDolt, ok := beadsTools()
+	if !ok || gotBD != bd || gotDolt != dolt {
+		t.Fatalf("beadsTools = (%q, %q, %t), want configured paths", gotBD, gotDolt, ok)
+	}
+}
+
 func initScratchStore(t *testing.T, dir, prefix string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -266,7 +282,7 @@ func TestWatchedStoresIntendedTable(t *testing.T) {
 func TestScratchStoreClosedBeadFiresNotifyPath(t *testing.T) {
 	bd, dolt, ok := beadsTools()
 	if !ok {
-		t.Skip("bd and dolt CLIs not on PATH — integration drives their real binaries through the poll loop")
+		t.Skip("set PARLAY_ROBOTSWATCH_BD and PARLAY_ROBOTSWATCH_DOLT to absolute executable paths to run this integration")
 	}
 	isolateBeadsEnv(t, bd, dolt)
 
