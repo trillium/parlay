@@ -294,3 +294,71 @@ func TestHistorySinceCursorUnknownOnEmptyChannelReturnsNothing(t *testing.T) {
 		t.Errorf("skipped = %d, want 0", skipped)
 	}
 }
+
+// A long-poll cursor is a message id. After Clear (or removing the newest
+// channel's messages) a restart used to rebuild the counter from the now-empty
+// log and reissue ids a client was still holding.
+func TestIDsAreNeverReissuedAfterClearAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "messages.jsonl")
+	ms, err := openMessageStore(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last ChatMessage
+	for i := 0; i < 3; i++ {
+		if last, err = ms.Append(ChatMessage{Role: "user", Text: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ms.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	ms.Close()
+
+	ms2, err := openMessageStore(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ms2.Close()
+	next, err := ms2.Append(ChatMessage{Role: "user", Text: "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := seqFromID(last.ID)
+	b, _ := seqFromID(next.ID)
+	if b <= a {
+		t.Errorf("post-restart id %s reuses or precedes pre-clear id %s", next.ID, last.ID)
+	}
+}
+
+func TestIDsAreNeverReissuedAfterRemoveByChannelAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "messages.jsonl")
+	ms, err := openMessageStore(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ms.Append(ChatMessage{Role: "user", Text: "keep", Channel: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	last, err := ms.Append(ChatMessage{Role: "user", Text: "drop", Channel: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.RemoveByChannel("b"); err != nil {
+		t.Fatal(err)
+	}
+	ms.Close()
+
+	ms2, err := openMessageStore(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ms2.Close()
+	next, err := ms2.Append(ChatMessage{Role: "user", Text: "z", Channel: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ID == last.ID {
+		t.Errorf("id %s was reissued after its message was removed", next.ID)
+	}
+}
