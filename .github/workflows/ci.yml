@@ -296,11 +296,11 @@ jobs:
       # The locked, package-local tsc, not `bunx tsc`, which would fetch
       # TypeScript from the network instead of using the lockfile's version.
       - name: Typecheck (packages/input)
-        run: ../../node_modules/.bin/tsc --noEmit
+        run: ./node_modules/.bin/tsc --noEmit
         working-directory: packages/input
 
       - name: Typecheck (packages/webview)
-        run: ../../node_modules/.bin/tsc --noEmit
+        run: ./node_modules/.bin/tsc --noEmit
         working-directory: packages/webview
 
   # ── Hermetic shell harnesses ──────────────────────────────────────────────
