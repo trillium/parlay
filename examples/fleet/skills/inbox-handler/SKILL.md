@@ -33,7 +33,7 @@ Run this inside your harness and keep the loop running persistently
 (`Monitor({ persistent: true })`, `nohup`, or launchd):
 
 ```bash
-PARLAY_SERVER=http://localhost:31337 parlay listen --agent pi-inbox --name "PI Inbox" --color "#38bdf8"
+parlay listen --agent pi-inbox --name "PI Inbox" --color "#38bdf8"
 ```
 
 For another store, enroll its channel (or set `PARLAY_PI_INBOX_STORE=<store>`
@@ -47,7 +47,7 @@ bridge extension, prefer the arg form — it persists the store in that session:
 or raw:
 
 ```bash
-PARLAY_SERVER=http://localhost:31337 parlay listen --agent task-inbox --name "Task Inbox" --color "#38bdf8"
+parlay listen --agent task-inbox --name "Task Inbox" --color "#38bdf8"
 ```
 
 Enroll BEFORE the first dispatch: `parlay send` refuses unregistered
@@ -60,12 +60,10 @@ This registers the store channel, announces, and blocks in the poll loop. The Pi
 bridge turns only poke messages into wakes — that store's `<STORE>_POKE v1` selects the store worker prompt, while `MAIL_POKE v1:` mail wakes select the separate agent-mail prompt (see `examples/fleet/agent-mail-runbook.md`); ordinary chat and
 close notifications are not work assignments.
 
-Relay/server scoping matters: the relay is bound to one server URL, and
-`parlay listen` preflights it — enrolling against the wrong URL fails loudly
-rather than leaving you deaf. On this box the relay is scoped to
-`http://localhost:31337` (which fronts the same chat state as the native
-`:4242` server), hence the pin above. If preflight complains, match the URL
-to your relay's scope; do not bypass the check.
+Relay/server scoping: there is one canonical server and the CLI resolves it
+itself, so callers set no port or `PARLAY_SERVER`. The relay is bound to that
+one server and `parlay listen` preflights it; if preflight complains, fix the
+relay rather than bypassing the check.
 
 Re-arming is a takeover, not an addition: one live poll loop per channel. If
 the loop dies, `send` still succeeds but nobody reads — re-run `listen`

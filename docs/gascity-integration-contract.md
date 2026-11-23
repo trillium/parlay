@@ -862,9 +862,9 @@ wrong-server relay in it is a fleet outage (robots-93xu).
 > instead of `PARLAY_AGENT_HOME`.) Use `examples/bootstrap-sandbox.sh` rather than
 > hand-rolling the isolation.
 >
-> **Never target port `:31337`** — the captain's live Pulse instance (project CLAUDE.md).
-> Pulse is the author's private distribution of this server, not a parlay dependency and not
-> something this repository ships.
+> **Never target the live serving port from a test** — use an isolated instance
+> (`examples/bootstrap-sandbox.sh`). There is exactly one canonical server; the retired
+> second server no longer exists.
 
 The probe run for §5 of this document redirected `GC_HOME` to a scratch directory and the
 supervisor port to `18372`, and invoked only `version`, `--help`, `config show --json`, and

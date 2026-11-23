@@ -35,7 +35,7 @@ tests still green.
 `/fleet/`, **copy-only by default** (deploy dependency surface stays "Go,
 period"), `--build` flag opt-in to run the Bun/Vite builds first. Required
 rider: `packages/client/build.ts` learns an env/flag opt-out for its
-reload-ping to `:31337` so an installer-driven build cannot poke the live
+reload-ping to the live server so an installer-driven build cannot poke the live
 server (improvement-log idea 9). **Accept:** fresh `install.sh` on a box with
 prebuilt dists serves the panel at `/` and fleet at `/fleet/`; an install.sh
 test asserts the `-assets-dir` layout (idea 10).
