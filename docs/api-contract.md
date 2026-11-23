@@ -860,7 +860,9 @@ rpcId was unknown/expired.
 
 ### `GET /api/chat/version`
 Bundle version, polled on every SSE `connected` so a stale PWA tab
-self-upgrades. Response: `{ "version": "string" }` (`"unknown"` = no-op).
+self-upgrades. Read from `PA_VERSION` in `<assets-dir>/parlay-agent.js` (the bundle
+the server serves). Response: `{ "version": "string" }` (`"unknown"` = no-op,
+including a missing bundle).
 
 ### `GET /api/rode`
 The latest RODE Connect microphone reading, for consumers that are not SSE

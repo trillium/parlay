@@ -105,6 +105,7 @@ func main() {
 		}
 		defer consumer.Close()
 	}
+	handlers.SetAssetsDir(*assetsFlag)
 	handlers.RegisterData(mux, st)
 	handlers.RegisterTTS(mux, *paiDirFlag, hub)
 	handlers.RegisterPages(mux, hub)
