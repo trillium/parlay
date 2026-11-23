@@ -239,3 +239,19 @@ func TestHandleHistoryReturnsOldestFirstAndRespectsLimit(t *testing.T) {
 		t.Errorf("history = %+v, want last 2 messages oldest-first [two three]", got)
 	}
 }
+
+// One unauthenticated POST must not be able to make the server buffer an
+// arbitrarily large body.
+func TestDecodeJSONRefusesAnOversizedBody(t *testing.T) {
+	st := newTestStore(t)
+	huge := `{"text":"` + strings.Repeat("a", maxJSONBodyBytes+1) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(huge))
+	rec := httptest.NewRecorder()
+	handleSend(st, newBroker())(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+	if st.Messages.Count() != 0 {
+		t.Errorf("an oversized message was stored")
+	}
+}

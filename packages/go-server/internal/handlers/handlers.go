@@ -62,6 +62,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"parlay/go-server/internal/store"
@@ -146,13 +147,27 @@ func writeStatusError(w http.ResponseWriter, status int, msg string) {
 // decodeJSON decodes the request body into v, writing a transport-level 400
 // and returning false on failure — the one error class every endpoint in
 // this package treats identically regardless of its own convention.
+//
+// The body is capped at maxJSONBodyBytes: the API has no authentication and
+// accepts LAN origins, so an unbounded read lets one POST exhaust memory.
+// Routes that legitimately carry more (uploads) read their own bodies.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeStatusError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
 		writeStatusError(w, http.StatusBadRequest, "invalid JSON body")
 		return false
 	}
 	return true
 }
+
+// maxJSONBodyBytes bounds every JSON request body read through decodeJSON.
+// 8 MiB comfortably holds a chat message with inline image data URLs.
+const maxJSONBodyBytes = 8 << 20
 
 // methodNotAllowed writes a 405 with an Allow header, matching the pattern
 // C0's registerHealth already established for GET /health.
