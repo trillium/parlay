@@ -15,7 +15,7 @@ func initRepo(t *testing.T, dir string) string {
 	t.Helper()
 	// A developer's PATH shims and a hook's ambient GIT_* must not steer the
 	// fixture's git calls.
-	testsupport.IsolatedEnv(t, "git")
+	testsupport.IsolatedEnv(t)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}

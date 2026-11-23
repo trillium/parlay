@@ -2,8 +2,6 @@ package testsupport
 
 import (
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,29 +24,14 @@ var scrubbedExact = []string{"BASH_ENV", "ENV", "CDPATH"}
 
 // IsolatedEnv makes the process environment hermetic for a test that execs
 // subprocesses, restoring everything when the test ends. It pins PATH to the
-// system directories plus the directory of each tool in keep (resolved from
-// the PATH in effect when called — so the real `bd` or `git` still resolves),
-// and removes the GIT_*, PARLAY_*, BD_*, BEADS_* and BRAIN_* families and the
-// shell-startup variables. A test that later prepends a stub directory to PATH
-// still works: it layers on top of this PATH.
+// system directories and removes the GIT_*, PARLAY_*, BD_*, BEADS_* and
+// BRAIN_* families and the shell-startup variables. A test that later prepends
+// a stub directory to PATH still works: it layers on top of this PATH.
 //
 // Exported shell functions (BASH_FUNC_*) are removed too: they shadow commands
 // by name inside bash regardless of PATH.
-func IsolatedEnv(t *testing.T, keep ...string) {
+func IsolatedEnv(t *testing.T) {
 	t.Helper()
-	dirs := []string{}
-	seen := map[string]bool{}
-	for _, tool := range keep {
-		p, err := exec.LookPath(tool)
-		if err != nil {
-			continue // absent tool: the caller decides whether to skip
-		}
-		d := filepath.Dir(p)
-		if !seen[d] {
-			seen[d] = true
-			dirs = append(dirs, d)
-		}
-	}
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		if shouldScrub(k) {
@@ -56,7 +39,7 @@ func IsolatedEnv(t *testing.T, keep ...string) {
 			_ = os.Unsetenv(k)
 		}
 	}
-	t.Setenv("PATH", strings.Join(append(dirs, systemPath), string(os.PathListSeparator)))
+	t.Setenv("PATH", systemPath)
 }
 
 func shouldScrub(k string) bool {

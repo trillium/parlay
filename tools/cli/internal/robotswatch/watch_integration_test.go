@@ -61,9 +61,9 @@ func storeEnv(beadsDir, name string) []string {
 // poll) inherits this environment.
 func isolateBeadsEnv(t *testing.T) {
 	t.Helper()
-	// Pin PATH to the system dirs plus the beads toolchain, and scrub the
-	// GIT_*/PARLAY_* families a developer shell leaks into the bd subprocesses.
-	testsupport.IsolatedEnv(t, "bd", "dolt", "git")
+	// Pin PATH to the system dirs and scrub the GIT_*/PARLAY_* families a
+	// developer shell leaks into the bd subprocesses.
+	testsupport.IsolatedEnv(t)
 	saved := map[string]string{}
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
@@ -253,10 +253,10 @@ func TestWatchedStoresIntendedTable(t *testing.T) {
 // ── Test 2: scratch store close fires the notify path ─────────────────────────
 
 func TestScratchStoreClosedBeadFiresNotifyPath(t *testing.T) {
-	if !bdOnPath() {
-		t.Skip("bd CLI not on PATH — integration drives the real beads binary through the poll loop")
-	}
 	isolateBeadsEnv(t)
+	if !bdOnPath() {
+		t.Skip("bd CLI not on isolated PATH — integration drives the real beads binary through the poll loop")
+	}
 
 	stateHome := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", stateHome)

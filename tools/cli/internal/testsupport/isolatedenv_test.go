@@ -35,18 +35,17 @@ func TestIsolatedEnvPinsPathAndScrubsAmbientVariables(t *testing.T) {
 	}
 }
 
-func TestIsolatedEnvKeepsTheDirectoryOfNamedTools(t *testing.T) {
-	bin := t.TempDir()
-	tool := filepath.Join(bin, "fake-keep-tool")
-	if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+func TestIsolatedEnvRejectsShimNamedForSystemTool(t *testing.T) {
+	shim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shim, "git"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	IsolatedEnv(t, "fake-keep-tool", "no-such-tool-anywhere")
+	IsolatedEnv(t)
 
-	if err := exec.Command("fake-keep-tool").Run(); err != nil {
-		t.Errorf("kept tool no longer resolves: %v", err)
+	if err := exec.Command("git", "--version").Run(); err != nil {
+		t.Errorf("git resolved to the shim: %v", err)
 	}
 }
 
