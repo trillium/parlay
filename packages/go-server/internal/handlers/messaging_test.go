@@ -255,3 +255,17 @@ func TestDecodeJSONRefusesAnOversizedBody(t *testing.T) {
 		t.Errorf("an oversized message was stored")
 	}
 }
+
+func TestDecodeJSONRefusesOversizedSuffixAfterValidValue(t *testing.T) {
+	st := newTestStore(t)
+	body := `{"text":"ok"}` + strings.Repeat(" ", maxJSONBodyBytes+1)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handleSend(st, newBroker())(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+	if st.Messages.Count() != 0 {
+		t.Errorf("a message was stored before the oversized body was rejected")
+	}
+}

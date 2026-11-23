@@ -49,6 +49,27 @@ func TestIsolatedEnvRejectsShimNamedForSystemTool(t *testing.T) {
 	}
 }
 
+func TestIsolatedEnvPinsOnlyApprovedTool(t *testing.T) {
+	tools := t.TempDir()
+	approved := filepath.Join(tools, "bd")
+	if err := os.WriteFile(approved, []byte("#!/bin/sh\nprintf approved\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tools, "git"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	IsolatedEnv(t, approved)
+
+	if output, err := exec.Command("bd").Output(); err != nil || string(output) != "approved" {
+		t.Errorf("approved tool output = %q, %v; want approved", output, err)
+	}
+	if err := exec.Command("git", "--version").Run(); err != nil {
+		t.Errorf("unapproved sibling tool survived isolation: %v", err)
+	}
+}
+
 func TestIsolatedEnvRestoresOnCleanup(t *testing.T) {
 	t.Setenv("GIT_DIR", "/restore-me")
 	t.Run("inner", func(t *testing.T) { IsolatedEnv(t) })

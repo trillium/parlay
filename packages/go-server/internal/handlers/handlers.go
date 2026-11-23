@@ -63,6 +63,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"parlay/go-server/internal/store"
@@ -153,16 +154,29 @@ func writeStatusError(w http.ResponseWriter, status int, msg string) {
 // Routes that legitimately carry more (uploads) read their own bodies.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			writeStatusError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return false
-		}
-		writeStatusError(w, http.StatusBadRequest, "invalid JSON body")
-		return false
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(v); err != nil {
+		return writeJSONDecodeError(w, err)
+	}
+	tailErr := decoder.Decode(&struct{}{})
+	_, drainErr := io.Copy(io.Discard, r.Body)
+	if drainErr != nil {
+		return writeJSONDecodeError(w, drainErr)
+	}
+	if tailErr != io.EOF {
+		return writeJSONDecodeError(w, tailErr)
 	}
 	return true
+}
+
+func writeJSONDecodeError(w http.ResponseWriter, err error) bool {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		writeStatusError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return false
+	}
+	writeStatusError(w, http.StatusBadRequest, "invalid JSON body")
+	return false
 }
 
 // maxJSONBodyBytes bounds every JSON request body read through decodeJSON.

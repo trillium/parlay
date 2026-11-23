@@ -59,11 +59,11 @@ func storeEnv(beadsDir, name string) []string {
 // resolve to the shared Dolt server on 127.0.0.1:3307 or to the user's global
 // beads config. Everything the test spawns (bd, the store stub, the in-process
 // poll) inherits this environment.
-func isolateBeadsEnv(t *testing.T) {
+func isolateBeadsEnv(t *testing.T, approvedTools ...string) {
 	t.Helper()
 	// Pin PATH to the system dirs and scrub the GIT_*/PARLAY_* families a
 	// developer shell leaks into the bd subprocesses.
-	testsupport.IsolatedEnv(t)
+	testsupport.IsolatedEnv(t, approvedTools...)
 	saved := map[string]string{}
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
@@ -80,13 +80,24 @@ func isolateBeadsEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 }
 
-// bdOnPath reports whether the real beads CLI is available on PATH. The
-// integration body shells out to the real `bd` binary; hosts that only link
-// the beads Go library (e.g. CI) skip the test rather than fail it — same
-// convention as parlaybeads' opt-in TestRealStoreRoundTrip.
-func bdOnPath() bool {
-	_, err := exec.LookPath("bd")
-	return err == nil
+func beadsTools() (string, string, bool) {
+	bd, err := exec.LookPath("bd")
+	if err != nil {
+		return "", "", false
+	}
+	dolt, err := exec.LookPath("dolt")
+	if err != nil {
+		return "", "", false
+	}
+	bd, err = filepath.Abs(bd)
+	if err != nil {
+		return "", "", false
+	}
+	dolt, err = filepath.Abs(dolt)
+	if err != nil {
+		return "", "", false
+	}
+	return bd, dolt, true
 }
 
 // initScratchStore creates a fresh bd disk store at dir with the given issue
@@ -253,10 +264,11 @@ func TestWatchedStoresIntendedTable(t *testing.T) {
 // ── Test 2: scratch store close fires the notify path ─────────────────────────
 
 func TestScratchStoreClosedBeadFiresNotifyPath(t *testing.T) {
-	isolateBeadsEnv(t)
-	if !bdOnPath() {
-		t.Skip("bd CLI not on isolated PATH — integration drives the real beads binary through the poll loop")
+	bd, dolt, ok := beadsTools()
+	if !ok {
+		t.Skip("bd and dolt CLIs not on PATH — integration drives their real binaries through the poll loop")
 	}
+	isolateBeadsEnv(t, bd, dolt)
 
 	stateHome := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", stateHome)
