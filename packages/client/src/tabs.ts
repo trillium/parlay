@@ -8,7 +8,7 @@ function displayName(info: AgentInfo): string { return info.nicknames?.[0] ?? in
 import { sheetOpen, renderSheet } from './switcher'
 import { renderToolLog } from './toollog'
 import { PA_VERSION } from './version'
-
+import { isSafeUrl } from './safe-url'
 // Left-edge build label doubles as the active-tab cue: "v3.7.5 · First Mate".
 // The agent name is the load-bearing part (which tab am I in?), so it trails
 // the version — if the rotated string ever clips at the top edge, the version
@@ -103,7 +103,7 @@ function updateHeader(ch: string | null) {
     dotEl.title = statusTooltip(ch)
     // URL pills — clickable links to pulse pages this agent owns
     if (urlsEl) {
-      const urls = info.urls ?? []
+      const urls = (info.urls ?? []).filter(isSafeUrl)
       urlsEl.innerHTML = urls.map(u => `<a class="pa-url-pill" href="${esc(u)}" title="${esc(u)}" target="_blank">${esc(u.replace(/^https?:\/\/[^/]+/, '') || u)}</a>`).join('')
       urlsEl.classList.toggle('visible', urls.length > 0)
     }

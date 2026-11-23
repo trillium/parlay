@@ -3,6 +3,7 @@ import { inputEl } from '../dom'
 import { agentInfo, activeChannel } from '../state'
 import { switchChannel, archiveChannel, archived } from '../tabs'
 import { getSettings } from '../settings-modal'
+import { isSafeUrl } from '../safe-url'
 import { autoResize, sendMsg, clearDraft, scheduleDraftSave } from '../input'
 
 // ── CommandContext implementation ────────────────────────────────────────────
@@ -60,6 +61,7 @@ export function buildContext(): CommandContext {
 // (chat-app) — the chat drawer stays live as persistent chrome, zero SSE
 // teardown. Elsewhere, fall back to a full navigation.
 export function navigateWorkspace(url: string): boolean {
+  if (!isSafeUrl(url)) return false   // never let a frame or voice command run javascript:
   const frame = document.getElementById('pa-workspace') as HTMLIFrameElement | null
   const sameOrigin = url.startsWith('/') || url.startsWith(location.origin)
   if (frame && sameOrigin) { frame.src = url; return true }
