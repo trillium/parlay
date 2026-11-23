@@ -105,6 +105,7 @@ func main() {
 		}
 		defer consumer.Close()
 	}
+	handlers.SetAssetsDir(*assetsFlag)
 	handlers.RegisterData(mux, st)
 	handlers.RegisterTTS(mux, *paiDirFlag, hub)
 	handlers.RegisterPages(mux, hub)
@@ -132,7 +133,15 @@ func main() {
 	// registered later cannot land outside the boundary — see
 	// internal/guard/guard.go for the policy and for where it deliberately
 	// differs from packages/server/src/guard/.
-	srv := &http.Server{Addr: *addrFlag, Handler: guard.Wrap(mux)}
+	// ReadHeaderTimeout/IdleTimeout bound slow-loris headers and abandoned
+	// keep-alives. There is deliberately no Read/WriteTimeout: SSE streams and
+	// 25s long-polls are legitimately long-lived responses.
+	srv := &http.Server{
+		Addr:              *addrFlag,
+		Handler:           guard.Wrap(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	pair.Banner(os.Stderr, exposure, *addrFlag, pairToken, stderrIsTerminal(), systemIfaceAddrs)
 

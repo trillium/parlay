@@ -473,7 +473,7 @@ type pollResult struct {
 // Go path — the one bin/parlay actually execs — kept the leak alive
 // (robots-jkwc). It is the ONLY terminal status: a 500 still retries.
 func pollOnce(server, channelParam string, lastID *string, notifySafe bool, notifyBudget int, out io.Writer) pollResult {
-	resp, err := httpc.Client.Get(fmt.Sprintf("%s/api/chat/poll?after=%s%s", server, *lastID, channelParam))
+	resp, err := httpc.UnboundedClient.Get(fmt.Sprintf("%s/api/chat/poll?after=%s%s", server, *lastID, channelParam))
 	if err != nil {
 		return pollResult{sleep: 3 * time.Second}
 	}

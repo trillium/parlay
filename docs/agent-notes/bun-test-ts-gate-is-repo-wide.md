@@ -3,8 +3,8 @@
 `.github/workflows/ci.yml`'s `bun` job has an "uncovered" check before it runs
 any tests: it globs `git ls-files '*.test.ts' '*.test.tsx'` across the
 **entire repository** and fails the job if any match falls outside its
-hardcoded `$roots` list (`packages/input packages/client packages/server
-packages/webview packages/ccjuggler tools`).
+hardcoded `$roots` list (`packages/input packages/client packages/sandbox
+packages/webview packages/ccjuggler tools examples/fleet`).
 
 That glob is not scoped to the bun workspace (`package.json`'s `workspaces`
 is `packages/*` only). A test file added anywhere else in the tree — for

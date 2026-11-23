@@ -336,8 +336,8 @@ func (cr *CommandRegistry) snapshotLocked() []CommandInvocation {
 		out = append(out, cr.decorate(rec, now))
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].StartedAt != out[j].StartedAt {
-			return out[i].StartedAt > out[j].StartedAt
+		if c := CompareStamps(out[i].StartedAt, out[j].StartedAt); c != 0 {
+			return c > 0
 		}
 		return out[i].ID < out[j].ID
 	})
@@ -387,8 +387,8 @@ func (cr *CommandRegistry) evictLocked() []string {
 		if iTerm != jTerm {
 			return iTerm
 		}
-		if all[i].StartedAt != all[j].StartedAt {
-			return all[i].StartedAt < all[j].StartedAt
+		if c := CompareStamps(all[i].StartedAt, all[j].StartedAt); c != 0 {
+			return c < 0
 		}
 		return all[i].ID < all[j].ID
 	})

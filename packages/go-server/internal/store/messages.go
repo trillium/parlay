@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,6 +127,39 @@ func (ms *MessageStore) loadFromDisk() error {
 	}
 	ms.ring = buf
 	ms.nextSeq = maxSeq + 1
+	// The ring can no longer vouch for ids it has discarded: after a Clear (or
+	// a RemoveByChannel that dropped the newest message) the highest id ever
+	// handed out is gone from the log, so a restart would reissue it.
+	if hw := ms.loadHighWater(); hw > ms.nextSeq {
+		ms.nextSeq = hw
+	}
+	return nil
+}
+
+// highWaterPath is the sidecar holding the next sequence number to hand out,
+// written only by operations that delete messages.
+func (ms *MessageStore) highWaterPath() string { return ms.path + ".seq" }
+
+func (ms *MessageStore) loadHighWater() uint64 {
+	b, err := os.ReadFile(ms.highWaterPath())
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// persistHighWaterLocked records nextSeq durably. Callers run it BEFORE
+// removing messages: a crash in between leaves a too-high mark (ids merely
+// skip), never a reissued one.
+func (ms *MessageStore) persistHighWaterLocked() error {
+	b := []byte(strconv.FormatUint(ms.nextSeq, 10) + "\n")
+	if err := atomicfile.Write(ms.highWaterPath(), b, 0o644); err != nil {
+		return fmt.Errorf("persist id high-water mark: %w", err)
+	}
 	return nil
 }
 
@@ -318,6 +352,9 @@ func (ms *MessageStore) Clear() error {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
+	if err := ms.persistHighWaterLocked(); err != nil {
+		return err
+	}
 	ms.ring = ms.ring[:0] // clear the ring buffer
 
 	// nextSeq is deliberately NOT reset. Message ids are handed to clients as
@@ -342,6 +379,10 @@ func (ms *MessageStore) Clear() error {
 func (ms *MessageStore) RemoveByChannel(channel string) error {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
+
+	if err := ms.persistHighWaterLocked(); err != nil {
+		return err
+	}
 
 	// Filter out messages from this channel
 	kept := ms.ring[:0]

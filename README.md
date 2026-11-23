@@ -638,8 +638,8 @@ happy-dom preload some client packages need: DOM-touching suites fail there with
 `ReferenceError: document is not defined` even though they pass in-package —
 always run a suite from inside its own package. CI
 (`.github/workflows/ci.yml`) runs on every pull request and on pushes to
-`main`, and does exactly that for the Go modules, the Bun client packages, and
-the hermetic shell harnesses.
+`main`, and does exactly that for the Go modules, Bun package tests plus input
+and webview typechecks, and the hermetic shell harnesses.
 
 Repo conventions worth knowing:
 

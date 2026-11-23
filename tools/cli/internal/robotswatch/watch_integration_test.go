@@ -28,6 +28,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/trillium/parlay/tools/cli/internal/testsupport"
 )
 
 // ── Shared scaffolding ────────────────────────────────────────────────────────
@@ -57,8 +59,11 @@ func storeEnv(beadsDir, name string) []string {
 // resolve to the shared Dolt server on 127.0.0.1:3307 or to the user's global
 // beads config. Everything the test spawns (bd, the store stub, the in-process
 // poll) inherits this environment.
-func isolateBeadsEnv(t *testing.T) {
+func isolateBeadsEnv(t *testing.T, approvedTools ...string) {
 	t.Helper()
+	// Pin PATH to the system dirs and scrub the GIT_*/PARLAY_* families a
+	// developer shell leaks into the bd subprocesses.
+	testsupport.IsolatedEnv(t, approvedTools...)
 	saved := map[string]string{}
 	for _, kv := range os.Environ() {
 		k, v, _ := strings.Cut(kv, "=")
@@ -75,17 +80,44 @@ func isolateBeadsEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 }
 
-// bdOnPath reports whether the real beads CLI is available on PATH. The
-// integration body shells out to the real `bd` binary; hosts that only link
-// the beads Go library (e.g. CI) skip the test rather than fail it — same
-// convention as parlaybeads' opt-in TestRealStoreRoundTrip.
-func bdOnPath() bool {
-	_, err := exec.LookPath("bd")
-	return err == nil
+func beadsTools() (string, string, bool) {
+	bd, dolt := os.Getenv("PARLAY_ROBOTSWATCH_BD"), os.Getenv("PARLAY_ROBOTSWATCH_DOLT")
+	for _, tool := range []string{bd, dolt} {
+		if !filepath.IsAbs(tool) {
+			return "", "", false
+		}
+		info, err := os.Stat(tool)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			return "", "", false
+		}
+	}
+	return bd, dolt, true
 }
 
 // initScratchStore creates a fresh bd disk store at dir with the given issue
 // prefix and returns the path to its .beads dir.
+func TestBeadsToolsRequiresExplicitPaths(t *testing.T) {
+	bin := t.TempDir()
+	bd, dolt := filepath.Join(bin, "bd"), filepath.Join(bin, "dolt")
+	for _, tool := range []string{bd, dolt} {
+		if err := os.WriteFile(tool, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PARLAY_ROBOTSWATCH_BD", "")
+	t.Setenv("PARLAY_ROBOTSWATCH_DOLT", "")
+	if _, _, ok := beadsTools(); ok {
+		t.Fatal("ambient PATH tools were accepted")
+	}
+	t.Setenv("PARLAY_ROBOTSWATCH_BD", bd)
+	t.Setenv("PARLAY_ROBOTSWATCH_DOLT", dolt)
+	gotBD, gotDolt, ok := beadsTools()
+	if !ok || gotBD != bd || gotDolt != dolt {
+		t.Fatalf("beadsTools = (%q, %q, %t), want configured paths", gotBD, gotDolt, ok)
+	}
+}
+
 func initScratchStore(t *testing.T, dir, prefix string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -248,10 +280,11 @@ func TestWatchedStoresIntendedTable(t *testing.T) {
 // ── Test 2: scratch store close fires the notify path ─────────────────────────
 
 func TestScratchStoreClosedBeadFiresNotifyPath(t *testing.T) {
-	if !bdOnPath() {
-		t.Skip("bd CLI not on PATH — integration drives the real beads binary through the poll loop")
+	bd, dolt, ok := beadsTools()
+	if !ok {
+		t.Skip("set PARLAY_ROBOTSWATCH_BD and PARLAY_ROBOTSWATCH_DOLT to absolute executable paths to run this integration")
 	}
-	isolateBeadsEnv(t)
+	isolateBeadsEnv(t, bd, dolt)
 
 	stateHome := t.TempDir()
 	t.Setenv("PARLAY_STATE_HOME", stateHome)

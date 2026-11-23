@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"parlay/go-server/internal/store"
 )
 
 // Client roll call: a page announces itself on connect, and the server can
@@ -149,7 +151,7 @@ func (c *clientRegistry) record(rep clientReport) {
 		if len(c.rows) >= maxClientRows {
 			oldest, oldestAt := "", ""
 			for id, r := range c.rows {
-				if oldest == "" || r.LastSeen < oldestAt {
+				if oldest == "" || store.CompareStamps(r.LastSeen, oldestAt) < 0 {
 					oldest, oldestAt = id, r.LastSeen
 				}
 			}
@@ -177,7 +179,7 @@ func (c *clientRegistry) list() []clientRow {
 		}
 		out = append(out, row)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen > out[j].LastSeen })
+	sort.Slice(out, func(i, j int) bool { return store.CompareStamps(out[i].LastSeen, out[j].LastSeen) > 0 })
 	return out
 }
 

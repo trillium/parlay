@@ -11,7 +11,7 @@ limit meant it never read the diff (see the merge-gate section above — that ve
 exists because of the same lie). A triage of the open-PR backlog found 23/23 PRs
 green and 3 provably broken.
 
-Three parallel jobs, each pinned to action commit SHAs with `permissions:
+Four parallel jobs, each pinned to action commit SHAs with `permissions:
 contents: read` and no `pull_request_target`: **go** (build/vet/test/gofmt over
 every module in `GO_MODULES`), **shell** (the five hermetic harnesses named in
 its own comment, preceded by a `git`/`jq`/`curl`/`python3`/`bun` presence check
@@ -22,9 +22,9 @@ harness runs a Bun stub relay), **hygiene** (conflict markers, 2 MiB
 tracked-file ceiling measured on the tracked *blob* via `git ls-tree -l`, never
 `stat` on the worktree path, which would follow this repo's tracked symlinks;
 every top-level `docs/*.md` must be linked from `docs/README.md`; and no
-committed `*.sh` may reference an artifact that was deleted).
-There is no `bun` job: the client and input packages still have `package.json`
-files, but nothing in CI runs their tests.
+committed `*.sh` may reference an artifact that was deleted), **bun** (tests
+the listed Bun package/tool roots from their own directories and typechecks
+`packages/input` and `packages/webview`).
 Both hygiene gates distinguish "the tool failed" from "the tree is clean" —
 `git grep`'s status 2+ and a failed or empty `git ls-tree` each fail the step.
 Read the file's own comments for per-step rationale rather than re-deriving it.

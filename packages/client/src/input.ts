@@ -1,6 +1,7 @@
 import { CHAT_BASE } from './config'
 import { draftSaveTimer, open, activeChannel, setDraftSaveTimer, agentInfo } from './state'
 import { inputEl, sendBtn } from './dom'
+import { showSendFailed, clearSendFailed } from './send-status'
 import { armCompactTimer } from './sse'
 import { getSettings } from './settings-modal'
 import { scheduleEval, bumpInputVersion, applyEnvelope } from './commands'
@@ -135,10 +136,16 @@ export async function sendMsg(text: string, images?: string[]) {
       // and the finally re-enables; the text stays put (only cleared on r.ok).
       signal: AbortSignal.timeout(10_000),
     })
-    if (r.ok) { lastSendTs = Date.now(); inputEl.value = ''; autoResize(); armCompactTimer(); clearDraft() }
+    if (r.ok) {
+      lastSendTs = Date.now(); inputEl.value = ''; autoResize(); armCompactTimer(); clearDraft()
+      clearSendFailed()
+    } else {
+      showSendFailed()
+    }
   } catch {
     // Network error / timeout / abort — leave the text so a failed auto-submit
-    // (voice "briefly") can be retried, never silently lost.
+    // (voice "briefly") can be retried, never silently lost — and say so.
+    showSendFailed()
   } finally {
     // ALWAYS restore interactivity. Re-enabling lived after the try/catch, not in
     // a finally — so any non-settling /send left the send button greyed

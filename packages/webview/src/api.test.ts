@@ -111,6 +111,12 @@ describe('openEventStream', () => {
     es.emit('tool_event', JSON.stringify({ tool: 'Bash' }))
     expect(seen).toEqual([['message', { id: 7 }], ['tool_event', { tool: 'Bash' }]])
 
+    // useFleetStore consumes 'input_action'; without a subscription the fleet
+    // dashboard's eval-hit feed never receives a frame.
+    es.emit('input_action', JSON.stringify({ streamId: 's1', actions: [] }))
+    expect(seen.at(-1)).toEqual(['input_action', { streamId: 's1', actions: [] }])
+    seen.pop()
+
     stop()
     expect(es.closed).toBe(true)
     for (const set of es.listeners.values()) expect(set.size).toBe(0)

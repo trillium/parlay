@@ -1,6 +1,7 @@
 package spawn
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +73,15 @@ func resolveLauncher(cfg spawnConfig) string {
 		return "subprocess"
 	}
 	return resolved
+}
+
+// validateLauncher accepts exactly the launchers the pipeline can dispatch.
+func validateLauncher(l string) error {
+	switch l {
+	case "herdr", "subprocess", "gc":
+		return nil
+	}
+	return fmt.Errorf("unknown launcher %q (from PARLAY_SPAWN_LAUNCHER or config.toml [spawn].launcher) — expected one of: herdr, subprocess, gc", l)
 }
 
 // BeadsRequired reports whether beads-required mode is currently on for this

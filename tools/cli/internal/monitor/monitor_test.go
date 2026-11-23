@@ -174,6 +174,34 @@ func TestPollOnceTimeoutMessageIsQuietAndImmediate(t *testing.T) {
 	}
 }
 
+// The server holds a poll open ~25s, longer than httpc.DefaultTimeout. The
+// shared one-shot Client is shrunk here so the test needn't sleep 10s: a poll
+// that used it would be severed mid-hold and report a network error.
+func TestPollOnceSurvivesAHoldLongerThanTheOneShotTimeout(t *testing.T) {
+	orig := httpc.Client.Timeout
+	httpc.Client.Timeout = 100 * time.Millisecond
+	t.Cleanup(func() { httpc.Client.Timeout = orig })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "msg-1", "role": "user", "text": "held", "from": "captain",
+		})
+	}))
+	defer srv.Close()
+
+	lastID := ""
+	var out strings.Builder
+	got := pollOnce(srv.URL, "", &lastID, false, 400, &out)
+	if got.sleep != 0 {
+		t.Errorf("sleep = %v, want 0 (a held poll must not look like a network error)", got.sleep)
+	}
+	if lastID != "msg-1" {
+		t.Errorf("lastID = %q, want msg-1 (message delivered after the hold)", lastID)
+	}
+}
+
 func TestPollOnceEmitsChatMsgAndAdvancesLastID(t *testing.T) {
 	var gotAfter string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

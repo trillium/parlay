@@ -297,8 +297,26 @@ type versionResponse struct {
 // a fresh mtime, which then never expires.
 var bundleVersionCache struct {
 	mu      sync.Mutex
+	path    string
 	mtime   int64
 	version string
+}
+
+// assetsDir is the panel-bundle directory the server serves (-assets-dir),
+// set once at startup. The version the panel is told it should be running is
+// read from the bundle actually being served, not from a fixed location in the
+// home directory that a standalone install does not have.
+var (
+	assetsDirMu sync.RWMutex
+	assetsDir   string
+)
+
+// SetAssetsDir records the directory GET /api/chat/version reads the bundle
+// version from. Called once at startup with the resolved -assets-dir.
+func SetAssetsDir(dir string) {
+	assetsDirMu.Lock()
+	defer assetsDirMu.Unlock()
+	assetsDir = dir
 }
 
 // bundleVersionRe extracts PA_VERSION from the compiled client bundle.
@@ -313,13 +331,14 @@ var bundleVersionRe = regexp.MustCompile(`PA_VERSION\s*=\s*["']([^"']+)["']`)
 // "don't offer an update", which is the right behavior when the bundle is
 // missing or unreadable.
 func getBundleVersion() string {
-	// Try to read from the same path the TS version reads
-	home, err := os.UserHomeDir()
-	if err != nil {
+	assetsDirMu.RLock()
+	dir := assetsDir
+	assetsDirMu.RUnlock()
+	if dir == "" {
 		return "unknown"
 	}
 
-	bundlePath := filepath.Join(home, "pulse-pages", "annotate", "pulse-agent.js")
+	bundlePath := filepath.Join(dir, "parlay-agent.js")
 	info, err := os.Stat(bundlePath)
 	if err != nil {
 		return "unknown"
@@ -329,7 +348,7 @@ func getBundleVersion() string {
 
 	bundleVersionCache.mu.Lock()
 	defer bundleVersionCache.mu.Unlock()
-	if bundleVersionCache.mtime == mtime && bundleVersionCache.version != "" {
+	if bundleVersionCache.path == bundlePath && bundleVersionCache.mtime == mtime && bundleVersionCache.version != "" {
 		return bundleVersionCache.version
 	}
 
@@ -345,6 +364,7 @@ func getBundleVersion() string {
 		version = matches[1]
 	}
 
+	bundleVersionCache.path = bundlePath
 	bundleVersionCache.mtime = mtime
 	bundleVersionCache.version = version
 	return version

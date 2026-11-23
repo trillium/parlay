@@ -675,3 +675,30 @@ func TestRollbackTreatsUnregister404AsDone(t *testing.T) {
 		t.Errorf("expected rollback to report the registration gone; got:\n%s", out)
 	}
 }
+
+// A launcher the pipeline cannot dispatch used to register the agent and then
+// quietly launch under herdr. It must be refused before any server call.
+func TestSpawnOneRefusesAnUnknownLauncherBeforeRegistering(t *testing.T) {
+	refuseHerdr(t)
+	t.Setenv("PARLAY_SPAWN_LAUNCHER", "herder")
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	withPARLAYServer(t, srv.URL)
+
+	out, rc := captureStderr(t, func() int {
+		return runNamedSpawn([]string{"nope-badlauncher-z3", "Nope", "#c084fc", "brief", "--model", "sonnet"})
+	})
+	if rc == 0 {
+		t.Errorf("an unknown launcher should fail; output:\n%s", out)
+	}
+	if !strings.Contains(out, `unknown launcher "herder"`) {
+		t.Errorf("expected the unknown-launcher message; output:\n%s", out)
+	}
+	if calls != 0 {
+		t.Errorf("server saw %d calls; the agent must not be registered for a refused launcher", calls)
+	}
+}

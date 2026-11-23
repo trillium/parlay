@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -293,5 +295,34 @@ func TestPanelRoutesAreGuarded(t *testing.T) {
 		if !guard.IsGuarded(path) {
 			t.Errorf("%s mutates or drives the device but is not guarded", path)
 		}
+	}
+}
+
+// The version the panel is told to upgrade to comes from the bundle the server
+// serves (-assets-dir), not from a fixed ~/pulse-pages path.
+func TestVersionIsReadFromTheServedAssetsDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "parlay-agent.js"), []byte(`var PA_VERSION = "9.8.7";`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { SetAssetsDir("") })
+	SetAssetsDir(dir)
+
+	mux, _ := newPanelMux(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/chat/version", nil))
+	var got versionResponse
+	decodeBody(t, rec, &got)
+	if got.Version != "9.8.7" {
+		t.Errorf("version = %q, want 9.8.7", got.Version)
+	}
+
+	// A different assets dir must not be answered from the previous dir's cache.
+	SetAssetsDir(t.TempDir())
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/chat/version", nil))
+	decodeBody(t, rec, &got)
+	if got.Version != "unknown" {
+		t.Errorf("version with no bundle = %q, want unknown", got.Version)
 	}
 }
