@@ -119,6 +119,12 @@ func spawnOne(opts SpawnOptions) error {
 	if effectiveLauncher == "" {
 		effectiveLauncher = resolveLauncher(loadSpawnConfig())
 	}
+	// A typo'd launcher (env or config.toml) used to fall through the switch
+	// below to the herdr default — after the agent was already registered.
+	// Refuse before anything is created.
+	if err := validateLauncher(effectiveLauncher); err != nil {
+		return err
+	}
 
 	// bash runs the herdr duplicate-name guard whenever herdr happens to be
 	// on PATH, regardless of $LAUNCHER (line 1169: `_herdr_use_rpc ||
