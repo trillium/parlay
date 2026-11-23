@@ -112,3 +112,35 @@ func TestHandlerPathTraversalBlocked(t *testing.T) {
 		t.Fatal("path traversal should not return 200")
 	}
 }
+
+// An unrouted /api path must read as a 404, not as the panel's index.html with
+// a 200 — callers treat 404 as "this server does not support that".
+func TestHandlerNeverFallsBackToIndexUnderAPI(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>shell</html>"), 0o644)
+
+	h := Handler(dir)
+	for _, p := range []string{"/api/chat/debug-log", "/api/debug/input-timing", "/api/lavish/claim", "/api/", "/api"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("GET %s want 404 got %d", p, rr.Code)
+		}
+		if strings.Contains(rr.Body.String(), "shell") {
+			t.Errorf("GET %s served the SPA shell: %q", p, rr.Body.String())
+		}
+	}
+
+	// Non-API paths still fall back.
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/some/bookmarked/route", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "shell") {
+		t.Errorf("SPA fallback broke: %d %q", rr.Code, rr.Body.String())
+	}
+	// A path that merely starts with the letters "api" is not under /api/.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/apiary", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("GET /apiary want SPA fallback 200 got %d", rr.Code)
+	}
+}

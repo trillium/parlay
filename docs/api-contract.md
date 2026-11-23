@@ -1025,15 +1025,12 @@ Both are recorded in the log as `refused` with reason `off-connection` /
 ### `POST /api/chat/debug-log`
 Batched client console errors/warnings + instrumented traces from the panel,
 appended to a log file so a phone (no devtools) can be diagnosed by tailing
-it. The Go server does not serve it — its route 404s, and the client treats
-the 404 as "permanent no-op for the session" (confirmed, working degradation).
-Guarded (origin + JSON
-content-type). Disabled entirely with `PARLAY_DEBUG_LOG=0`; log path
-overridable via `PARLAY_DEBUG_LOG_PATH`. Request
-`{ "device", "ua", "url", "entries": [ { "ts", "level": "error"|"warn"|"trace", "source", "message", "detail"? } ] }`;
-responses 204 (disabled/empty/success), 400 (invalid JSON), 500 (persist
-failure to `$PARLAY_STATE_HOME/debug.log`). Fields truncated at 4000 chars,
-50 entries per batch.
+it. **The Go server does not serve it**: the route is a real 404 (unrouted
+`/api/*` paths are never the SPA fallback), it is not in the guard's route set,
+and the client treats the 404 as "permanent no-op for the session". The shape
+below is the retired TS server's, kept for the client's sake.
+Request
+`{ "device", "ua", "url", "entries": [ { "ts", "level": "error"|"warn"|"trace", "source", "message", "detail"? } ] }`.
 
 The `POST`/`GET /api/debug/input-timing` routes are legacy and **unserved** —
 they existed only on the deleted TS server and there is no Go counterpart:

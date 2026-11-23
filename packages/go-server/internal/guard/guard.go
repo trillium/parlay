@@ -187,7 +187,7 @@ var GuardedPaths = map[string]bool{
 	// someone editing internal/handlers and never opening this file. Landing
 	// the entries first removes that window, and an entry for a path no
 	// handler serves yet costs nothing — IsGuarded is consulted per request,
-	// so an unrouted path 404s before the guard's decision matters.
+	// so an unrouted /api path 404s (internal/static) before the guard's decision matters.
 	//
 	// Re-classify, do not trust this comment, if a Go handler ends up doing
 	// something its TS counterpart does not — that asymmetry is real and
@@ -206,7 +206,6 @@ var GuardedPaths = map[string]bool{
 	"/api/chat/tts-correction":        true, // rewrites persisted pronunciation substitutions
 	"/api/chat/tts/validate-splits":   true, // origin check only, see jsonExemptPaths
 	"/api/chat/tts-event":             true, // broadcasts a tts_event frame carrying a device uuid
-	"/api/chat/debug-log":             true, // appends client console errors to a log file on disk
 
 	// Remote-input intake (task-57ltl; targets + no-target rule task-46ys9;
 	// allow-listed slide actions task-l6wjg.4):

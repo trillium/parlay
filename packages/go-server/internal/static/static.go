@@ -8,6 +8,7 @@
 //	GET /parlay-agent.js         → dist/parlay-agent.js  (same origin as the panel)
 //	GET /annotate/<path>         → dist/<path>            (Pulse-compat alias)
 //	GET /<anything-else>         → dist/index.html        (SPA fallback)
+//	GET /api/<anything-unrouted> → 404 JSON               (never the SPA fallback)
 //
 // The /annotate/ prefix matches the Pulse symlink convention
 // (~/pulse-pages/annotate → packages/client), so any page that already
@@ -27,6 +28,15 @@ import (
 // exist, every request returns a 503 with a helpful message.
 func Handler(dir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An unrouted API path is a real 404, never the SPA shell: callers
+		// (the CLI's commandreport, the client's "404 = unsupported" fallbacks)
+		// read the status, and a 200 + index.html looks like success.
+		if p := r.URL.Path; p == "/api" || strings.HasPrefix(p, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}` + "\n"))
+			return
+		}
 		if dir == "" {
 			http.Error(w, "no assets directory configured (set --assets-dir or PARLAY_ASSETS_DIR)", http.StatusServiceUnavailable)
 			return
