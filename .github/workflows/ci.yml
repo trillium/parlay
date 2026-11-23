@@ -272,6 +272,7 @@ jobs:
           uncovered=""
           while IFS= read -r f; do
             covered=""
+            # shellcheck disable=SC2086 # $roots is a deliberate word list.
             for r in $roots; do
               case "$f" in "$r"/*) covered=1; break ;; esac
             done
@@ -279,11 +280,13 @@ jobs:
           done < <(git ls-files '*.test.ts' '*.test.tsx')
           if [ -n "$uncovered" ]; then
             echo "::error::Test files exist under no root in this job's list, so they are NEVER RUN:"
+            # shellcheck disable=SC2086 # $uncovered is a deliberate word list.
             printf '  %s\n' $uncovered
             echo "Add the owning package to \$roots above."
             exit 1
           fi
 
+          # shellcheck disable=SC2086 # $roots is a deliberate word list.
           for p in $roots; do
             echo "::group::bun test ($p)"
             ( cd "$p" && bun test )
