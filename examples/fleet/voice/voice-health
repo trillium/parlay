@@ -23,7 +23,7 @@ Environment (defaults match a stock install):
   VOICE_FRONTEND_URL  http://127.0.0.1:3000   VOICE_LIVEKIT_HTTP  http://127.0.0.1:7880
   VOICE_TTS_URL       http://127.0.0.1:8880   VOICE_STT_URL       http://127.0.0.1:2022
   VOICE_TLS_PAGE_PORT 3443                    VOICE_TLS_LIVEKIT_PORT 7443
-  LIVEKIT_API_KEY / LIVEKIT_API_SECRET        devkey / secret
+  LIVEKIT_API_KEY / LIVEKIT_API_SECRET        required (no default)
 
 Python standard library only, so it still runs when the voice tooling is broken.
 """
@@ -51,8 +51,8 @@ if TTS.endswith("/v1"):
 STT = (E("VOICE_STT_URL") or "http://127.0.0.1:2022").rstrip("/")
 PAGE_PORT = E("VOICE_TLS_PAGE_PORT") or "3443"
 LK_TLS_PORT = E("VOICE_TLS_LIVEKIT_PORT") or "7443"
-KEY = E("LIVEKIT_API_KEY") or "devkey"
-SECRET = E("LIVEKIT_API_SECRET") or "secret"
+KEY = E("LIVEKIT_API_KEY") or ""
+SECRET = E("LIVEKIT_API_SECRET") or ""
 BOT = "voice-mode-bot"
 HERE = os.path.dirname(os.path.abspath(__file__))
 INSTALL = "examples/fleet/voice/install.sh"

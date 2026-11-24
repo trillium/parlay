@@ -1,8 +1,8 @@
 import { AccessToken, AccessTokenOptions, VideoGrant } from "livekit-server-sdk";
 import { NextResponse, NextRequest } from "next/server";
 
-const API_KEY = process.env.LIVEKIT_API_KEY || "devkey";
-const API_SECRET = process.env.LIVEKIT_API_SECRET || "secret";
+const API_KEY = process.env.LIVEKIT_API_KEY;
+const API_SECRET = process.env.LIVEKIT_API_SECRET;
 
 // ONE room, always the same name. With a random name per page load, every
 // reload stranded the previous room and there was nothing stable to rejoin.
