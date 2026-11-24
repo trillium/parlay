@@ -548,7 +548,7 @@ need first, not a complete index of every module in the repo:
 | `tools/cli` | The Go `parlay` command surface — `reply`/`say`, `monitor`, `identity`/`scratchpad`, `alert`, `doctor`/`health`, `shutdown`, and more. Also embeds the compiled Go (RE2) eval-engine — the voice layer that matches spoken/typed phrases to a closed set of panel actions — as `parlay eval serve` (`internal/evalengine`). `bin/parlay` builds and execs this binary. |
 | `packages/input` | `parlay-input` — a self-contained, framework-agnostic DOM input wrapper for wiring your own UI input to a parlay server. The one publishable npm package; no dependencies. |
 | `packages/sandbox` | The **sandbox test site** — a react/vite page that previews what a string would do under each of your configurations (real eval engine, delivery removed), fires the real action on an explicit click, and carries the command log with its per-row off switch. Runs with `cd packages/sandbox && bun run dev`; no new endpoints. See [`packages/sandbox/README.md`](packages/sandbox/README.md) and [`docs/action-log.md`](docs/action-log.md). |
-| `examples/fleet` | The author's personal **fleet layer** — inbox dispatcher/emit, pi-inbox bridge, and the agent skills. Not core product; installs via `examples/fleet/install.sh`. |
+| `examples/fleet` | The author's personal **fleet layer** — inbox dispatcher/emit, pi-inbox bridge, the agent skills, and the phone voice path ([`examples/fleet/voice/README.md`](examples/fleet/voice/README.md)). Not core product; installs via `examples/fleet/install.sh`. |
 
 Agent-facing entry points live in `bin/` (`parlay`, `parlay-treehouse-guard`, …).
 
