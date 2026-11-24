@@ -1,0 +1,364 @@
+#!/usr/bin/python3
+"""voice-health: is the phone voice path ready for a turn, and if not, why not.
+
+Checks every piece a spoken turn needs, prints EVERY problem in one run with
+the command that fixes it, and exits:
+
+    0  ready: services up and a phone is on the line
+    1  a service is down or out of date: no turn can work
+    2  services are fine but no phone is on the line: a turn would fail with
+       "No active LiveKit rooms found"
+
+Usage: voice-health [--json] [--services-only | --engines-only]
+
+  --services-only  skip the phone checks (exit 0 or 1 only)
+  --engines-only   check only LiveKit, Kokoro and Whisper: what a turn needs
+                   when the test brings its own participant instead of a phone
+  --json           one JSON object instead of the table
+
+Environment (defaults match a stock install):
+  VOICEMODE_DIR       state directory                   (~/.voicemode)
+  VOICE_PUBLIC_HOST   name the phone uses               (the certificate's name)
+  VOICE_ROOM          the room the page joins           (voice_assistant_room)
+  VOICE_FRONTEND_URL  http://127.0.0.1:3000   VOICE_LIVEKIT_HTTP  http://127.0.0.1:7880
+  VOICE_TTS_URL       http://127.0.0.1:8880   VOICE_STT_URL       http://127.0.0.1:2022
+  VOICE_TLS_PAGE_PORT 3443                    VOICE_TLS_LIVEKIT_PORT 7443
+  LIVEKIT_API_KEY / LIVEKIT_API_SECRET        devkey / secret
+
+Python standard library only, so it still runs when the voice tooling is broken.
+"""
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+E = os.environ.get
+D = E("VOICEMODE_DIR") or os.path.join(os.path.expanduser("~"), ".voicemode")
+ROOM = E("VOICE_ROOM") or "voice_assistant_room"
+FRONTEND = (E("VOICE_FRONTEND_URL") or "http://127.0.0.1:3000").rstrip("/")
+LIVEKIT = (E("VOICE_LIVEKIT_HTTP") or "http://127.0.0.1:7880").rstrip("/")
+TTS = (E("VOICE_TTS_URL") or "http://127.0.0.1:8880").rstrip("/")
+if TTS.endswith("/v1"):
+    TTS = TTS[:-3]
+STT = (E("VOICE_STT_URL") or "http://127.0.0.1:2022").rstrip("/")
+PAGE_PORT = E("VOICE_TLS_PAGE_PORT") or "3443"
+LK_TLS_PORT = E("VOICE_TLS_LIVEKIT_PORT") or "7443"
+KEY = E("LIVEKIT_API_KEY") or "devkey"
+SECRET = E("LIVEKIT_API_SECRET") or "secret"
+BOT = "voice-mode-bot"
+HERE = os.path.dirname(os.path.abspath(__file__))
+INSTALL = "examples/fleet/voice/install.sh"
+
+checks = []
+
+
+def add(name, status, detail, fix=""):
+    checks.append({"name": name, "status": status, "detail": detail, "fix": fix})
+    return status == "ok"
+
+
+def get(url, timeout=6):
+    """(status, body) for a plain-http URL; (0, reason) when it cannot be reached."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, ""
+    except Exception as e:  # refused, timed out, reset
+        return 0, str(getattr(e, "reason", e))
+
+
+def curl(url, timeout=8):
+    """Fetch over TLS with the system trust store, the way a browser judges it."""
+    try:
+        p = subprocess.run(
+            ["/usr/bin/curl", "-sS", "-m", str(timeout), "-o", "-", "-w", "\n%{http_code}", url],
+            capture_output=True, text=True, timeout=timeout + 4)
+    except Exception as e:
+        return 0, str(e)
+    if p.returncode != 0:
+        return 0, (p.stderr.strip().splitlines() or ["curl failed"])[-1]
+    body, _, code = p.stdout.rpartition("\n")
+    return int(code or 0), body
+
+
+def listen_addresses(port):
+    """Addresses something listens on for a TCP port ('*' = every interface); None if it cannot be told."""
+    try:
+        p = subprocess.run(["/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fn"],
+                           capture_output=True, text=True, timeout=6)
+    except Exception:
+        return None
+    return sorted({line[1:].rsplit(":", 1)[0] for line in p.stdout.splitlines() if line.startswith("n")})
+
+
+def b64(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=")
+
+
+def token(grants):
+    now = int(time.time())
+    head = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    body = b64(json.dumps({"iss": KEY, "sub": "voice-health", "nbf": now - 10, "exp": now + 60,
+                           "video": grants}).encode())
+    sig = b64(hmac.new(SECRET.encode(), head + b"." + body, hashlib.sha256).digest())
+    return (head + b"." + body + b"." + sig).decode()
+
+
+def twirp(method, payload, grants):
+    req = urllib.request.Request(
+        f"{LIVEKIT}/twirp/livekit.RoomService/{method}", data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + token(grants)})
+    with urllib.request.urlopen(req, timeout=6) as r:
+        return json.loads(r.read().decode())
+
+
+def cert_facts():
+    """(common name, days left) of the certificate the forwarder serves."""
+    crt = os.path.join(E("VOICE_CERT_DIR") or os.path.join(D, "certs"), "m.crt")
+    try:
+        p = subprocess.run(["/usr/bin/openssl", "x509", "-noout", "-subject", "-enddate", "-in", crt],
+                           capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        return "", None, f"cannot read {crt}: {e}"
+    if p.returncode != 0:
+        return "", None, f"cannot read {crt}: {(p.stderr.strip().splitlines() or ['openssl failed'])[0]}"
+    cn = re.search(r"CN\s*=\s*([^,/\n]+)", p.stdout)
+    end = re.search(r"notAfter=(.+)", p.stdout)
+    days = None
+    if end:
+        try:
+            import calendar
+            t = calendar.timegm(time.strptime(end.group(1).strip(), "%b %d %H:%M:%S %Y %Z"))
+            days = int((t - time.time()) // 86400)
+        except ValueError:
+            pass
+    return (cn.group(1).strip() if cn else ""), days, ""
+
+
+def ago(seconds):
+    seconds = int(seconds)
+    if seconds < 90:
+        return f"{seconds}s ago"
+    if seconds < 5400:
+        return f"{seconds // 60}m ago"
+    return f"{seconds // 3600}h ago"
+
+
+def engines():
+    code, body = get(LIVEKIT + "/")
+    add("livekit", "ok" if code == 200 else "fail",
+        f"voice server answers on {LIVEKIT}" if code == 200 else f"{LIVEKIT} is not answering ({code or body})",
+        "" if code == 200 else "voicemode livekit start")
+
+    code, body = get(TTS + "/health")
+    add("kokoro (speech out)", "ok" if code == 200 else "fail",
+        f"answers on {TTS}" if code == 200 else f"{TTS}/health is not answering ({code or body})",
+        "" if code == 200 else "voicemode kokoro start")
+
+    code, body = get(STT + "/health")
+    add("whisper (speech in)", "ok" if code == 200 else "fail",
+        f"answers on {STT}" if code == 200 else f"{STT}/health is not answering ({code or body})",
+        "" if code == 200 else "voicemode whisper start")
+
+
+def services():
+    code, body = get(FRONTEND + "/api/voice-log")
+    try:
+        up = code == 200 and "phase" in json.loads(body)
+    except ValueError:
+        up = False
+    add("frontend", "ok" if up else "fail",
+        f"phone page server answers on {FRONTEND}" if up
+        else f"{FRONTEND}/api/voice-log did not answer as the voice page ({code or body})",
+        "" if up else f"{INSTALL} --restart")
+
+    if up:
+        code, body = get(FRONTEND + "/api/connection-details?identity=voice_health_probe")
+        try:
+            got = json.loads(body) if code == 200 else {}
+        except ValueError:
+            got = {}
+        if got.get("roomName") == ROOM:
+            add("page build", "ok", f"page joins the fixed room '{ROOM}' and rejoins by itself")
+        else:
+            add("page build", "fail",
+                f"page hands out room '{got.get('roomName', '?')}', not '{ROOM}': the old page that "
+                "needs a tap after every load is still installed",
+                f"{INSTALL} --build --restart")
+
+    engines()
+
+    cn, days, err = cert_facts()
+    host = E("VOICE_PUBLIC_HOST") or cn or socket.gethostname()
+    renew = f"tailscale cert --cert-file {D}/certs/m.crt --key-file {D}/certs/m.key {host}"
+    if err:
+        add("certificate", "fail", err, renew)
+    elif days is None:
+        add("certificate", "warn", f"for {cn or '?'}; could not read its end date")
+    elif days < 0:
+        add("certificate", "fail", f"for {cn} expired {-days} day(s) ago: the phone will refuse the page", renew)
+    elif days < 14:
+        add("certificate", "warn", f"for {cn} expires in {days} day(s)", renew)
+    else:
+        add("certificate", "ok", f"for {cn}, {days} days left")
+
+    proxy_fix = f"{INSTALL} --restart-proxy"
+    url = f"https://{host}:{PAGE_PORT}"
+    code, body = curl(url + "/api/voice-log")
+    try:
+        ours = code == 200 and "phase" in json.loads(body)
+    except ValueError:
+        ours = False
+    if ours:
+        add("secure page", "ok", f"{url}/ loads over TLS (the address the phone opens)")
+    elif code:
+        add("secure page", "fail",
+            f"{url}/ answers ({code}) but not as the voice page: another program is being served on the page port",
+            f"{INSTALL} --restart --restart-proxy")
+    else:
+        add("secure page", "fail", f"{url}/ is not reachable over TLS ({body})", f"{INSTALL} --restart-proxy")
+    url = f"https://{host}:{LK_TLS_PORT}"
+    code, body = curl(url + "/")
+    add("secure voice socket", "ok" if code == 200 else "fail",
+        f"{url} forwards to the voice server" if code == 200 else f"{url} is not reachable over TLS ({code or body})",
+        "" if code == 200 else proxy_fix)
+    # Tailnet membership is the path's only access control, so a forwarder that
+    # listens on every interface lets any device on the same network in.
+    heard = [a for port in (PAGE_PORT, LK_TLS_PORT) for a in (listen_addresses(port) or [])]
+    if any(a in ("*", "0.0.0.0", "[::]") for a in heard):
+        add("forwarder reach", "fail",
+            "the forwarder listens on every network interface: a device on the same network "
+            "that is not in the tailnet can reach the voice page", proxy_fix)
+    elif heard:
+        add("forwarder reach", "ok", f"listens on {', '.join(sorted(set(heard)))} only")
+    return host
+
+
+def presence():
+    """Freshest check-in from an open page: (entry, age seconds) or (None, None)."""
+    try:
+        with open(os.path.join(D, "page-presence.json")) as f:
+            pages = json.load(f).get("pages", {})
+    except Exception:
+        return None, None
+    best = None
+    for p in pages.values():
+        if isinstance(p, dict) and isinstance(p.get("epoch"), (int, float)):
+            if best is None or p["epoch"] > best["epoch"]:
+                best = p
+    if not best:
+        return None, None
+    return best, max(0, time.time() - best["epoch"])
+
+
+def phone(host):
+    open_it = f"open https://{host}:{PAGE_PORT}/ on the phone and leave it on screen"
+    try:
+        rooms = twirp("ListRooms", {}, {"roomList": True}).get("rooms", [])
+    except Exception as e:
+        add("phone on the line", "fail", f"could not ask the voice server who is connected: {e}", "voicemode livekit start")
+        return
+    people = {}
+    for r in rooms:
+        try:
+            ps = twirp("ListParticipants", {"room": r["name"]}, {"roomAdmin": True, "room": r["name"]})
+        except Exception:
+            continue
+        humans = [p for p in ps.get("participants", []) if not p.get("identity", "").startswith(BOT)]
+        if humans:
+            people[r["name"]] = humans
+    page, age = presence()
+    # A turn only ever talks in ROOM, so somebody in any other room is not a phone on the line.
+    here = people.get(ROOM, [])
+    elsewhere = sorted(n for n in people if n != ROOM)
+    if here:
+        parts = []
+        mic = False
+        for p in here:
+            has_mic = any(t.get("type") == "AUDIO" and not t.get("muted") for t in p.get("tracks", []))
+            mic = mic or has_mic
+            parts.append(f"{p.get('identity')} in '{ROOM}'" + ("" if has_mic else " (no microphone track)"))
+        add("phone on the line", "ok" if mic else "fail", "; ".join(parts),
+            "" if mic else "tap 'Turn microphone on' on the phone page and allow the microphone")
+    else:
+        if elsewhere:
+            why = f"somebody is in {', '.join(elsewhere)}, but a turn only talks in '{ROOM}'"
+        elif page is None:
+            why = "no voice page has checked in since the page was last installed"
+        elif age > 30:
+            why = f"the page last checked in {ago(age)}: it is closed, or the phone is locked"
+        else:
+            why = (f"a page is open (checked in {ago(age)}) but it is off the line: "
+                   f"connection {page.get('conn')}, {'on screen' if page.get('visible') else 'in the background'}")
+        add("phone on the line", "fail", f"nobody is in the voice room; {why}", open_it)
+    if here and elsewhere:
+        add("other rooms", "warn", f"somebody is also in {', '.join(elsewhere)}; a turn only talks in '{ROOM}'")
+    if page is not None and age <= 30:
+        bits = [f"checked in {ago(age)}", f"connection {page.get('conn')}",
+                f"microphone {'on' if page.get('mic') else 'OFF'}",
+                f"sound {'on' if page.get('sound') else 'BLOCKED until a tap'}",
+                f"screen kept awake: {'yes' if page.get('wakeLock') else 'no'}"]
+        bad = not page.get("mic") or not page.get("sound")
+        add("phone page", "warn" if bad else "ok", ", ".join(bits),
+            "tap the button on the phone page" if bad else "")
+    try:
+        with open(os.path.join(D, "turn-timing.jsonl")) as f:
+            last = json.loads(f.read().strip().splitlines()[-1])
+        add("last turn", "ok" if last.get("result") == "ok" else "warn",
+            f"{last.get('at')}: {last.get('result')} in {last.get('total_ms', 0) / 1000:.1f}s"
+            + (f", heard: {last.get('heard')}" if last.get("result") == "ok" else f" ({last.get('heard') or 'nothing heard'})"))
+    except Exception:
+        pass
+
+
+def main():
+    args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
+        print(__doc__)
+        return 0
+    unknown = [a for a in args if a not in ("--json", "--services-only", "--engines-only")]
+    if unknown:
+        print(f"voice-health: unknown argument {unknown[0]}\n", file=sys.stderr)
+        print(__doc__, file=sys.stderr)
+        return 64
+    host = ""
+    if "--engines-only" in args:
+        engines()
+    else:
+        host = services()
+    service_fail = any(c["status"] == "fail" for c in checks)
+    if "--services-only" not in args and "--engines-only" not in args:
+        phone(host)
+    any_fail = any(c["status"] == "fail" for c in checks)
+    code = 1 if service_fail else (2 if any_fail else 0)
+    verdict = {0: "READY", 1: "NOT READY: a service is down or out of date",
+               2: "NOT READY: no phone on the line"}[code]
+    if "--services-only" in args and code == 0:
+        verdict = "SERVICES READY (phone not checked)"
+    if "--engines-only" in args and code == 0:
+        verdict = "ENGINES READY (page and phone not checked)"
+    if "--json" in args:
+        print(json.dumps({"verdict": verdict, "exit": code,
+                          "page_url": f"https://{host}:{PAGE_PORT}/" if host else "", "checks": checks}))
+        return code
+    mark = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
+    width = max(len(c["name"]) for c in checks)
+    for c in checks:
+        print(f"{mark[c['status']]}  {c['name'].ljust(width)}  {c['detail']}")
+        if c["fix"]:
+            print(f"      {' ' * width}  fix: {c['fix']}")
+    print(f"\n{verdict}")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
